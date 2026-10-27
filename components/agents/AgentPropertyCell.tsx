@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect } from "react";
+import { useStore } from "@/lib/store";
 import { useAgentsStore } from "@/lib/agentsStore";
 import { activeRunFor, taskForPage, useAgentTasks, type RunRow, type TaskRow } from "@/lib/agentTasks";
 import { TASK_STATE_LABEL, type TaskState } from "@/lib/agentState";
@@ -62,6 +64,14 @@ export function StatusBadge({ task, run, agentName, compact = false }: { task: T
 }
 
 export function AgentPropertyCell({ pageId, kind }: AgentPropertyCellProps) {
+  const workspaceId = useStore((s) => s.syncWorkspaceId);
+  const subscribe = useAgentTasks((s) => s.subscribe);
+  const loadAgents = useAgentsStore((s) => s.load);
+  useEffect(() => {
+    if (!workspaceId) return;
+    void loadAgents(workspaceId);
+    return subscribe(workspaceId);
+  }, [workspaceId, subscribe, loadAgents]);
   const task = useAgentTasks((s) => taskForPage(s, pageId));
   const run = useAgentTasks((s) => (task ? activeRunFor(s, task) : null));
   const agents = useAgentsStore((s) => s.agents);
