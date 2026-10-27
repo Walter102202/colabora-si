@@ -123,6 +123,18 @@ exception when others then
   return sqlerrm;
 end $$;
 
+-- Runs a statement and returns the DETAIL of the error it raised (null when it succeeded).
+create or replace function tests.detail_of(p_sql text)
+returns text language plpgsql as $$
+declare v text;
+begin
+  execute p_sql;
+  return null;
+exception when others then
+  get stacked diagnostics v = pg_exception_detail;
+  return v;
+end $$;
+
 select plan(1);
 select pass('test helpers installed');
 select * from finish();
