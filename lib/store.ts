@@ -285,7 +285,7 @@ export const useStore = create<Store>()(persist((set, get) => {
   };
 }, {
   name: "colabora-workspace", version: 1,
-  partialize: (state) => ({
+  partialize: (state): WorkspaceState & SyncState => ({
     pages: Object.fromEntries(Object.entries(state.pages).filter(([id]) => !foreignPageIds.has(id))),
     rootOrder: state.rootOrder, expanded: state.expanded, syncedBlocks: state.syncedBlocks,
     reminders: state.reminders, settings: state.settings, syncWorkspaceId: state.syncWorkspaceId, syncUserId: state.syncUserId,
