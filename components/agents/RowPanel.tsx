@@ -18,7 +18,8 @@ import { briefFromRow, closeTask, createTask, decideApproval, sendMessage, type 
 import { StatusBadge } from "@/components/agents/AgentPropertyCell";
 import { ApprovalCard } from "@/components/agents/panel/ApprovalCard";
 import { DecisionCard } from "@/components/agents/panel/DecisionCard";
-import { VerificationCard } from "@/components/agents/panel/VerificationCard";
+import { LeadReviewCard } from "@/components/agents/panel/LeadReviewCard";
+import { SubtaskList } from "@/components/agents/panel/SubtaskList";
 import { ActivityTimeline } from "@/components/agents/panel/ActivityTimeline";
 import { FeedbackComposer } from "@/components/agents/panel/FeedbackComposer";
 import { formatRelative } from "@/lib/utils";
@@ -196,8 +197,16 @@ function TaskPanel({ task }: { task: TaskRow }) {
 
       <section className="space-y-1">
         <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Verification</h4>
-        <VerificationCard review={review} brief={brief} />
+        <LeadReviewCard
+          task={task}
+          review={review}
+          brief={brief}
+          artifact={artifact}
+          reviewerName={review ? (agents.find((a) => a.id === review.reviewer_id)?.name ?? null) : null}
+        />
       </section>
+
+      <SubtaskList parentId={task.id} />
 
       {approval && (approval.kind === "action" ? <ApprovalCard approval={approval} onDecide={onDecide} /> : <DecisionCard approval={approval} onDecide={onDecide} />)}
 
