@@ -8,6 +8,8 @@ import ButtonBlock from "@/components/blocks/ButtonBlock";
 import type { BlockOps } from "@/lib/blockOps";
 import { blockColorClass } from "@/lib/utils";
 import { CODE_LANGUAGES } from "@/lib/blockMeta";
+import BlockPresence from "@/components/BlockPresence";
+import BlockConflictNotice from "@/components/blocks/BlockConflictNotice";
 
 interface Props { block: Block; ops: BlockOps; ordinal?: number; spellCheck: boolean; selected?: boolean; pages: Record<string, Page>; insertBlocks: (id: string, blocks: Block[]) => void; commentCount?: number }
 function BlockItem({ block, ops, ordinal, spellCheck, selected, pages, insertBlocks, commentCount = 0 }: Props) {
@@ -27,10 +29,12 @@ function BlockItem({ block, ops, ordinal, spellCheck, selected, pages, insertBlo
   else body = text;
   return <div data-block-id={block.id} className={`block-item ${selected ? "selected-block" : ""}`} style={{ marginLeft: block.indent * 26 }} onMouseDownCapture={(event) => ops.onBlockMouseDown(block.id, event)}>
     <AttributionMargin blockId={block.id} attr={block.attr} />
+    <BlockPresence blockId={block.id} />
     {block.attr?.by === "agent" && <span className="agent-dot" title="Edited by an agent" />}
     {!ops.locked && <div className="block-gutter" style={{ top: block.type === "heading1" ? 22 : block.type === "heading2" ? 14 : block.type === "heading3" ? 10 : 0 }} contentEditable={false}><button aria-label="Add block below" onClick={() => ops.addBlockBelow(block.id)}><Plus size={15} /></button><button aria-label="Move or open block menu" onClick={(event) => ops.openBlockMenu(block.id, event.currentTarget)}><GripVertical size={15} /></button></div>}
     <div className={color.startsWith("bc-") && block.type !== "callout" ? `${color} rounded px-2` : ""}>{body}</div>
     {commentCount > 0 && ops.openComments && <button className="block-comment-count" aria-label={`${commentCount} block comments`} onClick={(event) => ops.openComments?.(block.id, event.currentTarget)}>💬 {commentCount}</button>}
+    <BlockConflictNotice pageId={ops.pageId} blockId={block.id} />
   </div>;
 }
 export default memo(BlockItem, (prev, next) => prev.block === next.block && prev.ops.locked === next.ops.locked && prev.spellCheck === next.spellCheck && prev.ordinal === next.ordinal && prev.selected === next.selected && prev.commentCount === next.commentCount && (next.block.type !== "button" || prev.pages === next.pages));

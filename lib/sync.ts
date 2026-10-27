@@ -281,7 +281,7 @@ async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise
   if (token !== generation) throw SYNC_CANCELLED;
   const rows = await fetchAllPages(sb); if (token !== generation) throw SYNC_CANCELLED;
   rows.forEach((r) => { known.add(r.id); lastSeen.set(r.id, Date.parse(r.updated_at)); });
-  let choice: ConflictChoice = "merge";
+  let choice: ConflictChoice = !linked && !meaningful && rows.some((r) => r.data && !r.deleted_at) ? "server" : "merge";
   if (!linked && meaningful && (switched || rows.some((r) => r.data && !r.deleted_at))) choice = await askConflictChoice(rows.filter((r) => r.data && !r.deleted_at).length, Object.values(useStore.getState().pages).filter((p) => !p.isDeleted && !foreignPageIds.has(p.id)).length);
   if (token !== generation) throw SYNC_CANCELLED;
   const current = useStore.getState();
@@ -310,6 +310,7 @@ async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise
   if (reminders.error) throw reminders.error;
   const rem = mergeReminders(choice === "server" ? [] : useStore.getState().reminders ?? [], reminders.data as ReminderRow[], useStore.getState().reminders?.length ?? 0);
   if (rem.changed) applyRemote({ reminders: rem.merged });
+  for (const page of Object.values(useStore.getState().pages)) if (!foreignPageIds.has(page.id) && !known.has(page.id) && !page.isDeleted) await insertPage(sb, page);
   useStore.getState().setSyncWorkspaceId(wsId, user.id); last = useStore.getState();
 }
 async function openQueue(sb: SupabaseClient, user: User): Promise<void> {
@@ -356,6 +357,8 @@ export function stopSync(): void {
 export async function forceFullPush(): Promise<void> {
   if (!started || !ready || !wsId || !queue || pushing) throw new Error("Sync is not ready");
   if (!window.confirm("Replace the cloud workspace with this device's copy? Pages that only exist in the cloud will be deleted.")) return;
+  const sb = getSupabase(); if (!sb) throw new Error("Not connected");
+  for (const row of await fetchAllPages(sb)) known.add(row.id);
   const s = useStore.getState(); queue.clearAll();
   for (const page of Object.values(s.pages)) if (!foreignPageIds.has(page.id) && known.has(page.id)) queue.enqueue(page.id, [{ op: "replace_page", page, revision: page.revision ?? 0 }]);
   for (const id of known) if (!s.pages[id]) queue.markDeleted(id);

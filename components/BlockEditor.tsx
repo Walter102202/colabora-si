@@ -21,12 +21,14 @@ import MentionMenu, { filteredMentions, type MentionItem } from "@/components/Me
 import DateMentionPopover from "@/components/DateMentionPopover";
 import { formatIsoDate } from "@/components/DatePickerCalendar";
 import { withViewTransition } from "@/lib/viewTransition";
+import { setLocalActiveBlock } from "@/lib/presence";
+import { DeletedBlockConflicts } from "@/components/blocks/BlockConflictNotice";
 
 export default function BlockEditor({ pageId }: { pageId: string }) {
   const page = useStore((s) => s.pages[pageId]), spellCheck = useStore((s) => s.settings?.spellcheck ?? true), actorId = useStore((s) => s.syncUserId ?? "local");
   const pages = useStore((s) => s.pages);
   if (!page) return null;
-  return <EditorSurface key={pageId} pageId={pageId} blocks={page.blocks} pages={pages} locked={page.locked} spellCheck={spellCheck} actorId={actorId} onChange={(blocks) => useStore.getState().setBlocks(pageId, blocks)} />;
+  return <><EditorSurface key={pageId} pageId={pageId} blocks={page.blocks} pages={pages} locked={page.locked} spellCheck={spellCheck} actorId={actorId} onChange={(blocks) => useStore.getState().setBlocks(pageId, blocks)} /><DeletedBlockConflicts pageId={pageId} blocks={page.blocks} /></>;
 }
 interface SurfaceProps { pageId: string; blocks: Block[]; onChange: (blocks: Block[]) => void; locked?: boolean; spellCheck?: boolean; actorId?: string; nested?: boolean; pages?: Record<string, Page> }
 type SlashState = { id: string; query: string; index: number; rect: DOMRect };
@@ -135,7 +137,7 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
         if (block.type === "paragraph" && handle.getText().trim() === "---") convert(id, "divider", "");
       },
       saveBlock: (id, html) => { if (!latest.current.locked) update(id, { html }); },
-      setActive: (id) => { active.current = id; if (slashRef.current?.id !== id) { slashRef.current = null; setSlash(null); } if (mentionRef.current?.id !== id) { mentionRef.current = null; setMention(null); } },
+      setActive: (id) => { active.current = id; setLocalActiveBlock(pageId, id); if (slashRef.current?.id !== id) { slashRef.current = null; setSlash(null); } if (mentionRef.current?.id !== id) { mentionRef.current = null; setMention(null); } },
       toggleChecked: (id) => { const block = list().find((b) => b.id === id); if (block) update(id, { checked: !block.checked }); },
       toggleCollapsed: (id) => {
         const next = list().map((b) => b.id === id ? { ...b, collapsed: !b.collapsed } : b);

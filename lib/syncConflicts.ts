@@ -20,9 +20,14 @@ export const useBlockConflicts = create<Conflicts>((set, get) => ({
       if (conflict.propertyId) store.updateCell(pageId, id, conflict.propertyId, conflict.theirs);
       else if (conflict.theirs && typeof conflict.theirs === "object" && "type" in conflict.theirs && "html" in conflict.theirs) {
         const block = conflict.theirs as Block;
-        const exists = JSON.stringify(page.blocks).includes(`"id":"${id}"`);
-        if (choice === "theirs" && exists) store.updateBlock(pageId, id, block);
-        else store.insertBlock(pageId, exists ? id : conflict.after ?? page.blocks.at(-1)?.id ?? null, { ...block, id: newId(), rev: undefined, attr: undefined });
+        let found = false;
+        const update = (blocks: Block[]): Block[] => blocks.flatMap((current) => {
+          if (current.id === id) { found = true; return choice === "theirs" ? [{ ...block, id, rev: current.rev }] : [current, { ...block, id: newId(), rev: undefined, attr: undefined }]; }
+          return [{ ...current, ...(current.columns ? { columns: current.columns.map((c) => ({ ...c, blocks: update(c.blocks) })) } : {}) }];
+        });
+        const blocks = update(page.blocks);
+        if (found) store.setBlocks(pageId, blocks);
+        else store.insertBlock(pageId, conflict.after ?? page.blocks.at(-1)?.id ?? null, { ...block, id: newId(), rev: undefined, attr: undefined });
       } else if (conflict.theirs && typeof conflict.theirs === "object" && "cells" in conflict.theirs) store.addRow(pageId, { ...(conflict.theirs as unknown as DbRow), id: newId() });
     }
     set((s) => ({ byPage: { ...s.byPage, [pageId]: (s.byPage[pageId] ?? []).filter((c) => c.id !== id) } }));
