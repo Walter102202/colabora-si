@@ -92,6 +92,17 @@ begin
   return jsonb_build_object('owner', v_owner, 'viewer', v_viewer, 'agent_user', v_agent_user, 'ws', v_ws, 'agent', v_agent, 'grant', v_grant);
 end $$;
 
+-- A plain page (optionally under a parent) in a workspace; returns its id.
+create or replace function tests.make_page(p_ws uuid, p_id text, p_parent text default null, p_data jsonb default null)
+returns text language plpgsql as $$
+begin
+  perform set_config('app.ops_write', '1', true);
+  insert into public.pages (id, workspace_id, parent_id, data)
+  values (p_id, p_ws, p_parent, coalesce(p_data, jsonb_build_object('id', p_id, 'title', p_id, 'parentId', p_parent, 'blocks', '[]'::jsonb)));
+  perform set_config('app.ops_write', '', true);
+  return p_id;
+end $$;
+
 -- Runs a statement and returns the SQLSTATE it raised ('' when it succeeded).
 create or replace function tests.sqlstate_of(p_sql text)
 returns text language plpgsql as $$
