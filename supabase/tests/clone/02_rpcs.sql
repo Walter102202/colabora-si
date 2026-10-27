@@ -317,5 +317,21 @@ select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-00000000
 select throws_ok($$select public.apply_page_ops('ops-db','[{"op":"db_prop_set","property":{"id":"key","name":"Key","type":"id","nextId":999}}]')$$,'PT403','forbidden','nonmembers cannot change property counters');
 reset role;
 
+
+select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000001","role":"authenticated"}',true);
+set local role authenticated;
+insert into rpc_results values('human-comment-id',to_jsonb(public.add_page_comment('ops-row','A comment with an identifier',null,null,null)));
+select ok((select payload#>>'{}' from rpc_results where name='human-comment-id') ~ '^[0-9a-f]{32}$','comment RPC returns the generated 32-character id');
+select is((select data#>>'{comments,0,id}' from public.pages where id='ops-row'),(select payload#>>'{}' from rpc_results where name='human-comment-id'),'returned comment id identifies the stored comment');
+select is((select data#>>'{comments,0,body}' from public.pages where id='ops-row'),'A comment with an identifier','comment body is stored with that id');
+reset role;
+select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000003","role":"authenticated","app_metadata":{"principal_type":"agent"}}',true);
+set local role authenticated;
+insert into rpc_results values('agent-comment-id',to_jsonb(public.add_page_comment('stale-update','Agent comment','b','b',null)));
+reset role;
+select is((select data#>>'{comments,0,id}' from public.pages where id='stale-update'),(select payload#>>'{}' from rpc_results where name='agent-comment-id'),'agents receive the id of their created comment');
+select is((select data#>>'{comments,0,authorType}' from public.pages where id='stale-update'),'agent','returning an id preserves agent attribution');
+select isnt((select payload from rpc_results where name='agent-comment-id'),(select payload from rpc_results where name='human-comment-id'),'separate comments have distinct identifiers');
+
 select * from finish();
 rollback;

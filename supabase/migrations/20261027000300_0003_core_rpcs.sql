@@ -698,7 +698,7 @@ begin
   select coalesce(nullif(raw_user_meta_data->>'full_name',''),email) into v_name from auth.users where id = auth.uid();
   v_comment := jsonb_strip_nulls(jsonb_build_object('id',replace(gen_random_uuid()::text,'-',''),'body',btrim(p_body),'author',v_name,'authorId',auth.uid(),'authorType',private.principal_type(),'createdAt',floor(extract(epoch from clock_timestamp())*1000)::bigint,'blockId',p_block_id,'anchorId',coalesce(p_anchor_id,p_block_id),'parentId',p_parent_id));
   perform private.apply_page_ops_core(p_page_id,jsonb_build_array(jsonb_build_object('op','comment_add','comment',v_comment)),null);
-  return 'ok';
+  return v_comment->>'id';
 end;
 $$;
 revoke all on function public.add_page_comment(text,text,text,text,text) from public,anon;
