@@ -57,7 +57,7 @@ Deno.test('embedded database renders as a Markdown table', () => {
   const text = md.blocks[0].markdown;
   assert.ok(text.startsWith('**Database: [Leads](/p/db1)**'));
   assert.ok(text.includes('| Name | Stage | Value |'));
-  assert.ok(text.includes(`| Acme | Won | ${(1200).toLocaleString()} |`));
+  assert.ok(text.includes("| Acme | Won | 1,200 |"));
   assert.ok(text.includes('| Beta \\| Co |  |  |'));
 });
 
