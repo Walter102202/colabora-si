@@ -83,3 +83,28 @@ it("ST-1 seed has four roots and the Agent Tasks contract", () => {
   expect(tasks.database!.properties.map((p) => p.name)).toEqual(["Task", "Lead", "Worker", "Status", "Waiting on", "Done when", "Depends on", "Output", "Cost", "Run"]);
   expect(tasks.database!.views.map((v) => v.name)).toEqual(["Table", "Waiting on you", "Working", "Board"]);
 });
+
+it("CM-1 comments identify their author and anchor and touch the page", () => {
+  const p = page({ id: "comments" }); useStore.setState({ pages: { [p.id]: p }, syncUserId: null });
+  useStore.getState().addComment(p.id, "  A note  ", "block");
+  const current = useStore.getState().pages[p.id];
+  expect(current.comments![0]).toMatchObject({ body: "A note", authorId: "local", authorType: "human", author: "You (this device)", blockId: "block", anchorId: "block", resolved: false });
+  expect(current.updatedAt).toBeGreaterThan(p.updatedAt);
+  expect(p.comments).toBeUndefined();
+});
+it("CM-2 resolving and reopening comments touches updatedAt", () => {
+  const id = useStore.getState().createPage(); useStore.getState().addComment(id, "Note");
+  const before = useStore.getState().pages[id], comment = before.comments![0]; advance();
+  useStore.getState().toggleResolveComment(id, comment.id);
+  expect(useStore.getState().pages[id].comments![0].resolved).toBe(true);
+  expect(useStore.getState().pages[id].updatedAt).toBeGreaterThan(before.updatedAt);
+  advance(); useStore.getState().toggleResolveComment(id, comment.id);
+  expect(useStore.getState().pages[id].comments![0].resolved).toBe(false);
+});
+it("CM-3 deleting a comment touches updatedAt", () => {
+  const id = useStore.getState().createPage(); useStore.getState().addComment(id, "Note");
+  const before = useStore.getState().pages[id]; advance();
+  useStore.getState().deleteComment(id, before.comments![0].id);
+  expect(useStore.getState().pages[id].comments).toEqual([]);
+  expect(useStore.getState().pages[id].updatedAt).toBeGreaterThan(before.updatedAt);
+});

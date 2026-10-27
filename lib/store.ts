@@ -192,7 +192,7 @@ export const useStore = create<Store>()(persist((set, get) => {
       if (!body.trim()) return;
       mutate(pageId, (page) => pm.touch({ ...page, comments: [...(page.comments ?? []), {
         id: newId(), body: body.trim(), ...(blockId ? { blockId, anchorId: blockId } : {}),
-        authorId: get().syncUserId ?? "local", authorType: "human", author: "You (this device)", createdAt: Date.now(), resolved: false,
+        authorId: get().syncUserId ?? "local", authorType: "human", author: get().syncUserId ? get().members?.find((member) => member.id === get().syncUserId)?.name : "You (this device)", createdAt: Date.now(), resolved: false,
       }] }));
     },
     deleteComment: (pageId, id) => mutate(pageId, (page) => pm.touch({ ...page, comments: (page.comments ?? []).filter((c) => c.id !== id) })),

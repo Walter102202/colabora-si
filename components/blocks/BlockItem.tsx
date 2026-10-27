@@ -9,8 +9,8 @@ import type { BlockOps } from "@/lib/blockOps";
 import { blockColorClass } from "@/lib/utils";
 import { CODE_LANGUAGES } from "@/lib/blockMeta";
 
-interface Props { block: Block; ops: BlockOps; ordinal?: number; spellCheck: boolean; selected?: boolean; pages: Record<string, Page>; insertBlocks: (id: string, blocks: Block[]) => void }
-function BlockItem({ block, ops, ordinal, spellCheck, selected, pages, insertBlocks }: Props) {
+interface Props { block: Block; ops: BlockOps; ordinal?: number; spellCheck: boolean; selected?: boolean; pages: Record<string, Page>; insertBlocks: (id: string, blocks: Block[]) => void; commentCount?: number }
+function BlockItem({ block, ops, ordinal, spellCheck, selected, pages, insertBlocks, commentCount = 0 }: Props) {
   const register = useCallback((handle: EditableHandle | null) => ops.register(block.id, handle), [block.id, ops]);
   const color = blockColorClass(block.color), heading = block.type.startsWith("heading");
   const placeholder = heading ? `Heading ${block.type.at(-1)}` : block.type === "todo" ? "To-do" : ["bulleted", "numbered"].includes(block.type) ? "List" : block.type === "toggle" ? "Toggle" : block.type === "quote" ? "Empty quote" : block.type === "callout" ? "Type something…" : "Type '/' for commands";
@@ -30,6 +30,7 @@ function BlockItem({ block, ops, ordinal, spellCheck, selected, pages, insertBlo
     {block.attr?.by === "agent" && <span className="agent-dot" title="Edited by an agent" />}
     {!ops.locked && <div className="block-gutter" style={{ top: block.type === "heading1" ? 22 : block.type === "heading2" ? 14 : block.type === "heading3" ? 10 : 0 }} contentEditable={false}><button aria-label="Add block below" onClick={() => ops.addBlockBelow(block.id)}><Plus size={15} /></button><button aria-label="Move or open block menu" onClick={(event) => ops.openBlockMenu(block.id, event.currentTarget)}><GripVertical size={15} /></button></div>}
     <div className={color.startsWith("bc-") && block.type !== "callout" ? `${color} rounded px-2` : ""}>{body}</div>
+    {commentCount > 0 && ops.openComments && <button className="block-comment-count" aria-label={`${commentCount} block comments`} onClick={(event) => ops.openComments?.(block.id, event.currentTarget)}>💬 {commentCount}</button>}
   </div>;
 }
-export default memo(BlockItem, (prev, next) => prev.block === next.block && prev.ops.locked === next.ops.locked && prev.spellCheck === next.spellCheck && prev.ordinal === next.ordinal && prev.selected === next.selected);
+export default memo(BlockItem, (prev, next) => prev.block === next.block && prev.ops.locked === next.ops.locked && prev.spellCheck === next.spellCheck && prev.ordinal === next.ordinal && prev.selected === next.selected && prev.commentCount === next.commentCount && (next.block.type !== "button" || prev.pages === next.pages));
