@@ -337,5 +337,27 @@ select is((select data#>>'{comments,0,id}' from public.pages where id='stale-upd
 select is((select data#>>'{comments,0,authorType}' from public.pages where id='stale-update'),'agent','returning an id preserves agent attribution');
 select isnt((select payload from rpc_results where name='agent-comment-id'),(select payload from rpc_results where name='human-comment-id'),'separate comments have distinct identifiers');
 
+
+-- Integrated directory and comment delivery use the two seeded agents.
+select set_config('request.jwt.claims','{"sub":"00000000-0000-4000-8000-000000000001","role":"authenticated"}',true);
+set local role authenticated;
+select is((select count(*) from public.workspace_directory_v where workspace_id='00000000-0000-4000-8000-000000000010' and is_agent),2::bigint,'workspace directory includes agents without membership rows');
+insert into rpc_results values('mentioned-agent',to_jsonb(public.add_page_comment('research-task-1','<span class="mention person-mention" data-user="00000000-0000-4000-8000-000000000032">@Codex</span> Check the sources')));
+select is((select count(*) from public.agent_activities where body->>'comment_id'=(select payload#>>'{}' from rpc_results where name='mentioned-agent') and type='prompt' and body->>'source'='comment'),1::bigint,'an explicit agent mention creates one comment prompt');
+select is((select count(*) from public.agent_events where payload->>'comment_id'=(select payload#>>'{}' from rpc_results where name='mentioned-agent') and type='task.feedback' and status='queued' and lease_until is null),1::bigint,'comment prompt queues an immediately available feedback event');
+select public.apply_page_ops('research-task-1',jsonb_build_array(jsonb_build_object('op','comment_add','comment',(select c from public.pages p cross join lateral jsonb_array_elements(p.data->'comments') c where p.id='research-task-1' and c->>'id'=(select payload#>>'{}' from rpc_results where name='mentioned-agent')))));
+select is((select count(*) from public.agent_activities where body->>'comment_id'=(select payload#>>'{}' from rpc_results where name='mentioned-agent')),1::bigint,'replaying the same comment does not prompt the agent twice');
+select is((select count(*) from public.notifications where comment_id=(select payload#>>'{}' from rpc_results where name='mentioned-agent')),0::bigint,'agent mentions do not create a human inbox notification');
+reset role;
+select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000001","role":"authenticated"}',true);
+set local role authenticated;
+insert into rpc_results values('foreign-agent-mention',to_jsonb(public.add_page_comment('ops-row','<span data-user="00000000-0000-4000-8000-000000000032">@Codex</span> Outside workspace')));
+reset role;
+select is((select count(*) from public.agent_activities where body->>'comment_id'=(select payload#>>'{}' from rpc_results where name='foreign-agent-mention')),0::bigint,'mention cannot enqueue work in another workspace');
+select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated"}',true);
+set local role authenticated;
+select is((select count(*) from public.workspace_directory_v),0::bigint,'outsider cannot read people or agents from the directory');
+reset role;
+
 select * from finish();
 rollback;

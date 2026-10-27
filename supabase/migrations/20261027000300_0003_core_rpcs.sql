@@ -649,7 +649,7 @@ grant execute on function public.mark_notifications_read(uuid[]) to authenticate
 
 create or replace function private.notify_comment(p_page_id text, p_ws uuid, p_page jsonb, p_comment jsonb)
 returns void language plpgsql security definer set search_path = '' as $$
-declare v_user uuid; v_parent jsonb; v_task record; v_seq bigint; v_body jsonb;
+declare v_user uuid; v_parent jsonb; v_task record; v_seq bigint; v_event_seq bigint; v_body jsonb;
 begin
   if to_regclass('public.notifications') is null then return; end if;
   v_parent := p_page->'comments'->private.array_id_index(p_page->'comments',p_comment->>'parentId');
@@ -660,18 +660,21 @@ begin
   end if;
   for v_user in select distinct u.id from regexp_matches(p_comment->>'body','data-user="([0-9a-fA-F-]{36})"','g') mention
     join auth.users u on u.id::text = mention[1]
-    where u.id <> auth.uid() and (exists(select 1 from public.workspace_members m where m.workspace_id = p_ws and m.user_id = u.id) or exists(select 1 from public.workspaces w where w.id = p_ws and w.owner_id = u.id))
+    where u.id <> auth.uid()
   loop
     if coalesce((select raw_app_meta_data->>'principal_type' from auth.users where id = v_user),'human') <> 'agent' then
+      if not exists(select 1 from public.workspace_members m where m.workspace_id=p_ws and m.user_id=v_user)
+         and not exists(select 1 from public.workspaces w where w.id=p_ws and w.owner_id=v_user) then continue; end if;
       insert into public.notifications(workspace_id,user_id,kind,page_id,block_id,comment_id,actor_id,actor_type,payload)
       values(p_ws,v_user,'mention',p_page_id,p_comment->>'blockId',p_comment->>'id',auth.uid(),private.principal_type(),jsonb_build_object('body',p_comment->>'body'));
-    elsif to_regclass('public.agent_activities') is not null then
-      for v_task in execute 'select t.id,t.active_run_id,t.delegate_agent_id from public.agent_tasks t join public.agents a on a.id=t.delegate_agent_id where t.row_page_id=$1 and a.auth_user_id=$2 and t.state not in (''done'',''failed'',''cancelled'') for update of t' using p_page_id,v_user loop
-        execute 'update public.agent_tasks set next_seq=next_seq+1 where id=$1 returning next_seq' into v_seq using v_task.id;
+    elsif to_regclass('public.agent_activities') is not null and to_regprocedure('private.next_seq(uuid)') is not null then
+      for v_task in execute 'select t.id,t.active_run_id,t.delegate_agent_id from public.agent_tasks t join public.agents a on a.id=t.delegate_agent_id where t.row_page_id=$1 and a.auth_user_id=$2 and t.workspace_id=$3 and a.workspace_id=$3 and a.status=''enabled'' and a.revoked_at is null and t.state not in (''done'',''failed'',''cancelled'') for update of t' using p_page_id,v_user,p_ws loop
+        execute 'select private.next_seq($1)' into v_seq using v_task.id;
         v_body := jsonb_build_object('text',p_comment->>'body','signal','feedback','source','comment','comment_id',p_comment->>'id');
         execute 'insert into public.agent_activities(workspace_id,task_id,run_id,seq,type,body,author_type,author_id) values($1,$2,$3,$4,''prompt'',$5,$6,$7)' using p_ws,v_task.id,v_task.active_run_id,v_seq,v_body,private.principal_type(),auth.uid();
-        if to_regclass('public.agent_events') is not null then
-          execute 'insert into public.agent_events(workspace_id,task_id,run_id,agent_id,type,payload,seq,lease_until) values($1,$2,$3,$4,''task.feedback'',$5,$6,now()+interval ''30 seconds'')' using p_ws,v_task.id,v_task.active_run_id,v_task.delegate_agent_id,v_body,v_seq;
+        if to_regclass('public.agent_events') is not null and to_regprocedure('private.next_event_seq(uuid)') is not null then
+          execute 'select private.next_event_seq($1)' into v_event_seq using v_task.id;
+          execute 'insert into public.agent_events(workspace_id,task_id,run_id,agent_id,type,payload,seq) values($1,$2,$3,$4,''task.feedback'',$5,$6)' using p_ws,v_task.id,v_task.active_run_id,v_task.delegate_agent_id,v_body,v_event_seq;
         end if;
       end loop;
     end if;
@@ -772,10 +775,19 @@ grant execute on function public.accept_invitation(text) to authenticated;
 
 create or replace function private.workspace_directory()
 returns table(workspace_id uuid,user_id uuid,display_name text,is_agent boolean)
-language sql stable security definer set search_path = '' as $$
+language plpgsql stable security definer set search_path = '' as $$
+begin
+  return query
   select m.workspace_id,m.user_id,coalesce(nullif(u.raw_user_meta_data->>'full_name',''),u.email),coalesce(u.raw_app_meta_data->>'principal_type','human')='agent'
   from public.workspace_members m join auth.users u on u.id=m.user_id
   where private.is_human_member(m.workspace_id) or (private.is_agent() and exists(select 1 from public.pages p where p.workspace_id=m.workspace_id and private.agent_can_read(p.id)));
+  if to_regclass('public.agents') is not null then
+    return query execute 'select a.workspace_id,a.auth_user_id,a.name,true from public.agents a
+      where a.revoked_at is null
+        and not exists(select 1 from public.workspace_members m where m.workspace_id=a.workspace_id and m.user_id=a.auth_user_id)
+        and (private.is_human_member(a.workspace_id) or (private.is_agent() and exists(select 1 from public.pages p where p.workspace_id=a.workspace_id and private.agent_can_read(p.id))))';
+  end if;
+end;
 $$;
 revoke all on function private.workspace_directory() from public,anon;
 grant execute on function private.workspace_directory() to authenticated;
