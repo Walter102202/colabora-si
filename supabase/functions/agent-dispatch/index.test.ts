@@ -96,7 +96,8 @@ Deno.test('webhook agents get a signed CloudEvent; 2xx acks ok', async () => {
   assert.equal(event.data.text, 'Fix row 4');
   assert.equal(event.data.mcp_url, 'https://project.test/functions/v1/mcp');
   const headers = new Headers(init.headers);
-  assert.equal(headers.get('X-Signature'), `sha256=${await hmacSha256Hex('whsec', body)}`);
+  assert.equal(headers.get('X-Signature'), null);
+  assert.equal(init.redirect, 'manual');
   const t = 1_700_000_000;
   assert.equal(headers.get('X-Agent-Signature'), `t=${t},v1=${await hmacSha256Hex('whsec', `${t}.${body}`)}`);
   assert.equal(headers.get('X-Agent-Event-Id'), 'ev-7');
@@ -125,6 +126,8 @@ Deno.test('network errors retry; a webhook agent without url or secret fails wit
     message(1, { ...push, connection: { webhook_url: 'https://down.example' } }, { webhook_secret: 's' }),
     message(2, { ...push, connection: {} }, { webhook_secret: 's' }),
     message(3, { ...push, connection: { webhook_url: 'https://hook.example' } }),
+    message(4, { ...push, connection: { webhook_url: 'https://169.254.169.254/latest' } }, { webhook_secret: 's' }),
+    message(5, { ...push, connection: { webhook_url: 'http://hook.example' } }, { webhook_secret: 's' }),
   ]], () => Promise.reject(new TypeError('connection refused')));
   const res = await handleAgentDispatch(req(SECRET), deps);
   await res.body?.cancel();
@@ -133,6 +136,8 @@ Deno.test('network errors retry; a webhook agent without url or secret fails wit
     [false, true, 'network'],
     [false, false, 'webhook_url_missing'],
     [false, false, 'webhook_secret_missing'],
+    [false, false, 'webhook_url_private'],
+    [false, false, 'webhook_url_not_https'],
   ]);
 });
 
