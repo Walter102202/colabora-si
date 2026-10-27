@@ -1,0 +1,48 @@
+"use client";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { ChevronsLeft, ChevronDown, Home, Moon, Plus, Search, Settings, Star, Sun, Trash2 } from "lucide-react";
+import { getFavorites, useStore } from "@/lib/store";
+import { useTheme } from "@/lib/useTheme";
+import { withViewTransition } from "@/lib/viewTransition";
+import Emoji from "@/components/Emoji";
+import SidebarItem from "@/components/SidebarItem";
+import SyncStatus from "@/components/SyncStatus";
+import Tooltip from "@/components/Tooltip";
+
+export default function Sidebar({ collapse }: { collapse: () => void }) {
+  const pages = useStore((s) => s.pages), rootOrder = useStore((s) => s.rootOrder), router = useRouter();
+  const { theme, toggle } = useTheme();
+  const [workspaceMenu, setWorkspaceMenu] = useState(false), [addMenu, setAddMenu] = useState(false);
+  const openModal = (kind: string) => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind } }));
+  const open = (id: string) => { setAddMenu(false); withViewTransition(() => router.push(`/p/${id}`)); };
+  const favorites = getFavorites(pages);
+  return <aside className="sidebar-inner group/aside">
+    <div className="relative flex items-center justify-between px-3 pb-1 pt-2.5">
+      <button className="workspace-chip" onClick={() => setWorkspaceMenu(!workspaceMenu)}><span className="workspace-avatar">C</span><span className="truncate">My Workspace</span><ChevronDown size={14} /></button>
+      <Tooltip label="Collapse sidebar" shortcut="Ctrl+\"><button className="icon-button hover-actions" aria-label="Collapse sidebar" onClick={collapse}><ChevronsLeft size={17} /></button></Tooltip>
+      {workspaceMenu && <><button className="menu-backdrop" aria-label="Close workspace menu" onClick={() => setWorkspaceMenu(false)} /><div className="menu-panel absolute left-3 top-12 w-56" role="menu">
+        <button role="menuitem" onClick={toggle}>{theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}{theme === "dark" ? "Light mode" : "Dark mode"}</button>
+        <button role="menuitem" className="danger" onClick={() => { if (confirm("Reset the entire workspace? This deletes all pages on this device.")) { useStore.getState().resetWorkspace(); setWorkspaceMenu(false); router.push("/"); } }}>Reset workspace</button>
+      </div></>}
+    </div>
+    <div className="flex items-center gap-1 px-3 pb-2 pt-1.5">
+      <button className="home-pill" onClick={() => withViewTransition(() => router.push("/"))}><Home size={15} />Home</button>
+      <Tooltip label="Settings"><button className="icon-button rounded-full" aria-label="Settings" onClick={() => openModal("settings")}><Settings size={17} /></button></Tooltip>
+      <span className="flex-1" /><Tooltip label="Search pages" shortcut="Ctrl+K"><button className="icon-button" aria-label="Search pages" onClick={() => openModal("search")}><Search size={17} /></button></Tooltip>
+    </div>
+    <div className="scrollbar-thin mt-2 min-h-0 flex-1 overflow-y-auto px-2">
+      {favorites.length > 0 && <section className="mb-5"><div className="section-label">Favorites</div>{favorites.map((page) => <button key={page.id} className="sidebar-row w-full px-2" onClick={() => open(page.id)}><Emoji emoji={page.icon ?? "📄"} /><Star size={13} className="favorite-star" /><span className="truncate">{page.title || "Untitled"}</span></button>)}</section>}
+      <div className="relative flex items-center justify-between" onDragOver={(event) => { if (event.dataTransfer.types.includes("text/page-id")) event.preventDefault(); }} onDrop={(event) => { const id = event.dataTransfer.getData("text/page-id"); if (id) { event.preventDefault(); useStore.getState().movePage(id, null); } }}>
+        <div className="section-label">Private</div><button className="icon-button hover-actions" aria-label="Add a page" onClick={() => setAddMenu(!addMenu)}><Plus size={15} /></button>
+        {addMenu && <><button className="menu-backdrop" aria-label="Close add page menu" onClick={() => setAddMenu(false)} /><div className="menu-panel absolute right-1 top-7 w-52" role="menu">
+          <button role="menuitem" onClick={() => open(useStore.getState().createPage())}>New page</button><button role="menuitem" onClick={() => open(useStore.getState().createDatabasePage())}>New database</button>
+          <button role="menuitem" onClick={() => { setAddMenu(false); openModal("template"); }}>From a template</button><button role="menuitem" onClick={() => { setAddMenu(false); openModal("import"); }}>Import Markdown</button>
+        </div></>}
+      </div>
+      {rootOrder.filter((id) => pages[id] && !pages[id].isDeleted).map((id) => <SidebarItem key={id} pageId={id} />)}
+      {!rootOrder.some((id) => pages[id] && !pages[id].isDeleted) && <div className="empty-state text-xs">No pages yet<button onClick={() => open(useStore.getState().createPage())}>New page</button></div>}
+    </div>
+    <div className="border-t border-border px-2 py-2"><div className="px-2 py-2"><SyncStatus /></div><button className="sidebar-row w-full px-2" onClick={() => openModal("trash")}><Trash2 size={16} />Trash</button></div>
+  </aside>;
+}
