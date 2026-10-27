@@ -176,6 +176,7 @@ export function applyOps(input: Page, ops: PageOp[], actor: BlockAttr): { page: 
 export function diffPageToOps(prev: Page, next: Page): PageOp[] {
   if (prev === next) return [];
   const replacement = (): PageOp[] => [{ op: "replace_page", page: next, revision: prev.revision ?? 0 }];
+  if (next.versions?.[0] !== prev.versions?.[0] && prev.versions?.some((version) => version.id === next.versions?.[0]?.id)) return replacement();
   if (prev.parentId !== next.parentId || prev.isDeleted !== next.isDeleted || !!prev.database !== !!next.database) return replacement();
   if (prev.database && next.database && (prev.database.id !== next.database.id || prev.database.locked !== next.database.locked || !equal(prev.database.rowTemplates, next.database.rowTemplates))) return replacement();
   if ((prev.comments ?? []).some((c) => !(next.comments ?? []).some((n) => n.id === c.id))) return replacement();
