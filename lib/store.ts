@@ -7,6 +7,7 @@ import * as dm from "@/lib/dbMutations";
 import { createPageFromTemplate as materializeTemplate, sanitizeBlocks, seedWorkspace } from "@/lib/seed";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { stripHtml } from "@/lib/utils";
+import { useAuthStore } from "@/lib/auth";
 
 export interface RemotePatch {
   pages?: Record<string, Page | null>;
@@ -190,9 +191,10 @@ export const useStore = create<Store>()(persist((set, get) => {
     setExpanded: (id, value) => set((state) => ({ expanded: { ...state.expanded, [id]: value } })),
     addComment: (pageId, body, blockId) => {
       if (!body.trim()) return;
+      const user = useAuthStore.getState().user;
       mutate(pageId, (page) => pm.touch({ ...page, comments: [...(page.comments ?? []), {
         id: newId(), body: body.trim(), ...(blockId ? { blockId, anchorId: blockId } : {}),
-        authorId: get().syncUserId ?? "local", authorType: "human", author: get().syncUserId ? get().members?.find((member) => member.id === get().syncUserId)?.name : "You (this device)", createdAt: Date.now(), resolved: false,
+        authorId: user?.id ?? "local", authorType: "human", author: user ? user.user_metadata.full_name || user.email || "You" : "You (this device)", createdAt: Date.now(), resolved: false,
       }] }));
     },
     deleteComment: (pageId, id) => mutate(pageId, (page) => pm.touch({ ...page, comments: (page.comments ?? []).filter((c) => c.id !== id) })),

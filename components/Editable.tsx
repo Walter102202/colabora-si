@@ -1,6 +1,6 @@
 "use client";
 import { forwardRef, useImperativeHandle, useLayoutEffect, useRef } from "react";
-import { focusAtEnd, focusAtStart } from "@/lib/caret";
+import { caretOffset, focusAtEnd, focusAtStart, setCaretAtOffset } from "@/lib/caret";
 
 export interface EditableHandle {
   el: HTMLDivElement | null;
@@ -25,9 +25,16 @@ interface EditableProps {
 const markEmpty = (element: HTMLDivElement) => element.classList.toggle("is-empty", !element.textContent?.trim() && !element.querySelector("img,br[data-keep]"));
 const Editable = forwardRef<EditableHandle, EditableProps>(function Editable(props, ref) {
   const element = useRef<HTMLDivElement>(null);
+  const renderedHtml = useRef(props.html);
   useLayoutEffect(() => {
     const node = element.current;
-    if (node && document.activeElement !== node) { if (node.innerHTML !== props.html) node.innerHTML = props.html; markEmpty(node); }
+    if (node && node.innerHTML !== props.html && (document.activeElement !== node || props.html !== renderedHtml.current)) {
+      const focused = document.activeElement === node, offset = focused ? caretOffset(node) : 0;
+      node.innerHTML = props.html;
+      if (focused) setCaretAtOffset(node, offset);
+    }
+    renderedHtml.current = props.html;
+    if (node) markEmpty(node);
   });
   useImperativeHandle(ref, () => ({
     get el() { return element.current; },

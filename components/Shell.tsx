@@ -18,6 +18,12 @@ import TrashModal from "@/components/TrashModal";
 import MovePageModal from "@/components/MovePageModal";
 import PeekPanel from "@/components/PeekPanel";
 import TemplateModal from "@/components/TemplateModal";
+import AuthModal from "@/components/AuthModal";
+import { initAuth, useAuthStore } from "@/lib/auth";
+import { initSync, stopSync } from "@/lib/sync";
+import SyncConflictModal from "@/components/SyncConflictModal";
+import { usePresenceSession, useSharedPresenceScope } from "@/lib/presence";
+import PresenceAvatars from "@/components/PresenceAvatars";
 
 const subscribeWidth = (callback: () => void) => { window.addEventListener("resize", callback); return () => window.removeEventListener("resize", callback); };
 export default function Shell({ children }: { children: React.ReactNode }) {
@@ -32,9 +38,18 @@ function HydratedShell({ children }: { children: React.ReactNode }) {
   const [resizing, setResizing] = useState(false);
   const [modal, setModal] = useState<{ kind: string; pageId?: string } | null>(null);
   const pageId = /^\/p\/([^/]+)/.exec(pathname)?.[1], page = pageId ? pages[pageId] : undefined;
+  const user = useAuthStore((s) => s.user), workspaceId = useStore((s) => s.syncWorkspaceId);
+  const sharedId = /^\/shared\/([^/]+)/.exec(pathname)?.[1], sharedWorkspace = useSharedPresenceScope((s) => sharedId ? s.byPage[sharedId] : undefined);
+  usePresenceSession(pageId ?? sharedId ?? null, pageId ? workspaceId : sharedWorkspace ?? null, user?.id ?? null, user?.email ?? "", user?.user_metadata.full_name);
   const crumbs = pageId ? getBreadcrumb(pages, pageId) : [];
   const request = (kind: string, pageId?: string) => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind, pageId } }));
-  useEffect(() => { initHistory(); }, []);
+  useEffect(() => { initHistory(); initAuth(); }, []);
+  useEffect(() => {
+    let currentId: string | null = null;
+    const update = () => { const user = useAuthStore.getState().user; if ((user?.id ?? null) === currentId) return; currentId = user?.id ?? null; if (user) void initSync(user); else stopSync(); };
+    update(); const unsubscribe = useAuthStore.subscribe(update);
+    return () => { unsubscribe(); stopSync(); };
+  }, []);
   useEffect(() => {
     const handler = (event: Event) => setModal((event as CustomEvent<{ kind: string; pageId?: string }>).detail);
     window.addEventListener("colabora-modal", handler);
@@ -68,16 +83,18 @@ function HydratedShell({ children }: { children: React.ReactNode }) {
     <div className="app-main flex min-w-0 flex-1 flex-col"><header className="app-topbar flex h-11 shrink-0 items-center gap-1 px-3">
       {(collapsed || narrow) && <button className="icon-button" aria-label="Open sidebar" onClick={() => { setCollapsed(false); setDrawerAt(pathname); }}><Menu size={18} /></button>}
       <nav aria-label="Breadcrumb" className="flex min-w-0 flex-1 items-center text-sm">{crumbs.length ? crumbs.map((crumb, index) => <span className="flex min-w-0 items-center" key={crumb.id}>{index > 0 && <ChevronRight size={14} className="shrink-0 text-text-tertiary" />}<button className="breadcrumb-button" onClick={() => withViewTransition(() => router.push(`/p/${crumb.id}`))}><Emoji emoji={crumb.icon ?? "📄"} size={16} /><span className="truncate">{crumb.title || "Untitled"}</span></button></span>) : <button className="text-text-tertiary" onClick={() => request("search")}>Search…</button>}</nav>
-      {page && <><span className="hidden whitespace-nowrap text-xs text-text-tertiary md:block">Edited {formatRelative(page.updatedAt)}</span><PresenceBadge pageId={page.id} /></>}
+      {page && <><span className="hidden whitespace-nowrap text-xs text-text-tertiary md:block">Edited {formatRelative(page.updatedAt)}</span><PresenceAvatars /><PresenceBadge pageId={page.id} /></>}
       <InboxBell />
       {page && <><button className={`icon-button ${page.isFavorite ? "favorite-star" : ""}`} aria-label={page.isFavorite ? "Remove from Favorites" : "Add to Favorites"} onClick={() => useStore.getState().toggleFavorite(page.id)}><Star size={17} fill={page.isFavorite ? "currentColor" : "none"} /></button><button className="icon-button" aria-label="Style, export, and more" onClick={() => request("page-menu", page.id)}><MoreHorizontal size={18} /></button></>}
     </header><main className="min-h-0 flex-1">{children}</main></div>
     {modal?.kind === "search" && <SearchModal onClose={() => setModal(null)} />}
     {modal?.kind === "settings" && <SettingsModal onClose={() => setModal(null)} />}
+    {modal?.kind === "auth" && <AuthModal onClose={() => setModal(null)} />}
     {modal?.kind === "shortcuts" && <ShortcutsModal onClose={() => setModal(null)} />}
     {modal?.kind === "trash" && <TrashModal onClose={() => setModal(null)} />}
     {modal?.kind === "move" && modal.pageId && <MovePageModal pageId={modal.pageId} onClose={() => setModal(null)} />}
     <PeekPanel />
+    <SyncConflictModal />
     {modal?.kind === "template" && <TemplateModal pageId={modal.pageId} onClose={() => setModal(null)} />}
   </div>;
 }
