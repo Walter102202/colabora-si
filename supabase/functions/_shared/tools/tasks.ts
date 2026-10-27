@@ -20,6 +20,19 @@ export function myTasksFilter(ctx: ToolContext): Filter {
     : { col: 'owner_user_id', op: 'eq', value: ctx.principal.userId };
 }
 
+/**
+ * Pull delivery (§IV.7.4): once the agent has seen its tasks, its pending dispatch events are marked delivered.
+ * Best effort: a failure here never hides the tasks from the agent.
+ */
+export async function markDelivered(ctx: ToolContext): Promise<void> {
+  if (!ctx.principal.agentId) return;
+  try {
+    await ctx.db.rpc('mark_events_delivered', {});
+  } catch {
+    // ignored
+  }
+}
+
 /** Prompts (messages to the agent) newer than the agent's own latest activity, per task. */
 async function pendingPrompts(ctx: ToolContext, taskIds: string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
@@ -74,6 +87,7 @@ const listMyTasks: ToolDef = {
       last_activity_at: r.last_activity_at,
       pending_prompts: prompts.get(String(r.id)) ?? 0,
     }));
+    if (tasks.length) await markDelivered(ctx);
     const queued = tasks.filter((t) => t.state === 'queued').length;
     return { text: `${plural(tasks.length, 'task')} (${queued} queued).`, structured: { tasks } };
   },

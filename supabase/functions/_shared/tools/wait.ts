@@ -3,7 +3,7 @@
 import { must, ToolError } from '../db.ts';
 import type { ToolContext, ToolDef } from '../mcp.ts';
 import { num, object, output, plural, READ, str } from './common.ts';
-import { myTasksFilter } from './tasks.ts';
+import { markDelivered, myTasksFilter } from './tasks.ts';
 import { excerpt, type Row } from './taskData.ts';
 
 export const POLL_MS = 1500;
@@ -412,6 +412,7 @@ const waitForMyTasks: ToolDef = {
     const after = str(args.after);
     if (!after) {
       const { tasks, cursor } = await initialState(ctx);
+      if (tasks.length) await markDelivered(ctx);
       return {
         text: tasks.length ? `${plural(tasks.length, 'task')} need you.` : 'Nothing pending. Wait again with next_cursor.',
         structured: { changed: tasks.length > 0, tasks, next_cursor: encodeTaskCursor(cursor) },
@@ -426,6 +427,7 @@ const waitForMyTasks: ToolDef = {
       const delta = await changesSince(ctx, cursor);
       cursor = delta.cursor;
       if (delta.tasks.length) {
+        await markDelivered(ctx);
         return {
           text: delta.tasks.map((t) => `${String(t.task_id)} ${t.reason} (${String(t.state)})`).join('; '),
           structured: { changed: true, tasks: delta.tasks, next_cursor: encodeTaskCursor(cursor) },

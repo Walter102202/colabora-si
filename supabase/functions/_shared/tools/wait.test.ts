@@ -179,6 +179,7 @@ Deno.test('wait_for_my_tasks with after returns only tasks updated after the cur
   assert.equal(out.structured.changed, true);
   const tasks = out.structured.tasks as Row[];
   assert.deepEqual(tasks.map((t) => [t.task_id, t.reason, t.pending_prompts]), [['t1', 'feedback', 1]]);
+  assert.deepEqual(h.rpcs.map((r) => r.fn), ['mark_events_delivered']);
   const next = decodeTaskCursor(String(out.structured.next_cursor));
   assert.equal(next.t, '2026-10-27T10:01:00.123456Z');
 
@@ -195,6 +196,7 @@ Deno.test('wait_for_my_tasks timeout returns changed:false and the same cursor',
   assert.equal(out.structured.changed, false);
   assert.equal(out.structured.next_cursor, after);
   assert.equal(h.elapsed(), 3000);
+  assert.deepEqual(h.rpcs, []);
 });
 
 Deno.test('wait_for_my_tasks reports a stop, an approval decision and a closed task', async () => {
