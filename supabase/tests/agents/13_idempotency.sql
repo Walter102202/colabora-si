@@ -1,5 +1,5 @@
 begin;
-select plan(7);
+select plan(8);
 
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_DB', 'page_A', '{
@@ -33,6 +33,8 @@ select is(tests.error_of($$select public.edit_block_text('page_A', 'blk_a1', 'He
           'a stale rev from an agent raises block_conflict');
 select is((tests.detail_of($$select public.edit_block_text('page_A', 'blk_a1', 'Hello', 'Hi', 1)$$))::jsonb ->> 'text',
           'Hello from a person', 'the conflict detail carries the current text');
+select is(tests.error_of($$select public.edit_block_text('page_A', 'blk_a1', 'gone text', 'Hi', 1)$$), 'block_conflict',
+          'a stale rev is a conflict even when old_str is no longer in the block');
 
 -- Computed properties cannot be written.
 select tests.reset_role();
