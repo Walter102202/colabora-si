@@ -304,15 +304,29 @@ const addComment: ToolDef = {
     body: { type: 'string', minLength: 1, maxLength: 10_000 },
     block_id: { type: 'string' },
   }, ['page_id', 'body']),
-  outputSchema: output({ comment_id: { type: 'string' } }),
+  outputSchema: output({ comment_id: { type: ['string', 'null'] } }),
   annotations: WRITE,
   async handler(args, ctx) {
-    const data = await must(ctx.db.rpc<string>('add_page_comment', {
-      p_page_id: args.page_id,
+    const pageId = String(args.page_id);
+    // add_page_comment returns 'ok' or a human-readable refusal, and no id.
+    const status = await must(ctx.db.rpc<string>('add_page_comment', {
+      p_page_id: pageId,
       p_body: args.body,
       p_block_id: str(args.block_id),
     }));
-    return { text: `Comment ${String(data)} added.`, structured: { comment_id: data } };
+    if (status !== 'ok') {
+      const message = String(status ?? 'The comment was not added.');
+      const code = /not found/i.test(message) ? 'not_found' : /permission/i.test(message) ? 'forbidden' : 'invalid_input';
+      throw new ToolError(code, message);
+    }
+    // Recover the id: the newest comment by the caller with this body.
+    const body = String(args.body).trim();
+    const { bundle } = await loadPage(ctx.db, pageId);
+    const mine = (bundle.page.comments ?? [])
+      .filter((c) => c.authorId === ctx.principal.userId && c.body === body)
+      .sort((a, b) => b.createdAt - a.createdAt);
+    const commentId = mine[0]?.id ?? null;
+    return { text: commentId ? `Comment ${commentId} added to page ${pageId}.` : `Comment added to page ${pageId}.`, structured: { comment_id: commentId } };
   },
 };
 

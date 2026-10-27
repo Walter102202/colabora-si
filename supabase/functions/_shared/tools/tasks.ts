@@ -186,7 +186,7 @@ const heartbeat: ToolDef = {
     const stop = data.stop_requested === true;
     return {
       text: stop ? 'Stop requested: finish safely and call ack_stop.' : `Alive. ${plural(prompts.length, 'pending message')}.`,
-      structured: { stop_requested: stop, pending_prompts: prompts, brief_stale: data.brief_stale === true },
+      structured: { stop_requested: stop, status: data.status ?? null, pending_prompts: prompts, brief_stale: data.brief_stale === true },
     };
   },
 };

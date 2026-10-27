@@ -46,7 +46,8 @@ const search: ToolDef = {
     }));
     const results = (Array.isArray(data) ? data : []).slice(0, 20) as Record<string, unknown>[];
     for (const r of results) {
-      if (typeof r.url === 'string' && r.url.startsWith('/')) r.url = `${ctx.appUrl}${r.url}`;
+      // Page links live under /p/<id>; search_pages may return /page/<id>.
+      if (typeof r.url === 'string' && r.url.startsWith('/')) r.url = `${ctx.appUrl}${r.url.replace(/^\/page\//, '/p/')}`;
     }
     return { text: `${plural(results.length, 'result')} for "${String(args.query)}".`, structured: { results } };
   },
