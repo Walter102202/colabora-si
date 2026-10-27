@@ -24,4 +24,4 @@ How each harness connects to a colabora workspace. Every harness reaches the sam
 
 Any harness can wait inside a tool call: `wait_for_task` (one task) and `wait_for_my_tasks` (anything assigned to me) hold the call until something changes, up to 120 s, and return a cursor to call again. Claude Code (channel) and Codex (Stop hook) also wake up an idle session without spending model turns.
 
-The snippets shown in the settings screen come from `snippets.ts`.
+The per-harness READMEs are the human-readable source; the settings screen shows its snippets from `lib/agentSnippets.ts`.
