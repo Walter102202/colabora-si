@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { defaultOperator, filterRows, matchCondition, NO_VALUE_OPS, operatorsFor, rowColorKey } from "@/lib/dbFilter";
+import { computeCell, DateValue } from "@/lib/dbCompute";
 import { db, page, prop, row, view } from "./fixtures";
 import type { DbProperty, FilterOperator, PropertyType } from "@/lib/types";
 
@@ -38,6 +39,19 @@ function dateFormula(op: FilterOperator, value: string) {
 it("A-5-108 date formula comparisons", () => { for (const [op, value, expected] of [["is", "2026-04-15", true], ["isNot", "2026-04-15", false], ["gt", "2026-01-01", true], ["lt", "2026-01-01", false], ["lt", "2026-12-31", true]] as const) expect(dateFormula(op, value)).toBe(expected); });
 it("A-5-109 timestamp operand for formula date", () => expect(dateFormula("gt", "2026-01-01T00:00:00Z")).toBe(true));
 it("A-5-110 text search within formula date", () => expect(dateFormula("contains", "2026")).toBe(true));
+it("Date formulas search English display text without numeric coercion", () => {
+  const date = prop({ id: "d", name: "D", type: "date" });
+  const formula = prop({ id: "f", type: "formula", formula: 'dateAdd(D, 0, "days")' });
+  const database = db([date, formula]), theRow = row({ d: "2026-04-15" });
+  const value = computeCell(theRow, formula, database, {});
+  expect(value).toBeInstanceOf(DateValue);
+  expect(String(value)).toBe("Apr 15, 2026");
+  for (const target of ["2026", "15"]) {
+    expect(matchCondition(theRow, { id: "c", propertyId: "f", operator: "contains", value: target }, database, {})).toBe(true);
+    expect(matchCondition(theRow, { id: "c", propertyId: "f", operator: "notContains", value: target }, database, {})).toBe(false);
+  }
+  expect(computeCell(theRow, { ...formula, formula: 'formatDate(D, "MMM")' }, database, {})).toBe("Apr");
+});
 it("A-5-111 date comparisons", () => { for (const [op, value, expected] of [["is", "2026-05-10", true], ["isNot", "2026-05-10", false], ["gt", "2026-05-09", true], ["lt", "2026-05-11", true]] as const) expect(match("date", "2026-05-10", op, value)).toBe(expected); });
 it("A-5-112 date and time cell compares by day", () => expect(match("date", "2026-05-10T18:30", "is", "2026-05-10")).toBe(true));
 it("A-5-113 created time compares by local day", () => expect(match("createdTime", undefined, "is", "2026-05-10")).toBe(true));
