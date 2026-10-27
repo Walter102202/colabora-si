@@ -99,7 +99,28 @@ async function taskSteps() {
     console.log("skip - task steps (set SMOKE_TASK_ID)");
     return;
   }
-  console.log("skip - task tools are not in this server yet");
+  const taskId = env.SMOKE_TASK_ID;
+  const waited = await ok("wait_for_my_tasks", {});
+  check(typeof waited.next_cursor === "string", "wait_for_my_tasks returns a cursor");
+
+  const claim = await ok("claim_task", { task_id: taskId, harness: "custom", external_session_id: "mcp-smoke" });
+  check(claim.task_id === taskId && typeof claim.run_id === "string", `claim_task starts run ${claim.run_id}`);
+  const runId = claim.run_id;
+  const criteria = (claim.brief?.done_when ?? []).filter((c) => c.check !== "human").map((c) => c.id);
+
+  const activity = await ok("post_activity", { run_id: runId, type: "thought", body: { text: "Smoke test run" } });
+  check(typeof activity.seq === "number", `post_activity logged #${activity.seq}`);
+
+  const artifact = await ok("add_artifact", {
+    run_id: runId, kind: "page", ref: claim.row_page_id, title: "Smoke deliverable", satisfies: criteria,
+  });
+  check(typeof artifact.artifact_id === "string", `add_artifact declared v${artifact.version}`);
+
+  const quick = await ok("wait_for_task", { task_id: taskId, after_seq: activity.seq, timeout_s: 0, run_id: runId });
+  check(typeof quick.next_seq === "number", "wait_for_task with timeout_s 0 returns at once");
+
+  const submitted = await ok("submit_for_review", { run_id: runId, summary: "Smoke test delivery", artifact_ids: [artifact.artifact_id] });
+  check(submitted.task_state === "ready_for_review", "submit_for_review moves the task to ready_for_review");
 }
 
 try {
