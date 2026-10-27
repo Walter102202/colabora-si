@@ -10,6 +10,7 @@ import { downloadBlob } from "@/lib/export";
 import type { WorkspaceState } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
 import { isSupabaseConfigured } from "@/lib/supabase";
+import { forceFullPull, forceFullPush, useSyncStatus } from "@/lib/sync";
 export function workspaceExport() {
   const s = useStore.getState();
   return { app: "colabora-si", version: 1, exportedAt: new Date().toISOString(), pages: s.pages, rootOrder: s.rootOrder, expanded: s.expanded, syncedBlocks: s.syncedBlocks ?? {}, reminders: s.reminders ?? [], settings: s.settings };
@@ -27,7 +28,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
       <fieldset><legend>Default page font</legend><p>Applied to newly created pages.</p><div className="segmented">{(["default", "serif", "mono"] as const).map((font) => <button key={font} className={`font-page-${font}`} aria-pressed={settings.defaultFont === font} onClick={() => update({ defaultFont: font })}>{font[0].toUpperCase() + font.slice(1)}</button>)}</div></fieldset>
       <label className="setting-toggle">Small text by default<input type="checkbox" checked={settings.smallTextDefault} onChange={(e) => update({ smallTextDefault: e.target.checked })} /></label><label className="setting-toggle">Full width by default<input type="checkbox" checked={settings.fullWidthDefault} onChange={(e) => update({ fullWidthDefault: e.target.checked })} /></label></>}
     {tab === "Editor" && <fieldset><label className="setting-toggle">Spellcheck<input type="checkbox" checked={settings.spellcheck} onChange={(e) => update({ spellcheck: e.target.checked })} /></label><p>Underline misspelled words while typing.</p></fieldset>}
-    {tab === "Data" && <><fieldset><legend>Sync</legend><p>Sync isn&apos;t configured for this build — everything stays in your browser.</p></fieldset><fieldset><legend>Storage</legend><p>{Object.values(pages).filter((p) => !p.isDeleted).length} pages · {storage}</p></fieldset><fieldset><legend>Backup</legend><p>Export your pages and settings as JSON.</p><div className="flex flex-wrap gap-2"><button className="action-button" onClick={() => downloadBlob(new Blob([JSON.stringify(workspaceExport(), null, 2)], { type: "application/json" }), "workspace-export.json")}>Export JSON</button><label className="action-button cursor-pointer">Import<input className="sr-only" type="file" accept="application/json,.json" onChange={async (event) => {
+    {tab === "Data" && <><SyncControls /><fieldset><legend>Storage</legend><p>{Object.values(pages).filter((p) => !p.isDeleted).length} pages · {storage}</p></fieldset><fieldset><legend>Backup</legend><p>Export your pages and settings as JSON.</p><div className="flex flex-wrap gap-2"><button className="action-button" onClick={() => downloadBlob(new Blob([JSON.stringify(workspaceExport(), null, 2)], { type: "application/json" }), "workspace-export.json")}>Export JSON</button><label className="action-button cursor-pointer">Import<input className="sr-only" type="file" accept="application/json,.json" onChange={async (event) => {
       const file = event.target.files?.[0]; event.target.value = ""; if (!file) return;
       try {
         const data = JSON.parse(await file.text());
@@ -37,4 +38,18 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     }} /></label></div>{error && <p role="alert" className="danger">{error}</p>}</fieldset><fieldset><legend>Trash</legend><p>{trash ? `${trash} pages in trash.` : "Trash is empty."}</p><button className="action-button" disabled={!trash} onClick={() => { if (confirm("Permanently delete all pages in Trash?")) useStore.getState().emptyTrash(); }}>Empty trash</button></fieldset><fieldset><legend>Danger zone</legend><p>Deletes every page and starts over with the sample workspace.</p><button className="action-button danger" onClick={() => { if (confirm("Reset the entire workspace? This deletes all your pages.")) { useStore.getState().resetWorkspace(); onClose(); router.push("/"); } }}>Reset workspace</button></fieldset></>}
     {tab === "About" && <div className="space-y-4 text-sm text-text-secondary"><p><strong>colabora.si</strong> — a local-first workspace for humans and AI agents. Everything you write is stored in your browser.</p><p>Built with Next.js, React, Tailwind and Zustand.</p><p>Tip: press Ctrl/⌘ / for keyboard shortcuts.</p></div>}
   </div></div></Modal>;
+}
+
+function SyncControls() {
+  const { user } = useAuth(), { status, lastSyncedAt } = useSyncStatus(), workspaceId = useStore((s) => s.syncWorkspaceId);
+  const [busy, setBusy] = useState<"push" | "pull" | null>(null), [error, setError] = useState("");
+  const configured = isSupabaseConfigured(), connected = !!user && !!workspaceId && status !== "idle";
+  const labels = { idle: "Not syncing", syncing: "Syncing…", synced: "Up to date", offline: "Offline — changes queue locally", error: "Sync error — retrying" };
+  const run = async (kind: "push" | "pull") => {
+    setBusy(kind); setError("");
+    try { if (kind === "push") await forceFullPush(); else await forceFullPull(); }
+    catch { setError("Could not complete the sync — check your connection and try again."); }
+    finally { setBusy(null); }
+  };
+  return <fieldset><legend>Sync</legend>{!configured ? <p>Sync isn&apos;t configured for this build — everything stays in your browser.</p> : !user ? <p>Not signed in — this workspace is local-only. Log in from the Account tab to sync it to the cloud.</p> : <><p>{new URL(process.env.NEXT_PUBLIC_SUPABASE_URL!).host} · {labels[status]}{lastSyncedAt ? ` · last sync ${new Date(lastSyncedAt).toLocaleTimeString("en-US")}` : ""}</p><p className="break-all font-mono text-xs">Workspace: {workspaceId ?? "Connecting…"}</p><div className="flex flex-wrap gap-2"><button className="action-button" disabled={!connected || !!busy || status === "syncing" || status === "offline"} onClick={() => void run("push")}>{busy === "push" ? "Pushing…" : "Force full push"}</button><button className="action-button" disabled={!connected || !!busy || status === "syncing" || status === "offline"} onClick={() => void run("pull")}>{busy === "pull" ? "Pulling…" : "Force full pull"}</button></div>{error && <p role="alert" className="danger">{error}</p>}</>}</fieldset>;
 }

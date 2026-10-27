@@ -19,7 +19,9 @@ import MovePageModal from "@/components/MovePageModal";
 import PeekPanel from "@/components/PeekPanel";
 import TemplateModal from "@/components/TemplateModal";
 import AuthModal from "@/components/AuthModal";
-import { initAuth } from "@/lib/auth";
+import { initAuth, useAuthStore } from "@/lib/auth";
+import { initSync, stopSync } from "@/lib/sync";
+import SyncConflictModal from "@/components/SyncConflictModal";
 
 const subscribeWidth = (callback: () => void) => { window.addEventListener("resize", callback); return () => window.removeEventListener("resize", callback); };
 export default function Shell({ children }: { children: React.ReactNode }) {
@@ -37,6 +39,12 @@ function HydratedShell({ children }: { children: React.ReactNode }) {
   const crumbs = pageId ? getBreadcrumb(pages, pageId) : [];
   const request = (kind: string, pageId?: string) => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind, pageId } }));
   useEffect(() => { initHistory(); initAuth(); }, []);
+  useEffect(() => {
+    let currentId: string | null = null;
+    const update = () => { const user = useAuthStore.getState().user; if ((user?.id ?? null) === currentId) return; currentId = user?.id ?? null; if (user) void initSync(user); else stopSync(); };
+    update(); const unsubscribe = useAuthStore.subscribe(update);
+    return () => { unsubscribe(); stopSync(); };
+  }, []);
   useEffect(() => {
     const handler = (event: Event) => setModal((event as CustomEvent<{ kind: string; pageId?: string }>).detail);
     window.addEventListener("colabora-modal", handler);
@@ -81,6 +89,7 @@ function HydratedShell({ children }: { children: React.ReactNode }) {
     {modal?.kind === "trash" && <TrashModal onClose={() => setModal(null)} />}
     {modal?.kind === "move" && modal.pageId && <MovePageModal pageId={modal.pageId} onClose={() => setModal(null)} />}
     <PeekPanel />
+    <SyncConflictModal />
     {modal?.kind === "template" && <TemplateModal pageId={modal.pageId} onClose={() => setModal(null)} />}
   </div>;
 }
