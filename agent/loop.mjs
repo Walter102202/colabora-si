@@ -234,6 +234,9 @@ export async function runAgent(opts) {
 
       let submitted = false;
       let stopRequested = false;
+      // Once a call in this reply waits for a person, the rest of the reply is
+      // not executed: the model re-issues them after it has seen the decision.
+      let deferred = false;
       for (const toolCall of calls) {
         const name = toolCall.function.name;
         /** @type {Record<string, any>} */
@@ -246,6 +249,10 @@ export async function runAgent(opts) {
         }
         if (stopRequested) {
           messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "stop_requested" }) });
+          continue;
+        }
+        if (deferred || signal?.aborted) {
+          messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "deferred", message: "not executed: a decision was pending in this turn; call it again now that you have the answer" }) });
           continue;
         }
         if (RUNTIME_TOOLS.has(name) || !toolSchemas.has(name)) {
@@ -266,6 +273,7 @@ export async function runAgent(opts) {
             link,
           });
           const answer = await waitForHuman();
+          deferred = true;
           if ("stop" in answer) stopRequested = true;
           else if ("aborted" in answer) content = { ...content, note: "agent process stopping" };
           else content = { ...content, human_response: answer.answer };
