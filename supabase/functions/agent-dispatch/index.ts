@@ -21,6 +21,10 @@ Deno.serve((req) => {
     mcpUrl,
     now: () => Date.now(),
     fetch: (input, init) => fetch(input, init),
+    resolveDns: async (host) => {
+      const lookups = (['A', 'AAAA'] as const).map((t) => Deno.resolveDns(host, t).catch(() => [] as string[]));
+      return (await Promise.all(lookups)).flat();
+    },
     async dequeue(batch, vt) {
       const { data, error } = await service.rpc('dispatch_dequeue', { p_batch: batch, p_vt: vt });
       if (error) throw error;
