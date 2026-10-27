@@ -28,10 +28,16 @@ export function parseArgs(argv) {
  */
 export function describeChange(task, activities) {
   const last = activities[activities.length - 1];
-  const parts = [`${task.task_id ?? "task"} changed: state ${task.state ?? "?"}`];
-  if (task.review_state) parts.push(`review ${task.review_state}`);
-  if (task.waiting_on) parts.push(`waiting on ${task.waiting_on}`);
-  if (last) parts.push(`last activity ${last.type ?? "?"}${last.author ? ` by ${last.author}` : ""}${last.excerpt ? `: ${last.excerpt}` : ""}`);
+  // Only structured, validated fields are printed. Free text from the workspace is data, not instructions.
+  const slug = (/** @type {unknown} */ v) => (typeof v === "string" && /^[A-Za-z0-9_.:@ -]{1,64}$/.test(v) ? v : null);
+  const parts = [`${slug(task.task_id) ?? "task"} changed: state ${slug(task.state) ?? "?"}`];
+  if (slug(task.review_state)) parts.push(`review ${task.review_state}`);
+  if (slug(task.waiting_on)) parts.push(`waiting on ${task.waiting_on}`);
+  if (last) {
+    const excerpt = String(last.excerpt ?? "").replace(/[<>"`]/g, " ").replace(/\s+/g, " ").trim();
+    parts.push(`last activity ${slug(last.type) ?? "?"}${slug(last.author) ? ` by ${last.author}` : ""}${excerpt ? ` (untrusted text: "${excerpt}")` : ""}`);
+  }
+  parts.push("call get_task to read it");
   return parts.join(", ").replace(/\s+/g, " ").slice(0, 400);
 }
 

@@ -149,7 +149,7 @@ describe("channel events", () => {
       event_id: "e-1",
       payload: { review_of: "sub-15", summary: "Delivered v2\nwith three\tactivities", "bad-key": "x" },
     });
-    expect(event.content).toBe("sub-15 ready_for_review: Delivered v2 with three activities");
+    expect(event.content).toBe('sub-15 ready_for_review: untrusted text: "Delivered v2 with three activities"');
     expect(event.content).not.toMatch(/\n/);
     expect(event.meta).toEqual({ task_id: "sub-15", parent_task_id: "parent-1", reason: "ready_for_review", event_id: "e-1" });
     for (const key of Object.keys(event.meta)) expect(key).toMatch(/^[A-Za-z0-9_]+$/);

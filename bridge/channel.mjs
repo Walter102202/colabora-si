@@ -7,7 +7,19 @@
 // tool `wait_for_my_tasks`, which keeps a cursor so nothing is lost.
 
 const META_KEY = /^[A-Za-z0-9_]+$/;
+// Meta values are ids, enums and short refs: anything else is dropped rather than injected into the tag.
+const META_VALUE = /^[A-Za-z0-9_.:-]{1,128}$/;
 const MAX_CONTENT = 300;
+
+/**
+ * Free text that came from the workspace (titles, summaries, feedback) is data
+ * for the session, never markup or instructions: strip the characters that
+ * could close or open a tag and flatten it.
+ * @param {unknown} value
+ */
+export function untrustedText(value) {
+  return String(value ?? "").replace(/[<>"&`]/g, " ").replace(/\s+/g, " ").trim();
+}
 
 /** Reason reported to the session for each `agent_events.type`. */
 const REASON_BY_TYPE = /** @type {Record<string, string>} */ ({
@@ -30,8 +42,8 @@ export function sanitizeMeta(meta) {
   const out = {};
   for (const [key, value] of Object.entries(meta ?? {})) {
     if (!META_KEY.test(key)) continue;
-    if (typeof value === "string" && value !== "") out[key] = value;
-    else if (typeof value === "number" || typeof value === "boolean") out[key] = String(value);
+    const text = typeof value === "number" || typeof value === "boolean" ? String(value) : value;
+    if (typeof text === "string" && META_VALUE.test(text)) out[key] = text;
   }
   return out;
 }
@@ -52,10 +64,13 @@ export function eventToChannel(event) {
   const reviewOf = typeof payload.review_of === "string" ? payload.review_of : null;
   const reason = reviewOf ? "ready_for_review" : (REASON_BY_TYPE[event.type] ?? event.type.replace(/\W+/g, "_"));
   const taskId = reviewOf ?? event.task_id;
-  const label = payload.task_ref ?? payload.review_of_ref ?? taskId;
-  const detail = payload.summary ?? payload.text ?? payload.title
-    ?? (payload.decision ? `decision ${payload.decision}` : null)
-    ?? (Array.isArray(payload.artifact_ids) ? `${payload.artifact_ids.length} artifact(s)` : null);
+  const ref = payload.task_ref ?? payload.review_of_ref;
+  const label = typeof ref === "string" && META_VALUE.test(ref) ? ref : taskId;
+  const decision = typeof payload.decision === "string" && META_VALUE.test(payload.decision) ? `decision ${payload.decision}` : null;
+  const artifacts = Array.isArray(payload.artifact_ids) ? `${payload.artifact_ids.length} artifact(s)` : null;
+  const free = untrustedText(payload.summary ?? payload.text ?? payload.title ?? "");
+  // Free text from the workspace is quoted as data; the session reads the task itself before acting.
+  const detail = free ? `untrusted text: "${free}"` : (decision ?? artifacts);
   const content = oneLine(`${label} ${reason}${detail ? `: ${detail}` : ""}`);
   return {
     content,
@@ -75,8 +90,9 @@ export function eventToChannel(event) {
  * @param {{ task_id: string, title?: string, state?: string, reason?: string, pending_prompts?: number, active_run_id?: string }} task
  */
 export function taskToChannel(task) {
-  const reason = task.reason ?? "changed";
-  const title = task.title ? ` "${task.title}"` : "";
+  const reason = typeof task.reason === "string" && META_VALUE.test(task.reason) ? task.reason : "changed";
+  const cleanTitle = untrustedText(task.title);
+  const title = cleanTitle ? ` "${cleanTitle}"` : "";
   const prompts = task.pending_prompts ? ` (${task.pending_prompts} pending message(s))` : "";
   return {
     content: oneLine(`${task.task_id}${title} ${reason}${task.state ? `, state ${task.state}` : ""}${prompts}`),
