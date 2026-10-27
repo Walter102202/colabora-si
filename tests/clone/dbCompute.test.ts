@@ -51,10 +51,10 @@ it("A-5-32 date parts", () => {
 });
 it("A-5-33 date results preserve time and display text", () => {
   const value = formula('dateAdd(prop("D"), 1, "day")', [date], { d: "2026-03-15" }) as DateValue;
-  expect(value).toBeInstanceOf(DateValue); expect(new Date(value.time).getDate()).toBe(16); expect(value.toString()).toBe(value.text); expect(String(value)).toContain("2026");
+  expect(value).toBeInstanceOf(DateValue); expect(new Date(value.time).getUTCDate()).toBe(16); expect(value.toString()).toBe(value.text); expect(String(value)).toContain("2026");
 });
 it("A-5-34 calendar and duration units", () => {
-  for (const [expr, part, expected] of [['dateAdd(D, 1, "month")', "getMonth", 3], ['dateSubtract(D, 1, "year")', "getFullYear", 2025], ['dateAdd(D, 2, "weeks")', "getDate", 29]] as const) {
+  for (const [expr, part, expected] of [['dateAdd(D, 1, "month")', "getUTCMonth", 3], ['dateSubtract(D, 1, "year")', "getUTCFullYear", 2025], ['dateAdd(D, 2, "weeks")', "getUTCDate", 29]] as const) {
     expect(new Date((formula(expr, [date], { d: "2026-03-15" }) as DateValue).time)[part]()).toBe(expected);
   }
 });
@@ -101,9 +101,9 @@ it("A-5-58 numeric rollups", () => { for (const [fn, expected] of [["sum", 40], 
 it("A-5-59 text has no numeric extrema", () => { for (const fn of ["average", "min", "max"] as const) expect(rollup(fn, true)).toBeNull(); });
 it("A-5-60 original rollup values", () => expect(rollup("showOriginal", true)).toBe("a, b"));
 it("A-5-61 missing rollup relation", () => expect(rollup("sum", false, true)).toBeNull());
-it("A-5-62 number formats", () => { expect(formatNumber(1234.5)).toBe((1234.5).toLocaleString()); expect(formatNumber(.25, "percent")).toBe("25%"); expect(formatNumber(3, "dollar")).toBe("$3"); expect(formatNumber(3, "euro")).toBe("€3"); });
+it("A-5-62 number formats", () => { expect(formatNumber(1234.5)).toBe((1234.5).toLocaleString("en-US")); expect(formatNumber(.25, "percent")).toBe("25%"); expect(formatNumber(3, "dollar")).toBe("$3"); expect(formatNumber(3, "euro")).toBe("€3"); });
 it("A-5-63 invalid numbers", () => { expect(formatNumber(NaN)).toBe(""); expect(formatNumber(Infinity)).toBe(""); });
-it("A-5-64 rounded number format", () => expect(formatNumber(1 / 3)).toBe((.333333).toLocaleString()));
+it("A-5-64 rounded number format", () => expect(formatNumber(1 / 3)).toBe((.333333).toLocaleString("en-US")));
 it("A-5-65 prefixed ids", () => expect(formatIdValue(prop({ type: "id", idPrefix: "TASK" }), 12)).toBe("TASK-12"));
 it("A-5-66 unprefixed and empty ids", () => { for (const prefix of [undefined, "  "]) expect(formatIdValue(prop({ type: "id", idPrefix: prefix }), 12)).toBe("12"); for (const value of [null, ""]) expect(formatIdValue(prop(), value)).toBe(""); });
 it("A-5-67 local ISO days", () => { for (const hour of [0, 12]) expect(isoDay(new Date(2026, 2, 15, hour).getTime())).toBe("2026-03-15"); });
@@ -131,7 +131,7 @@ function agg(fn: AggregationFn, values: unknown[] = [1, 3, 8, null], patch: Part
 it("A-5-79 counts", () => { for (const [fn, expected] of [["count", "4"], ["countValues", "3"], ["countEmpty", "1"], ["countNotEmpty", "3"]] as const) expect(agg(fn)).toBe(expected); });
 it("A-5-80 percentages", () => { expect(agg("percentEmpty")).toBe("25%"); expect(agg("percentNotEmpty")).toBe("75%"); });
 it("A-5-81 numeric aggregates", () => { for (const [fn, expected] of [["sum", "12"], ["average", "4"], ["median", "3"], ["min", "1"], ["max", "8"], ["range", "7"]] as const) expect(agg(fn)).toBe(expected); });
-it("A-5-82 even median", () => expect(agg("median", [1, 4])).toBe((2.5).toLocaleString()));
+it("A-5-82 even median", () => expect(agg("median", [1, 4])).toBe((2.5).toLocaleString("en-US")));
 it("A-5-83 text numeric aggregates", () => { for (const fn of ["sum", "average", "median", "min", "max", "range"] as const) expect(agg(fn, ["a", "b"], { type: "text" })).toBe(""); });
 it("A-5-84 checkbox aggregates", () => { expect(agg("checked", [true, false, null], { type: "checkbox" })).toBe("1"); expect(agg("unchecked", [true, false, null], { type: "checkbox" })).toBe("2"); expect(agg("percentChecked", [true, false, null], { type: "checkbox" })).toBe("33%"); });
 it("A-5-85 empty aggregates", () => { expect(agg("none")).toBe(""); expect(agg("percentEmpty", [])).toBe("0%"); });

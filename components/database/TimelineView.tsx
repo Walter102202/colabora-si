@@ -11,10 +11,11 @@ function parseDay(value: unknown): number | null {
 type Drag = { id: string; x: number; start: number; end: number; mode: "move" | "start" | "end"; ds: number; de: number };
 export default function TimelineView({ ops, database, view, rows, pages, canOpenRow }: ViewProps) {
   const [drag, setDrag] = useState<Drag | null>(null), current = useRef<Drag | null>(null), ignoreClick = useRef(false);
+  const [now] = useState(() => new Date());
   const props = database.properties.filter((p) => ["date", "createdTime", "lastEditedTime"].includes(p.type)), startProp = props.find((p) => p.id === view.dateProp) ?? props[0], endProp = props.find((p) => p.id === view.endDateProp);
   if (!startProp) return <p className="empty-block">{ops.readOnly ? "This timeline view has no date property." : "Add a Date property to use the timeline view."}</p>;
   const bars = rows.flatMap((row) => { const start = parseDay(computeCell(row, startProp, database, pages)); if (start === null) return []; const end = endProp ? parseDay(computeCell(row, endProp, database, pages)) ?? start : start; return [{ row, start, end: Math.max(start, end) }]; });
-  const today = Math.floor(Date.now() / DAY), now = new Date(), fallbackStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) / DAY, fallbackEnd = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0) / DAY;
+  const today = Math.floor(now.getTime() / DAY), fallbackStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) / DAY, fallbackEnd = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0) / DAY;
   const min = Math.min(today, ...(bars.length ? bars.map((b) => b.start) : [fallbackStart])) - 2, max = Math.max(today, ...(bars.length ? bars.map((b) => b.end) : [fallbackEnd])) + 4, days = max - min + 1;
   const months: { label: string; span: number }[] = [];
   for (let i = 0; i < days; i++) { const label = new Date((min + i) * DAY).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", year: "numeric" }); if (months.at(-1)?.label === label) months[months.length - 1].span++; else months.push({ label, span: 1 }); }

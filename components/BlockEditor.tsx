@@ -27,6 +27,7 @@ import { blocksToMarkdown } from "@/lib/export";
 import { getCopiedSyncKey } from "@/lib/syncRef";
 import EmojiMenu from "@/components/EmojiMenu";
 import { searchEmoji, type EmojiEntry } from "@/lib/emojiData";
+import { putFile } from "@/lib/fileStore";
 import { requestNotifyPermission } from "@/lib/push";
 import { renderMath } from "@/lib/math";
 
@@ -48,6 +49,7 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
   const [comments, setComments] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [mention, setMention] = useState<SlashState | null>(null), mentionRef = useRef<SlashState | null>(null);
   const [emoji, setEmoji] = useState<SlashState | null>(null), emojiRef = useRef<SlashState | null>(null);
+  const [equationEdit, setEquationEdit] = useState<{ source: string; rect: DOMRect } | null>(null), equationElement = useRef<HTMLElement | null>(null);
   const [datePick, setDatePick] = useState<SlashState | null>(null);
   const [dateChip, setDateChip] = useState<{ iso: string; rect: DOMRect } | null>(null), dateChipElement = useRef<HTMLElement | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]), selected = useRef<string[]>([]), selAnchor = useRef<string | null>(null), selHead = useRef<string | null>(null);
@@ -295,6 +297,18 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
         if (latest.current.locked) return;
         const handle = handles.current.get(id), index = list().findIndex((b) => b.id === id), block = list()[index];
         if (!handle?.el || !block) return;
+        const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+        if (files.length) {
+          event.preventDefault();
+          void (async () => {
+            const inserted: Block[] = [];
+            for (const file of files) { const fileId = newId(); await putFile(fileId, file); inserted.push(createBlock("image", { fileId, fileName: file.name, fileSize: file.size })); }
+            if (latest.current.locked) return;
+            const next = [...list()], at = next.findIndex((b) => b.id === id); if (at < 0) return;
+            const empty = !stripHtml(next[at].html).trim(); next.splice(at + (empty ? 0 : 1), empty ? 1 : 0, ...inserted, createBlock()); commit(next, { id: next[at + inserted.length].id });
+          })().catch(() => window.alert("Could not save the pasted image. Check available storage."));
+          return;
+        }
         const html = event.clipboardData.getData("text/html"), text = event.clipboardData.getData("text/plain");
         const parsed = html ? htmlToBlocks(html) : [];
         if (!parsed.length && !text) return;
@@ -374,6 +388,8 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
   return <div ref={container} className={`block-editor ${nested ? "nested-editor" : ""}`} onMouseDown={(event) => { if (!event.shiftKey && selected.current.length) selectBlocks([]); }} onClickCapture={(event) => {
     const target = event.target as HTMLElement, link = target.closest<HTMLAnchorElement>("a.mention[data-page]"), chip = target.closest<HTMLElement>("span.date-mention[data-date]");
     if (link?.dataset.page) { event.preventDefault(); withViewTransition(() => router.push("/p/" + link.dataset.page)); }
+    const equation = target.closest<HTMLElement>(".inline-eq[data-eq]");
+    if (equation && !locked) { event.preventDefault(); equationElement.current = equation; setEquationEdit({ source: equation.dataset.eq ?? "", rect: equation.getBoundingClientRect() }); }
     if (chip && !locked) { event.preventDefault(); dateChipElement.current = chip; setDateChip({ iso: chip.dataset.date!, rect: chip.getBoundingClientRect() }); }
   }}>
     {visible.map((block) => <BlockItem key={block.id} block={block} ops={ops} selected={selectedIds.includes(block.id)} ordinal={ordinals[block.id]} spellCheck={spellCheck} pages={pages} commentCount={pages[pageId]?.comments?.filter((c) => (c.anchorId ?? c.blockId) === block.id && !c.resolved).length ?? 0} insertBlocks={(id, inserted) => {
@@ -388,6 +404,7 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
     {selection && !slash && !mention && !emoji && <InlineToolbar key={selection.link ? "link" : "format"} range={selection.range} rect={selection.rect} initialLink={selection.link} locked={locked} onClose={() => setSelection(null)} onTurnInto={(type) => { if (active.current) changeType(active.current, type); }} onComment={() => { if (active.current) setComments({ id: active.current, rect: selection.rect }); setSelection(null); }} onChange={() => { for (const [id, handle] of handles.current) if (handle.el?.contains(selection.range.commonAncestorContainer)) ops.saveBlock(id, handle.getHtml()); }} />}
     {comments && <BlockCommentsPopover pageId={pageId} blockId={comments.id} rect={comments.rect} onClose={() => setComments(null)} />}
     {mention && <MentionMenu items={filteredMentions(pages, pageId, mention.query)} index={mention.index} rect={mention.rect} onIndex={(index) => { const next = { ...mention, index }; mentionRef.current = next; setMention(next); }} onSelect={selectMention} />}
+    {equationEdit && <><button className="menu-backdrop" aria-label="Close equation editor" onClick={() => setEquationEdit(null)} /><form className="menu-panel fixed z-[70] w-64 p-2" style={{ left: Math.max(8, Math.min(equationEdit.rect.left, innerWidth - 264)), top: Math.min(equationEdit.rect.bottom + 6, innerHeight - 160) }} onSubmit={(event) => { event.preventDefault(); const element = equationElement.current; if (!element) return; element.dataset.eq = equationEdit.source; element.innerHTML = renderMath(equationEdit.source); element.closest('[contenteditable="true"]')?.dispatchEvent(new Event("input", { bubbles: true })); setEquationEdit(null); }}><input autoFocus aria-label="Inline equation" className="cell-input" value={equationEdit.source} onChange={(e) => setEquationEdit({ ...equationEdit, source: e.target.value })} onKeyDown={(e) => { if (e.key === "Escape") setEquationEdit(null); }} /><div className="math-render p-2" dangerouslySetInnerHTML={{ __html: renderMath(equationEdit.source) }} /><button className="action-button">Save</button></form></>}
     {datePick && <DateMentionPopover rect={datePick.rect} onChangeDate={(iso) => selectMention({ kind: "date", iso, label: "" }, datePick)} onClose={() => setDatePick(null)} />}
     {dateChip && <DateMentionPopover iso={dateChip.iso} rect={dateChip.rect} onClose={() => setDateChip(null)} onChangeDate={(iso) => {
       const element = dateChipElement.current;

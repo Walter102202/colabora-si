@@ -76,7 +76,7 @@ function HydratedShell({ children }: { children: React.ReactNode }) {
       else if ((mod && key === "/") || (key === "?" && !target.isContentEditable && !["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) { event.preventDefault(); request("shortcuts"); }
       else if (key === "escape") setDrawerAt(null);
       if (["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key) && target.closest('[role="menu"]')) {
-        const menu = target.closest('[role="menu"]')!, items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+        const menu = target.closest('[role="menu"]')!, items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]'));
         if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); const current = items.indexOf(target as HTMLButtonElement); items[(current + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus(); }
         if (event.key === "Escape") { event.preventDefault(); (menu.previousElementSibling as HTMLButtonElement | null)?.click(); }
       }
