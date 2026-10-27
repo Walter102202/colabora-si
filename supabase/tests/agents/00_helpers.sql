@@ -70,7 +70,7 @@ declare
   v_agent_user uuid := tests.make_user('agent+fixture@agents.invalid');
   v_ws uuid; v_agent uuid; v_grant uuid; v_now bigint := (extract(epoch from now()) * 1000)::bigint;
 begin
-  insert into private.app_secrets (name, value) values ('agent_token_pepper', 'test-pepper') on conflict (name) do nothing;
+  insert into private.app_secrets (name, value) values ('agent_token_pepper', 'test-pepper') on conflict (name) do update set value = excluded.value;
   insert into public.workspaces (name, owner_id) values ('Test', v_owner) returning id into v_ws;
   insert into public.workspace_members (workspace_id, user_id, role) values (v_ws, v_owner, 'owner'), (v_ws, v_viewer, 'viewer');
   perform set_config('app.ops_write', '1', true);
