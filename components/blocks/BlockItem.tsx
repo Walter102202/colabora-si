@@ -3,19 +3,21 @@ import { memo, useCallback } from "react";
 import { ChevronRight, GripVertical, Plus } from "lucide-react";
 import Editable, { type EditableHandle } from "@/components/Editable";
 import { AttributionMargin } from "@/components/agents/AttributionMargin";
-import type { Block } from "@/lib/types";
+import type { Block, Page } from "@/lib/types";
+import ButtonBlock from "@/components/blocks/ButtonBlock";
 import type { BlockOps } from "@/lib/blockOps";
 import { blockColorClass } from "@/lib/utils";
 import { CODE_LANGUAGES } from "@/lib/blockMeta";
 
-interface Props { block: Block; ops: BlockOps; ordinal?: number; spellCheck: boolean; selected?: boolean }
-function BlockItem({ block, ops, ordinal, spellCheck, selected }: Props) {
+interface Props { block: Block; ops: BlockOps; ordinal?: number; spellCheck: boolean; selected?: boolean; pages: Record<string, Page>; insertBlocks: (id: string, blocks: Block[]) => void }
+function BlockItem({ block, ops, ordinal, spellCheck, selected, pages, insertBlocks }: Props) {
   const register = useCallback((handle: EditableHandle | null) => ops.register(block.id, handle), [block.id, ops]);
   const color = blockColorClass(block.color), heading = block.type.startsWith("heading");
   const placeholder = heading ? `Heading ${block.type.at(-1)}` : block.type === "todo" ? "To-do" : ["bulleted", "numbered"].includes(block.type) ? "List" : block.type === "toggle" ? "Toggle" : block.type === "quote" ? "Empty quote" : block.type === "callout" ? "Type something…" : "Type '/' for commands";
   const text = <Editable ref={register} html={block.html} placeholder={placeholder} spellCheck={spellCheck} readOnly={ops.locked} className={`block-text ${heading ? `block-${block.type} always-ph` : ""} ${block.checked ? "line-through text-text-tertiary" : ""} ${color.startsWith("tc-") ? color : ""}`} onInput={(html) => ops.handleInput(block.id, html)} onBlurSave={(html) => ops.saveBlock(block.id, html)} onKeyDown={(event) => ops.handleKeyDown(block.id, event)} onPaste={(event) => ops.handlePaste(block.id, event)} onFocus={() => ops.setActive(block.id)} />;
   let body: React.ReactNode;
-  if (block.type === "divider") body = <div className="py-3"><hr className="border-border" /></div>;
+  if (block.type === "button") body = <ButtonBlock block={block} ops={ops} pages={pages} onInsert={(blocks) => insertBlocks(block.id, blocks)} />;
+  else if (block.type === "divider") body = <div className="py-3"><hr className="border-border" /></div>;
   else if (block.type === "code") body = <div className="code-block"><div className="code-toolbar"><select aria-label="Code language" disabled={ops.locked} value={block.language ?? "plaintext"} onChange={(event) => ops.updateBlock(block.id, { language: event.target.value })}>{CODE_LANGUAGES.map((language) => <option key={language}>{language}</option>)}</select><button onClick={() => void navigator.clipboard.writeText(block.html)}>Copy</button></div><textarea aria-label="Code" spellCheck={false} readOnly={ops.locked} value={block.html} rows={Math.max(3, block.html.split("\n").length)} onFocus={() => ops.setActive(block.id)} onChange={(event) => ops.updateBlock(block.id, { html: event.target.value })} onKeyDown={(event) => { if (event.key === "Tab" && !ops.locked) { event.preventDefault(); const { selectionStart: start, selectionEnd: end, value } = event.currentTarget; ops.updateBlock(block.id, { html: value.slice(0, start) + "  " + value.slice(end) }); requestAnimationFrame(() => event.currentTarget?.setSelectionRange(start + 2, start + 2)); } }} /></div>;
   else if (block.type === "todo") body = <div className="block-line"><input aria-label="Complete task" type="checkbox" checked={!!block.checked} disabled={ops.locked} onChange={() => ops.toggleChecked(block.id)} />{text}</div>;
   else if (block.type === "bulleted" || block.type === "numbered") body = <div className="block-line"><span className="list-marker">{block.type === "bulleted" ? "•" : `${ordinal ?? 1}.`}</span>{text}</div>;

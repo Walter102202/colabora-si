@@ -46,5 +46,6 @@ export const SLASH_ITEMS: SlashItem[] = [
   { type: "divider", title: "Divider", description: "Visually divide blocks.", keywords: ["divider", "line"], group: "Basic", icon: "—" },
   { type: "callout", title: "Callout", description: "Make writing stand out.", keywords: ["callout", "note"], group: "Basic", icon: "💡" },
   { type: "code", title: "Code", description: "Capture a code snippet.", keywords: ["code", "snippet"], group: "Advanced", icon: "⌘" },
+  { type: "button", title: "Button", description: "Run actions with a click.", keywords: ["button", "action"], group: "Advanced", icon: "🔘" },
 ];
 export const filterSlashItems = (query: string) => SLASH_ITEMS.filter((item) => !query.trim() || item.title.toLowerCase().includes(query.toLowerCase().trim()) || item.keywords.some((key) => key.includes(query.toLowerCase().trim())));

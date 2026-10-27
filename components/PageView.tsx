@@ -25,6 +25,7 @@ export default function PageView({ pageId }: { pageId: string }) {
     </div>
     {parent && row && <RowProperties ops={buildDbOps(parent.id)} row={row} pages={pages} />}
     {(row || new URLSearchParams(window.location.search).has("task")) && <RowPanel pageId={pageId} />}
+    {!page.database && !page.locked && page.blocks.length <= 1 && !page.blocks[0]?.html && <button className="mt-3 text-sm text-text-tertiary" onClick={() => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind: "template", pageId } }))}>Start with a template</button>}
     <div className="pt-2">{page.database ? <DatabaseView pageId={pageId} /> : <BlockEditor pageId={pageId} />}</div>
     <div className="mt-8 text-xs text-text-tertiary">{!page.database && <>{stats.words} {stats.words === 1 ? "word" : "words"} · {stats.blocks} {stats.blocks === 1 ? "block" : "blocks"} · {stats.mins} min read · </>}Edited {formatRelative(page.updatedAt)}</div>
   </div></div>;

@@ -254,3 +254,11 @@ tr:hover .row-actions > button, tr:focus-within .row-actions > button, th.row-ac
 .row-properties { margin: 16px -6px; }.row-property { display: grid; grid-template-columns: 160px minmax(0, 1fr); align-items: center; min-height: 34px; font-size: 14px; }.row-property:hover { background: var(--bg-hover-faint); }
 .peek-overlay { position: fixed; inset: 0; z-index: 55; display: flex; justify-content: flex-end; }.peek-backdrop { position: absolute; inset: 0; background: color-mix(in srgb, var(--text) 20%, transparent); }.peek-panel { position: relative; display: flex; flex-direction: column; width: min(896px, 100%); height: 100%; border-left: 1px solid var(--border); background: var(--bg); box-shadow: var(--shadow); animation: peekIn 180ms ease-out; }.peek-panel > header { display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 12px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--text-secondary); }.peek-panel .page-content { padding-top: 32px; }
 @keyframes peekIn { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+.template-card { display: flex; align-items: flex-start; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 8px; text-align: left; }
+.featured-template { border-color: var(--accent); }
+.database-board { display: flex; align-items: flex-start; gap: 16px; overflow-x: auto; padding: 8px 0 20px; }
+.board-column { flex: 0 0 260px; min-height: 100px; }.board-column > header { display: flex; align-items: center; gap: 8px; height: 28px; font-size: 12px; }.board-column > header button { margin-left: auto; }
+.board-card { padding: 10px; margin: 6px 0; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); cursor: pointer; box-shadow: 0 1px 2px var(--border); }
+.board-card:hover { background: var(--bg-hover-faint); box-shadow: var(--shadow); }
+.database-table .row-actions { width: 88px; min-width: 88px; white-space: nowrap; }

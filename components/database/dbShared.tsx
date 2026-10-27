@@ -22,3 +22,26 @@ export function CellPreview({ row, property, database, pages }: { row: DbRow; pr
   const text = displayValue(computeCell(row, property, database, pages), property, database, pages);
   return text ? <span className="text-xs text-text-secondary">{text}</span> : null;
 }
+
+export function flattenTree(rows: DbRow[], collapsed: Set<string>): { row: DbRow; depth: number; hasChildren: boolean }[] {
+  const ids = new Set(rows.map((r) => r.id)), children = new Map<string, DbRow[]>(), roots: DbRow[] = [];
+  for (const row of rows) {
+    if (row.parentRowId && row.parentRowId !== row.id && ids.has(row.parentRowId)) children.set(row.parentRowId, [...(children.get(row.parentRowId) ?? []), row]);
+    else roots.push(row);
+  }
+  const result: { row: DbRow; depth: number; hasChildren: boolean }[] = [], seen = new Set<string>();
+  const visit = (row: DbRow, depth: number, hidden = false) => {
+    if (seen.has(row.id)) return;
+    seen.add(row.id);
+    if (!hidden) result.push({ row, depth, hasChildren: !!children.get(row.id)?.length });
+    for (const child of children.get(row.id) ?? []) visit(child, depth + 1, hidden || collapsed.has(row.id));
+  };
+  for (const root of roots) visit(root, 0);
+  for (const row of rows) if (!seen.has(row.id)) visit(row, 0);
+  return result;
+}
+export function subItemCounts(rows: DbRow[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const row of rows) if (row.parentRowId) counts[row.parentRowId] = (counts[row.parentRowId] ?? 0) + 1;
+  return counts;
+}
