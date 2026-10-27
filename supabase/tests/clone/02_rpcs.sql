@@ -248,6 +248,10 @@ reset role;
 create or replace function private.agent_can_write(p_page_id text) returns boolean language sql stable security definer set search_path='' as $$
   select auth.uid()='20000000-0000-4000-8000-000000000003'::uuid and p_page_id='stale-update';
 $$;
+create or replace function private.agent_can(p_page_id text, p_scope text)
+returns boolean language sql stable security definer set search_path='' as $$
+  select private.agent_can_write(p_page_id);
+$$;
 insert into rpc_results select 'before-agent',data from public.pages where id='stale-update';
 select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000003","role":"authenticated","app_metadata":{"principal_type":"agent"}}',true);
 set local role authenticated;
@@ -261,5 +265,77 @@ select is(public.get_page_bundle('stale-update'),null::jsonb,'unreadable page ha
 select throws_ok($$select public.apply_workspace_ops('20000000-0000-4000-8000-000000000010','[{"op":"set_root_order","rootOrder":[]}]')$$,'PT403','forbidden','nonmember cannot reorder workspace');
 reset role;
 select ok(not (select data ? 'comments' from public.pages where id='stale-update'),'denied comment does not insert');
+
+-- Scalar and property operations used by row RPCs, including their undo payloads.
+select set_config('request.jwt.claims','{}',true);
+select lives_ok($$insert into public.pages(id,workspace_id,data,last_edited_by_type)
+  values('system-page','20000000-0000-4000-8000-000000000010','{"id":"system-page","title":"System page","blocks":[]}','human')$$,
+  'a seed without a principal can insert a page');
+select is((select last_edited_by_type from public.pages where id='system-page'),'system','seed actor is system');
+select ok((select last_edited_by is null from public.pages where id='system-page'),'system has no user id');
+update public.pages set last_edited_by_type='human',last_edited_by='20000000-0000-4000-8000-000000000001' where id='system-page';
+select ok((select last_edited_by_type='system' and last_edited_by is null from public.pages where id='system-page'),'job updates cannot forge a human actor');
+select is(private.principal_type(),'anon','system attribution does not turn anon into an authorized principal');
+set local role anon;
+select is((select count(*) from public.pages where id='system-page'),0::bigint,'anonymous still cannot read an unpublished system page');
+reset role;
+select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000001","role":"authenticated"}',true);
+insert into public.pages(id,workspace_id,data) values
+  ('ops-db','20000000-0000-4000-8000-000000000010','{"id":"ops-db","title":"Options database","blocks":[],"database":{"id":"db","properties":[{"id":"title","name":"Name","type":"text"},{"id":"status","name":"Status","type":"select","options":[]},{"id":"key","name":"Key","type":"id","nextId":1}],"rows":[],"views":[]}}'),
+  ('ops-row','20000000-0000-4000-8000-000000000010','{"id":"ops-row","title":"Before","blocks":[]}');
+insert into rpc_results values('original-properties',(select data#>'{database,properties}' from public.pages where id='ops-db'));
+select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000003","role":"authenticated","app_metadata":{"principal_type":"agent"}}',true);
+insert into rpc_results values('properties',private.apply_page_ops_core('ops-db','[
+  {"op":"db_prop_set","property":{"id":"status","name":"Status","type":"select","options":[{"id":"done","name":"Done","color":"green"}]}},
+  {"op":"db_prop_set","property":{"id":"key","name":"Key","type":"id","nextId":2}},
+  {"op":"db_row_add","after":null,"row":{"id":"r1","pageId":"ops-row","cells":{"title":"Before","status":"done","key":1}}}
+]',null));
+select is((select data#>>'{database,properties,1,options,0,name}' from public.pages where id='ops-db'),'Done','agent row operations can create a select option');
+select is((select data#>>'{database,properties,2,nextId}' from public.pages where id='ops-db'),'2','agent row operations advance the id counter');
+select is((select data#>>'{database,rows,0,cells,key}' from public.pages where id='ops-db'),'1','row insertion uses the allocated id');
+select is((select payload->'inverse' from rpc_results where name='properties'),'[
+  {"op":"db_row_delete","rowId":"r1"},
+  {"op":"db_prop_set","property":{"id":"key","name":"Key","type":"id","nextId":1},"after":"status"},
+  {"op":"db_prop_set","property":{"id":"status","name":"Status","type":"select","options":[]},"after":"title"}
+]'::jsonb,'row and property inverses preserve values and order');
+select private.apply_page_ops_core('ops-db',(select payload->'inverse' from rpc_results where name='properties'),null);
+select is((select data#>'{database,properties}' from public.pages where id='ops-db'),(select payload from rpc_results where name='original-properties'),'property inverses restore the schema');
+select is((select data#>'{database,rows}' from public.pages where id='ops-db'),'[]'::jsonb,'row inverse removes the inserted row');
+insert into rpc_results values('new-property',private.apply_page_ops_core('ops-db','[{"op":"db_prop_set","property":{"id":"extra","name":"Extra","type":"text"},"after":"title"}]',null));
+select is((select data#>>'{database,properties,1,id}' from public.pages where id='ops-db'),'extra','new property respects after');
+select is((select payload->'inverse' from rpc_results where name='new-property'),'[{"op":"db_prop_delete","propertyId":"extra"}]'::jsonb,'new property inverse deletes that property');
+select private.apply_page_ops_core('ops-db',(select payload->'inverse' from rpc_results where name='new-property'),null);
+select is((select data#>'{database,properties}' from public.pages where id='ops-db'),(select payload from rpc_results where name='original-properties'),'new property undo restores the schema');
+insert into rpc_results values('row-title',private.apply_page_ops_core('ops-row','[{"op":"set_page","patch":{"title":"Reflected title","id":"forged","parentId":"forged"}}]',null));
+select is((select data->>'title' from public.pages where id='ops-row'),'Reflected title','set_page reflects a title on the row page');
+select ok((select data->>'id'='ops-row' and not(data ? 'parentId') from public.pages where id='ops-row'),'set_page only updates allowed scalars');
+select is((select payload->'inverse' from rpc_results where name='row-title'),'[{"op":"set_page","patch":{"title":"Before"}}]'::jsonb,'set_page returns its scalar inverse');
+select private.apply_page_ops_core('ops-row',(select payload->'inverse' from rpc_results where name='row-title'),null);
+select is((select data->>'title' from public.pages where id='ops-row'),'Before','set_page inverse restores the title');
+select is((select last_edited_by_type from public.pages where id='ops-row'),'agent','agent attribution remains agent');
+select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000001","role":"authenticated"}',true);
+set local role authenticated;
+select is(public.search_pages('Before')->0->>'url','/p/ops-row','search returns the application page route');
+select throws_ok($$select private.apply_page_ops_core('ops-row','[]',null)$$,'42501',null,'clients cannot bypass the public RPC authorization');
+select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated"}',true);
+select throws_ok($$select public.apply_page_ops('ops-db','[{"op":"db_prop_set","property":{"id":"key","name":"Key","type":"id","nextId":999}}]')$$,'PT403','forbidden','nonmembers cannot change property counters');
+reset role;
+
+
+select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000001","role":"authenticated"}',true);
+set local role authenticated;
+insert into rpc_results values('human-comment-id',to_jsonb(public.add_page_comment('ops-row','A comment with an identifier',null,null,null)));
+select ok((select payload#>>'{}' from rpc_results where name='human-comment-id') ~ '^[0-9a-f]{32}$','comment RPC returns the generated 32-character id');
+select is((select data#>>'{comments,0,id}' from public.pages where id='ops-row'),(select payload#>>'{}' from rpc_results where name='human-comment-id'),'returned comment id identifies the stored comment');
+select is((select data#>>'{comments,0,body}' from public.pages where id='ops-row'),'A comment with an identifier','comment body is stored with that id');
+reset role;
+select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000003","role":"authenticated","app_metadata":{"principal_type":"agent"}}',true);
+set local role authenticated;
+insert into rpc_results values('agent-comment-id',to_jsonb(public.add_page_comment('stale-update','Agent comment','b','b',null)));
+reset role;
+select is((select data#>>'{comments,0,id}' from public.pages where id='stale-update'),(select payload#>>'{}' from rpc_results where name='agent-comment-id'),'agents receive the id of their created comment');
+select is((select data#>>'{comments,0,authorType}' from public.pages where id='stale-update'),'agent','returning an id preserves agent attribution');
+select isnt((select payload from rpc_results where name='agent-comment-id'),(select payload from rpc_results where name='human-comment-id'),'separate comments have distinct identifiers');
+
 select * from finish();
 rollback;

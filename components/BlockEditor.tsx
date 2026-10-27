@@ -135,7 +135,7 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
       const patch: Partial<Block> = {};
       if (NON_TEXT.includes(type)) patch.html = cleanHtml === undefined && type === "code" ? next[index].html : "";
       if (type === "page") patch.pageId = useStore.getState().createPage(pageId, { title: "Untitled", icon: "📄" });
-      if (type === "database") patch.pageId = item?.variant === "linked" ? undefined : useStore.getState().createDatabasePage(pageId);
+      if (type === "database") { patch.pageId = item?.variant === "linked" ? undefined : useStore.getState().createDatabasePage(pageId); if (item?.variant === "linked") patch.linkedViews = []; }
       if (type === "columns") patch.columns = [0, 1].map(() => ({ id: newId(), blocks: [createBlock()] }));
       if (type === "table") { patch.table = [["", "", ""], ["", "", ""]]; patch.tableHeaderRow = true; }
       if (type === "button") { patch.buttonLabel = "New button"; patch.buttonActions = []; }

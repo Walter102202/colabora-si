@@ -3,6 +3,7 @@ import { useStore } from "@/lib/store";
 import { openPeek } from "@/lib/peek";
 import { withViewTransition } from "@/lib/viewTransition";
 import { runAgentAction } from "@/lib/agentActions";
+import { newId } from "@/lib/factories";
 import { cloneWithNewIds } from "@/lib/pageMutations";
 export interface DbOps {
   pageId: string; database: Database; locked: boolean; readOnly: boolean;
@@ -59,4 +60,29 @@ export function buildDbOps(pageId: string): DbOps {
   };
   cached.set(pageId, ops);
   return ops;
+}
+
+export function createLinkedViews(database: Database): DbView[] {
+  return database.views.map((view) => ({ ...structuredClone(view), id: newId() }));
+}
+
+export function buildLinkedDbOps(sourceId: string, hostPageId: string, blockId: string): DbOps {
+  const source = buildDbOps(sourceId);
+  const host = () => useStore.getState().pages[hostPageId];
+  const block = () => host()?.blocks.find((b) => b.id === blockId);
+  const views = () => block()?.linkedViews ?? source.database.views;
+  const changeViews = (change: (views: DbView[]) => DbView[]) => {
+    if (!host() || host().locked || source.readOnly || source.locked || !block()) return;
+    const current = views(), next = change(current);
+    if (next !== current) useStore.getState().updateBlock(hostPageId, blockId, { linkedViews: next });
+  };
+  return {
+    ...source,
+    get database() { return { ...source.database, views: views() }; },
+    get locked() { return !!host()?.locked || source.locked; },
+    get readOnly() { return !!host()?.locked || source.readOnly; },
+    addView: (view) => changeViews((views) => [...views, view]),
+    updateView: (id, patch) => changeViews((views) => views.some((v) => v.id === id) ? views.map((view) => view.id === id ? { ...view, ...patch, id } : view) : views),
+    deleteView: (id) => changeViews((views) => views.length > 1 && views.some((v) => v.id === id) ? views.filter((view) => view.id !== id) : views),
+  };
 }

@@ -57,3 +57,12 @@ it("PO-7 workspace synced blocks are replaced and removed immutably", () => {
   const next = applyWorkspaceOps(workspace, [{ op: "synced_set", key: "a", blocks: null }, { op: "synced_set", key: "b", blocks }]);
   expect(next.syncedBlocks).toEqual({ b: blocks }); expect(workspace.syncedBlocks).toHaveProperty("a");
 });
+
+it("linked views round trip through block operations and their inverse", () => {
+  const linked = b("database", { pageId: "source", linkedViews: [view({ id: "local-view" })] }), before = page({ blocks: [linked] });
+  const after = { ...before, blocks: [{ ...linked, linkedViews: [view({ id: "local-view", name: "Focused", filters: [{ id: "filter", propertyId: "title", operator: "contains", value: "A" }] })] }] };
+  const ops = diffPageToOps(before, after), applied = applyOps(before, ops, actor);
+  expect(ops).toHaveLength(1); expect(ops[0].op).toBe("update_block");
+  expect(content(applied.page)).toEqual(content(after));
+  expect(content(applyOps(applied.page, applied.inverse, actor).page)).toEqual(content(before));
+});
