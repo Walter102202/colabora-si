@@ -16,6 +16,7 @@ export default function InlineToolbar({ range, rect, onChange, onTurnInto, onCom
     <button aria-label="Link" disabled={locked} onClick={() => setPanel(panel === "link" ? "" : "link")}>↗</button><button aria-label="Color" disabled={locked} onClick={() => setPanel(panel === "colors" ? "" : "colors")}>A ▾</button>
     {panel === "link" && <form className="menu-panel absolute left-0 top-full mt-1 flex w-64 gap-2" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); run(() => createLink(url)); onClose(); }}><input autoFocus aria-label="Link URL" placeholder="Paste link…" value={url} onChange={(event) => setUrl(event.target.value)} className="min-w-0 flex-1" onKeyDown={(event) => { if (event.key === "Escape") onClose(); }} /><button type="submit">Add</button></form>}
     {panel === "colors" && <div className="menu-panel absolute left-0 top-full mt-1 max-h-72 w-52 overflow-auto">{[...TEXT_COLORS, ...BG_COLORS].map((color) => <button key={color.key} onClick={() => { run(() => applyColor(color.cls || null)); onClose(); }}>{color.label}</button>)}</div>}
-    {panel === "types" && <div className="menu-panel absolute left-0 top-full mt-1 max-h-72 w-52 overflow-auto">{SLASH_ITEMS.filter((item) => item.type !== "divider").map((item) => <button key={item.type} onClick={() => { onTurnInto?.(item.type); onClose(); }}>{item.title}</button>)}</div>}
+    {panel === "types" && <div className="menu-panel absolute left-0 top-full mt-1 max-h-72 w-52 overflow-auto">{SLASH_ITEMS.filter((item) => item.type !== "divider" && !item.provider && !item.variant).map((item) => <button key={item.type} onClick={() => { onTurnInto?.(item.type); onClose(); }}>{item.title}</button>)}</div>}
   </div>;
 }
+
