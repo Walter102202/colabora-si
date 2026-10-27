@@ -74,6 +74,8 @@ begin
   insert into public.workspaces (name, owner_id) values ('Test', v_owner) returning id into v_ws;
   insert into public.workspace_members (workspace_id, user_id, role) values (v_ws, v_owner, 'owner'), (v_ws, v_viewer, 'viewer');
   perform set_config('app.ops_write', '1', true);
+  -- Pages are stamped by the server with the caller's principal: insert them as the system actor.
+  perform set_config('request.jwt.claims', '{"role":"authenticated","app_metadata":{"principal_type":"system"}}', true);
   insert into public.pages (id, workspace_id, parent_id, data) values
     ('page_A', v_ws, null, jsonb_build_object('id', 'page_A', 'title', 'Page A', 'icon', null, 'cover', null, 'parentId', null,
        'blocks', jsonb_build_array(jsonb_build_object('id', 'blk_a1', 'type', 'paragraph', 'html', 'Hello A', 'indent', 0, 'rev', 1)),
@@ -83,6 +85,7 @@ begin
     ('page_B', v_ws, null, jsonb_build_object('id', 'page_B', 'title', 'Page B', 'icon', null, 'cover', null, 'parentId', null,
        'blocks', jsonb_build_array(jsonb_build_object('id', 'blk_b1', 'type', 'paragraph', 'html', 'Hello B', 'indent', 0, 'rev', 1)),
        'isFavorite', false, 'isDeleted', false, 'fullWidth', false, 'smallText', false, 'createdAt', v_now, 'updatedAt', v_now));
+  perform set_config('request.jwt.claims', '', true);
   insert into public.agents (workspace_id, auth_user_id, name, kind, sponsor_user_id, created_by)
   values (v_ws, v_agent_user, 'Fixture Agent', 'acp_local', v_owner, v_owner) returning id into v_agent;
   insert into public.workspace_members (workspace_id, user_id, role) values (v_ws, v_agent_user, 'viewer');
@@ -97,8 +100,10 @@ create or replace function tests.make_page(p_ws uuid, p_id text, p_parent text d
 returns text language plpgsql as $$
 begin
   perform set_config('app.ops_write', '1', true);
+  perform set_config('request.jwt.claims', '{"role":"authenticated","app_metadata":{"principal_type":"system"}}', true);
   insert into public.pages (id, workspace_id, parent_id, data)
   values (p_id, p_ws, p_parent, coalesce(p_data, jsonb_build_object('id', p_id, 'title', p_id, 'parentId', p_parent, 'blocks', '[]'::jsonb)));
+  perform set_config('request.jwt.claims', '', true);
   perform set_config('app.ops_write', '', true);
   return p_id;
 end $$;

@@ -185,6 +185,8 @@ grant execute on function private.jwt_client_id() to authenticated, anon;
 grant execute on function private.linked_agent_id() to authenticated, anon;
 grant execute on function private.task_actor_agent_id() to authenticated, anon;
 grant execute on function private.agent_can(text, text) to authenticated, anon;
+-- The plugs are declared in 0001 without grants; the policies of 0001 call them as the caller.
+grant execute on function private.agent_can_read(text), private.agent_can_write(text) to authenticated, anon;
 
 -- ============ RLS ============
 

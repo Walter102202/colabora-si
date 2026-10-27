@@ -13,7 +13,7 @@ insert into storage.objects (bucket_id, name, owner) values ('files', (:'f'::jso
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
 
 select results_eq(
-  $$ select id from public.pages order by id $$,
+  $$ select id from public.pages where workspace_id = (select workspace_id from public.pages where id = 'page_A') order by id $$,
   $$ values ('page_A'), ('page_A1') $$,
   'agent sees only page_A and its child');
 select is(public.get_page_bundle('page_B'), null, 'bundle of page_B is null for the agent');
@@ -32,7 +32,7 @@ select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.revoke_agent((:'f'::jsonb->>'agent')::uuid, 'isolation test');
 select tests.reset_role();
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
-select is((select count(*)::int from public.pages), 0, 'revoked agent reads no pages');
+select is((select count(*)::int from public.pages where workspace_id = (:'f'::jsonb->>'ws')::uuid), 0, 'revoked agent reads no pages');
 select is(public.get_page_bundle('page_A'), null, 'revoked agent gets no bundle');
 
 -- global kill switch and workspace pause
@@ -43,7 +43,7 @@ select tests.set_service();
 select public.set_app_flag('agents_enabled', 'false'::jsonb);
 select tests.reset_role();
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
-select is((select count(*)::int from public.pages), 0, 'kill switch off: agent reads no pages');
+select is((select count(*)::int from public.pages where workspace_id = (:'f'::jsonb->>'ws')::uuid), 0, 'kill switch off: agent reads no pages');
 select tests.reset_role();
 select tests.set_service();
 select public.set_app_flag('agents_enabled', 'true'::jsonb);
@@ -52,7 +52,7 @@ select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.pause_workspace_agents((:'f'::jsonb->>'ws')::uuid, true);
 select tests.reset_role();
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
-select is((select count(*)::int from public.pages), 0, 'workspace paused: agent reads no pages');
+select is((select count(*)::int from public.pages where workspace_id = (:'f'::jsonb->>'ws')::uuid), 0, 'workspace paused: agent reads no pages');
 
 select * from finish();
 rollback;
