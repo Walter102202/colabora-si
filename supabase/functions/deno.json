@@ -1,0 +1,11 @@
+{
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.112.3"
+  },
+  "compilerOptions": {
+    "lib": ["deno.window"]
+  },
+  "tasks": {
+    "test": "deno test --allow-env --allow-net --allow-read ."
+  }
+}
