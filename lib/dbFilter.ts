@@ -58,7 +58,7 @@ export function matchCondition(row: DbRow, cond: FilterCondition, db: Database, 
     // objetivo no-fecha (p. ej. contains "Aug"): cae al texto
   }
 
-  if (prop.type === "number" || prop.type === "rollup" || prop.type === "formula") {
+  if (!(v instanceof DateValue) && (prop.type === "number" || prop.type === "rollup" || prop.type === "formula")) {
     const numericTarget = target !== "" && !isNaN(Number(target));
     if (!numericTarget) {
       if (prop.type === "number") return true;             // objetivo vacío o no numérico: filtro inactivo

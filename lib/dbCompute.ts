@@ -22,7 +22,7 @@ const toBool = (value: FormulaValue): boolean => {
   throw new FormulaError(`Expected true/false, got ${kind(value)}`);
 };
 export function formatDateValue(date: Date): string {
-  return date.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", ...(date.getHours() || date.getMinutes() || date.getSeconds() ? { hour: "numeric", minute: "2-digit" } as const : {}) });
+  return date.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", ...(date.getHours() || date.getMinutes() || date.getSeconds() ? { hour: "numeric", minute: "2-digit" } as const : {}) });
 }
 const toStr = (value: FormulaValue): string => value === null ? "" : value instanceof Date ? formatDateValue(value) : typeof value === "number" ? String(round6(value)) : String(value);
 export function parseDateString(value: string): Date | null {
@@ -52,7 +52,7 @@ function dateFunction(name: string, args: FormulaValue[]): FormulaValue {
   if (name === "day") return date.getDate();
   if (name === "formatDate") {
     const pad = (n: number) => String(n).padStart(2, "0");
-    const tokens: Record<string, string> = { YYYY: String(date.getFullYear()), MMM: date.toLocaleString(undefined, { month: "short" }), MM: pad(date.getMonth() + 1), DD: pad(date.getDate()), HH: pad(date.getHours()), mm: pad(date.getMinutes()), ss: pad(date.getSeconds()) };
+    const tokens: Record<string, string> = { YYYY: String(date.getFullYear()), MMM: date.toLocaleString("en-US", { month: "short" }), MM: pad(date.getMonth() + 1), DD: pad(date.getDate()), HH: pad(date.getHours()), mm: pad(date.getMinutes()), ss: pad(date.getSeconds()) };
     return (args[1] == null ? "YYYY-MM-DD" : toStr(args[1])).replace(/YYYY|MMM|MM|DD|HH|mm|ss/g, (token) => tokens[token]);
   }
   if (name === "dateBetween") {
