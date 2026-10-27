@@ -55,3 +55,28 @@ it("A-4-120 malformed HTML never throws", () => { for (const input of ["<p>unclo
 const mixed = '<article><h1>Title</h1><p>Intro with <b>bold</b>.</p><ul><li>a</li><li>b<ul><li>c</li></ul></li></ul><blockquote>quote</blockquote><pre class="language-js">code</pre><hr><table><thead><tr><th>A</th></tr></thead></table></article>';
 it("A-4-121 mixed document", () => { const blocks = htmlToBlocks(mixed); expect(blocks.map((b) => b.type)).toEqual(["heading1", "paragraph", "bulleted", "bulleted", "bulleted", "quote", "code", "divider", "table"]); expect(blocks.map((b) => b.indent)).toEqual([0, 0, 0, 0, 1, 0, 0, 0, 0]); expect(blocks[1].html).toBe("Intro with <b>bold</b>."); expect(blocks[6].language).toBe("javascript"); });
 it("A-4-122 block ids and indents", () => { const blocks = htmlToBlocks(mixed); expect(new Set(blocks.map((b) => b.id)).size).toBe(blocks.length); for (const block of blocks) { expect(block.id).toBeTruthy(); expect(typeof block.indent).toBe("number"); } });
+
+import { createElement, createRef } from "react";
+import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
+import Editable, { type EditableHandle } from "@/components/Editable";
+it("Editable removes hostile HTML on render, replacement, paste and drop", () => {
+  const container = document.createElement("div"); document.body.appendChild(container);
+  const root = createRoot(container), handle = createRef<EditableHandle>();
+  const hostile = '<b>Kept</b><img src="x" onerror="window.compromised=true"><script>window.compromised=true</script>';
+  const render = (html: string) => flushSync(() => root.render(createElement(Editable, { html, ref: handle })));
+  const check = (expected: string) => { expect(container.querySelector("img,script,[onerror]")).toBeNull(); expect(handle.current?.getHtml()).toBe(expected); };
+  try {
+    render(hostile); check("<b>Kept</b>");
+    render(hostile.replace("Kept", "Imported")); check("<b>Imported</b>");
+    handle.current!.setHtml(hostile); check("<b>Kept</b>");
+    for (const type of ["paste", "drop"]) {
+      handle.current!.setHtml(""); handle.current!.focus();
+      const transfer = new DataTransfer(); transfer.setData("text/html", hostile);
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, type === "paste" ? "clipboardData" : "dataTransfer", { value: transfer });
+      handle.current!.el!.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true); check("<b>Kept</b>");
+    }
+  } finally { flushSync(() => root.unmount()); container.remove(); }
+});
