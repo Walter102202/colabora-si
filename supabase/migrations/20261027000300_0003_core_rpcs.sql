@@ -1,3 +1,13 @@
+create or replace function private.stamp_page_actor()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  new.last_edited_by := (select auth.uid());
+  new.last_edited_by_type := case when new.last_edited_by is null then 'system' else private.principal_type() end;
+  new.last_edit_run_id := private.current_run_id();
+  if tg_op = 'INSERT' then new.revision := 1; end if;
+  return new;
+end $$;
+
 create or replace function private.block_paths(p_data jsonb)
 returns table(block jsonb, path text[]) language sql immutable set search_path = '' as $$
   with recursive nodes(block, path) as (
@@ -700,11 +710,11 @@ declare v_result jsonb; v_limit int := greatest(1,least(coalesce(p_limit,10),20)
 begin
   if p_kind = 'task' then
     if to_regclass('public.agent_tasks') is null then return '[]'; end if;
-    execute 'select coalesce(jsonb_agg(to_jsonb(r)),''[]'') from (select id,title,''/page/''||row_page_id as url,ts_headline(''simple'',title,plainto_tsquery(''simple'',$1)) as snippet,''task'' as kind,updated_at from public.agent_tasks where to_tsvector(''simple'',title) @@ plainto_tsquery(''simple'',$1) order by ts_rank(to_tsvector(''simple'',title),plainto_tsquery(''simple'',$1)) desc limit $2) r' into v_result using p_query,v_limit;
+    execute 'select coalesce(jsonb_agg(to_jsonb(r)),''[]'') from (select id,title,''/p/''||row_page_id as url,ts_headline(''simple'',title,plainto_tsquery(''simple'',$1)) as snippet,''task'' as kind,updated_at from public.agent_tasks where to_tsvector(''simple'',title) @@ plainto_tsquery(''simple'',$1) order by ts_rank(to_tsvector(''simple'',title),plainto_tsquery(''simple'',$1)) desc limit $2) r' into v_result using p_query,v_limit;
     return v_result;
   end if;
   select coalesce(jsonb_agg(to_jsonb(r)),'[]') into v_result from (
-    select id,title,'/page/'||id as url,ts_headline('simple',private.page_text(data),plainto_tsquery('simple',p_query)) as snippet,'page' as kind,updated_at
+    select id,title,'/p/'||id as url,ts_headline('simple',private.page_text(data),plainto_tsquery('simple',p_query)) as snippet,'page' as kind,updated_at
     from public.pages where deleted_at is null and search_tsv @@ plainto_tsquery('simple',p_query)
     order by ts_rank(search_tsv,plainto_tsquery('simple',p_query)) desc limit v_limit
   ) r;
