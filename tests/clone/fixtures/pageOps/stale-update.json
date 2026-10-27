@@ -1,0 +1,99 @@
+{
+  "ops": [
+    {
+      "rev": 1,
+      "patch": {
+        "html": "Changed"
+      },
+      "op": "update_block",
+      "id": "a"
+    }
+  ],
+  "page": {
+    "blocks": [
+      {
+        "indent": 0,
+        "rev": 2,
+        "id": "a",
+        "html": "A",
+        "type": "paragraph"
+      },
+      {
+        "indent": 0,
+        "rev": 1,
+        "id": "b",
+        "html": "B",
+        "type": "paragraph"
+      }
+    ],
+    "parentId": null,
+    "icon": null,
+    "id": "page",
+    "isDeleted": false,
+    "cover": null,
+    "fullWidth": false,
+    "title": "Page",
+    "createdAt": 1700000000000,
+    "isFavorite": false,
+    "smallText": false,
+    "updatedAt": 1700000000000
+  },
+  "expected": {
+    "results": [
+      {
+        "rev": 3,
+        "conflict": {
+          "theirs": {
+            "indent": 0,
+            "rev": 2,
+            "id": "a",
+            "html": "A",
+            "type": "paragraph"
+          },
+          "id": "a"
+        },
+        "i": 0,
+        "ok": true
+      }
+    ],
+    "page": {
+      "id": "page",
+      "updatedAt": 1700000000000,
+      "title": "Page",
+      "isDeleted": false,
+      "cover": null,
+      "icon": null,
+      "fullWidth": false,
+      "createdAt": 1700000000000,
+      "blocks": [
+        {
+          "html": "Changed",
+          "indent": 0,
+          "id": "a",
+          "type": "paragraph",
+          "rev": 3,
+          "attr": {
+            "by": "human",
+            "id": "person",
+            "at": 1700000000000
+          }
+        },
+        {
+          "indent": 0,
+          "rev": 1,
+          "id": "b",
+          "html": "B",
+          "type": "paragraph"
+        }
+      ],
+      "parentId": null,
+      "isFavorite": false,
+      "smallText": false
+    }
+  },
+  "actor": {
+    "by": "human",
+    "id": "person",
+    "at": 1700000000000
+  }
+}
