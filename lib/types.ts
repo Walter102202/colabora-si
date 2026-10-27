@@ -307,8 +307,8 @@ export interface PageComment {
   id: string;
   body: string;        // plain text or Markdown, already trimmed; never HTML
   author?: string;     // legacy display name/email of the author; absent in local use
-  authorId?: string;   // actor id (person or agent)
-  authorType?: "human" | "agent";
+  authorId: string;    // actor id (person or agent)
+  authorType: "human" | "agent";
   runId?: string;      // agent: run that wrote the comment
   parentId?: string;   // reply to another comment
   anchorId?: string;   // anchored to a block; absent = page comment
