@@ -45,6 +45,18 @@ export interface AgentNotificationsState {
 }
 
 let channel: RealtimeChannel | null = null;
+let channelUser: string | null = null;
+let subscribers = 0;
+
+// supabase-js returns the registered channel for a topic that still exists; after an unawaited
+// removeChannel that instance is already subscribed and `.on` would throw. Drop it from the registry first.
+function dropStaleChannel(client: ReturnType<typeof getAgentClient>, topic: string): void {
+  if (!client) return;
+  const full = `realtime:${topic}`;
+  if (client.realtime.channels.some((c) => c.topic === full)) {
+    client.realtime.channels = client.realtime.channels.filter((c) => c.topic !== full);
+  }
+}
 
 export const useAgentNotifications = create<AgentNotificationsState>()((set, get) => ({
   userId: null,
@@ -64,16 +76,34 @@ export const useAgentNotifications = create<AgentNotificationsState>()((set, get
     set({ status: "ready", notifications: (data ?? []) as NotificationRow[] });
   },
 
+  // Reference counted like agentTasks.subscribe: one channel per user, closed by the last release.
   subscribe(userId) {
     const client = getAgentClient();
     if (!client) return () => {};
+    if (channel && channelUser === userId) {
+      subscribers += 1;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        subscribers -= 1;
+        if (subscribers <= 0 && channel) {
+          void client.removeChannel(channel);
+          channel = null;
+          channelUser = null;
+        }
+      };
+    }
     if (channel) {
       void client.removeChannel(channel);
       channel = null;
     }
+    subscribers = 1;
+    channelUser = userId;
     set({ userId });
+    dropStaleChannel(client, `agent-inbox-${userId}`);
     const ch = client
-      .channel(`inbox-${userId}`)
+      .channel(`agent-inbox-${userId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `user_id=eq.${userId}` }, (payload) => {
         const list = get().notifications;
         if (payload.eventType === "DELETE") {
@@ -88,9 +118,17 @@ export const useAgentNotifications = create<AgentNotificationsState>()((set, get
       .subscribe();
     channel = ch;
     void get().load();
+    let released = false;
     return () => {
-      if (channel === ch) channel = null;
-      void client.removeChannel(ch);
+      if (released) return;
+      released = true;
+      subscribers -= 1;
+      if (channel !== ch) return;
+      if (subscribers <= 0) {
+        channel = null;
+        channelUser = null;
+        void client.removeChannel(ch);
+      }
     };
   },
 
