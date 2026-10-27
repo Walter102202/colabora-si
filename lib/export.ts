@@ -3,6 +3,7 @@ import { computeCell, displayValue } from "@/lib/dbCompute";
 import { blockColorClass, safeHref, sanitizeHtml } from "@/lib/utils";
 import { renderMath } from "@/lib/math";
 import { EXPORT_CSS } from "@/lib/exportStyles";
+import { getFile } from "@/lib/fileStore";
 import { safeCover } from "@/lib/cover";
 
 export function inlineToMarkdown(html: string): string {
@@ -105,7 +106,9 @@ async function blocksToHtml(blocks: Block[], pages: Record<string, Page>, synced
   for (const block of blocks) {
     const indent = Number.isFinite(block.indent) ? Math.max(0, block.indent) : 0, ind = indent ? ` style="margin-left:${indent * 24}px"` : "";
     const color = blockColorClass(block.color), cls = color ? " " + escapeHtml(color) : "", text = sanitizeHtml(block.html ?? "");
-    const src = safeHref(block.url), caption = block.caption ? `<figcaption>${escapeHtml(block.caption)}</figcaption>` : "";
+    let src = safeHref(block.url);
+    if (block.fileId) { const blob = await getFile(block.fileId).catch(() => undefined); if (blob) src = await new Promise<string>((resolve) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.readAsDataURL(blob); }); }
+    const caption = block.caption ? `<figcaption>${escapeHtml(block.caption)}</figcaption>` : "";
     if (block.type !== "numbered") counts.clear();
     switch (block.type) {
       case "heading1": case "heading2": case "heading3": { const tag = "h" + (Number(block.type.at(-1)) + 1); parts.push(`<${tag} class="b${cls}"${ind}>${text}</${tag}>`); break; }

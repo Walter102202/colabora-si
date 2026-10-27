@@ -11,6 +11,7 @@ import { foreignPageIds } from "@/lib/foreignPages";
 import { DEFAULT_SETTINGS } from "@/lib/factories";
 import { useBlockConflicts, type BlockConflict } from "@/lib/syncConflicts";
 
+import { onFileSyncStart, onFileSyncStop } from "@/lib/fileStore";
 export const CLIENT_TAG = Math.random().toString(36).slice(2) + Date.now().toString(36);
 const DEBOUNCE_MS = 1500, MAX_RETRIES = 5, ACTIVE_EDIT_MS = 2000, DELETE_ECHO_TTL_MS = 120000;
 const PAGE_COLS = "id,parent_id,data,deleted_at,updated_at,revision,last_edited_by,last_edited_by_type,last_edit_run_id";
@@ -233,6 +234,7 @@ async function pullSince(): Promise<void> {
 const online = () => { attempts = 0; if (pendingRetryUser) { const user = pendingRetryUser; pendingRetryUser = null; void initSync(user); } else { setStatus("syncing"); void pullSince(); } };
 const offline = () => setStatus("offline");
 function startRealtime(sb: SupabaseClient): void {
+  if (wsId) onFileSyncStart(wsId);
   const token = generation;
   channel = sb.channel(`workspace-${wsId}`)
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "pages", filter: `workspace_id=eq.${wsId}` }, (payload) => { if (token === generation) handlePageRow(payload.new as PageRow); })
@@ -344,6 +346,7 @@ export async function initSync(user: User): Promise<void> {
   }
 }
 export function stopSync(): void {
+  onFileSyncStop();
   generation++; started = ready = false; currentUserId = wsId = null; pendingRetryUser = null;
   conflictReject?.(); conflictReject = null; useSyncConflict.setState({ prompt: null });
   window.removeEventListener("online", online); window.removeEventListener("offline", offline);

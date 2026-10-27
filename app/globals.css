@@ -438,3 +438,6 @@ a.mention { text-decoration: none; font-weight: 500; border-radius: 3px; padding
 .emoji-grid { display: grid; grid-template-columns: repeat(8,minmax(0,1fr)); }
 .emoji-grid button { display: flex; align-items: center; justify-content: center; height: 36px; width: 36px; padding: 0; font-size: 20px; }
 .page-icon-button { transition: transform 120ms; }.page-icon-button:hover { transform: scale(1.05); }
+
+.share-popover { position: fixed; right: 12px; top: 44px; width: min(380px, calc(100vw - 24px)); padding: 16px; z-index: 50; }
+.share-popover select { max-width: 110px; font-size: 12px; background: var(--bg-primary); }
