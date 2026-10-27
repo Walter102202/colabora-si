@@ -66,6 +66,7 @@ export const AGENT_DEFS: Record<string, JsonSchema> = {
       equation: { type: 'string' },
       pageId: { type: 'string' },
       color: { type: 'string', enum: BLOCK_COLORS },
+      key: { type: 'string', pattern: '^[A-Za-z0-9_.:-]{1,64}$', description: 'Stable section key the app reads back, e.g. "brief:goal".' },
     },
     required: ['type'],
     additionalProperties: false,

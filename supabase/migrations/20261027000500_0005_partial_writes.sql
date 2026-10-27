@@ -85,6 +85,9 @@ begin
   end if;
   v_indent := coalesce((p_block->>'indent')::int, 0);
   if v_indent < 0 or v_indent > 6 then raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'indent'; end if;
+  if p_block ? 'key' and (p_block->>'key') !~ '^[A-Za-z0-9_.:-]{1,64}$' then
+    raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'key';
+  end if;
   if p_block ? 'color' and (p_block->>'color') not in ('default','gray','brown','orange','yellow','green','blue','purple','pink','red',
        'bg-gray','bg-brown','bg-orange','bg-yellow','bg-green','bg-blue','bg-purple','bg-pink','bg-red') then
     raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'color';
@@ -113,6 +116,7 @@ begin
     'type', v_type,
     'indent', v_indent,
     'color', p_block->>'color',
+    'key', p_block->>'key',
     'checked', case when v_type = 'todo' then coalesce((p_block->>'checked')::boolean, false) end,
     'language', case when v_type = 'code' then left(p_block->>'language', 40) end,
     'icon', case when v_type = 'callout' then left(p_block->>'icon', 16) end,
