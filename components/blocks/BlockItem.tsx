@@ -1,5 +1,5 @@
 "use client";
-import { memo, useCallback } from "react";
+import { memo, useCallback, useState } from "react";
 import { ChevronRight, GripVertical, Plus } from "lucide-react";
 import Editable, { type EditableHandle } from "@/components/Editable";
 import { AttributionMargin } from "@/components/agents/AttributionMargin";
@@ -7,7 +7,7 @@ import type { Block, Page } from "@/lib/types";
 import ButtonBlock from "@/components/blocks/ButtonBlock";
 import type { BlockOps } from "@/lib/blockOps";
 import { blockColorClass, stripHtml } from "@/lib/utils";
-import { BLOCK_LABELS, CODE_LANGUAGES } from "@/lib/blockMeta";
+import { BLOCK_LABELS } from "@/lib/blockMeta";
 import BlockPresence from "@/components/BlockPresence";
 import BlockConflictNotice from "@/components/blocks/BlockConflictNotice";
 import ColumnsBlock from "@/components/blocks/ColumnsBlock";
@@ -20,9 +20,12 @@ import TocBlock from "@/components/blocks/TocBlock";
 import InlineDatabaseBlock from "@/components/blocks/InlineDatabaseBlock";
 import BookmarkBlock from "@/components/blocks/BookmarkBlock";
 import MediaBlock from "@/components/blocks/MediaBlock";
+import CodeBlock from "@/components/blocks/CodeBlock";
+import EmojiPicker from "@/components/EmojiPicker";
 
 interface Props { block: Block; ops: BlockOps; ordinal?: number; spellCheck: boolean; selected?: boolean; pages: Record<string, Page>; insertBlocks: (id: string, blocks: Block[]) => void; commentCount?: number }
 function BlockItem({ block, ops, ordinal, spellCheck, selected, pages, insertBlocks, commentCount = 0 }: Props) {
+  const [pickingIcon, setPickingIcon] = useState(false);
   const register = useCallback((handle: EditableHandle | null) => ops.register(block.id, handle), [block.id, ops]);
   const color = blockColorClass(block.color), heading = block.type.startsWith("heading");
   const placeholder = heading ? `Heading ${block.type.at(-1)}` : block.type === "todo" ? "To-do" : ["bulleted", "numbered"].includes(block.type) ? "List" : block.type === "toggle" ? "Toggle" : block.type === "quote" ? "Empty quote" : block.type === "callout" ? "Type something…" : "Type '/' for commands";
@@ -40,12 +43,12 @@ function BlockItem({ block, ops, ordinal, spellCheck, selected, pages, insertBlo
   else if (block.type === "bookmark") body = <BookmarkBlock block={block} ops={ops} />;
   else if (["image", "video", "audio", "file", "embed"].includes(block.type)) body = <MediaBlock block={block} ops={ops} />;
   else if (block.type === "divider") body = <div className="py-3"><hr className="border-border" /></div>;
-  else if (block.type === "code") body = <div className="code-block"><div className="code-toolbar"><select aria-label="Code language" disabled={ops.locked} value={block.language ?? "plaintext"} onChange={(event) => ops.updateBlock(block.id, { language: event.target.value })}>{CODE_LANGUAGES.map((language) => <option key={language}>{language}</option>)}</select><button onClick={() => void navigator.clipboard.writeText(block.html)}>Copy</button></div><textarea aria-label="Code" spellCheck={false} readOnly={ops.locked} value={block.html} rows={Math.max(3, block.html.split("\n").length)} onFocus={() => ops.setActive(block.id)} onChange={(event) => ops.updateBlock(block.id, { html: event.target.value })} onKeyDown={(event) => { if (event.key === "Tab" && !ops.locked) { event.preventDefault(); const { selectionStart: start, selectionEnd: end, value } = event.currentTarget; ops.updateBlock(block.id, { html: value.slice(0, start) + "  " + value.slice(end) }); requestAnimationFrame(() => event.currentTarget?.setSelectionRange(start + 2, start + 2)); } }} /></div>;
+  else if (block.type === "code") body = <CodeBlock block={block} ops={ops} />;
   else if (block.type === "todo") body = <div className="block-line"><input aria-label="Complete task" type="checkbox" checked={!!block.checked} disabled={ops.locked} onChange={() => ops.toggleChecked(block.id)} />{text}</div>;
   else if (block.type === "bulleted" || block.type === "numbered") body = <div className="block-line"><span className="list-marker">{block.type === "bulleted" ? "•" : `${ordinal ?? 1}.`}</span>{text}</div>;
   else if (block.type === "toggle" || (heading && block.toggleable)) body = <div className="block-line"><button className={`toggle-marker ${heading ? `marker-${block.type}` : ""}`} aria-label={block.collapsed ? "Expand block" : "Collapse block"} onClick={() => ops.toggleCollapsed(block.id)}><ChevronRight size={17} className={block.collapsed ? "" : "rotate-90"} /></button>{text}</div>;
   else if (block.type === "quote") body = <div className="quote-block">{text}</div>;
-  else if (block.type === "callout") body = <div className={`callout-block ${color || "bc-gray"}`}><span>{block.icon ?? "💡"}</span>{text}</div>;
+  else if (block.type === "callout") body = <div className={`callout-block ${color || "bc-gray"}`}><span className="relative"><button disabled={ops.locked} aria-label="Change callout icon" onClick={() => setPickingIcon(!pickingIcon)}>{block.icon ?? "💡"}</button>{pickingIcon && <EmojiPicker onSelect={(icon) => ops.updateBlock(block.id, { icon })} onClose={() => setPickingIcon(false)} />}</span>{text}</div>;
   else body = text;
   const drop = ops.dropTarget?.id === block.id ? ops.dropTarget.position : null;
   return <div data-block-id={block.id} className={`block-item ${selected ? "selected-block" : ""} ${ops.draggingId === block.id ? "opacity-40" : ""} ${drop ? `block-drop-${drop}` : ""}`} style={{ marginLeft: block.indent * 26 }} onMouseDownCapture={(event) => ops.onBlockMouseDown(block.id, event)} onDragOver={(event) => ops.onDragOverBlock(block.id, event)} onDrop={(event) => { if (ops.draggingId) { event.preventDefault(); event.stopPropagation(); ops.onDrop(); } }}>

@@ -20,7 +20,7 @@ export const COVER_IMAGES = [
 
 export function safeCover(value: string | null | undefined): string | null {
   if (!value) return null;
-  if (COVER_GRADIENTS.includes(value)) return value;
+  if (COVER_GRADIENTS.includes(value) || /^linear-gradient\([a-zA-Z0-9\s#%.,()+-]+\)$/.test(value)) return value;
   if (/^data:image\/[a-z0-9.+-]+[;,]/i.test(value)) return value;
   try { const url = new URL(value); return url.protocol === "http:" || url.protocol === "https:" ? value : null; } catch { return null; }
 }

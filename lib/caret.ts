@@ -103,3 +103,25 @@ export function textBeforeCaret(el: HTMLElement): string {
   pre.setEnd(range.startContainer, range.startOffset);
   return pre.toString();
 }
+// Sustituye «disparador + consulta» (queryLen caracteres tras el disparador de 1 carácter)
+// por `node`, añade un espacio y deja el caret tras el espacio.
+export function insertMentionNode(el: HTMLElement, queryLen: number, node: HTMLElement) {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) { el.appendChild(node); return; }
+  const range = sel.getRangeAt(0);
+  const container = range.startContainer;
+  if (container.nodeType !== Node.TEXT_NODE) { el.appendChild(node); return; }
+  const offset = range.startOffset;
+  const r = document.createRange();
+  r.setStart(container, Math.max(0, offset - queryLen - 1));
+  r.setEnd(container, offset);
+  r.deleteContents();
+  r.insertNode(node);
+  const space = document.createTextNode(" ");
+  node.parentNode?.insertBefore(space, node.nextSibling);
+  const after = document.createRange();
+  after.setStartAfter(space);
+  after.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(after);
+}

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { expect, it } from "vitest";
-import { blocksToMarkdown as md, inlineToMarkdown, pageToMarkdown } from "@/lib/export";
+import { blocksToMarkdown as md, inlineToMarkdown, pageToMarkdown, pageToHtml, rowsToCsv } from "@/lib/export";
 import { markdownToBlocks } from "@/lib/markdown";
 import { b, column, db, page, prop, row } from "./fixtures";
 import type { Block, BlockType } from "@/lib/types";
@@ -87,3 +87,59 @@ it("A-6-173 computed database cells", () => {
   expect(pageToMarkdown(page({ database: db(props, [row({ title: "Row", count: 21 })]) }))).toContain("| Row | 21 | 42 |");
   expect(pageToMarkdown(page({ database: db([props[0], prop({ id: "status", type: "select", options: [{ id: "done", name: "Done", color: "green" }] })], [row({ title: "Row", status: "done" })]) }))).toContain("| Row | Done |");
 });
+
+
+const htmlBody = async (blocks: Block[], pages: Record<string, import("@/lib/types").Page> = {}, synced: Record<string, Block[]> = {}) => new DOMParser().parseFromString(await pageToHtml(page({ blocks }), pages, synced), "text/html").body;
+it("A-6-174 complete HTML document", async () => { const out = await pageToHtml(page(), {}); expect(out.startsWith("<!DOCTYPE html>")).toBe(true); expect(out).toContain('<html lang="en">'); expect(out).toContain('<meta charset="utf-8">'); expect(out.endsWith("</html>")).toBe(true); });
+it("A-6-175 self contained styles", async () => { const doc = new DOMParser().parseFromString(await pageToHtml(page(), {}), "text/html"); expect(doc.querySelector("style")?.textContent).toContain(".page"); expect(doc.querySelector("link,script")).toBeNull(); });
+it("A-6-176 document titles", async () => { for (const title of ["My doc", ""]) { const doc = new DOMParser().parseFromString(await pageToHtml(page({ title }), {}), "text/html"); expect(doc.title).toBe(title || "Untitled"); expect(doc.querySelector("h1")?.textContent).toBe(title || "Untitled"); } });
+it("A-6-177 title is escaped", async () => { const out = await pageToHtml(page({ title: "<script>alert(1)</script>" }), {}); expect(out).toContain("&lt;script&gt;"); expect(out).not.toContain("<script>"); });
+it("A-6-178 optional page icon", async () => { expect(await pageToHtml(page({ icon: "📘" }), {})).toContain('<div class="icon">📘</div>'); expect(await pageToHtml(page(), {})).not.toContain('<div class="icon">'); });
+it("A-6-179 gradient cover", async () => { const out = await pageToHtml(page({ cover: "linear-gradient(90deg,#000,#fff)" }), {}); expect(out).toContain('style="background:linear-gradient(90deg,#000,#fff)"'); });
+it("A-6-180 image cover position", async () => expect(await pageToHtml(page({ cover: "https://i.test/c.jpg", coverPosition: 30 }), {})).toContain("background-image:url('https://i.test/c.jpg');background-position-y:30%"));
+it("A-6-181 no cover", async () => expect(await pageToHtml(page(), {})).not.toContain('<div class="cover"'));
+it("A-6-182 product footer", async () => expect(await pageToHtml(page(), {})).toContain("Exported from colabora.si"));
+it("A-6-183 heading levels", async () => { const body = await htmlBody([b("heading1"), b("heading2"), b("heading3")]); expect([...body.querySelectorAll("h2.b,h3.b,h4.b")].map((el) => el.tagName)).toEqual(["H2", "H3", "H4"]); });
+it("A-6-184 paragraph markup", async () => expect((await htmlBody([b("paragraph", { html: "a <b>bold</b>" })])).querySelector(".b")?.innerHTML).toBe("a <b>bold</b>"));
+it("A-6-185 todo state", async () => { const body = await htmlBody([b("todo"), b("todo", { checked: true })]); expect(body.querySelectorAll(".todo")[0].textContent).toBe("☐text"); expect(body.querySelectorAll(".todo")[1].textContent).toBe("☑text"); expect(body.querySelectorAll(".done")).toHaveLength(1); });
+it("A-6-186 lists", async () => { const body = await htmlBody([b("bulleted"), b("numbered")]); expect(body.querySelector("ul.one li")?.textContent).toBe("text"); expect(body.querySelector("ol")?.getAttribute("start")).toBe("1"); });
+it("A-6-187 numbered reset", async () => { const body = await htmlBody([b("numbered"), b("numbered"), b("numbered"), b(), b("numbered")]); expect([...body.querySelectorAll("ol")].map((el) => el.start)).toEqual([1, 2, 3, 1]); });
+it("A-6-188 nested counters", async () => { const body = await htmlBody([0, 1, 1, 0].map((indent) => b("numbered", { indent }))); expect([...body.querySelectorAll("ol")].map((el) => el.start)).toEqual([1, 1, 2, 2]); expect(body.querySelectorAll("ol")[1].style.marginLeft).toBe("24px"); });
+it("A-6-189 toggle", async () => expect((await htmlBody([b("toggle")])).querySelector("details summary")?.textContent).toBe("text"));
+it("A-6-190 quote callout divider", async () => { const body = await htmlBody([b("quote"), b("callout", { icon: "⚠️" }), b("callout"), b("divider")]); expect(body.querySelector("blockquote")?.textContent).toBe("text"); expect([...body.querySelectorAll(".callout > span")].map((el) => el.textContent)).toEqual(["⚠️", "💡"]); expect(body.querySelector("hr")).not.toBeNull(); });
+it("A-6-191 code escapes HTML", async () => expect((await htmlBody([b("code", { html: "<b>x</b>" })])).querySelector("pre code")?.innerHTML).toBe("&lt;b&gt;x&lt;/b&gt;"));
+it("A-6-192 buttons and navigation markers", async () => { const body = await htmlBody([b("button", { buttonLabel: "Go" }), b("button"), b("toc", { html: "TOC marker" }), b("breadcrumb", { html: "Breadcrumb marker" })]); expect(body.textContent).toContain("🔘 Go"); expect(body.textContent).toContain("🔘 Button"); expect(body.textContent).not.toContain("marker"); });
+it("A-6-193 block colors", async () => { const body = await htmlBody([b("paragraph", { color: "red" }), b("paragraph", { color: "bg-blue" }), b()]); expect([...body.querySelectorAll(".b")].map((el) => el.className)).toEqual(["b tc-red", "b bc-blue", "b"]); });
+it("A-6-194 indentation", async () => { const body = await htmlBody([b("paragraph", { indent: 2 }), b()]); expect([...body.querySelectorAll<HTMLElement>(".b")].map((el) => el.style.marginLeft)).toEqual(["48px", ""]); });
+it("A-6-195 image captions", async () => { const body = await htmlBody([b("image", { url: "u", caption: "A cat" }), b("image", { url: "u" })]); expect([...body.querySelectorAll("img")].map((el) => el.alt)).toEqual(["A cat", ""]); expect(body.querySelectorAll("figcaption")).toHaveLength(1); });
+it("A-6-196 image dimensions", async () => { const body = await htmlBody([b("image", { url: "u", width: 50, align: "center" })]); expect(body.querySelector("img")?.style.width).toBe("50%"); expect(body.querySelector("figure")?.style.textAlign).toBe("center"); });
+it("A-6-197 image attribute injection", async () => { const body = await htmlBody([b("image", { url: 'a"onerror="alert(1)' })]); expect(body.querySelector("img")?.getAttribute("src")).toBe('a"onerror="alert(1)'); expect(body.querySelector("[onerror]")).toBeNull(); });
+it("A-6-198 media tags", async () => { const body = await htmlBody([b("video", { url: "u" }), b("audio", { url: "u" }), b("file", { url: "u", fileName: "r.pdf" })]); expect(body.querySelector("video[controls]")?.getAttribute("src")).toBe("u"); expect(body.querySelector("audio[controls]")?.getAttribute("src")).toBe("u"); expect(body.querySelector("a[download]")?.getAttribute("download")).toBe("r.pdf"); });
+it("A-6-199 missing media omitted", async () => expect((await htmlBody([b("image"), b("video"), b("audio"), b("file")])).querySelector("figure,a")).toBeNull());
+it("A-6-200 bookmarks and embeds", async () => { const body = await htmlBody([b("bookmark", { url: "u", bookmarkTitle: "Title" }), b("bookmark", { url: "u" }), b("embed", { url: "u" })]); expect([...body.querySelectorAll("a.bookmark .t")].map((el) => el.textContent)).toEqual(["Title", "u", "u"]); expect(body.querySelector("iframe")).toBeNull(); });
+it("A-6-201 table headers", async () => { const body = await htmlBody([{}, { tableHeaderRow: true }, { tableHeaderCol: true }].map((patch) => b("table", { table: [["A", "B"], ["1", "2"]], ...patch }))); expect([...body.querySelectorAll("table")].map((el) => el.querySelectorAll("th").length)).toEqual([0, 2, 2]); });
+it("A-6-202 equation rendering", async () => expect((await htmlBody([b("equation", { equation: "\\frac{a}{b}" })])).querySelector(".math-frac")).not.toBeNull());
+it("A-6-203 columns", async () => { const body = await htmlBody([b("columns", { columns: [column([b()], 2), column([b()])] })]); expect([...body.querySelectorAll<HTMLElement>(".cols > div")].map((el) => el.style.flexGrow)).toEqual(["2", "1"]); });
+it("A-6-204 synced originals and copies", async () => { const body = await htmlBody([b("synced", { id: "source" }), b("synced", { syncedFrom: "source" })], {}, { source: [b("paragraph", { html: "shared content" })] }); expect(body.querySelectorAll(".b")).toHaveLength(2); expect(body.textContent?.match(/shared content/g)).toHaveLength(2); });
+it("A-6-205 absent synced content", async () => expect((await htmlBody([b("synced", { syncedFrom: "missing", html: "marker" })])).textContent).not.toContain("marker"));
+it("A-6-206 synced cycle guard", async () => { const body = await htmlBody([b("synced", { id: "s" })], {}, { s: [b("paragraph", { html: "once" }), b("synced", { syncedFrom: "s" })] }); expect(body.textContent?.match(/once/g)).toHaveLength(1); });
+it("A-6-207 page links", async () => { const body = await htmlBody([b("page", { pageId: "child" }), b("page", { pageId: "gone" })], { child: page({ title: "Child", icon: "🧒" }) }); expect(body.textContent).toContain("🧒 Child"); expect(body.textContent).toContain("Sub-page"); });
+it("A-6-208 inline database", async () => { const body = await htmlBody([b("database", { pageId: "db" }), b("database", { pageId: "gone" })], { db: page({ database: db([prop({ id: "title", name: "Name" })], [row({ title: "Row one" })]) }) }); expect(body.querySelectorAll("table")).toHaveLength(1); expect(body.querySelector("th")?.textContent).toBe("Name"); expect(body.querySelector("td")?.textContent).toBe("Row one"); });
+it("A-6-209 root database", async () => { const out = await pageToHtml(page({ blocks: [b("paragraph", { html: "marker" })], database: db([prop({ id: "title", name: "Name" })], [row({ title: "a" }), row({ title: "b" })]) }), {}); expect(out).toContain("<td>a</td>"); expect(out).toContain("<td>b</td>"); expect(out).not.toContain("marker"); });
+it("A-6-210 database escaping", async () => { const out = await pageToHtml(page({ database: db([prop({ id: "title", name: "<Name>" })], [row({ title: "<script>x</script>" })]) }), {}); expect(out).toContain("&lt;Name&gt;"); expect(out).toContain("&lt;script&gt;x&lt;/script&gt;"); expect(out).not.toContain("<script>"); });
+const csvProps = [prop({ id: "title", name: "Name" }), prop({ id: "note", name: "Note" })];
+const csv = (cells: Record<string, unknown>[], properties = csvProps) => { const database = db(properties, cells.map((c) => row(c))); return rowsToCsv(properties, database.rows, database, {}); };
+it("A-6-211 csv headers", () => expect(csv([])).toBe("Name,Note"));
+it("A-6-212 csv CRLF", () => expect(csv([{ title: "a" }, { title: "b" }], [csvProps[0]])).toBe("Name\r\na\r\nb"));
+const csvCases: [number, string, string][] = [[213, "Smith, John", '"Smith, John"'], [214, 'say "hi"', '"say ""hi"""'], [215, "line\nnext\rend", '"line\nnext\rend"'], [217, "plain", "plain"]];
+it.each(csvCases)("A-6-%i csv values", (_id, input, expected) => expect(csv([{ title: input }], [csvProps[0]])).toBe("Name\r\n" + expected));
+it("A-6-216 csv header escaping", () => expect(csv([], [prop({ name: "Last, First" })])).toBe('"Last, First"'));
+it("A-6-218 missing empty null csv fields", () => expect(csv([{}, { note: "" }, { note: null }])).toBe("Name,Note\r\n,\r\n,\r\n,"));
+it("A-6-219 empty rows", () => expect(csv([])).toBe("Name,Note"));
+it("A-6-220 property subset order", () => expect(csv([{ title: "a", note: "b" }], [csvProps[1], csvProps[0]])).toBe("Note,Name\r\nb,a"));
+it("A-6-221 relation titles", () => { const relation = prop({ id: "rel", name: "Relation", type: "relation" }), database = db([relation], [row({ rel: ["target"] })]); expect(rowsToCsv(database.properties, database.rows, database, { target: page({ title: "Target" }) })).toBe("Relation\r\nTarget"); });
+it("A-6-222 multiselect display", () => { const multi = prop({ id: "multi", name: "Tags", type: "multiSelect", options: [{ id: "a", name: "one", color: "red" }, { id: "b", name: "two", color: "blue" }] }); expect(csv([{ multi: ["a", "b"] }], [multi])).toBe('Tags\r\n"one, two"'); });
+
+import { stripHtml, blockColorClass } from "@/lib/utils";
+it("A-6-253 strip markup", () => { expect(stripHtml("<b>bold</b> and <i>italic</i>")).toBe("bold and italic"); expect(stripHtml("<p>hi</p>")).toBe("hi"); });
+it("A-6-254 block color class", () => expect(["red", "bg-red", "default", undefined].map(blockColorClass)).toEqual(["tc-red", "bc-red", "", ""]));

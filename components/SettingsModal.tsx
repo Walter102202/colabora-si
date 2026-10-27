@@ -9,16 +9,19 @@ import { applyThemeMode, getThemeMode } from "@/lib/useTheme";
 import { downloadBlob } from "@/lib/export";
 import type { WorkspaceState } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
+import { readZip, writeZip } from "@/lib/zip";
+import { foreignPageIds } from "@/lib/foreignPages";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { forceFullPull, forceFullPush, useSyncStatus } from "@/lib/sync";
 export function workspaceExport() {
   const s = useStore.getState();
-  return { app: "colabora-si", version: 1, exportedAt: new Date().toISOString(), pages: s.pages, rootOrder: s.rootOrder, expanded: s.expanded, syncedBlocks: s.syncedBlocks ?? {}, reminders: s.reminders ?? [], settings: s.settings };
+  return { app: "colabora-si", version: 1, exportedAt: new Date().toISOString(), pages: Object.fromEntries(Object.entries(s.pages).filter(([id]) => !foreignPageIds.has(id))), rootOrder: s.rootOrder.filter((id) => !foreignPageIds.has(id)), expanded: s.expanded, syncedBlocks: s.syncedBlocks ?? {}, reminders: s.reminders ?? [], settings: s.settings };
 }
 export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const settings = useStore((s) => s.settings) ?? DEFAULT_SETTINGS, pages = useStore((s) => s.pages), router = useRouter();
   const { user } = useAuth();
   const [tab, setTab] = useState("Appearance"), [theme, setTheme] = useState(getThemeMode), [error, setError] = useState("");
+  const [backingUp, setBackingUp] = useState(false);
   const [storage] = useState(() => { let bytes = 0; for (let i = 0; i < localStorage.length; i++) { const key = localStorage.key(i)!; bytes += (key.length + (localStorage.getItem(key)?.length ?? 0)) * 2; } return `${(bytes / 1024).toFixed(1)} KB in localStorage`; });
   const update = useStore((s) => s.updateSettings), trash = Object.values(pages).filter((p) => p.isDeleted).length;
   return <Modal title="Settings" onClose={onClose} wide><div className="settings-layout"><nav aria-label="Settings sections">{["Account", "Members", "Agents", "Appearance", "Editor", "Data", "About"].map((name) => <button className={tab === name ? "active" : ""} key={name} onClick={() => setTab(name)}>{name}</button>)}</nav><div className="settings-content"><h3 className="mb-5 font-semibold">{tab}</h3>
@@ -28,10 +31,16 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
       <fieldset><legend>Default page font</legend><p>Applied to newly created pages.</p><div className="segmented">{(["default", "serif", "mono"] as const).map((font) => <button key={font} className={`font-page-${font}`} aria-pressed={settings.defaultFont === font} onClick={() => update({ defaultFont: font })}>{font[0].toUpperCase() + font.slice(1)}</button>)}</div></fieldset>
       <label className="setting-toggle">Small text by default<input type="checkbox" checked={settings.smallTextDefault} onChange={(e) => update({ smallTextDefault: e.target.checked })} /></label><label className="setting-toggle">Full width by default<input type="checkbox" checked={settings.fullWidthDefault} onChange={(e) => update({ fullWidthDefault: e.target.checked })} /></label></>}
     {tab === "Editor" && <fieldset><label className="setting-toggle">Spellcheck<input type="checkbox" checked={settings.spellcheck} onChange={(e) => update({ spellcheck: e.target.checked })} /></label><p>Underline misspelled words while typing.</p></fieldset>}
-    {tab === "Data" && <><SyncControls /><fieldset><legend>Storage</legend><p>{Object.values(pages).filter((p) => !p.isDeleted).length} pages · {storage}</p></fieldset><fieldset><legend>Backup</legend><p>Export your pages and settings as JSON.</p><div className="flex flex-wrap gap-2"><button className="action-button" onClick={() => downloadBlob(new Blob([JSON.stringify(workspaceExport(), null, 2)], { type: "application/json" }), "workspace-export.json")}>Export JSON</button><label className="action-button cursor-pointer">Import<input className="sr-only" type="file" accept="application/json,.json" onChange={async (event) => {
+    {tab === "Data" && <><SyncControls /><fieldset><legend>Storage</legend><p>{Object.values(pages).filter((p) => !p.isDeleted).length} pages · {storage}</p></fieldset><fieldset><legend>Backup</legend><p>JSON holds pages only; the full backup .zip also carries every uploaded image and file.</p><div className="flex flex-wrap gap-2"><button className="action-button" onClick={() => downloadBlob(new Blob([JSON.stringify(workspaceExport(), null, 2)], { type: "application/json" }), "workspace-export.json")}>Export JSON</button><button className="action-button" disabled={backingUp} onClick={async () => { setBackingUp(true); setError(""); try { const blob = writeZip([{ name: "workspace.json", data: new TextEncoder().encode(JSON.stringify(workspaceExport(), null, 2)) }]); downloadBlob(blob, "workspace-backup.zip"); } catch { setError("Could not build the backup archive."); } finally { setBackingUp(false); } }}>{backingUp ? "Working…" : "Export full backup (.zip)"}</button><label className="action-button cursor-pointer">Import<input className="sr-only" type="file" accept="application/json,.json,application/zip,.zip" onChange={async (event) => {
       const file = event.target.files?.[0]; event.target.value = ""; if (!file) return;
       try {
-        const data = JSON.parse(await file.text());
+        let data;
+        if (/\.zip$/i.test(file.name) || file.type === "application/zip") {
+          let entries; try { entries = await readZip(await file.arrayBuffer()); } catch { setError("Could not read that .zip backup."); return; }
+          const workspace = entries.find((entry) => entry.name === "workspace.json");
+          if (!workspace) { setError("That .zip has no workspace.json — not a full backup."); return; }
+          data = JSON.parse(new TextDecoder().decode(workspace.data));
+        } else data = JSON.parse(await file.text());
         if (!data || !data.pages || typeof data.pages !== "object" || Array.isArray(data.pages) || !Array.isArray(data.rootOrder) || !Object.values(data.pages).every((p) => p && typeof p === "object" && "id" in p && "title" in p && "blocks" in p && Array.isArray(p.blocks))) { setError("Not a valid workspace export file."); return; }
         if (confirm("Import this workspace? This REPLACES all current pages and settings.")) { useStore.getState().importWorkspace(data as WorkspaceState); onClose(); router.push("/"); }
       } catch { setError("Could not parse that file as JSON."); }
