@@ -14,7 +14,8 @@ export interface AttributionMarginProps {
 }
 
 export function AttributionMargin({ attr }: AttributionMarginProps) {
-  const agent = useAgentsStore((s) => (attr?.by === "agent" ? s.agents.find((a) => a.id === attr.id) : undefined));
+  // The server stamps the agent's auth user id; older rows may carry the agent id.
+  const agent = useAgentsStore((s) => (attr?.by === "agent" ? s.agents.find((a) => a.auth_user_id === attr.id || a.id === attr.id) : undefined));
   const run = useAgentTasks((s) => (attr?.runId ? s.runs[attr.runId] : undefined));
   if (!attr || attr.by !== "agent") return null;
   const name = agent?.name ?? "Agent";
