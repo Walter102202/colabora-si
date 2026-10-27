@@ -1,0 +1,52 @@
+# Supabase CLI configuration.
+# Only the settings the project depends on are pinned; everything else keeps
+# the CLI defaults so upgrades do not fight this file.
+
+project_id = "colabora-si"
+
+[db]
+# Same as the hosted project (Postgres 17.x) so `supabase db reset` reproduces it.
+major_version = 17
+
+[db.seed]
+enabled = true
+# One seed per track: the workspace (people, pages) and the agents.
+sql_paths = ["./seeds/01_workspace.sql", "./seeds/02_agents.sql"]
+
+[auth]
+# Also bounds agent tokens.
+jwt_expiry = 3600
+
+[auth.oauth_server]
+# Supabase Auth as OAuth 2.1 authorization server for chat clients.
+enabled = true
+authorization_url_path = "/oauth/consent"
+allow_dynamic_registration = true
+
+[functions.send-reminders]
+# Called by pg_cron through pg_net with a shared secret, not by a signed-in user.
+verify_jwt = false
+
+[functions.send-email]
+# Auth Send Email Hook: the hook carries its own signature.
+verify_jwt = false
+
+[functions.mcp]
+# 401 + protected-resource metadata without a token; the function validates manually.
+verify_jwt = false
+
+[functions.agent-token]
+# The caller presents a personal access token, not a JWT.
+verify_jwt = false
+
+[functions.agent-admin]
+# Signed-in people only.
+verify_jwt = true
+
+[functions.agent-dispatch]
+# pg_cron + shared secret.
+verify_jwt = false
+
+[functions.agent-webhook]
+# Provider signature.
+verify_jwt = false

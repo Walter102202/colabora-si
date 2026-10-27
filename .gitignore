@@ -1,0 +1,58 @@
+# local, never versioned (design source and private context)
+CONTEXTO.md
+CLAUDE.local.md
+Espacio colaborativo humanos y agentes.md
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# tests
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# browser automation tooling (console logs + dumps)
+/.playwright-mcp/
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# environment variables (the example file IS versioned)
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# supabase CLI local state; migrations/ and functions/ ARE versioned
+/supabase/.temp/
+/supabase/.branches/
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# brainstorming mockups (local)
+.superpowers/
+
+# local artifacts (videos, renders); never versioned
+/.local/

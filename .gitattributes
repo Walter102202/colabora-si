@@ -1,0 +1,11 @@
+# Line endings: LF in git, native in the working copy.
+* text=auto eol=lf
+
+# Binaries: leave untouched.
+*.png binary
+*.jpg binary
+*.ico binary
+*.svg text eol=lf
+
+# Lockfile: collapsed diffs in review tools.
+package-lock.json linguist-generated=true
