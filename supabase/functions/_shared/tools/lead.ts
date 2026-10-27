@@ -21,16 +21,19 @@ const sourceItem = object({
 
 const span = (text: string): AgentBlockInput['spans'] => [text];
 
-/** Row page content mirroring the "Task brief" row template sections (Goal, Done when, Constraints, Sources). */
+/** Keys of the brief sections in a row page; the app's briefFromRow reads the blocks under each key. */
+export const BRIEF_KEYS = { goal: 'brief:goal', done_when: 'brief:done_when', constraints: 'brief:constraints', sources: 'brief:sources' } as const;
+
+/** Row page content mirroring the "Task brief" row template sections (Goal, Done when, Constraints, Sources), keyed like the template. */
 export function briefBlocks(goal: string, doneWhen: string[], constraints?: string, sources: string[] = []): AgentBlockInput[] {
   const blocks: AgentBlockInput[] = [
-    { type: 'heading2', spans: span('Goal') },
+    { type: 'heading2', spans: span('Goal'), key: BRIEF_KEYS.goal },
     { type: 'paragraph', spans: span(goal) },
-    { type: 'heading2', spans: span('Done when') },
+    { type: 'heading2', spans: span('Done when'), key: BRIEF_KEYS.done_when },
     ...doneWhen.map((text): AgentBlockInput => ({ type: 'todo', spans: span(text), checked: false })),
-    { type: 'heading2', spans: span('Constraints') },
+    { type: 'heading2', spans: span('Constraints'), key: BRIEF_KEYS.constraints },
     { type: 'paragraph', spans: span(constraints ?? '') },
-    { type: 'heading2', spans: span('Sources') },
+    { type: 'heading2', spans: span('Sources'), key: BRIEF_KEYS.sources },
   ];
   if (sources.length) for (const s of sources) blocks.push({ type: 'bulleted', spans: span(s) });
   else blocks.push({ type: 'paragraph', spans: span('') });

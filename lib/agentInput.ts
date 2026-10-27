@@ -22,6 +22,7 @@ export type AgentBlockInput = {
   indent?: number;                // 0..6
   checked?: boolean; language?: string; icon?: string; url?: string; caption?: string;
   equation?: string; pageId?: string; color?: BlockColor;
+  key?: string;                   // stable section key (e.g. "brief:goal"); letters, digits, "_", ":", ".", "-"
 };
 // Not allowed for agents: columns, synced, table, embed, button, database, video, audio, toc, breadcrumb.
 
