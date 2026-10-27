@@ -12,6 +12,13 @@ on conflict (model) do nothing;
 insert into private.app_flags (name, value) values ('agents_enabled', 'true'::jsonb)
 on conflict (name) do nothing;
 
+-- ============ local development secrets ============
+-- Only when no token pepper exists yet (a hosted project sets its own before seeding, and issues tokens from
+-- Settings > Agents). The agents below sign in with the password derived from AGENT_LOGIN_PEPPER=local-dev-login-pepper
+-- (supabase/functions/.env.example); with another pepper, rotate their login from Settings > Agents.
+insert into private.app_secrets (name, value) values ('agent_token_pepper', 'local-dev-token-pepper')
+on conflict (name) do nothing;
+
 -- ============ demo agents ============
 -- Workspace 00000000-0000-4000-8000-000000000010, owner 00000000-0000-4000-8000-000000000001 (from 01_workspace.sql).
 -- Claude Code (Lead): agent ...0021, auth user ...0031. Codex (worker): agent ...0022, auth user ...0032.
@@ -19,11 +26,11 @@ on conflict (name) do nothing;
 insert into auth.users(instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,raw_app_meta_data,raw_user_meta_data,created_at,updated_at,confirmation_token,email_change,email_change_token_new,recovery_token)
 values
   ('00000000-0000-0000-0000-000000000000','00000000-0000-4000-8000-000000000031','authenticated','authenticated',
-   'agent+00000000-0000-4000-8000-000000000021@agents.invalid',extensions.crypt('demo-password',extensions.gen_salt('bf')),now(),
+   'agent+00000000-0000-4000-8000-000000000021@agents.invalid',extensions.crypt(encode(extensions.hmac('00000000-0000-4000-8000-000000000031','local-dev-login-pepper','sha256'),'hex'),extensions.gen_salt('bf')),now(),
    '{"provider":"email","providers":["email"],"principal_type":"agent","agent_id":"00000000-0000-4000-8000-000000000021","workspace_id":"00000000-0000-4000-8000-000000000010"}',
    '{}',now(),now(),'','','',''),
   ('00000000-0000-0000-0000-000000000000','00000000-0000-4000-8000-000000000032','authenticated','authenticated',
-   'agent+00000000-0000-4000-8000-000000000022@agents.invalid',extensions.crypt('demo-password',extensions.gen_salt('bf')),now(),
+   'agent+00000000-0000-4000-8000-000000000022@agents.invalid',extensions.crypt(encode(extensions.hmac('00000000-0000-4000-8000-000000000032','local-dev-login-pepper','sha256'),'hex'),extensions.gen_salt('bf')),now(),
    '{"provider":"email","providers":["email"],"principal_type":"agent","agent_id":"00000000-0000-4000-8000-000000000022","workspace_id":"00000000-0000-4000-8000-000000000010"}',
    '{}',now(),now(),'','','','')
 on conflict(id) do nothing;
@@ -49,6 +56,19 @@ values
   ('00000000-0000-4000-8000-000000000042','00000000-0000-4000-8000-000000000010','00000000-0000-4000-8000-000000000022',
    'market-research','{read,write,comment}',true,'00000000-0000-4000-8000-000000000001')
 on conflict do nothing;
+
+-- Development agent tokens (hash = sha256(pepper || token)); the plain tokens are documented in
+-- supabase/functions/.env.example and only work with the local pepper above.
+insert into public.agent_tokens (id, workspace_id, agent_id, name, token_hash, token_prefix, scopes, created_by)
+select t.id, '00000000-0000-4000-8000-000000000010', t.agent_id, 'local development',
+       encode(extensions.digest(convert_to(s.value || t.token, 'utf8'), 'sha256'), 'hex'), left(t.token, 8), '{mcp}',
+       '00000000-0000-4000-8000-000000000001'
+from (values
+  ('00000000-0000-4000-8000-000000000061'::uuid, '00000000-0000-4000-8000-000000000021'::uuid, 'agt_LOCALDEVLEAD0000000000000000000000000001'),
+  ('00000000-0000-4000-8000-000000000062'::uuid, '00000000-0000-4000-8000-000000000022'::uuid, 'agt_LOCALDEVCODEX000000000000000000000000002')
+) as t(id, agent_id, token)
+join private.app_secrets s on s.name = 'agent_token_pepper' and s.value = 'local-dev-token-pepper'
+on conflict (id) do nothing;
 
 -- ============ task 1: queued on the first row ============
 

@@ -20,7 +20,7 @@ import { ApprovalCard } from "@/components/agents/panel/ApprovalCard";
 import { DecisionCard } from "@/components/agents/panel/DecisionCard";
 import { LeadReviewCard } from "@/components/agents/panel/LeadReviewCard";
 import { SubtaskList } from "@/components/agents/panel/SubtaskList";
-import { ActivityTimeline } from "@/components/agents/panel/ActivityTimeline";
+import { ActivityTimeline, activityLabel } from "@/components/agents/panel/ActivityTimeline";
 import { FeedbackComposer } from "@/components/agents/panel/FeedbackComposer";
 import { formatRelative } from "@/lib/utils";
 
@@ -168,7 +168,7 @@ function TaskPanel({ task }: { task: TaskRow }) {
         {recentActions.length > 0 ? (
           <ul className="text-xs text-text-secondary">
             {recentActions.map((a) => (
-              <li key={a.id}>· {typeof a.body.summary === "string" ? a.body.summary : String(a.body.op ?? "action")}</li>
+              <li key={a.id}>· {activityLabel(a)}</li>
             ))}
           </ul>
         ) : (

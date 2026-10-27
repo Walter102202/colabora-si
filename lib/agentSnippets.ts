@@ -13,6 +13,15 @@ export interface HarnessSnippet {
   notes: string[];
 }
 
+/** Origin of an URL, for the Supabase URL the bridge needs next to the MCP endpoint. */
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "https://<project>.supabase.co";
+  }
+}
+
 const tokenNote = "Exchange the personal access token for a 1-hour JWT at the token URL; the bridge and the reference agent do it for you.";
 
 export const HARNESS_SNIPPETS: HarnessSnippet[] = [
@@ -30,11 +39,14 @@ export const HARNESS_SNIPPETS: HarnessSnippet[] = [
       "env": {
         "WORKSPACE_MCP_URL": "${mcpUrl}",
         "WORKSPACE_AGENT_TOKEN_URL": "${tokenUrl}",
-        "WORKSPACE_AGENT_PAT": "agt_..."
+        "WORKSPACE_AGENT_PAT": "agt_...",
+        "NEXT_PUBLIC_SUPABASE_URL": "${originOf(mcpUrl)}",
+        "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_..."
       }
     }
   }
 }
+# the two NEXT_PUBLIC_* values are the workspace's public Supabase URL and key (the channel listens on Realtime)
 # start the session with the channel registered
 MCP_PROTOCOL_NEGOTIATION=legacy claude --dangerously-load-development-channels server:colabora`,
     notes: [tokenNote, "Without the channel flag the session still works: it waits with wait_for_task."],

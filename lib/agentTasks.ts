@@ -176,6 +176,17 @@ let channel: RealtimeChannel | null = null;
 let channelWorkspace: string | null = null;
 let subscribers = 0;
 
+// supabase-js returns the registered channel for a topic that still exists; after an unawaited
+// removeChannel that instance is already subscribed and `.on` would throw. Drop it from the registry first.
+function dropStaleChannel(client: ReturnType<typeof getAgentClient>, topic: string): void {
+  if (!client) return;
+  const full = `realtime:${topic}`;
+  if (client.realtime.channels.some((c) => c.topic === full)) {
+    client.realtime.channels = client.realtime.channels.filter((c) => c.topic !== full);
+  }
+}
+
+
 export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
   workspaceId: null,
   status: "idle",
@@ -236,6 +247,7 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
     }
     subscribers = 1;
     channelWorkspace = workspaceId;
+    dropStaleChannel(client, `agents-${workspaceId}`);
     const ch = client.channel(`agents-${workspaceId}`);
     for (const table of TABLES) {
       ch.on(

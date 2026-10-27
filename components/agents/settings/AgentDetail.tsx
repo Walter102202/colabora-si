@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { useAgentsStore, type AgentRow } from "@/lib/agentsStore";
 import { formatRelative } from "@/lib/utils";
@@ -18,8 +18,11 @@ const WHAT = {
 
 export function AgentDetail({ agent, onBack }: { agent: AgentRow; onBack: () => void }) {
   const pages = useStore((s) => s.pages);
-  const grants = useAgentsStore((s) => s.grants.filter((g) => g.agent_id === agent.id));
-  const tokens = useAgentsStore((s) => s.tokens.filter((t) => t.agent_id === agent.id));
+  // Select the raw arrays: a selector that filters returns a new array on every call and re-renders forever.
+  const allGrants = useAgentsStore((s) => s.grants);
+  const allTokens = useAgentsStore((s) => s.tokens);
+  const grants = useMemo(() => allGrants.filter((g) => g.agent_id === agent.id), [allGrants, agent.id]);
+  const tokens = useMemo(() => allTokens.filter((t) => t.agent_id === agent.id), [allTokens, agent.id]);
   const { issueToken, revokeToken, grantPage, revokeGrant, setPaused, revokeAgent } = useAgentsStore();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

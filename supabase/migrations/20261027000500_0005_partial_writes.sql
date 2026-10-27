@@ -352,6 +352,11 @@ begin
   if v_block is null then raise exception using errcode='PT404', message='block_not_found', detail=p_block_id; end if;
 
   v_text := private.html_to_text(v_block->>'html');
+  -- A stale rev is a conflict even when old_str is gone: the caller re-reads and decides with the current text.
+  if p_rev is not null and coalesce((v_block->>'rev')::bigint, 0) is distinct from p_rev then
+    raise exception using errcode='PT409', message='block_conflict',
+      detail=jsonb_build_object('page_id', p_page_id, 'block_id', p_block_id, 'rev', v_block->'rev', 'text', left(v_text, 2000))::text;
+  end if;
   v_count := (length(v_text) - length(replace(v_text, p_old_str, ''))) / length(p_old_str);
   if v_count = 0 then raise exception using errcode='PT422', message='old_str_not_found'; end if;
   if v_count > 1 then raise exception using errcode='PT422', message='old_str_not_unique', detail=jsonb_build_object('count', v_count)::text; end if;
