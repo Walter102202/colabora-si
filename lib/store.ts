@@ -212,7 +212,8 @@ export const useStore = create<Store>()(persist((set, get) => {
     saveVersion: (pageId, auto = false) => mutate(pageId, (page) => {
       const last = page.versions?.[0];
       if (last && last.title === page.title && JSON.stringify(last.blocks) === JSON.stringify(page.blocks) && JSON.stringify(last.database) === JSON.stringify(page.database)) return page;
-      const version = { id: newId(), createdAt: Date.now(), title: page.title, blocks: page.blocks, database: page.database, auto };
+      const user = useAuthStore.getState().user;
+      const version = { id: newId(), createdAt: Date.now(), title: page.title, blocks: page.blocks, database: page.database, auto, author: { id: user?.id ?? "local", type: "human" as const, name: user?.user_metadata.full_name || user?.email || "You (this device)" } };
       return pm.touch({ ...page, versions: [version, ...(page.versions ?? [])].slice(0, 50) });
     }),
     restoreVersion: (pageId, versionId) => mutate(pageId, (page) => {

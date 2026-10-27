@@ -24,6 +24,9 @@ import { initSync, stopSync } from "@/lib/sync";
 import SyncConflictModal from "@/components/SyncConflictModal";
 import { usePresenceSession, useSharedPresenceScope } from "@/lib/presence";
 import PresenceAvatars from "@/components/PresenceAvatars";
+import PageMenu from "@/components/PageMenu";
+import PageHistoryModal from "@/components/PageHistoryModal";
+import ImportModal from "@/components/ImportModal";
 
 const subscribeWidth = (callback: () => void) => { window.addEventListener("resize", callback); return () => window.removeEventListener("resize", callback); };
 export default function Shell({ children }: { children: React.ReactNode }) {
@@ -93,6 +96,9 @@ function HydratedShell({ children }: { children: React.ReactNode }) {
     {modal?.kind === "shortcuts" && <ShortcutsModal onClose={() => setModal(null)} />}
     {modal?.kind === "trash" && <TrashModal onClose={() => setModal(null)} />}
     {modal?.kind === "move" && modal.pageId && <MovePageModal pageId={modal.pageId} onClose={() => setModal(null)} />}
+    {modal?.kind === "page-menu" && modal.pageId && <PageMenu pageId={modal.pageId} onClose={() => setModal(null)} />}
+    {modal?.kind === "history" && modal.pageId && <PageHistoryModal pageId={modal.pageId} onClose={() => setModal(null)} />}
+    {modal?.kind === "import" && <ImportModal onClose={() => setModal(null)} />}
     <PeekPanel />
     <SyncConflictModal />
     {modal?.kind === "template" && <TemplateModal pageId={modal.pageId} onClose={() => setModal(null)} />}
