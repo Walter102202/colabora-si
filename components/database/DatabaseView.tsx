@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { Lock, Search, X } from "lucide-react";
 import { useStore } from "@/lib/store";
-import { buildDbOps } from "@/lib/dbOps";
+import { buildDbOps, buildLinkedDbOps } from "@/lib/dbOps";
 import { filterRows, operatorsFor } from "@/lib/dbFilter";
 import { sortRows } from "@/lib/dbCompute";
 import { createView, newId } from "@/lib/factories";
@@ -13,10 +13,14 @@ import { downloadCsv } from "@/lib/export";
 import type { ColorRule, DbViewType, FilterCondition } from "@/lib/types";
 const VIEW_NAMES: Record<DbViewType, string> = { table: "Table", board: "Board", list: "List", gallery: "Gallery", calendar: "Calendar", timeline: "Timeline" };
 const COLORS = ["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
-export default function DatabaseView({ pageId, locked = false }: { pageId: string; locked?: boolean }) {
-  const pages = useStore((s) => s.pages), page = pages[pageId], database = page?.database;
+export default function DatabaseView({ pageId, locked = false, linkedPageId, linkedBlockId }: { pageId: string; locked?: boolean; linkedPageId?: string; linkedBlockId?: string }) {
+  const pages = useStore((s) => s.pages), page = pages[pageId];
   const [active, setActive] = useState(0), [search, setSearch] = useState(""), [searching, setSearching] = useState(false), [panel, setPanel] = useState("");
-  const ops = useMemo(() => locked ? { ...buildDbOps(pageId), locked: true, readOnly: true } : buildDbOps(pageId), [pageId, locked]);
+  const ops = useMemo(() => {
+    const base = linkedPageId && linkedBlockId ? buildLinkedDbOps(pageId, linkedPageId, linkedBlockId) : buildDbOps(pageId);
+    return locked ? { ...base, get database() { return base.database; }, locked: true, readOnly: true } : base;
+  }, [pageId, locked, linkedPageId, linkedBlockId]);
+  const database = page?.database ? ops.database : undefined;
   const view = database?.views[active] ?? database?.views[0];
   const rows = useMemo(() => database && view ? sortRows(filterRows(database.rows, view, database, pages).filter((row) => !search.trim() || rowSearchText(row, database, pages).includes(search.trim().toLowerCase())), view, database, pages) : [], [database, view, pages, search]);
   if (!database || !view) return null;

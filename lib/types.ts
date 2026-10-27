@@ -107,6 +107,7 @@ export interface Block {
   fileName?: string;          // file: displayed name
   fileSize?: number;          // file: bytes
   pageId?: string;            // page / database: id of the referenced page
+  linkedViews?: DbView[];     // database link: views owned by this block, rows remain in pageId
   bookmarkTitle?: string;     // bookmark: fetched title
   bookmarkDescription?: string; // bookmark: fetched description
   table?: string[][];         // table: rows of cells; each cell is sanitized HTML
