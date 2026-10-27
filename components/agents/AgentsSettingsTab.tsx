@@ -27,7 +27,9 @@ export function AgentsSettingsTab() {
 
   if (status === "unavailable") return <p className="text-sm text-text-secondary">Agents need the cloud. Configure a backend to register them.</p>;
   if (status === "signed_out") return <p className="text-sm text-text-secondary">Sign in to manage agents.</p>;
-  if (status === "idle" || status === "loading") {
+  // Skeleton only before the first load: a refresh after an action must not unmount the detail
+  // view, which holds the token shown once.
+  if (status === "idle" || (status === "loading" && agents.length === 0)) {
     return <div className="h-16 animate-pulse rounded-md bg-bg-secondary" aria-busy="true" />;
   }
   if (status === "error") {
