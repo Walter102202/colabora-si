@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-// Body text uses the system UI stack (Segoe UI Variable on Windows, SF on
-// macOS), like Notion; no webfont.
+// El texto de cuerpo usa la pila de UI del sistema (Segoe UI Variable en
+// Windows, SF en macOS), igual que Notion; sin webfont.
 
 const jetbrainsMono = JetBrains_Mono({
   variable: "--font-mono",
@@ -27,14 +27,16 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        {/* Apply the theme before first paint to avoid a flash */}
+        {/* Aplica el tema antes del primer paint para evitar el flash */}
         <script
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var t=localStorage.getItem('colabora-theme');if(t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme: dark)').matches)){document.documentElement.classList.add('dark');}}catch(e){}})();`,
           }}
         />
       </head>
-      <body className={jetbrainsMono.variable}>{children}</body>
+      <body className={jetbrainsMono.variable}>
+        {children}
+      </body>
     </html>
   );
 }
