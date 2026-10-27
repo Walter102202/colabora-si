@@ -10,7 +10,7 @@ import { CODE_LANGUAGES } from "@/lib/blockMeta";
 
 interface Props { block: Block; ops: BlockOps; ordinal?: number; spellCheck: boolean; selected?: boolean }
 function BlockItem({ block, ops, ordinal, spellCheck, selected }: Props) {
-  const register = useCallback((handle: EditableHandle | null) => ops.register(block.id, handle), [block.id, ops.register]);
+  const register = useCallback((handle: EditableHandle | null) => ops.register(block.id, handle), [block.id, ops]);
   const color = blockColorClass(block.color), heading = block.type.startsWith("heading");
   const placeholder = heading ? `Heading ${block.type.at(-1)}` : block.type === "todo" ? "To-do" : ["bulleted", "numbered"].includes(block.type) ? "List" : block.type === "toggle" ? "Toggle" : block.type === "quote" ? "Empty quote" : block.type === "callout" ? "Type something…" : "Type '/' for commands";
   const text = <Editable ref={register} html={block.html} placeholder={placeholder} spellCheck={spellCheck} readOnly={ops.locked} className={`block-text ${heading ? `block-${block.type} always-ph` : ""} ${block.checked ? "line-through text-text-tertiary" : ""} ${color.startsWith("tc-") ? color : ""}`} onInput={(html) => ops.handleInput(block.id, html)} onBlurSave={(html) => ops.saveBlock(block.id, html)} onKeyDown={(event) => ops.handleKeyDown(block.id, event)} onPaste={(event) => ops.handlePaste(block.id, event)} onFocus={() => ops.setActive(block.id)} />;

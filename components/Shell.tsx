@@ -11,6 +11,11 @@ import Sidebar from "@/components/Sidebar";
 import Emoji from "@/components/Emoji";
 import { PresenceBadge } from "@/components/agents/PresenceBadge";
 import { InboxBell } from "@/components/agents/InboxBell";
+import SearchModal from "@/components/SearchModal";
+import SettingsModal from "@/components/SettingsModal";
+import ShortcutsModal from "@/components/ShortcutsModal";
+import TrashModal from "@/components/TrashModal";
+import MovePageModal from "@/components/MovePageModal";
 
 const subscribeWidth = (callback: () => void) => { window.addEventListener("resize", callback); return () => window.removeEventListener("resize", callback); };
 export default function Shell({ children }: { children: React.ReactNode }) {
@@ -23,10 +28,16 @@ function HydratedShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false), [drawerAt, setDrawerAt] = useState<string | null>(null);
   const [width, setWidth] = useState(() => { try { const value = Number(localStorage.getItem("colabora-sidebar-width")); return value > 0 ? Math.max(200, Math.min(480, value)) : 260; } catch { return 260; } });
   const [resizing, setResizing] = useState(false);
+  const [modal, setModal] = useState<{ kind: string; pageId?: string } | null>(null);
   const pageId = /^\/p\/([^/]+)/.exec(pathname)?.[1], page = pageId ? pages[pageId] : undefined;
   const crumbs = pageId ? getBreadcrumb(pages, pageId) : [];
   const request = (kind: string, pageId?: string) => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind, pageId } }));
   useEffect(() => { initHistory(); }, []);
+  useEffect(() => {
+    const handler = (event: Event) => setModal((event as CustomEvent<{ kind: string; pageId?: string }>).detail);
+    window.addEventListener("colabora-modal", handler);
+    return () => window.removeEventListener("colabora-modal", handler);
+  }, []);
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey, key = event.key.toLowerCase(), target = event.target as HTMLElement;
@@ -59,5 +70,10 @@ function HydratedShell({ children }: { children: React.ReactNode }) {
       <InboxBell />
       {page && <><button className={`icon-button ${page.isFavorite ? "favorite-star" : ""}`} aria-label={page.isFavorite ? "Remove from Favorites" : "Add to Favorites"} onClick={() => useStore.getState().toggleFavorite(page.id)}><Star size={17} fill={page.isFavorite ? "currentColor" : "none"} /></button><button className="icon-button" aria-label="Style, export, and more" onClick={() => request("page-menu", page.id)}><MoreHorizontal size={18} /></button></>}
     </header><main className="min-h-0 flex-1">{children}</main></div>
+    {modal?.kind === "search" && <SearchModal onClose={() => setModal(null)} />}
+    {modal?.kind === "settings" && <SettingsModal onClose={() => setModal(null)} />}
+    {modal?.kind === "shortcuts" && <ShortcutsModal onClose={() => setModal(null)} />}
+    {modal?.kind === "trash" && <TrashModal onClose={() => setModal(null)} />}
+    {modal?.kind === "move" && modal.pageId && <MovePageModal pageId={modal.pageId} onClose={() => setModal(null)} />}
   </div>;
 }
