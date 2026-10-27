@@ -141,6 +141,19 @@ Deno.test('network errors retry; a webhook agent without url or secret fails wit
   ]);
 });
 
+Deno.test('a hostname that resolves to a private address is refused before any call', async () => {
+  const push = { kind: 'webhook', delivery: 'push' as const };
+  const { deps, acks, posts } = setup([[
+    message(1, { ...push, connection: { webhook_url: 'https://inner.example/hook' } }, { webhook_secret: 's' }),
+    message(2, { ...push, connection: { webhook_url: 'https://outer.example/hook' } }, { webhook_secret: 's' }),
+  ]]);
+  deps.resolveDns = (host) => Promise.resolve(host === 'inner.example' ? ['93.184.216.34', '::ffff:10.0.0.5'] : ['93.184.216.34']);
+  const res = await handleAgentDispatch(req(SECRET), deps);
+  await res.body?.cancel();
+  assert.deepEqual(posts.map((p) => p.url), ['https://outer.example/hook']);
+  assert.deepEqual(acks.map((a) => [a.ok, a.retryable, a.error]), [[false, false, 'webhook_url_private'], [true, undefined, undefined]]);
+});
+
 Deno.test('a full batch dequeues again until the queue is empty', async () => {
   const first = Array.from({ length: 3 }, (_, i) => message(i + 1));
   const { deps, acks } = setup([first, [message(4)]]);

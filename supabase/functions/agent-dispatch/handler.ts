@@ -2,7 +2,7 @@
 // Pull agents get nothing pushed (they fetch with wait_for_my_tasks); webhook agents get a signed CloudEvent.
 import { jsonResponse, oauthError } from '../_shared/errors.ts';
 import { hmacSha256Hex, timingSafeEqual } from '../_shared/hmac.ts';
-import { webhookUrlError } from '../_shared/webhookUrl.ts';
+import { isBlockedIp, isIpLiteral, normalizeHost, webhookUrlError } from '../_shared/webhookUrl.ts';
 
 export interface DispatchEvent {
   event_id: string;
@@ -57,6 +57,8 @@ export interface DispatchDeps {
   batch?: number;
   maxRounds?: number;
   webhookTimeoutMs?: number;
+  /** Resolves a hostname to its A/AAAA addresses; when set, deliveries to private addresses are refused. */
+  resolveDns?: (host: string) => Promise<string[]>;
 }
 
 export interface DispatchSummary {
@@ -109,6 +111,17 @@ async function deliverWebhook(m: DispatchMessage, deps: DispatchDeps): Promise<A
   const urlError = webhookUrlError(url);
   if (urlError) return { ...base, ok: false, error: urlError, retryable: false };
   if (!secret) return { ...base, ok: false, error: 'webhook_secret_missing', retryable: false };
+  const host = normalizeHost(new URL(url).hostname);
+  if (deps.resolveDns && !isIpLiteral(host)) {
+    let addrs: string[];
+    try {
+      addrs = await deps.resolveDns(host);
+    } catch {
+      return { ...base, ok: false, error: 'network: dns', retryable: true };
+    }
+    if (addrs.length === 0) return { ...base, ok: false, error: 'network: dns', retryable: true };
+    if (addrs.some(isBlockedIp)) return { ...base, ok: false, error: 'webhook_url_private', retryable: false };
+  }
 
   const body = JSON.stringify(cloudEvent(m.event, deps.mcpUrl));
   const t = Math.floor(deps.now() / 1000);
