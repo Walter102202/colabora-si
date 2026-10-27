@@ -288,9 +288,9 @@ a.mention { text-decoration: none; font-weight: 500; border-radius: 3px; padding
 .editor-column { position: relative; min-width: 0; padding: 4px; border-radius: 6px; }
 .editor-column:hover { background: var(--bg-hover); }
 .column-delete { position: absolute; right: 0; top: -20px; z-index: 2; }
-.column-resizer { display: flex; justify-content: center; width: 12px; margin: 0 -4px; flex-shrink: 0; cursor: col-resize; touch-action: none; }
-.column-resizer span { width: 3px; background: var(--accent); opacity: 0; border-radius: 3px; }
-.column-resizer:hover span { opacity: .4; }
+.editor-column-resizer { display: flex; justify-content: center; width: 12px; margin: 0 -4px; flex-shrink: 0; cursor: col-resize; touch-action: none; }
+.editor-column-resizer span { width: 3px; background: var(--accent); opacity: 0; border-radius: 3px; }
+.editor-column-resizer:hover span { opacity: .4; }
 .nested-editor .block-gutter { left: -22px; width: 22px; }
 .nested-editor .block-gutter button:first-child { display: none; }
 .nested-editor > [aria-label="Add a block"] { height: 24px; }
@@ -352,3 +352,45 @@ a.mention { text-decoration: none; font-weight: 500; border-radius: 3px; padding
 .history-version.active, .history-version:hover { background: var(--bg-hover-strong); }
 @media (max-width: 640px) { .history-layout { grid-template-columns: 160px 1fr; } .history-layout > aside, .history-layout > section { padding: 8px; } }
 
+
+.database-list-row { display: flex; align-items: center; gap: 8px; min-height: 32px; border-bottom: 1px solid var(--border); padding: 4px; }
+.database-list-row[role="button"]:hover, .gallery-card[role="button"]:hover { background-color: var(--bg-hover); cursor: pointer; }
+.database-gallery { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.gallery-card { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.gallery-cover { aspect-ratio: 3/2; background-size: cover; background-position: center; background-color: var(--bg-secondary); display: flex; align-items: center; justify-content: center; font-size: 30px; }
+.gallery-new { min-height: 140px; border: 1px dashed var(--border); border-radius: 12px; color: var(--text-tertiary); font-size: 14px; }
+.database-calendar-grid { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); border-top: 1px solid var(--border); border-left: 1px solid var(--border); }
+.calendar-weekday { padding: 6px; text-align: center; color: var(--text-tertiary); font-size: 12px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.calendar-day { min-height: 92px; padding: 4px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); font-size: 12px; }
+.calendar-day.empty, .calendar-day.weekend { background: var(--bg-secondary); }
+.calendar-day:hover .hover-actions { opacity: 1; }
+.calendar-today { display: inline-flex; width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 50%; background: var(--accent); color: white; }
+.calendar-chip { display: block; text-align: left; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 4px; margin-bottom: 2px; border: 1px solid var(--border); border-radius: 4px; background-color: var(--bg); }
+.timeline-scroll { max-width: 100%; overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; }
+.timeline { position: relative; }
+.timeline-months, .timeline-days { display: flex; background: var(--bg-secondary); border-bottom: 1px solid var(--border); }
+.timeline-months span { flex-shrink: 0; font-size: 12px; text-align: center; padding: 5px; border-right: 1px solid var(--border); }
+.timeline-days span { flex-shrink: 0; font-size: 10px; text-align: center; padding: 3px; border-right: 1px solid var(--border); }
+.timeline-row { display: flex; height: 32px; border-bottom: 1px solid var(--border); }
+.timeline-label { flex-shrink: 0; text-align: left; font-size: 12px; padding: 4px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-right: 1px solid var(--border); }
+.timeline-track { position: relative; flex-shrink: 0; background-image: repeating-linear-gradient(to right,transparent,transparent 33px,var(--border) 33px,var(--border) 34px); }
+.timeline-bar { position: absolute; top: 6px; height: 20px; border-radius: 5px; padding: 1px 7px; background: var(--accent); color: white; font-size: 11px; overflow: hidden; white-space: nowrap; cursor: grab; touch-action: none; }
+.timeline-bar.dragging { outline: 1px solid var(--accent); outline-offset: 2px; }
+.timeline-handle { position: absolute; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.timeline-today { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--accent); opacity: .5; pointer-events: none; z-index: 1; }
+.database-group td { background: var(--bg-secondary); font-size: 12px; font-weight: 500; padding: 6px 8px; }
+.aggregation-cell { display: block; width: 100%; min-height: 28px; padding: 4px 8px; text-align: right; font-size: 12px; color: var(--text-secondary); }
+.aggregation-cell.empty { opacity: 0; }
+.database-table tfoot:hover .aggregation-cell.empty { opacity: 1; }
+@media (min-width: 640px) { .database-gallery { grid-template-columns: repeat(3,minmax(0,1fr)); } }
+@media (min-width: 1024px) { .database-gallery { grid-template-columns: repeat(4,minmax(0,1fr)); } }
+
+.board-card.bc-gray, .gallery-card.bc-gray, .calendar-chip.bc-gray { background-color: var(--bgc-gray); }
+.board-card.bc-brown, .gallery-card.bc-brown, .calendar-chip.bc-brown { background-color: var(--bgc-brown); }
+.board-card.bc-orange, .gallery-card.bc-orange, .calendar-chip.bc-orange { background-color: var(--bgc-orange); }
+.board-card.bc-yellow, .gallery-card.bc-yellow, .calendar-chip.bc-yellow { background-color: var(--bgc-yellow); }
+.board-card.bc-green, .gallery-card.bc-green, .calendar-chip.bc-green { background-color: var(--bgc-green); }
+.board-card.bc-blue, .gallery-card.bc-blue, .calendar-chip.bc-blue { background-color: var(--bgc-blue); }
+.board-card.bc-purple, .gallery-card.bc-purple, .calendar-chip.bc-purple { background-color: var(--bgc-purple); }
+.board-card.bc-pink, .gallery-card.bc-pink, .calendar-chip.bc-pink { background-color: var(--bgc-pink); }
+.board-card.bc-red, .gallery-card.bc-red, .calendar-chip.bc-red { background-color: var(--bgc-red); }

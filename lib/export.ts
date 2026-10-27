@@ -1,4 +1,4 @@
-import type { Block, Page } from "@/lib/types";
+import type { Block, Database, DbProperty, DbRow, Page } from "@/lib/types";
 import { computeCell, displayValue } from "@/lib/dbCompute";
 import { safeHref } from "@/lib/utils";
 
@@ -82,4 +82,11 @@ export function downloadBlob(blob: Blob, name: string): void {
 }
 export function downloadMarkdown(page: Page, pages: Record<string, Page>): void {
   downloadBlob(new Blob([pageToMarkdown(page, pages)], { type: "text/markdown;charset=utf-8" }), safeName(page.title) + ".md");
+}
+function csvEscape(value: string): string { return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value; }
+export function rowsToCsv(properties: DbProperty[], rows: DbRow[], database: Database, pages: Record<string, Page>): string {
+  return [properties.map((p) => csvEscape(p.name)).join(","), ...rows.map((row) => properties.map((p) => csvEscape(displayValue(computeCell(row, p, database, pages), p, database, pages) || "")).join(","))].join("\r\n");
+}
+export function downloadCsv(title: string, properties: DbProperty[], rows: DbRow[], database: Database, pages: Record<string, Page>): void {
+  downloadBlob(new Blob(["\uFEFF", rowsToCsv(properties, rows, database, pages)], { type: "text/csv;charset=utf-8" }), safeName(title) + ".csv");
 }
