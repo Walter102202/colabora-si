@@ -16,6 +16,8 @@ import SettingsModal from "@/components/SettingsModal";
 import ShortcutsModal from "@/components/ShortcutsModal";
 import TrashModal from "@/components/TrashModal";
 import MovePageModal from "@/components/MovePageModal";
+import PeekPanel from "@/components/PeekPanel";
+import TemplateModal from "@/components/TemplateModal";
 
 const subscribeWidth = (callback: () => void) => { window.addEventListener("resize", callback); return () => window.removeEventListener("resize", callback); };
 export default function Shell({ children }: { children: React.ReactNode }) {
@@ -75,5 +77,7 @@ function HydratedShell({ children }: { children: React.ReactNode }) {
     {modal?.kind === "shortcuts" && <ShortcutsModal onClose={() => setModal(null)} />}
     {modal?.kind === "trash" && <TrashModal onClose={() => setModal(null)} />}
     {modal?.kind === "move" && modal.pageId && <MovePageModal pageId={modal.pageId} onClose={() => setModal(null)} />}
+    <PeekPanel />
+    {modal?.kind === "template" && <TemplateModal pageId={modal.pageId} onClose={() => setModal(null)} />}
   </div>;
 }

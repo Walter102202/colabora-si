@@ -9,7 +9,7 @@ import { runShortcut, shortcutFormat } from "@/lib/formatting";
 import { htmlToBlocks } from "@/lib/htmlPaste";
 import { cloneWithNewIds } from "@/lib/pageMutations";
 import { sanitizeHtml, stripHtml } from "@/lib/utils";
-import type { Block, BlockType } from "@/lib/types";
+import type { Block, BlockType, Page } from "@/lib/types";
 import type { EditableHandle } from "@/components/Editable";
 import BlockItem from "@/components/blocks/BlockItem";
 import BlockMenu from "@/components/blocks/BlockMenu";
@@ -18,13 +18,14 @@ import InlineToolbar from "@/components/InlineToolbar";
 
 export default function BlockEditor({ pageId }: { pageId: string }) {
   const page = useStore((s) => s.pages[pageId]), spellCheck = useStore((s) => s.settings?.spellcheck ?? true), actorId = useStore((s) => s.syncUserId ?? "local");
+  const pages = useStore((s) => s.pages);
   if (!page) return null;
-  return <EditorSurface key={pageId} pageId={pageId} blocks={page.blocks} locked={page.locked} spellCheck={spellCheck} actorId={actorId} onChange={(blocks) => useStore.getState().setBlocks(pageId, blocks)} />;
+  return <EditorSurface key={pageId} pageId={pageId} blocks={page.blocks} pages={pages} locked={page.locked} spellCheck={spellCheck} actorId={actorId} onChange={(blocks) => useStore.getState().setBlocks(pageId, blocks)} />;
 }
-interface SurfaceProps { pageId: string; blocks: Block[]; onChange: (blocks: Block[]) => void; locked?: boolean; spellCheck?: boolean; actorId?: string; nested?: boolean }
+interface SurfaceProps { pageId: string; blocks: Block[]; onChange: (blocks: Block[]) => void; locked?: boolean; spellCheck?: boolean; actorId?: string; nested?: boolean; pages?: Record<string, Page> }
 type SlashState = { id: string; query: string; index: number; rect: DOMRect };
 type Focus = { id: string; offset?: number; end?: boolean };
-export function EditorSurface({ pageId, blocks, onChange, locked = false, spellCheck = true, actorId = "local", nested = false }: SurfaceProps) {
+export function EditorSurface({ pageId, blocks, onChange, locked = false, spellCheck = true, actorId = "local", nested = false, pages = {} }: SurfaceProps) {
   const container = useRef<HTMLDivElement>(null), handles = useRef(new Map<string, EditableHandle>()), latest = useRef({ blocks, onChange, locked, actorId });
   const active = useRef<string | null>(null), pending = useRef<Focus | null>(null), slashRef = useRef<SlashState | null>(null);
   const [slash, setSlash] = useState<SlashState | null>(null), [menu, setMenu] = useState<{ id: string; rect: DOMRect } | null>(null);
@@ -210,7 +211,10 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
   };
   const menuBlock = menu ? blocks.find((b) => b.id === menu.id) : undefined;
   return <div ref={container} className="block-editor">
-    {visible.map((block) => <BlockItem key={block.id} block={block} ops={ops} ordinal={ordinals[block.id]} spellCheck={spellCheck} />)}
+    {visible.map((block) => <BlockItem key={block.id} block={block} ops={ops} ordinal={ordinals[block.id]} spellCheck={spellCheck} pages={pages} insertBlocks={(id, inserted) => {
+      const next = [...latest.current.blocks], index = next.findIndex((b) => b.id === id);
+      next.splice(index + 1, 0, ...cloneWithNewIds(inserted)); latest.current.blocks = next; latest.current.onChange(next);
+    }} />)}
     {!locked && <div className="h-24 cursor-text" aria-label="Add a block" onClick={() => { const last = blocks.at(-1); if (last?.type === "paragraph" && !last.html) handles.current.get(last.id)?.focus(); else if (last) ops.addBlockBelow(last.id); else { const next = createBlock(); pending.current = { id: next.id }; onChange([next]); } }} />}
     {slash && <SlashMenu query={slash.query} index={slash.index} rect={slash.rect} onIndex={(index) => { const next = { ...slash, index }; slashRef.current = next; setSlash(next); }} onSelect={selectSlash} />}
     {menu && menuBlock && <BlockMenu block={menuBlock} rect={menu.rect} onClose={() => setMenu(null)} onType={(type) => changeType(menu.id, type)} onUpdate={(patch) => ops.updateBlock(menu.id, patch)} onDuplicate={() => { const next = [...blocks], copy = cloneWithNewIds([menuBlock])[0]; next.splice(next.findIndex((b) => b.id === menu.id) + 1, 0, copy); pending.current = { id: copy.id, end: true }; onChange(next); }} onDelete={() => { const next = blocks.filter((b) => b.id !== menu.id); onChange(next.length ? next : [createBlock()]); }} />}
