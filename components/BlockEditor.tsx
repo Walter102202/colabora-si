@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
-import { createBlock } from "@/lib/factories";
+import { createBlock, newId } from "@/lib/factories";
 import { applyType, indentBlock, mergeWithPrevious, numbering, outdentBlock, splitBlock, visibleBlocks, type BlockOps } from "@/lib/blockOps";
 import { caretOffset, isCaretAtEnd, isCaretAtStart, setCaretAtOffset, splitAtCaret, textBeforeCaret } from "@/lib/caret";
 import { filterSlashItems, MARKDOWN_SHORTCUTS, NON_TEXT, type SlashItem } from "@/lib/blockMeta";
@@ -23,6 +23,8 @@ import { formatIsoDate } from "@/components/DatePickerCalendar";
 import { withViewTransition } from "@/lib/viewTransition";
 import { setLocalActiveBlock } from "@/lib/presence";
 import { DeletedBlockConflicts } from "@/components/blocks/BlockConflictNotice";
+import { blocksToMarkdown } from "@/lib/export";
+import { getCopiedSyncKey } from "@/lib/syncRef";
 
 export default function BlockEditor({ pageId }: { pageId: string }) {
   const page = useStore((s) => s.pages[pageId]), spellCheck = useStore((s) => s.settings?.spellcheck ?? true), actorId = useStore((s) => s.syncUserId ?? "local");
@@ -43,7 +45,17 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
   const [mention, setMention] = useState<SlashState | null>(null), mentionRef = useRef<SlashState | null>(null);
   const [datePick, setDatePick] = useState<SlashState | null>(null);
   const [dateChip, setDateChip] = useState<{ iso: string; rect: DOMRect } | null>(null), dateChipElement = useRef<HTMLElement | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]), selected = useRef<string[]>([]), selAnchor = useRef<string | null>(null), selHead = useRef<string | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null), [dropTarget, setDropTarget] = useState<BlockOps["dropTarget"]>(null), dragState = useRef<{ id: string | null; target: BlockOps["dropTarget"] }>({ id: null, target: null });
   const visible = useMemo(() => nested ? blocks : visibleBlocks(blocks), [blocks, nested]), ordinals = useMemo(() => numbering(blocks), [blocks]);
+  const selectBlocks = useCallback((ids: string[], anchor: string | null = ids[0] ?? null, head: string | null = ids.at(-1) ?? null) => {
+    selected.current = ids; setSelectedIds(ids); selAnchor.current = anchor; selHead.current = head;
+    if (ids.length) (document.activeElement as HTMLElement | null)?.blur();
+  }, []);
+  const selectRange = useCallback((anchor: string, head: string) => {
+    const ids = visibleBlocks(latest.current.blocks).map((b) => b.id), a = ids.indexOf(anchor), b = ids.indexOf(head);
+    if (a >= 0 && b >= 0) selectBlocks(ids.slice(Math.min(a, b), Math.max(a, b) + 1), anchor, head);
+  }, [selectBlocks]);
   useLayoutEffect(() => {
     latest.current = { blocks, onChange, locked, actorId, pages }; slashRef.current = slash; mentionRef.current = mention;
     if (pending.current) {
@@ -79,7 +91,7 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
     latest.current.onChange(latest.current.blocks.map((block) => block.id === state.id ? { ...block, html, attr: { by: "human", id: latest.current.actorId, at: Date.now() } } : block));
     setMention(null); mentionRef.current = null; setDatePick(null);
   }, []);
-  const ops = useMemo<BlockOps>(() => {
+  const ops = useMemo<BlockOps & { chooseSlash: (item: SlashItem) => void; convert: (id: string, type: BlockType) => void }>(() => {
     const list = () => latest.current.blocks;
     const commit = (next: Block[], focus?: Focus) => {
       if (latest.current.locked) return;
@@ -92,12 +104,26 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
       const index = list().findIndex((b) => b.id === id), next = createBlock("paragraph", { indent: list()[index]?.indent ?? 0 }), blocks = [...list()];
       blocks.splice(index + 1, 0, next); commit(blocks, { id: next.id });
     };
-    const convert = (id: string, type: BlockType, cleanHtml?: string) => {
+    const convert = (id: string, type: BlockType, cleanHtml?: string, item?: SlashItem) => {
+      if (nested && ["columns", "database"].includes(type)) return;
       const current = list().map((b) => b.id === id && cleanHtml !== undefined ? { ...b, html: cleanHtml } : b);
       const next = applyType(current, id, type), index = next.findIndex((b) => b.id === id);
+      if (index < 0) return;
+      const patch: Partial<Block> = {};
+      if (NON_TEXT.includes(type)) patch.html = cleanHtml === undefined && type === "code" ? next[index].html : "";
+      if (type === "page") patch.pageId = useStore.getState().createPage(pageId, { title: "Untitled", icon: "📄" });
+      if (type === "database") patch.pageId = item?.variant === "linked" ? undefined : useStore.getState().createDatabasePage(pageId);
+      if (type === "columns") patch.columns = [0, 1].map(() => ({ id: newId(), blocks: [createBlock()] }));
+      if (type === "table") { patch.table = [["", "", ""], ["", "", ""]]; patch.tableHeaderRow = true; }
+      if (type === "button") { patch.buttonLabel = "New button"; patch.buttonActions = []; }
+      if (type === "equation") patch.equation = "";
+      if (type === "synced") patch.syncedFrom = item?.variant === "syncedCopy" ? getCopiedSyncKey() ?? undefined : undefined;
+      if (type === "embed") { patch.embedProvider = item?.provider; patch.url = undefined; }
+      next[index] = { ...next[index], ...patch };
       handles.current.get(id)?.setHtml(next[index]?.html ?? "");
-      if (type === "divider") { const paragraph = createBlock("paragraph", { indent: next[index].indent }); next.splice(index + 1, 0, paragraph); commit(next, { id: paragraph.id }); }
-      else commit(next, { id, end: !nested });
+      if (["page", "divider", "toc", "breadcrumb", "button", "database", "table", "equation", "columns", "synced"].includes(type)) {
+        const paragraph = createBlock("paragraph", { indent: next[index].indent }); next.splice(index + 1, 0, paragraph); commit(next, type === "page" && !nested ? undefined : { id: paragraph.id });
+      } else commit(next, NON_TEXT.includes(type) ? undefined : { id, end: !nested });
       setSlash(null); slashRef.current = null;
     };
     const chooseSlash = (item: SlashItem) => {
@@ -105,9 +131,9 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
       if (!state) return;
       const handle = handles.current.get(state.id), block = list().find((b) => b.id === state.id);
       if (!handle?.el || !block) return;
-      const offset = caretOffset(handle.el), range = window.getSelection()?.getRangeAt(0).cloneRange();
-      if (range) { setCaretAtOffset(handle.el, Math.max(0, offset - state.query.length - 1)); const start = window.getSelection()!.getRangeAt(0); range.setStart(start.startContainer, start.startOffset); range.deleteContents(); }
-      convert(state.id, item.type, sanitizeHtml(handle.getHtml()));
+      const text = handle.getText(), start = text.lastIndexOf("/");
+      if (start >= 0) handle.el.textContent = text.slice(0, start) + text.slice(start + 1 + state.query.length);
+      convert(state.id, item.type, sanitizeHtml(handle.getHtml()), item);
     };
     const remove = (id: string) => {
       const index = list().findIndex((b) => b.id === id), next = list().filter((b) => b.id !== id);
@@ -116,7 +142,7 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
     };
     const duplicate = (id: string) => { const index = list().findIndex((b) => b.id === id); if (index < 0) return; const copy = cloneWithNewIds([list()[index]])[0], next = [...list()]; next.splice(index + 1, 0, copy); commit(next, { id: copy.id, end: true }); };
     return {
-      pageId, locked, numbering: ordinals, draggingId: null, dropTarget: null,
+      pageId, locked, numbering: ordinals, draggingId, dropTarget, convert, chooseSlash,
       register: (id, handle) => { if (handle) handles.current.set(id, handle); else handles.current.delete(id); },
       handleInput: (id, html) => {
         update(id, { html });
@@ -136,8 +162,8 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
         } else { mentionRef.current = null; setMention(null); }
         if (block.type === "paragraph" && handle.getText().trim() === "---") convert(id, "divider", "");
       },
-      saveBlock: (id, html) => { if (!latest.current.locked) update(id, { html }); },
-      setActive: (id) => { active.current = id; setLocalActiveBlock(pageId, id); if (slashRef.current?.id !== id) { slashRef.current = null; setSlash(null); } if (mentionRef.current?.id !== id) { mentionRef.current = null; setMention(null); } },
+      saveBlock: (id, html) => { if (!latest.current.locked && list().find((b) => b.id === id)?.html !== html) update(id, { html }); if (nested) { slashRef.current = null; setSlash(null); } },
+      setActive: (id) => { active.current = id; if (!nested) { setLocalActiveBlock(pageId, id); selectBlocks([]); } if (slashRef.current?.id !== id) { slashRef.current = null; setSlash(null); } if (mentionRef.current?.id !== id) { mentionRef.current = null; setMention(null); } },
       toggleChecked: (id) => { const block = list().find((b) => b.id === id); if (block) update(id, { checked: !block.checked }); },
       toggleCollapsed: (id) => {
         const next = list().map((b) => b.id === id ? { ...b, collapsed: !b.collapsed } : b);
@@ -146,18 +172,38 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
       updateBlock: update,
       openBlockMenu: (id, anchor) => setMenu({ id, rect: anchor.getBoundingClientRect() }),
       openComments: (id, anchor) => setComments({ id, rect: anchor.getBoundingClientRect() }),
-      addBlockBelow: add, onBlockMouseDown: () => {}, onDragStart: () => {}, onDragOverBlock: () => {}, onDrop: () => {},
+      addBlockBelow: add,
+      onBlockMouseDown: (id, event) => {
+        if (nested || latest.current.locked || (event.target as HTMLElement).closest<HTMLElement>("[data-block-id]")?.dataset.blockId !== id) return;
+        if (event.shiftKey) { event.preventDefault(); selectRange(selAnchor.current ?? active.current ?? id, id); } else selectBlocks([]);
+      },
+      onDragStart: (id) => { dragState.current = { id, target: null }; setDraggingId(id); setDropTarget(null); setSelection(null); },
+      onDragOverBlock: (id, event) => {
+        if (nested) event.stopPropagation();
+        if (!dragState.current.id || dragState.current.id === id) return;
+        event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(), target = { id, position: event.clientY < rect.top + rect.height / 2 ? "above" as const : "below" as const };
+        dragState.current.target = target; setDropTarget(target);
+      },
+      onDrop: () => {
+        const { id, target } = dragState.current;
+        if (id && target) { const moved = list().find((b) => b.id === id), next = list().filter((b) => b.id !== id), index = next.findIndex((b) => b.id === target.id); if (moved && index >= 0) { next.splice(index + (target.position === "below" ? 1 : 0), 0, moved); commit(next); } }
+        dragState.current = { id: null, target: null }; setDraggingId(null); setDropTarget(null);
+      },
       handleKeyDown: (id, event) => {
         if (event.nativeEvent.isComposing || latest.current.locked) return;
         const handle = handles.current.get(id), block = list().find((b) => b.id === id);
         if (!handle?.el || !block) return;
         const mod = event.ctrlKey || event.metaKey;
-        if (mod && event.shiftKey && ["ArrowUp", "ArrowDown"].includes(event.key)) {
+        if (!nested && mod && event.key.toLowerCase() === "a") {
+          const selection = window.getSelection();
+          if (!handle.getText() || selection?.toString() === handle.getText()) { event.preventDefault(); selectBlocks(visibleBlocks(list()).map((b) => b.id)); return; }
+        }
+        if (!nested && mod && event.shiftKey && ["ArrowUp", "ArrowDown"].includes(event.key)) {
           event.preventDefault(); const next = [...list()], index = next.findIndex((b) => b.id === id), target = index + (event.key === "ArrowUp" ? -1 : 1);
           if (target >= 0 && target < next.length) { next.splice(target, 0, next.splice(index, 1)[0]); commit(next, { id, offset: caretOffset(handle.el) }); } return;
         }
-        if (mod && event.key.toLowerCase() === "d") { event.preventDefault(); duplicate(id); return; }
-        if (mod && event.shiftKey && ["Backspace", "Delete"].includes(event.key)) { event.preventDefault(); remove(id); return; }
+        if (!nested && mod && event.key.toLowerCase() === "d") { event.preventDefault(); duplicate(id); return; }
+        if (!nested && mod && event.shiftKey && ["Backspace", "Delete"].includes(event.key)) { event.preventDefault(); remove(id); return; }
         const format = shortcutFormat(event);
         if (format) { event.preventDefault(); event.stopPropagation(); runShortcut(format); if (format !== "link") update(id, { html: handle.getHtml() }); return; }
         const mentionState = mentionRef.current;
@@ -173,7 +219,7 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
         }
         const state = slashRef.current;
         if (state?.id === id && ["ArrowUp", "ArrowDown", "Enter", "Tab", "Escape"].includes(event.key)) {
-          event.preventDefault(); const items = filterSlashItems(state.query);
+          event.preventDefault(); const items = filterSlashItems(state.query, nested);
           if (event.key === "Escape") { slashRef.current = null; setSlash(null); }
           else if (event.key === "ArrowUp" || event.key === "ArrowDown") { const next = { ...state, index: (state.index + (event.key === "ArrowDown" ? 1 : Math.max(1, items.length) - 1)) % Math.max(1, items.length) }; slashRef.current = next; setSlash(next); }
           else if (items[state.index]) chooseSlash(items[state.index]);
@@ -181,7 +227,7 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
         }
         if (event.key === " " && block.type === "paragraph") {
           const token = textBeforeCaret(handle.el), shortcut = MARKDOWN_SHORTCUTS.find((s) => s.match.test(token));
-          if (shortcut) { event.preventDefault(); handle.el.textContent = handle.getText().slice(token.length); convert(id, shortcut.type, sanitizeHtml(handle.getHtml())); return; }
+          if (shortcut && (!nested || !["+", "[ ]", "```"].includes(token))) { event.preventDefault(); handle.el.textContent = handle.getText().slice(token.length); convert(id, shortcut.type, sanitizeHtml(handle.getHtml())); return; }
         }
         if (event.key === "Enter") {
           event.preventDefault();
@@ -200,12 +246,12 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
           if (following) { event.preventDefault(); const next = list().filter((b) => b.id !== following.id).map((b) => b.id === id && !NON_TEXT.includes(following.type) ? { ...b, html: b.html + following.html } : b); const offset = caretOffset(handle.el); handle.setHtml(next[index].html); commit(next, { id, offset }); } return;
         }
         if (event.key === "Tab") { event.preventDefault(); commit((event.shiftKey ? outdentBlock : indentBlock)(list(), id), { id, offset: caretOffset(handle.el) }); return; }
-        const back = ["ArrowUp", "ArrowLeft"].includes(event.key), forward = ["ArrowDown", "ArrowRight"].includes(event.key);
+        const back = (nested ? ["ArrowUp"] : ["ArrowUp", "ArrowLeft"]).includes(event.key), forward = (nested ? ["ArrowDown"] : ["ArrowDown", "ArrowRight"]).includes(event.key);
         if ((back && isCaretAtStart(handle.el)) || (forward && isCaretAtEnd(handle.el))) {
           const vis = (nested ? list() : visibleBlocks(list())).filter((b) => handles.current.has(b.id)), index = vis.findIndex((b) => b.id === id), target = vis[index + (back ? -1 : 1)];
           if (target) { event.preventDefault(); handles.current.get(target.id)?.focus(back); }
         }
-        if (event.key === "Escape") { event.preventDefault(); handle.el.blur(); setSelection(null); }
+        if (!nested && event.key === "Escape") { event.preventDefault(); selectBlocks([id]); setSelection(null); }
       },
       handlePaste: (id, event) => {
         if (latest.current.locked) return;
@@ -235,7 +281,43 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
         commit(next, { id: placed.at(-1)?.id ?? id, end: true });
       },
     };
-  }, [pageId, locked, ordinals, nested, selectMention]);
+  }, [pageId, locked, ordinals, nested, selectMention, selectBlocks, selectRange, draggingId, dropTarget]);
+  const deleteSelected = useCallback(() => {
+    if (latest.current.locked) return;
+    const list = latest.current.blocks, first = list.findIndex((b) => selected.current.includes(b.id));
+    const remaining = list.filter((b) => !selected.current.includes(b.id));
+    if (!remaining.length) remaining.push(createBlock());
+    const previous = list[first - 1], target = previous && remaining.includes(previous) ? previous : remaining[0];
+    if (!NON_TEXT.includes(target.type)) pending.current = { id: target.id, end: target === previous };
+    latest.current.onChange(remaining); selectBlocks([]);
+  }, [selectBlocks]);
+  const duplicateSelected = useCallback(() => {
+    if (latest.current.locked) return;
+    const list = latest.current.blocks, copies = cloneWithNewIds(list.filter((b) => selected.current.includes(b.id))), last = list.findLastIndex((b) => selected.current.includes(b.id));
+    const next = [...list]; next.splice(last + 1, 0, ...copies); latest.current.onChange(next); selectBlocks(copies.map((b) => b.id));
+  }, [selectBlocks]);
+  const copySelected = useCallback((cut: boolean) => {
+    const markdown = blocksToMarkdown(latest.current.blocks.filter((b) => selected.current.includes(b.id)), latest.current.pages);
+    void navigator.clipboard.writeText(markdown).then(() => { if (cut) deleteSelected(); });
+  }, [deleteSelected]);
+  useEffect(() => {
+    if (nested || !selectedIds.length) return;
+    const keydown = (event: KeyboardEvent) => {
+      const mod = event.ctrlKey || event.metaKey, key = event.key.toLowerCase();
+      if (!["escape", "enter", "arrowup", "arrowdown", "backspace", "delete"].includes(key) && !(mod && ["a", "d", "c", "x"].includes(key))) return;
+      event.preventDefault(); event.stopPropagation();
+      const ids = visibleBlocks(latest.current.blocks).map((b) => b.id), head = selHead.current ?? selected.current.at(-1)!;
+      if (key === "escape") selectBlocks([]);
+      else if (key === "enter") { selectBlocks([]); handles.current.get(head)?.focus(true); }
+      else if (mod && key === "a") selectBlocks(ids);
+      else if (mod && key === "c") copySelected(false);
+      else if (mod && key === "x" && !latest.current.locked) copySelected(true);
+      else if (mod && key === "d") duplicateSelected();
+      else if (key === "delete" || key === "backspace") deleteSelected();
+      else if (key === "arrowup" || key === "arrowdown") { const next = ids[ids.indexOf(head) + (key === "arrowdown" ? 1 : -1)]; if (next) { if (event.shiftKey) selectRange(selAnchor.current ?? next, next); else selectBlocks([next]); } }
+    };
+    window.addEventListener("keydown", keydown, true); return () => window.removeEventListener("keydown", keydown, true);
+  }, [nested, selectedIds.length, selectBlocks, selectRange, copySelected, deleteSelected, duplicateSelected]);
   useEffect(() => {
     if (nested) return;
     const capture = (link = false) => {
@@ -248,38 +330,22 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
     document.addEventListener("selectionchange", changed); window.addEventListener("colabora-link-input", link);
     return () => { document.removeEventListener("selectionchange", changed); window.removeEventListener("colabora-link-input", link); };
   }, [nested]);
-  const changeType = (id: string, type: BlockType) => {
-    const next = applyType(latest.current.blocks, id, type), index = next.findIndex((b) => b.id === id);
-    handles.current.get(id)?.setHtml(next[index]?.html ?? "");
-    pending.current = { id, end: true }; latest.current.onChange(next);
-  };
-  const selectSlash = (item: SlashItem) => {
-    if (!slash) return;
-    const handle = handles.current.get(slash.id);
-    if (handle?.el) {
-      const offset = caretOffset(handle.el), selection = window.getSelection(), range = selection?.getRangeAt(0).cloneRange();
-      if (range) { setCaretAtOffset(handle.el, Math.max(0, offset - slash.query.length - 1)); const start = selection!.getRangeAt(0); range.setStart(start.startContainer, start.startOffset); range.deleteContents(); }
-      const current = latest.current.blocks.map((b) => b.id === slash.id ? { ...b, html: sanitizeHtml(handle.getHtml()) } : b), next = applyType(current, slash.id, item.type);
-      handle.setHtml(next.find((b) => b.id === slash.id)?.html ?? "");
-      if (item.type === "divider") { const paragraph = createBlock(); next.splice(next.findIndex((b) => b.id === slash.id) + 1, 0, paragraph); pending.current = { id: paragraph.id }; }
-      else pending.current = { id: slash.id, end: true };
-      latest.current.onChange(next);
-    }
-    setSlash(null); slashRef.current = null;
-  };
+  const changeType = (id: string, type: BlockType) => ops.convert(id, type);
+  const selectSlash = (item: SlashItem) => ops.chooseSlash(item);
   const menuBlock = menu ? blocks.find((b) => b.id === menu.id) : undefined;
-  return <div ref={container} className="block-editor" onClickCapture={(event) => {
+  return <div ref={container} className={`block-editor ${nested ? "nested-editor" : ""}`} onMouseDown={(event) => { if (!event.shiftKey && selected.current.length) selectBlocks([]); }} onClickCapture={(event) => {
     const target = event.target as HTMLElement, link = target.closest<HTMLAnchorElement>("a.mention[data-page]"), chip = target.closest<HTMLElement>("span.date-mention[data-date]");
     if (link?.dataset.page) { event.preventDefault(); withViewTransition(() => router.push("/p/" + link.dataset.page)); }
     if (chip && !locked) { event.preventDefault(); dateChipElement.current = chip; setDateChip({ iso: chip.dataset.date!, rect: chip.getBoundingClientRect() }); }
   }}>
-    {visible.map((block) => <BlockItem key={block.id} block={block} ops={ops} ordinal={ordinals[block.id]} spellCheck={spellCheck} pages={pages} commentCount={pages[pageId]?.comments?.filter((c) => (c.anchorId ?? c.blockId) === block.id && !c.resolved).length ?? 0} insertBlocks={(id, inserted) => {
+    {visible.map((block) => <BlockItem key={block.id} block={block} ops={ops} selected={selectedIds.includes(block.id)} ordinal={ordinals[block.id]} spellCheck={spellCheck} pages={pages} commentCount={pages[pageId]?.comments?.filter((c) => (c.anchorId ?? c.blockId) === block.id && !c.resolved).length ?? 0} insertBlocks={(id, inserted) => {
       const next = [...latest.current.blocks], index = next.findIndex((b) => b.id === id);
       next.splice(index + 1, 0, ...cloneWithNewIds(inserted)); latest.current.blocks = next; latest.current.onChange(next);
     }} />)}
     {!locked && <div className="h-24 cursor-text" aria-label="Add a block" onClick={() => { const last = blocks.at(-1); if (last?.type === "paragraph" && !last.html) handles.current.get(last.id)?.focus(); else if (last) ops.addBlockBelow(last.id); else { const next = createBlock(); pending.current = { id: next.id }; onChange([next]); } }} />}
-    {slash && <SlashMenu query={slash.query} index={slash.index} rect={slash.rect} onIndex={(index) => { const next = { ...slash, index }; slashRef.current = next; setSlash(next); }} onSelect={selectSlash} />}
+    {slash && <SlashMenu nested={nested} query={slash.query} index={slash.index} rect={slash.rect} onIndex={(index) => { const next = { ...slash, index }; slashRef.current = next; setSlash(next); }} onSelect={selectSlash} />}
     {menu && menuBlock && <BlockMenu block={menuBlock} rect={menu.rect} onClose={() => setMenu(null)} onType={(type) => changeType(menu.id, type)} onUpdate={(patch) => ops.updateBlock(menu.id, patch)} onComment={() => { setComments(menu); setMenu(null); }} onDuplicate={() => { const next = [...blocks], copy = cloneWithNewIds([menuBlock])[0]; next.splice(next.findIndex((b) => b.id === menu.id) + 1, 0, copy); pending.current = { id: copy.id, end: true }; onChange(next); }} onDelete={() => { const next = blocks.filter((b) => b.id !== menu.id); onChange(next.length ? next : [createBlock()]); }} />}
+    {selectedIds.length > 1 && <div className="block-selection-toolbar" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}><span>{selectedIds.length} selected</span>{!locked && <button onClick={duplicateSelected}>Duplicate</button>}<button onClick={() => copySelected(false)}>Copy</button>{!locked && <button className="danger" onClick={deleteSelected}>Delete</button>}<button aria-label="Clear selection" onClick={() => selectBlocks([])}>×</button></div>}
     {selection && !slash && !mention && <InlineToolbar key={selection.link ? "link" : "format"} range={selection.range} rect={selection.rect} initialLink={selection.link} locked={locked} onClose={() => setSelection(null)} onTurnInto={(type) => { if (active.current) changeType(active.current, type); }} onComment={() => { if (active.current) setComments({ id: active.current, rect: selection.rect }); setSelection(null); }} onChange={() => { for (const [id, handle] of handles.current) if (handle.el?.contains(selection.range.commonAncestorContainer)) ops.saveBlock(id, handle.getHtml()); }} />}
     {comments && <BlockCommentsPopover pageId={pageId} blockId={comments.id} rect={comments.rect} onClose={() => setComments(null)} />}
     {mention && <MentionMenu items={filteredMentions(pages, pageId, mention.query)} index={mention.index} rect={mention.rect} onIndex={(index) => { const next = { ...mention, index }; mentionRef.current = next; setMention(next); }} onSelect={selectMention} />}
