@@ -8,17 +8,20 @@ import { DEFAULT_SETTINGS } from "@/lib/factories";
 import { applyThemeMode, getThemeMode } from "@/lib/useTheme";
 import { downloadBlob } from "@/lib/export";
 import type { WorkspaceState } from "@/lib/types";
+import { useAuth } from "@/lib/auth";
+import { isSupabaseConfigured } from "@/lib/supabase";
 export function workspaceExport() {
   const s = useStore.getState();
   return { app: "colabora-si", version: 1, exportedAt: new Date().toISOString(), pages: s.pages, rootOrder: s.rootOrder, expanded: s.expanded, syncedBlocks: s.syncedBlocks ?? {}, reminders: s.reminders ?? [], settings: s.settings };
 }
 export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const settings = useStore((s) => s.settings) ?? DEFAULT_SETTINGS, pages = useStore((s) => s.pages), router = useRouter();
+  const { user } = useAuth();
   const [tab, setTab] = useState("Appearance"), [theme, setTheme] = useState(getThemeMode), [error, setError] = useState("");
   const [storage] = useState(() => { let bytes = 0; for (let i = 0; i < localStorage.length; i++) { const key = localStorage.key(i)!; bytes += (key.length + (localStorage.getItem(key)?.length ?? 0)) * 2; } return `${(bytes / 1024).toFixed(1)} KB in localStorage`; });
   const update = useStore((s) => s.updateSettings), trash = Object.values(pages).filter((p) => p.isDeleted).length;
   return <Modal title="Settings" onClose={onClose} wide><div className="settings-layout"><nav aria-label="Settings sections">{["Account", "Members", "Agents", "Appearance", "Editor", "Data", "About"].map((name) => <button className={tab === name ? "active" : ""} key={name} onClick={() => setTab(name)}>{name}</button>)}</nav><div className="settings-content"><h3 className="mb-5 font-semibold">{tab}</h3>
-    {tab === "Account" && <p className="text-sm text-text-secondary">Sync isn&apos;t configured for this build. The app keeps working fully offline — everything is stored in your browser.</p>}
+    {tab === "Account" && <div className="space-y-4"><p className="text-sm text-text-secondary">{!isSupabaseConfigured() ? "Sync isn't configured for this build. The app keeps working fully offline — everything is stored in your browser." : user ? user.email : "Log in to sync your workspace across devices."}</p><button className="action-button" onClick={() => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind: "auth" } }))}>{user ? "Manage account" : "Log in"}</button></div>}
     {tab === "Members" && <p className="text-sm text-text-secondary">Sign in to invite people</p>}{tab === "Agents" && <AgentsSettingsTab />}
     {tab === "Appearance" && <><fieldset><legend>Theme</legend><p>How the app looks on this device.</p><div className="segmented">{(["light", "dark", "system"] as const).map((mode) => <button key={mode} aria-pressed={theme === mode} onClick={() => { applyThemeMode(mode); setTheme(mode); update({ theme: mode }); }}>{mode[0].toUpperCase() + mode.slice(1)}</button>)}</div></fieldset>
       <fieldset><legend>Default page font</legend><p>Applied to newly created pages.</p><div className="segmented">{(["default", "serif", "mono"] as const).map((font) => <button key={font} className={`font-page-${font}`} aria-pressed={settings.defaultFont === font} onClick={() => update({ defaultFont: font })}>{font[0].toUpperCase() + font.slice(1)}</button>)}</div></fieldset>

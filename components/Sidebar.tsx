@@ -9,10 +9,12 @@ import Emoji from "@/components/Emoji";
 import SidebarItem from "@/components/SidebarItem";
 import SyncStatus from "@/components/SyncStatus";
 import Tooltip from "@/components/Tooltip";
+import { useAuth } from "@/lib/auth";
 
 export default function Sidebar({ collapse }: { collapse: () => void }) {
   const pages = useStore((s) => s.pages), rootOrder = useStore((s) => s.rootOrder), router = useRouter();
   const { theme, toggle } = useTheme();
+  const { user } = useAuth();
   const [workspaceMenu, setWorkspaceMenu] = useState(false), [addMenu, setAddMenu] = useState(false);
   const openModal = (kind: string) => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind } }));
   const open = (id: string) => { setAddMenu(false); withViewTransition(() => router.push(`/p/${id}`)); };
@@ -43,6 +45,6 @@ export default function Sidebar({ collapse }: { collapse: () => void }) {
       {rootOrder.filter((id) => pages[id] && !pages[id].isDeleted).map((id) => <SidebarItem key={id} pageId={id} />)}
       {!rootOrder.some((id) => pages[id] && !pages[id].isDeleted) && <div className="empty-state text-xs">No pages yet<button onClick={() => open(useStore.getState().createPage())}>New page</button></div>}
     </div>
-    <div className="border-t border-border px-2 py-2"><div className="px-2 py-2"><SyncStatus /></div><button className="sidebar-row w-full px-2" onClick={() => openModal("trash")}><Trash2 size={16} />Trash</button></div>
+    <div className="border-t border-border px-2 py-2"><div className="px-2 py-2"><SyncStatus /></div><button className="sidebar-row w-full px-2" onClick={() => openModal("auth")}><span className="workspace-avatar h-5 w-5 text-xs">{user ? (user.email ?? "U")[0].toUpperCase() : "C"}</span><span className="truncate">{user?.email ?? "Log in"}</span></button><button className="sidebar-row w-full px-2" onClick={() => openModal("trash")}><Trash2 size={16} />Trash</button></div>
   </aside>;
 }

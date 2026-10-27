@@ -18,6 +18,8 @@ import TrashModal from "@/components/TrashModal";
 import MovePageModal from "@/components/MovePageModal";
 import PeekPanel from "@/components/PeekPanel";
 import TemplateModal from "@/components/TemplateModal";
+import AuthModal from "@/components/AuthModal";
+import { initAuth } from "@/lib/auth";
 
 const subscribeWidth = (callback: () => void) => { window.addEventListener("resize", callback); return () => window.removeEventListener("resize", callback); };
 export default function Shell({ children }: { children: React.ReactNode }) {
@@ -34,7 +36,7 @@ function HydratedShell({ children }: { children: React.ReactNode }) {
   const pageId = /^\/p\/([^/]+)/.exec(pathname)?.[1], page = pageId ? pages[pageId] : undefined;
   const crumbs = pageId ? getBreadcrumb(pages, pageId) : [];
   const request = (kind: string, pageId?: string) => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind, pageId } }));
-  useEffect(() => { initHistory(); }, []);
+  useEffect(() => { initHistory(); initAuth(); }, []);
   useEffect(() => {
     const handler = (event: Event) => setModal((event as CustomEvent<{ kind: string; pageId?: string }>).detail);
     window.addEventListener("colabora-modal", handler);
@@ -74,6 +76,7 @@ function HydratedShell({ children }: { children: React.ReactNode }) {
     </header><main className="min-h-0 flex-1">{children}</main></div>
     {modal?.kind === "search" && <SearchModal onClose={() => setModal(null)} />}
     {modal?.kind === "settings" && <SettingsModal onClose={() => setModal(null)} />}
+    {modal?.kind === "auth" && <AuthModal onClose={() => setModal(null)} />}
     {modal?.kind === "shortcuts" && <ShortcutsModal onClose={() => setModal(null)} />}
     {modal?.kind === "trash" && <TrashModal onClose={() => setModal(null)} />}
     {modal?.kind === "move" && modal.pageId && <MovePageModal pageId={modal.pageId} onClose={() => setModal(null)} />}
