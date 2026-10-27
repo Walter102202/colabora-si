@@ -72,3 +72,25 @@ it("A-5-124 absent color rules", () => expect(rowColorKey(rows[0], view(), datab
 it("A-5-125 first matching color", () => expect(rowColorKey(rows[0], view({ colorRules: [{ id: "1", propertyId: "status", operator: "is", value: "todo", color: "red" }, { id: "2", propertyId: "status", operator: "is", value: "done", color: "green" }, { id: "3", propertyId: "status", operator: "isNotEmpty", color: "blue" }] }), database, {})).toBe("green"));
 it("A-5-126 inactive colors are skipped", () => expect(rowColorKey(rows[0], view({ colorRules: [{ id: "1", propertyId: "status", operator: "is", value: "", color: "red" }, { id: "2", propertyId: "status", operator: "is", value: "done", color: "green" }] }), database, {})).toBe("green"));
 it("A-5-127 empty color rules", () => { const v = view({ colorRules: [{ id: "1", propertyId: "status", operator: "isEmpty", color: "gray" }] }); expect(rowColorKey(row(), v, database, {})).toBe("gray"); expect(rowColorKey(rows[0], v, database, {})).toBeNull(); });
+
+
+import { databaseTaskValues } from "@/lib/databaseTaskValues";
+import { groupRows } from "@/lib/dbCompute";
+it("agent views filter and group authoritative task states without changing stored cells", () => {
+  const status = prop({ id: "state", name: "Status", type: "agentStatus" }), worker = prop({ id: "worker", type: "agentDelegate" });
+  const source = db([status, worker], [row({ state: "done" }, "queued-page"), row({}, "review-page"), row({}, "plain-page")]);
+  const query = databaseTaskValues(source, {
+    queued: { row_page_id: "queued-page", state: "queued", delegate_agent_id: "worker", updated_at: "2026-10-27T00:00:00Z" },
+    old: { row_page_id: "review-page", state: "done", delegate_agent_id: "old-worker", updated_at: "2026-10-27T01:00:00Z" },
+    review: { row_page_id: "review-page", state: "ready_for_review", delegate_agent_id: "worker", updated_at: "2026-10-27T00:00:00Z" },
+  });
+  const waiting = view({ filters: [{ id: "f", propertyId: "state", operator: "is", value: "ready_for_review" }] });
+  expect(filterRows(query.rows, waiting, query, {}).map((r) => r.pageId)).toEqual(["review-page"]);
+  const groups = groupRows(query.rows, view({ type: "board", groupBy: "state" }), query, {});
+  expect(groups.find((g) => g.key === "queued")?.rows[0].pageId).toBe("queued-page");
+  expect(groups.find((g) => g.key === "ready_for_review")?.rows[0].pageId).toBe("review-page");
+  expect(groups.find((g) => g.key === null)?.rows[0].pageId).toBe("plain-page");
+  expect(query.rows[1].cells.worker).toBe("worker");
+  expect(source.properties[0].type).toBe("agentStatus");
+  expect(source.rows[0].cells).toEqual({ state: "done" });
+});

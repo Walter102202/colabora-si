@@ -3,7 +3,7 @@ import type { Database, DbProperty, DbRow, DbView, Page, PropertyType } from "@/
 import { computeCell, displayValue } from "@/lib/dbCompute";
 import type { DbOps } from "@/lib/dbOps";
 import { AgentPropertyCell } from "@/components/agents/AgentPropertyCell";
-export interface ViewProps { ops: DbOps; database: Database; view: DbView; rows: DbRow[]; pages: Record<string, Page>; canOpenRow?: (row: DbRow) => boolean }
+export interface ViewProps { ops: DbOps; database: Database; queryDatabase?: Database; view: DbView; rows: DbRow[]; pages: Record<string, Page>; canOpenRow?: (row: DbRow) => boolean }
 export const TYPE_LABELS: Record<PropertyType, string> = {
   text: "Text", number: "Number", select: "Select", multiSelect: "Multi-select", status: "Status", date: "Date", checkbox: "Checkbox", url: "URL", email: "Email", phone: "Phone", person: "Person", files: "Files & media", createdTime: "Created time", lastEditedTime: "Last edited time", relation: "Relation", rollup: "Rollup", formula: "Formula", id: "ID", createdBy: "Created by", lastEditedBy: "Last edited by", agentStatus: "Agent status", agentDelegate: "Agent delegate", button: "Button",
 };
