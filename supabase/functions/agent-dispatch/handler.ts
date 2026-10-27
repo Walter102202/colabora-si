@@ -2,6 +2,7 @@
 // Pull agents get nothing pushed (they fetch with wait_for_my_tasks); webhook agents get a signed CloudEvent.
 import { jsonResponse, oauthError } from '../_shared/errors.ts';
 import { hmacSha256Hex, timingSafeEqual } from '../_shared/hmac.ts';
+import { webhookUrlError } from '../_shared/webhookUrl.ts';
 
 export interface DispatchEvent {
   event_id: string;
@@ -104,16 +105,18 @@ async function deliverWebhook(m: DispatchMessage, deps: DispatchDeps): Promise<A
   const conn = m.agent.connection ?? {};
   const url = typeof conn.webhook_url === 'string' ? conn.webhook_url : '';
   const secret = m.secrets.webhook_secret ?? (typeof conn.webhook_secret === 'string' ? conn.webhook_secret : '');
-  if (!/^https?:\/\//i.test(url)) return { ...base, ok: false, error: 'webhook_url_missing', retryable: false };
+  if (!url) return { ...base, ok: false, error: 'webhook_url_missing', retryable: false };
+  const urlError = webhookUrlError(url);
+  if (urlError) return { ...base, ok: false, error: urlError, retryable: false };
   if (!secret) return { ...base, ok: false, error: 'webhook_secret_missing', retryable: false };
 
   const body = JSON.stringify(cloudEvent(m.event, deps.mcpUrl));
   const t = Math.floor(deps.now() / 1000);
   const signatures = [`t=${t}`, `v1=${await hmacSha256Hex(secret, `${t}.${body}`)}`];
   if (m.secrets.webhook_secret_prev) signatures.push(`v1prev=${await hmacSha256Hex(m.secrets.webhook_secret_prev, `${t}.${body}`)}`);
+  // Receivers verify X-Agent-Signature over `${t}.${body}`, reject stale t and deduplicate on X-Agent-Event-Id.
   const headers = {
     'Content-Type': 'application/cloudevents+json',
-    'X-Signature': `sha256=${await hmacSha256Hex(secret, body)}`,
     'X-Agent-Signature': signatures.join(','),
     'X-Agent-Event-Id': m.event.event_id,
     'X-Agent-Event-Type': m.event.type,
@@ -124,13 +127,16 @@ async function deliverWebhook(m: DispatchMessage, deps: DispatchDeps): Promise<A
       method: 'POST',
       headers,
       body,
+      redirect: 'manual',
       signal: AbortSignal.timeout(deps.webhookTimeoutMs ?? 10_000),
     });
     await res.body?.cancel();
+    if (res.status >= 300 && res.status < 400) return { ...base, ok: false, error: `http_${res.status}_redirect_refused`, retryable: false };
     const outcome = classify(res.status);
     return outcome.ok ? { ...base, ok: true } : { ...base, ok: false, error: `http_${res.status}`, retryable: outcome.retryable };
   } catch (err) {
-    return { ...base, ok: false, error: `network: ${err instanceof Error ? err.message : String(err)}`.slice(0, 280), retryable: true };
+    const kind = err instanceof Error && err.name === 'TimeoutError' ? 'timeout' : 'unreachable';
+    return { ...base, ok: false, error: `network: ${kind}`, retryable: true };
   }
 }
 
