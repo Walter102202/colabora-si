@@ -1,0 +1,18 @@
+import { getSupabase } from "@/lib/supabase";
+export type PushState = "unsupported" | "denied" | "signed-out" | "off" | "on";
+const SW_PATH = "/sw.js", VAPID_PUBLIC = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+export function isPushSupported(): boolean { return typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window && !!VAPID_PUBLIC; }
+function b64urlToBytes(value: string): Uint8Array<ArrayBuffer> { const base = value.replace(/-/g, "+").replace(/_/g, "/"), binary = atob(base.padEnd(Math.ceil(base.length / 4) * 4, "=")); return Uint8Array.from(binary, (c) => c.charCodeAt(0)); }
+function b64url(buffer: ArrayBuffer | null): string { return buffer ? btoa(String.fromCharCode(...new Uint8Array(buffer))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") : ""; }
+export async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> { if (!isPushSupported()) return null; try { return await navigator.serviceWorker.register(SW_PATH); } catch { return null; } }
+async function saveSubscription(sub: PushSubscription): Promise<boolean> { const sb = getSupabase(); if (!sb) return false; const { data: { user } } = await sb.auth.getUser(); if (!user) return false; const { error } = await sb.from("push_subscriptions").upsert({ endpoint: sub.endpoint, user_id: user.id, p256dh: b64url(sub.getKey("p256dh")), auth: b64url(sub.getKey("auth")) }); return !error; }
+export async function getPushState(): Promise<PushState> { if (!isPushSupported()) return "unsupported"; if (Notification.permission === "denied") return "denied"; const sb = getSupabase(); if (!sb) return "unsupported"; const { data: { user } } = await sb.auth.getUser(); if (!user) return "signed-out"; const registration = await navigator.serviceWorker.getRegistration(SW_PATH); return await registration?.pushManager.getSubscription() ? "on" : "off"; }
+export async function enablePush(): Promise<PushState> {
+  if (!isPushSupported()) return "unsupported"; const sb = getSupabase(); if (!sb) return "unsupported"; if (!(await sb.auth.getUser()).data.user) return "signed-out";
+  if (Notification.permission === "default") await Notification.requestPermission(); if (Notification.permission !== "granted") return Notification.permission === "denied" ? "denied" : "off";
+  try { if (!(await registerServiceWorker())) return "off"; const reg = await navigator.serviceWorker.ready, sub = await reg.pushManager.getSubscription() ?? await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(VAPID_PUBLIC!) }); if (!(await saveSubscription(sub))) { await sub.unsubscribe(); return "off"; } return "on"; } catch { return "off"; }
+}
+export async function disablePush(): Promise<PushState> { if (!isPushSupported()) return "unsupported"; const reg = await navigator.serviceWorker.getRegistration(SW_PATH), sub = await reg?.pushManager.getSubscription(); if (sub) { const sb = getSupabase(); if (sb) await sb.from("push_subscriptions").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); } return "off"; }
+export async function cleanupPushOnSignOut(): Promise<void> { try { await disablePush(); } catch {} }
+export async function syncPushSubscription(): Promise<void> { if (!isPushSupported() || Notification.permission !== "granted") return; const reg = await navigator.serviceWorker.getRegistration(SW_PATH), sub = await reg?.pushManager.getSubscription(); if (sub) await saveSubscription(sub); }
+export function requestNotifyPermission(): void { if (typeof window === "undefined" || !("Notification" in window)) return; if (isPushSupported()) { void enablePush(); return; } if (Notification.permission === "default") void Notification.requestPermission(); }

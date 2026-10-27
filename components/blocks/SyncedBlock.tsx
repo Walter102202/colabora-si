@@ -7,9 +7,10 @@ import { setCopiedSyncKey } from "@/lib/syncRef";
 import type { Block } from "@/lib/types";
 import type { BlockOps } from "@/lib/blockOps";
 import NestedEditor from "@/components/blocks/NestedEditor";
+import { useResolvedSyncedBlocks } from "@/lib/readOnlyData";
 const Ancestors = createContext<string[]>([]);
 export default function SyncedBlock({ block, ops }: { block: Block; ops: BlockOps }) {
-  const key = block.syncedFrom ?? block.id, blocks = useStore((s) => s.syncedBlocks?.[key]), parents = useContext(Ancestors);
+  const key = block.syncedFrom ?? block.id, blocks = useResolvedSyncedBlocks(key), parents = useContext(Ancestors);
   const [copied, setCopied] = useState(false);
   useEffect(() => { if (!blocks && !ops.locked) useStore.getState().setSyncedBlocks(key, [createBlock()]); }, [key, blocks, ops.locked]);
   if (parents.includes(key)) return <p className="text-sm text-text-tertiary">This synced block contains itself.</p>;

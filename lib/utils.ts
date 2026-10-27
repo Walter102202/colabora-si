@@ -95,11 +95,11 @@ export function formatRelative(ts: number): string {
   if (hr < 24) return `${hr}h ago`;
   const day = Math.floor(hr / 24);
   if (day < 7) return `${day}d ago`;
-  return new Date(ts).toLocaleDateString();
+  return new Date(ts).toLocaleDateString("en-US", { timeZone: "UTC" });
 }
 
 export function formatDate(ts: number): string {
-  return new Date(ts).toLocaleString(undefined, {
+  return new Date(ts).toLocaleString("en-US", { timeZone: "UTC",
     month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
   });
 }

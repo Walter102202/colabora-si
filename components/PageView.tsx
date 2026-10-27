@@ -13,10 +13,12 @@ import { buildDbOps } from "@/lib/dbOps";
 import { CommentThread } from "@/components/BlockCommentsPopover";
 import { COVER_GRADIENTS, coverBackground, safeCover } from "@/lib/cover";
 import CoverPicker from "@/components/CoverPicker";
+import EmojiPicker from "@/components/EmojiPicker";
 import { withViewTransition } from "@/lib/viewTransition";
 export default function PageView({ pageId }: { pageId: string }) {
   const page = useStore((s) => s.pages[pageId]), pages = useStore((s) => s.pages), spellCheck = useStore((s) => s.settings?.spellcheck ?? true), title = useRef<HTMLDivElement>(null);
   const [coverPicker, setCoverPicker] = useState(false), [reposition, setReposition] = useState(false), [tempPos, setTempPos] = useState(50), router = useRouter();
+  const [iconPicker, setIconPicker] = useState(false);
   const drag = useRef<{ pointer: number; y: number; pos: number; height: number } | null>(null);
   useEffect(() => { if (title.current && document.activeElement !== title.current && title.current.textContent !== page?.title) title.current.textContent = page?.title ?? ""; }, [pageId, page?.title]);
   useEffect(() => { const timer = setInterval(() => useStore.getState().saveVersion(pageId, true), 120000); return () => { clearInterval(timer); useStore.getState().saveVersion(pageId, true); }; }, [pageId]);
@@ -32,7 +34,7 @@ export default function PageView({ pageId }: { pageId: string }) {
   }} onPointerMove={(e) => { const start = drag.current; if (start?.pointer === e.pointerId) setTempPos(Math.max(0, Math.min(100, start.pos - (e.clientY - start.y) / start.height * 100))); }} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
     {reposition && <span className="cover-drag-hint">Drag image to reposition</span>}{!page.locked && <div className={`cover-controls ${reposition ? "visible-controls" : ""}`}>{reposition ? <><button onClick={() => { update(pageId, { coverPosition: Math.round(tempPos) }); setReposition(false); }}>Save position</button><button onClick={() => setReposition(false)}>Cancel</button></> : <>{!gradient && <button onClick={() => { setTempPos(page.coverPosition ?? 50); setReposition(true); }}>Reposition</button>}<button onClick={() => setCoverPicker(!coverPicker)}>Change cover</button><button onClick={() => update(pageId, { cover: null })}>Remove</button></>}</div>}{coverPicker && <CoverPicker onSelect={(cover) => update(pageId, { cover })} onClose={() => setCoverPicker(false)} />}
   </div>}<div className={`page-content font-page-${page.font ?? "default"} ${cover ? "has-cover" : ""}`} style={{ maxWidth: page.fullWidth ? "none" : undefined, fontSize: page.smallText ? 14 : 16 }}>
-    <div className="page-heading">{page.icon && <div className="mb-5"><Emoji emoji={page.icon} size={68} /></div>}
+    <div className="page-heading">{page.icon && <div className="relative mb-5"><button className="page-icon-button" disabled={page.locked} aria-label="Change page icon" onClick={() => setIconPicker(!iconPicker)}><Emoji emoji={page.icon} size={68} /></button>{iconPicker && <EmojiPicker onSelect={(icon) => update(pageId, { icon })} onRemove={() => update(pageId, { icon: null })} onClose={() => setIconPicker(false)} />}</div>}
       <div className="page-hover-controls">{!page.icon && !page.locked && <button onClick={() => update(pageId, { icon: "📄" })}>Add icon</button>}{!page.cover && !page.locked && <button onClick={() => update(pageId, { cover: COVER_GRADIENTS[0] })}>Add cover</button>}</div>
       {page.locked && <div className="mb-2 rounded bg-bg-secondary px-2.5 py-1 text-xs text-text-secondary">Page locked — editing is disabled. <button className="text-accent" onClick={() => useStore.getState().updatePage(pageId, { locked: false })}>Unlock</button></div>}
       <div ref={title} className="title-edit" contentEditable={!page.locked} suppressContentEditableWarning role="textbox" aria-label="Page title" data-placeholder="Untitled" spellCheck={spellCheck} onInput={(event) => useStore.getState().updatePage(pageId, { title: event.currentTarget.textContent?.replace(/\n/g, "") ?? "" })} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "ArrowDown") { event.preventDefault(); document.querySelector<HTMLElement>('[data-block-id] [contenteditable="true"]')?.focus(); } }} />

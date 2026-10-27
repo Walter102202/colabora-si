@@ -341,6 +341,9 @@ begin
   insert into public.page_shares (page_id, user_id, level)
   values (p_page_id, v_user, p_level)
   on conflict (page_id, user_id) do update set level = excluded.level;
+  if to_regclass('public.notifications') is not null then
+    insert into public.notifications(workspace_id,user_id,kind,page_id,actor_id,actor_type,payload) values(v_ws,v_user,'share',p_page_id,auth.uid(),'human',jsonb_build_object('level',p_level));
+  end if;
   return 'ok';
 end;
 $$;
@@ -781,3 +784,11 @@ select cron.schedule(
     body := jsonb_build_object('invoked_at',now()), timeout_milliseconds := 30000
   ) as request_id;$$
 );
+
+create or replace function public.email_config()
+returns jsonb language sql stable security definer set search_path = '' as $$
+  select coalesce(jsonb_object_agg(name,value),'{}'::jsonb) from private.app_secrets
+  where name in ('resend_api_key','email_from','app_url','project_url','cron_secret','send_email_hook_secret');
+$$;
+revoke all on function public.email_config() from public,anon,authenticated;
+grant execute on function public.email_config() to service_role;

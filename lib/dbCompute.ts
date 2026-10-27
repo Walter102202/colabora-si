@@ -22,12 +22,12 @@ const toBool = (value: FormulaValue): boolean => {
   throw new FormulaError(`Expected true/false, got ${kind(value)}`);
 };
 export function formatDateValue(date: Date): string {
-  return date.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", ...(date.getHours() || date.getMinutes() || date.getSeconds() ? { hour: "numeric", minute: "2-digit" } as const : {}) });
+  return date.toLocaleString("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric", ...(date.getUTCHours() || date.getUTCMinutes() || date.getUTCSeconds() ? { hour: "numeric", minute: "2-digit" } as const : {}) });
 }
 const toStr = (value: FormulaValue): string => value === null ? "" : value instanceof Date ? formatDateValue(value) : typeof value === "number" ? String(round6(value)) : String(value);
 export function parseDateString(value: string): Date | null {
   const parts = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  const date = parts ? new Date(+parts[1], +parts[2] - 1, +parts[3]) : new Date(value);
+  const date = parts ? new Date(Date.UTC(+parts[1], +parts[2] - 1, +parts[3])) : new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 const toDate = (value: FormulaValue): Date | null => {
@@ -47,26 +47,26 @@ function unit(value: FormulaValue): string {
 function dateFunction(name: string, args: FormulaValue[]): FormulaValue {
   const date = toDate(args[0] ?? null);
   if (!date) return name === "formatDate" ? "" : null;
-  if (name === "year") return date.getFullYear();
-  if (name === "month") return date.getMonth() + 1;
-  if (name === "day") return date.getDate();
+  if (name === "year") return date.getUTCFullYear();
+  if (name === "month") return date.getUTCMonth() + 1;
+  if (name === "day") return date.getUTCDate();
   if (name === "formatDate") {
     const pad = (n: number) => String(n).padStart(2, "0");
-    const tokens: Record<string, string> = { YYYY: String(date.getFullYear()), MMM: date.toLocaleString("en-US", { month: "short" }), MM: pad(date.getMonth() + 1), DD: pad(date.getDate()), HH: pad(date.getHours()), mm: pad(date.getMinutes()), ss: pad(date.getSeconds()) };
+    const tokens: Record<string, string> = { YYYY: String(date.getUTCFullYear()), MMM: date.toLocaleString("en-US", { timeZone: "UTC", month: "short" }), MM: pad(date.getUTCMonth() + 1), DD: pad(date.getUTCDate()), HH: pad(date.getUTCHours()), mm: pad(date.getUTCMinutes()), ss: pad(date.getUTCSeconds()) };
     return (args[1] == null ? "YYYY-MM-DD" : toStr(args[1])).replace(/YYYY|MMM|MM|DD|HH|mm|ss/g, (token) => tokens[token]);
   }
   if (name === "dateBetween") {
     const other = toDate(args[1] ?? null);
     if (!other) return null;
-    const u = unit(args[2] ?? null), months = (date.getFullYear() - other.getFullYear()) * 12 + date.getMonth() - other.getMonth();
-    if (u === "years") return date.getFullYear() - other.getFullYear();
+    const u = unit(args[2] ?? null), months = (date.getUTCFullYear() - other.getUTCFullYear()) * 12 + date.getUTCMonth() - other.getUTCMonth();
+    if (u === "years") return date.getUTCFullYear() - other.getUTCFullYear();
     if (u === "months") return months;
     if (u === "quarters") return Math.trunc(months / 3);
     return Math.trunc((+date - +other) / milliseconds[u]);
   }
   const count = toNum(args[1] ?? null) * (name === "dateSubtract" ? -1 : 1), u = unit(args[2] ?? null), result = new Date(date);
-  if (u === "years") result.setFullYear(result.getFullYear() + count);
-  else if (u === "months" || u === "quarters") result.setMonth(result.getMonth() + count * (u === "quarters" ? 3 : 1));
+  if (u === "years") result.setUTCFullYear(result.getUTCFullYear() + count);
+  else if (u === "months" || u === "quarters") result.setUTCMonth(result.getUTCMonth() + count * (u === "quarters" ? 3 : 1));
   else result.setTime(+result + count * milliseconds[u]);
   return result;
 }
@@ -163,15 +163,15 @@ function evaluate(source: string, lookup: (name: string) => FormulaValue): Formu
 export const isEmpty = (value: unknown): boolean => value == null || value === "" || (Array.isArray(value) && value.length === 0);
 export function formatNumber(value: number, format?: DbProperty["numberFormat"]): string {
   if (!Number.isFinite(value)) return "";
-  if (format === "percent") return round6(value * 100).toLocaleString() + "%";
-  return (format === "dollar" ? "$" : format === "euro" ? "€" : "") + round6(value).toLocaleString();
+  if (format === "percent") return round6(value * 100).toLocaleString("en-US") + "%";
+  return (format === "dollar" ? "$" : format === "euro" ? "€" : "") + round6(value).toLocaleString("en-US");
 }
 export function formatIdValue(prop: DbProperty, value: unknown): string {
   return isEmpty(value) ? "" : `${prop.idPrefix?.trim() ? prop.idPrefix.trim() + "-" : ""}${value}`;
 }
 export function isoDay(ms: number): string {
   const date = new Date(ms);
-  return new Date(ms - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  return date.toISOString().slice(0, 10);
 }
 export function displayValue(value: unknown, prop: DbProperty, database?: Database, pages: Record<string, Page> = {}): string {
   if (isEmpty(value)) return "";

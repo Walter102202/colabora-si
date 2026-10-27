@@ -9,6 +9,7 @@ import { foreignPageIds } from "@/lib/foreignPages";
 import { stripHtml } from "@/lib/utils";
 import { useAuthStore } from "@/lib/auth";
 
+import { collectSubtreeFileIds, collectTrashFileIds, scheduleBlobGc } from "@/lib/fileStore";
 export interface RemotePatch {
   pages?: Record<string, Page | null>;
   rootOrder?: string[];
@@ -174,8 +175,8 @@ export const useStore = create<Store>()(persist((set, get) => {
       const pages = pm.restoreTree(state.pages, id, Date.now());
       return { pages, rootOrder: pages[id].parentId === null && !state.rootOrder.includes(id) ? [...state.rootOrder, id] : state.rootOrder };
     }),
-    permanentlyDelete: (id) => set((state) => !state.pages[id] ? state : ({ pages: pm.purgeTree(state.pages, id), rootOrder: state.rootOrder.filter((key) => key !== id) })),
-    emptyTrash: () => set((state) => ({ pages: Object.fromEntries(Object.entries(state.pages).filter(([, page]) => !page.isDeleted)) })),
+    permanentlyDelete: (id) => { const ids = collectSubtreeFileIds(id); set((state) => !state.pages[id] ? state : ({ pages: pm.purgeTree(state.pages, id), rootOrder: state.rootOrder.filter((key) => key !== id) })); scheduleBlobGc(ids); },
+    emptyTrash: () => { const ids = collectTrashFileIds(); set((state) => ({ pages: Object.fromEntries(Object.entries(state.pages).filter(([, page]) => !page.isDeleted)) })); scheduleBlobGc(ids); },
     toggleFavorite: (id) => mutate(id, (page) => pm.touch({ ...page, isFavorite: !page.isFavorite })),
     movePage: (id, parentId, index) => set((state) => {
       const next = pm.moveInTree(state.pages, state.rootOrder, id, parentId, index);

@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronsLeft, ChevronDown, Home, Moon, Plus, Search, Settings, Star, Sun, Trash2 } from "lucide-react";
 import { getFavorites, useStore } from "@/lib/store";
@@ -11,17 +11,20 @@ import SyncStatus from "@/components/SyncStatus";
 import Tooltip from "@/components/Tooltip";
 import { useAuth } from "@/lib/auth";
 
+import { useDirectory } from "@/lib/directory";
+import { clearSharedWithMe, refreshSharedWithMe, useShares } from "@/lib/shares";
 export default function Sidebar({ collapse }: { collapse: () => void }) {
   const pages = useStore((s) => s.pages), rootOrder = useStore((s) => s.rootOrder), router = useRouter();
   const { theme, toggle } = useTheme();
-  const { user } = useAuth();
+  const { user } = useAuth(), shares = useShares((s) => s.entries);
+  useEffect(() => { if (!user) { clearSharedWithMe(); return; } void refreshSharedWithMe(); const refresh = () => void refreshSharedWithMe(); window.addEventListener("focus", refresh); return () => window.removeEventListener("focus", refresh); }, [user]);
   const [workspaceMenu, setWorkspaceMenu] = useState(false), [addMenu, setAddMenu] = useState(false);
   const openModal = (kind: string) => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind } }));
   const open = (id: string) => { setAddMenu(false); withViewTransition(() => router.push(`/p/${id}`)); };
-  const favorites = getFavorites(pages);
+  const favorites = getFavorites(pages), workspaceName = useDirectory((s) => s.workspaceName);
   return <aside className="sidebar-inner group/aside">
     <div className="relative flex items-center justify-between px-3 pb-1 pt-2.5">
-      <button className="workspace-chip" onClick={() => setWorkspaceMenu(!workspaceMenu)}><span className="workspace-avatar">C</span><span className="truncate">My Workspace</span><ChevronDown size={14} /></button>
+      <button className="workspace-chip" onClick={() => setWorkspaceMenu(!workspaceMenu)}><span className="workspace-avatar">C</span><span className="truncate">{user ? workspaceName : "My Workspace"}</span><ChevronDown size={14} /></button>
       <Tooltip label="Collapse sidebar" shortcut="Ctrl+\"><button className="icon-button hover-actions" aria-label="Collapse sidebar" onClick={collapse}><ChevronsLeft size={17} /></button></Tooltip>
       {workspaceMenu && <><button className="menu-backdrop" aria-label="Close workspace menu" onClick={() => setWorkspaceMenu(false)} /><div className="menu-panel absolute left-3 top-12 w-56" role="menu">
         <button role="menuitem" onClick={toggle}>{theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}{theme === "dark" ? "Light mode" : "Dark mode"}</button>
@@ -35,6 +38,7 @@ export default function Sidebar({ collapse }: { collapse: () => void }) {
     </div>
     <div className="scrollbar-thin mt-2 min-h-0 flex-1 overflow-y-auto px-2">
       {favorites.length > 0 && <section className="mb-5"><div className="section-label">Favorites</div>{favorites.map((page) => <button key={page.id} className="sidebar-row w-full px-2" onClick={() => open(page.id)}><Emoji emoji={page.icon ?? "📄"} /><Star size={13} className="favorite-star" /><span className="truncate">{page.title || "Untitled"}</span></button>)}</section>}
+      {user && !!shares.length && <section className="mb-5"><div className="section-label">Shared</div>{shares.map((share) => <button key={share.pageId} className="sidebar-row w-full px-2" onClick={() => withViewTransition(() => router.push("/shared/" + share.pageId))}><Emoji emoji={share.icon ?? "📄"} /><span className="min-w-0 flex-1 truncate">{share.title || "Untitled"}</span><span className="text-[10px] uppercase text-text-tertiary">{share.level}</span></button>)}</section>}
       <div className="relative flex items-center justify-between" onDragOver={(event) => { if (event.dataTransfer.types.includes("text/page-id")) event.preventDefault(); }} onDrop={(event) => { const id = event.dataTransfer.getData("text/page-id"); if (id) { event.preventDefault(); useStore.getState().movePage(id, null); } }}>
         <div className="section-label">Private</div><button className="icon-button hover-actions" aria-label="Add a page" onClick={() => setAddMenu(!addMenu)}><Plus size={15} /></button>
         {addMenu && <><button className="menu-backdrop" aria-label="Close add page menu" onClick={() => setAddMenu(false)} /><div className="menu-panel absolute right-1 top-7 w-52" role="menu">

@@ -11,7 +11,7 @@ export default function ColumnsBlock({ block, ops }: { block: Block; ops: BlockO
   const [widths, setWidths] = useState<number[] | null>(null), live = useRef<number[] | null>(null);
   const end = () => { if (live.current) ops.updateBlock(block.id, { columns: columns.map((c, i) => ({ ...c, width: Math.round(live.current![i] * 1000) / 1000 })) }); drag.current = null; live.current = null; setWidths(null); };
   return <div ref={container} className="columns-block" contentEditable={false}>{columns.map((column, i) => <Fragment key={column.id}>
-    {i > 0 && <div className="column-resizer" role="separator" aria-orientation="vertical" aria-label="Drag to resize columns" onPointerDown={(event) => {
+    {i > 0 && <div className="editor-column-resizer" role="separator" aria-orientation="vertical" aria-label="Drag to resize columns" onPointerDown={(event) => {
       if (ops.locked) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
       const start = columns.map((c) => c.width ?? 1); drag.current = { x: event.clientX, widths: start, ratio: start.reduce((a, b) => a + b, 0) / (container.current?.clientWidth || 1), index: i - 1 };
     }} onPointerMove={(event) => {
@@ -26,3 +26,4 @@ export default function ColumnsBlock({ block, ops }: { block: Block; ops: BlockO
     </div>
   </Fragment>)}{!ops.locked && columns.length < 5 && <button className="hover-actions icon-button" aria-label="Add column" onClick={() => ops.updateBlock(block.id, { columns: [...columns, { id: newId(), blocks: [createBlock()] }] })}>+</button>}</div>;
 }
+

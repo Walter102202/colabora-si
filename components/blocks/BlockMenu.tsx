@@ -12,7 +12,7 @@ export default function BlockMenu({ block, rect, onClose, onType, onUpdate, onDu
       <button role="menuitem" onClick={() => setPanel("types")}>Turn into</button><button role="menuitem" onClick={() => setPanel("colors")}>Color</button>
       {block.type.startsWith("heading") && <button role="menuitem" onClick={() => done(() => onUpdate({ toggleable: !block.toggleable, collapsed: false }))}>{block.toggleable ? "Remove toggle" : "Toggle heading"}</button>}
       {onComment && <button role="menuitem" onClick={() => done(onComment)}>Comment</button>}
-      <button role="menuitem" onClick={() => done(onDuplicate)}>Duplicate</button><button role="menuitem" className="danger" onClick={() => done(onDelete)}>Delete</button>
+      <button role="menuitem" onClick={() => done(() => { void navigator.clipboard.writeText(location.origin + location.pathname + "#" + block.id); })}>Copy link to block</button><button role="menuitem" onClick={() => done(onDuplicate)}>Duplicate</button><button role="menuitem" className="danger" onClick={() => done(onDelete)}>Delete</button>
     </>}
   </div>;
 }

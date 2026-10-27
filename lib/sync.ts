@@ -11,6 +11,7 @@ import { foreignPageIds } from "@/lib/foreignPages";
 import { DEFAULT_SETTINGS } from "@/lib/factories";
 import { useBlockConflicts, type BlockConflict } from "@/lib/syncConflicts";
 
+import { onFileSyncStart, onFileSyncStop } from "@/lib/fileStore";
 export const CLIENT_TAG = Math.random().toString(36).slice(2) + Date.now().toString(36);
 const DEBOUNCE_MS = 1500, MAX_RETRIES = 5, ACTIVE_EDIT_MS = 2000, DELETE_ECHO_TTL_MS = 120000;
 const PAGE_COLS = "id,parent_id,data,deleted_at,updated_at,revision,last_edited_by,last_edited_by_type,last_edit_run_id";
@@ -233,6 +234,7 @@ async function pullSince(): Promise<void> {
 const online = () => { attempts = 0; if (pendingRetryUser) { const user = pendingRetryUser; pendingRetryUser = null; void initSync(user); } else { setStatus("syncing"); void pullSince(); } };
 const offline = () => setStatus("offline");
 function startRealtime(sb: SupabaseClient): void {
+  if (wsId) onFileSyncStart(wsId);
   const token = generation;
   channel = sb.channel(`workspace-${wsId}`)
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "pages", filter: `workspace_id=eq.${wsId}` }, (payload) => { if (token === generation) handlePageRow(payload.new as PageRow); })
@@ -259,12 +261,22 @@ function makeEngine(sb: SupabaseClient, user: User): PageSyncEngine {
 }
 async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise<void> {
   const initial = useStore.getState(), switched = !!initial.syncUserId && initial.syncUserId !== user.id;
-  const linked = switched ? null : initial.syncWorkspaceId;
+  let linked = switched ? null : initial.syncWorkspaceId;
+  const invitation = sessionStorage.getItem("colabora-invitation");
+  if (invitation) {
+    const result = await sb.rpc("accept_invitation", { p_token: invitation });
+    if (result.error) throw result.error;
+    linked = result.data; sessionStorage.removeItem("colabora-invitation");
+    const url = new URL(location.href); url.searchParams.delete("invite"); history.replaceState(history.state, "", url);
+  }
   let workspace: WorkspaceRow | null = null;
   if (linked) { const result = await sb.from("workspaces").select(WS_COLS).eq("id", linked).maybeSingle(); if (result.error) throw result.error; workspace = result.data as WorkspaceRow | null; }
   if (!workspace) {
+    const memberships = await sb.from("workspace_members").select("workspace_id").eq("user_id", user.id).neq("role", "owner").limit(1).maybeSingle();
+    if (memberships.error) throw memberships.error;
+    if (memberships.data) { const joined = await sb.from("workspaces").select(WS_COLS).eq("id", memberships.data.workspace_id).maybeSingle(); if (joined.error) throw joined.error; workspace = joined.data as WorkspaceRow | null; }
     const owned = await sb.from("workspaces").select(WS_COLS).eq("owner_id", user.id).order("updated_at", { ascending: false }).limit(1).maybeSingle();
-    if (owned.error) throw owned.error; workspace = owned.data as WorkspaceRow | null;
+    if (owned.error) throw owned.error; workspace ??= owned.data as WorkspaceRow | null;
     if (!workspace) { const joined = await sb.from("workspaces").select(WS_COLS).order("updated_at", { ascending: false }).limit(1).maybeSingle(); if (joined.error) throw joined.error; workspace = joined.data as WorkspaceRow | null; }
   }
   if (token !== generation) throw SYNC_CANCELLED;
@@ -344,6 +356,7 @@ export async function initSync(user: User): Promise<void> {
   }
 }
 export function stopSync(): void {
+  onFileSyncStop();
   generation++; started = ready = false; currentUserId = wsId = null; pendingRetryUser = null;
   conflictReject?.(); conflictReject = null; useSyncConflict.setState({ prompt: null });
   window.removeEventListener("online", online); window.removeEventListener("offline", offline);
