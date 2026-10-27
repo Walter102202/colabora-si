@@ -21,8 +21,13 @@ Deno.serve((req) => {
     mcpUrl,
     now: () => Date.now(),
     fetch: (input, init) => fetch(input, init),
+    // A record type with no records is fine (NotFound); any other resolver failure fails the check closed.
     resolveDns: async (host) => {
-      const lookups = (['A', 'AAAA'] as const).map((t) => Deno.resolveDns(host, t).catch(() => [] as string[]));
+      const lookups = (['A', 'AAAA'] as const).map((t) =>
+        Deno.resolveDns(host, t).catch((err) => {
+          if (err instanceof Deno.errors.NotFound) return [] as string[];
+          throw err;
+        }));
       return (await Promise.all(lookups)).flat();
     },
     async dequeue(batch, vt) {
