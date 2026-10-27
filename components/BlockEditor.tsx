@@ -27,6 +27,7 @@ import { blocksToMarkdown } from "@/lib/export";
 import { getCopiedSyncKey } from "@/lib/syncRef";
 import EmojiMenu from "@/components/EmojiMenu";
 import { searchEmoji, type EmojiEntry } from "@/lib/emojiData";
+import { requestNotifyPermission } from "@/lib/push";
 import { renderMath } from "@/lib/math";
 
 export default function BlockEditor({ pageId }: { pageId: string }) {
@@ -393,7 +394,7 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
       element.closest('[contenteditable="true"]')?.dispatchEvent(new Event("input", { bubbles: true }));
       setDateChip({ ...dateChip, iso });
     }} onRemind={(time) => {
-      if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission();
+      requestNotifyPermission();
       useStore.getState().addReminder({ date: dateChip.iso + "T" + time, pageId, blockId: dateChipElement.current?.closest<HTMLElement>("[data-block-id]")?.dataset.blockId, text: (dateChipElement.current?.closest('[contenteditable="true"]')?.textContent ?? pages[pageId]?.title ?? "Reminder").slice(0, 120) });
     }} />}
   </div>;

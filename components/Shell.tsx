@@ -26,6 +26,7 @@ import { usePresenceSession, useSharedPresenceScope } from "@/lib/presence";
 import PresenceAvatars from "@/components/PresenceAvatars";
 import PageMenu from "@/components/PageMenu";
 import PageHistoryModal from "@/components/PageHistoryModal";
+import ReminderBell from "@/components/ReminderBell";
 import SharePopover from "@/components/SharePopover";
 import { foreignPageIds } from "@/lib/foreignPages";
 import ImportModal from "@/components/ImportModal";
@@ -89,7 +90,7 @@ function HydratedShell({ children }: { children: React.ReactNode }) {
       {(collapsed || narrow) && <button className="icon-button" aria-label="Open sidebar" onClick={() => { setCollapsed(false); setDrawerAt(pathname); }}><Menu size={18} /></button>}
       <nav aria-label="Breadcrumb" className="flex min-w-0 flex-1 items-center text-sm">{crumbs.length ? crumbs.map((crumb, index) => <span className="flex min-w-0 items-center" key={crumb.id}>{index > 0 && <ChevronRight size={14} className="shrink-0 text-text-tertiary" />}<button className="breadcrumb-button" onClick={() => withViewTransition(() => router.push(`/p/${crumb.id}`))}><Emoji emoji={crumb.icon ?? "📄"} size={16} /><span className="truncate">{crumb.title || "Untitled"}</span></button></span>) : <button className="text-text-tertiary" onClick={() => request("search")}>Search…</button>}</nav>
       {page && <><span className="hidden whitespace-nowrap text-xs text-text-tertiary md:block">Edited {formatRelative(page.updatedAt)}</span><PresenceAvatars /><PresenceBadge pageId={page.id} /></>}
-      <InboxBell />
+      <ReminderBell /><InboxBell />
       {page && user && workspaceId && !foreignPageIds.has(page.id) && <button className="action-button" title="Share or publish to the web" onClick={() => request("share", page.id)}>Share</button>}
       {page && <><button className={`icon-button ${page.isFavorite ? "favorite-star" : ""}`} aria-label={page.isFavorite ? "Remove from Favorites" : "Add to Favorites"} onClick={() => useStore.getState().toggleFavorite(page.id)}><Star size={17} fill={page.isFavorite ? "currentColor" : "none"} /></button><button className="icon-button" aria-label="Style, export, and more" onClick={() => request("page-menu", page.id)}><MoreHorizontal size={18} /></button></>}
     </header><main className="min-h-0 flex-1">{children}</main></div>

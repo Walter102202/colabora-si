@@ -441,3 +441,11 @@ a.mention { text-decoration: none; font-weight: 500; border-radius: 3px; padding
 
 .share-popover { position: fixed; right: 12px; top: 44px; width: min(380px, calc(100vw - 24px)); padding: 16px; z-index: 50; }
 .share-popover select { max-width: 110px; font-size: 12px; background: var(--bg-primary); }
+
+.reminder-count { position: absolute; top: -2px; right: -2px; background: var(--accent); color: white; min-width: 14px; height: 14px; border-radius: 7px; font-size: 9px; line-height: 14px; font-weight: 700; }
+.reminder-menu { position: absolute; top: 36px; right: 0; width: 288px; max-height: 380px; overflow: auto; z-index: 50; padding: 8px; }
+.reminder-toasts { position: fixed; right: 20px; bottom: 20px; width: 320px; max-width: calc(100vw - 40px); display: grid; gap: 8px; z-index: 70; }
+.reminder-toast { display: flex; align-items: center; gap: 10px; padding: 12px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow); }
+
+.cell-remind { float: right; opacity: 0; font-size: 12px; padding: 4px; }
+td:hover .cell-remind, .cell-remind:focus-visible { opacity: 1; }

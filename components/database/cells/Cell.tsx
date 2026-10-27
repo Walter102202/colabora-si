@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { Bell } from "lucide-react";
 import { createPortal } from "react-dom";
 import { AgentPropertyCell } from "@/components/agents/AgentPropertyCell";
 import DatePickerCalendar, { formatIsoDate } from "@/components/DatePickerCalendar";
@@ -11,6 +12,8 @@ import type { DbOps } from "@/lib/dbOps";
 import FilesCell from "@/components/database/cells/FilesCell";
 import RelationCell from "@/components/database/cells/RelationCell";
 import { safeHref } from "@/lib/utils";
+import { requestNotifyPermission } from "@/lib/push";
+import { useStore } from "@/lib/store";
 function CellInput({ value, onSave, placeholder = "", type = "text", readOnly = false, label }: { value: string; onSave: (value: string) => void; placeholder?: string; type?: string; readOnly?: boolean; label: string }) {
   const element = useRef<HTMLInputElement>(null);
   useEffect(() => { if (element.current && document.activeElement !== element.current) element.current.value = value; }, [value]);
@@ -34,7 +37,7 @@ export default function Cell({ ops, database, row, property, pages }: { ops: DbO
     const select = property.type !== "date", options = (property.options ?? []).filter((o) => o.name.toLowerCase().includes(query.toLowerCase()));
     const canCreate = query.trim() && !ops.locked && !options.some((o) => o.name.toLowerCase() === query.trim().toLowerCase());
     const create = () => { if (!canCreate) return; const option = { id: newId(), name: query.trim(), color: (["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"] as const)[query.trim().length % 9] }; ops.updateProperty(property.id, { options: [...(property.options ?? []), option] }); set(property.type === "multiSelect" ? [...(Array.isArray(value) ? value : []), option.id] : option.id); setQuery(""); if (property.type !== "multiSelect") close(); };
-    return <><button className="cell-button" disabled={ops.readOnly} onClick={(event) => setAnchor(event.currentTarget.getBoundingClientRect())}>{property.type === "date" && value ? formatIsoDate(String(value).slice(0, 10)) : text ? <OptionPills property={property} value={value} /> : <span className="text-text-tertiary">{ops.readOnly ? "—" : "Empty"}</span>}</button>{anchor && createPortal(<><button className="cell-backdrop" aria-label="Close cell editor" onClick={close} /><div className="menu-panel cell-popover" style={{ left: Math.max(8, Math.min(anchor.left, window.innerWidth - 256)), top: Math.max(8, Math.min(anchor.bottom + 4, window.innerHeight - 320)) }}>
+    return <>{property.type === "date" && !!value && !ops.readOnly && <button className="cell-remind" title="Remind me at 9:00 on this date" aria-label="Remind me at 9:00 on this date" onClick={() => { requestNotifyPermission(); useStore.getState().addReminder({ date: String(value).slice(0, 10) + "T09:00", pageId: row.pageId, text: String(row.cells.title ?? "").trim() || property.name + " reminder" }); }}><Bell size={13} /></button>}<button className="cell-button" disabled={ops.readOnly} onClick={(event) => setAnchor(event.currentTarget.getBoundingClientRect())}>{property.type === "date" && value ? formatIsoDate(String(value).slice(0, 10)) : text ? <OptionPills property={property} value={value} /> : <span className="text-text-tertiary">{ops.readOnly ? "—" : "Empty"}</span>}</button>{anchor && createPortal(<><button className="cell-backdrop" aria-label="Close cell editor" onClick={close} /><div className="menu-panel cell-popover" style={{ left: Math.max(8, Math.min(anchor.left, window.innerWidth - 256)), top: Math.max(8, Math.min(anchor.bottom + 4, window.innerHeight - 320)) }}>
       {select ? <><input autoFocus className="cell-input" placeholder="Search or create an option…" aria-label="Search options" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); create(); } }} />{options.map((option) => <button key={option.id} onClick={() => { if (property.type === "multiSelect") { const values = Array.isArray(value) ? value : []; set(values.includes(option.id) ? values.filter((v) => v !== option.id) : [...values, option.id]); } else { set(option.id); close(); } }}><span className={`tc-${option.color}`}>●</span>{option.name}{(Array.isArray(value) ? value.includes(option.id) : value === option.id) ? " ✓" : ""}</button>)}{canCreate && <button onClick={create}>Create “{query.trim()}”</button>}</> : <DatePickerCalendar value={value ? String(value).slice(0, 10) : null} onSelect={(iso) => { set(iso); close(); }} />}
       <button onClick={() => { set(null); close(); }}>{select ? "Clear" : "Clear date"}</button>
     </div></>, document.body)}</>;
