@@ -173,6 +173,8 @@ function index<T extends { id: string }>(rows: T[] | null | undefined): ById<T> 
 }
 
 let channel: RealtimeChannel | null = null;
+let channelWorkspace: string | null = null;
+let subscribers = 0;
 
 export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
   workspaceId: null,
@@ -209,13 +211,31 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
     }
   },
 
+  // Reference counted: the first caller for a workspace opens the channel and loads the
+  // rows; later callers share it; the channel closes when the last one releases.
   subscribe(workspaceId) {
     const client = getAgentClient();
     if (!client) return () => {};
+    if (channel && channelWorkspace === workspaceId) {
+      subscribers += 1;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        subscribers -= 1;
+        if (subscribers <= 0 && channel) {
+          void client.removeChannel(channel);
+          channel = null;
+          channelWorkspace = null;
+        }
+      };
+    }
     if (channel) {
       void client.removeChannel(channel);
       channel = null;
     }
+    subscribers = 1;
+    channelWorkspace = workspaceId;
     const ch = client.channel(`agents-${workspaceId}`);
     for (const table of TABLES) {
       ch.on(
@@ -252,9 +272,17 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
     ch.subscribe();
     channel = ch;
     void get().load(workspaceId);
+    let released = false;
     return () => {
-      if (channel === ch) channel = null;
-      void client.removeChannel(ch);
+      if (released) return;
+      released = true;
+      subscribers -= 1;
+      if (channel !== ch) return; // replaced by a newer workspace channel
+      if (subscribers <= 0) {
+        channel = null;
+        channelWorkspace = null;
+        void client.removeChannel(ch);
+      }
     };
   },
 

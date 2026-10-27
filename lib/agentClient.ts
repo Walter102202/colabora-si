@@ -1,22 +1,12 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { getSupabase } from "@/lib/supabase";
 
-// Supabase client of the agent layer. It uses the same public env as the
-// workspace sync client and the default storage key, so it sees the person's
-// session without importing the workspace auth module. Without env it is null
-// and every agent surface renders its "sign in" state.
-
-let client: SupabaseClient | null | undefined;
-
+// Supabase client of the agent layer: the workspace client itself, so the
+// browser holds one auth client and one session. Without env (or on the
+// server) it is null and every agent surface renders its "sign in" state.
 export function getAgentClient(): SupabaseClient | null {
-  if (client !== undefined) return client;
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key || typeof window === "undefined") {
-    client = null;
-    return client;
-  }
-  client = createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true } });
-  return client;
+  if (typeof window === "undefined") return null;
+  return getSupabase();
 }
 
 // Readable message for an RPC or PostgREST error (PTnnn codes carry the
