@@ -248,6 +248,10 @@ reset role;
 create or replace function private.agent_can_write(p_page_id text) returns boolean language sql stable security definer set search_path='' as $$
   select auth.uid()='20000000-0000-4000-8000-000000000003'::uuid and p_page_id='stale-update';
 $$;
+create or replace function private.agent_can(p_page_id text, p_scope text)
+returns boolean language sql stable security definer set search_path='' as $$
+  select private.agent_can_write(p_page_id);
+$$;
 insert into rpc_results select 'before-agent',data from public.pages where id='stale-update';
 select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000003","role":"authenticated","app_metadata":{"principal_type":"agent"}}',true);
 set local role authenticated;
