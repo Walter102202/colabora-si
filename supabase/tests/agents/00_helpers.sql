@@ -123,6 +123,20 @@ exception when others then
   return sqlerrm;
 end $$;
 
+-- One more agent in a workspace with an auth user, a role and a read/write/comment grant on a page.
+-- Returns {agent, user}.
+create or replace function tests.make_agent(p_ws uuid, p_email text, p_role text, p_grant_page text)
+returns jsonb language plpgsql as $$
+declare v_user uuid := tests.make_user(p_email); v_owner uuid; v_agent uuid;
+begin
+  select owner_id into v_owner from public.workspaces where id = p_ws;
+  insert into public.agents (workspace_id, auth_user_id, name, kind, role, sponsor_user_id, created_by)
+  values (p_ws, v_user, p_email, 'acp_local', p_role, v_owner, v_owner) returning id into v_agent;
+  insert into public.agent_grants (workspace_id, agent_id, page_id, scopes, inherit, granted_by)
+  values (p_ws, v_agent, p_grant_page, array['read','write','comment'], true, v_owner);
+  return jsonb_build_object('agent', v_agent, 'user', v_user);
+end $$;
+
 -- Runs a statement and returns the DETAIL of the error it raised (null when it succeeded).
 create or replace function tests.detail_of(p_sql text)
 returns text language plpgsql as $$
