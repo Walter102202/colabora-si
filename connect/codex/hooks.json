@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node <path-to-colabora>/connect/codex/on-stop.mjs",
+            "timeout": 1800
+          }
+        ]
+      }
+    ]
+  }
+}

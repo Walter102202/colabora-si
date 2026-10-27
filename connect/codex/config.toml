@@ -1,0 +1,14 @@
+# Add to ~/.codex/config.toml or <repo>/.codex/config.toml.
+# WORKSPACE_AGENT_JWT is the JWT returned by the agent-token exchange (valid one hour).
+[mcp_servers.colabora]
+url = "https://<project>.supabase.co/functions/v1/mcp"
+bearer_token_env_var = "WORKSPACE_AGENT_JWT"
+tool_timeout_sec = 180
+
+# Alternative for sessions longer than an hour: the local bridge exchanges and
+# renews the token itself. Use this block instead of the one above.
+# [mcp_servers.colabora]
+# command = "node"
+# args = ["<path-to-colabora>/bridge/index.mjs", "--no-channel"]
+# env = { WORKSPACE_MCP_URL = "https://<project>.supabase.co/functions/v1/mcp", WORKSPACE_AGENT_PAT = "agt_..." }
+# tool_timeout_sec = 180

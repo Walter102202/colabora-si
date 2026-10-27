@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "colabora": {
+      "command": "node",
+      "args": ["<path-to-colabora>/bridge/index.mjs", "--no-channel"],
+      "env": {
+        "WORKSPACE_MCP_URL": "https://<project>.supabase.co/functions/v1/mcp",
+        "WORKSPACE_AGENT_PAT": "agt_..."
+      }
+    }
+  }
+}
