@@ -11,6 +11,7 @@ import SyncStatus from "@/components/SyncStatus";
 import Tooltip from "@/components/Tooltip";
 import { useAuth } from "@/lib/auth";
 
+import { useDirectory } from "@/lib/directory";
 import { clearSharedWithMe, refreshSharedWithMe, useShares } from "@/lib/shares";
 export default function Sidebar({ collapse }: { collapse: () => void }) {
   const pages = useStore((s) => s.pages), rootOrder = useStore((s) => s.rootOrder), router = useRouter();
@@ -20,10 +21,10 @@ export default function Sidebar({ collapse }: { collapse: () => void }) {
   const [workspaceMenu, setWorkspaceMenu] = useState(false), [addMenu, setAddMenu] = useState(false);
   const openModal = (kind: string) => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind } }));
   const open = (id: string) => { setAddMenu(false); withViewTransition(() => router.push(`/p/${id}`)); };
-  const favorites = getFavorites(pages);
+  const favorites = getFavorites(pages), workspaceName = useDirectory((s) => s.workspaceName);
   return <aside className="sidebar-inner group/aside">
     <div className="relative flex items-center justify-between px-3 pb-1 pt-2.5">
-      <button className="workspace-chip" onClick={() => setWorkspaceMenu(!workspaceMenu)}><span className="workspace-avatar">C</span><span className="truncate">My Workspace</span><ChevronDown size={14} /></button>
+      <button className="workspace-chip" onClick={() => setWorkspaceMenu(!workspaceMenu)}><span className="workspace-avatar">C</span><span className="truncate">{user ? workspaceName : "My Workspace"}</span><ChevronDown size={14} /></button>
       <Tooltip label="Collapse sidebar" shortcut="Ctrl+\"><button className="icon-button hover-actions" aria-label="Collapse sidebar" onClick={collapse}><ChevronsLeft size={17} /></button></Tooltip>
       {workspaceMenu && <><button className="menu-backdrop" aria-label="Close workspace menu" onClick={() => setWorkspaceMenu(false)} /><div className="menu-panel absolute left-3 top-12 w-56" role="menu">
         <button role="menuitem" onClick={toggle}>{theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}{theme === "dark" ? "Light mode" : "Dark mode"}</button>

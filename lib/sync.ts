@@ -261,12 +261,22 @@ function makeEngine(sb: SupabaseClient, user: User): PageSyncEngine {
 }
 async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise<void> {
   const initial = useStore.getState(), switched = !!initial.syncUserId && initial.syncUserId !== user.id;
-  const linked = switched ? null : initial.syncWorkspaceId;
+  let linked = switched ? null : initial.syncWorkspaceId;
+  const invitation = sessionStorage.getItem("colabora-invitation");
+  if (invitation) {
+    const result = await sb.rpc("accept_invitation", { p_token: invitation });
+    if (result.error) throw result.error;
+    linked = result.data; sessionStorage.removeItem("colabora-invitation");
+    const url = new URL(location.href); url.searchParams.delete("invite"); history.replaceState(history.state, "", url);
+  }
   let workspace: WorkspaceRow | null = null;
   if (linked) { const result = await sb.from("workspaces").select(WS_COLS).eq("id", linked).maybeSingle(); if (result.error) throw result.error; workspace = result.data as WorkspaceRow | null; }
   if (!workspace) {
+    const memberships = await sb.from("workspace_members").select("workspace_id").eq("user_id", user.id).neq("role", "owner").limit(1).maybeSingle();
+    if (memberships.error) throw memberships.error;
+    if (memberships.data) { const joined = await sb.from("workspaces").select(WS_COLS).eq("id", memberships.data.workspace_id).maybeSingle(); if (joined.error) throw joined.error; workspace = joined.data as WorkspaceRow | null; }
     const owned = await sb.from("workspaces").select(WS_COLS).eq("owner_id", user.id).order("updated_at", { ascending: false }).limit(1).maybeSingle();
-    if (owned.error) throw owned.error; workspace = owned.data as WorkspaceRow | null;
+    if (owned.error) throw owned.error; workspace ??= owned.data as WorkspaceRow | null;
     if (!workspace) { const joined = await sb.from("workspaces").select(WS_COLS).order("updated_at", { ascending: false }).limit(1).maybeSingle(); if (joined.error) throw joined.error; workspace = joined.data as WorkspaceRow | null; }
   }
   if (token !== generation) throw SYNC_CANCELLED;

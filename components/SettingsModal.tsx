@@ -14,6 +14,7 @@ import { readZip, writeZip } from "@/lib/zip";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { forceFullPull, forceFullPush, useSyncStatus } from "@/lib/sync";
+import MembersSettings from "@/components/MembersSettings";
 import PushSettings from "@/components/PushSettings";
 export function workspaceExport() {
   const s = useStore.getState();
@@ -28,7 +29,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const update = useStore((s) => s.updateSettings), trash = Object.values(pages).filter((p) => p.isDeleted).length;
   return <Modal title="Settings" onClose={onClose} wide><div className="settings-layout"><nav aria-label="Settings sections">{["Account", "Members", "Agents", "Appearance", "Editor", "Data", "About"].map((name) => <button className={tab === name ? "active" : ""} key={name} onClick={() => setTab(name)}>{name}</button>)}</nav><div className="settings-content"><h3 className="mb-5 font-semibold">{tab}</h3>
     {tab === "Account" && <div className="space-y-4"><p className="text-sm text-text-secondary">{!isSupabaseConfigured() ? "Sync isn't configured for this build. The app keeps working fully offline — everything is stored in your browser." : user ? user.email : "Log in to sync your workspace across devices."}</p><button className="action-button" onClick={() => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind: "auth" } }))}>{user ? "Manage account" : "Log in"}</button><PushSettings /></div>}
-    {tab === "Members" && <p className="text-sm text-text-secondary">Sign in to invite people</p>}{tab === "Agents" && <AgentsSettingsTab />}
+    {tab === "Members" && <MembersSettings />}{tab === "Agents" && <AgentsSettingsTab />}
     {tab === "Appearance" && <><fieldset><legend>Theme</legend><p>How the app looks on this device.</p><div className="segmented">{(["light", "dark", "system"] as const).map((mode) => <button key={mode} aria-pressed={theme === mode} onClick={() => { applyThemeMode(mode); setTheme(mode); update({ theme: mode }); }}>{mode[0].toUpperCase() + mode.slice(1)}</button>)}</div></fieldset>
       <fieldset><legend>Default page font</legend><p>Applied to newly created pages.</p><div className="segmented">{(["default", "serif", "mono"] as const).map((font) => <button key={font} className={`font-page-${font}`} aria-pressed={settings.defaultFont === font} onClick={() => update({ defaultFont: font })}>{font[0].toUpperCase() + font.slice(1)}</button>)}</div></fieldset>
       <label className="setting-toggle">Small text by default<input type="checkbox" checked={settings.smallTextDefault} onChange={(e) => update({ smallTextDefault: e.target.checked })} /></label><label className="setting-toggle">Full width by default<input type="checkbox" checked={settings.fullWidthDefault} onChange={(e) => update({ fullWidthDefault: e.target.checked })} /></label></>}

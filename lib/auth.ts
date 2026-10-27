@@ -11,6 +11,7 @@ let initialized = false;
 export function initAuth(): void {
   if (initialized || typeof window === "undefined") return;
   initialized = true;
+  const invite = new URLSearchParams(location.search).get("invite"); if (invite) sessionStorage.setItem("colabora-invitation", invite);
   const supabase = getSupabase();
   if (!supabase) { useAuthStore.setState({ user: null, loading: false }); return; }
   let receivedEvent = false;

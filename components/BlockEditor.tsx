@@ -79,6 +79,8 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
     const node = document.createElement(item.kind === "page" ? "a" : "span");
     if (item.kind === "page") {
       node.className = "mention"; node.setAttribute("href", "/p/" + item.id); node.dataset.page = item.id; node.textContent = (item.icon ? item.icon + " " : "") + item.title;
+    } else if (item.kind === "person") {
+      node.className = "mention person-mention"; node.dataset.user = item.id; node.contentEditable = "false"; node.textContent = "@" + item.title;
     } else {
       node.className = "date-mention"; node.dataset.date = item.iso; node.contentEditable = "false"; node.textContent = "📅 " + formatIsoDate(item.iso);
     }

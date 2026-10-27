@@ -4,7 +4,7 @@ import type { Block, Page } from "@/lib/types";
 import { type BlockOps, numbering, visibleBlocks } from "@/lib/blockOps";
 import { ReadOnlyDataProvider, useReadOnlyData } from "@/lib/readOnlyData";
 import { coverBackground } from "@/lib/cover";
-import { formatRelative } from "@/lib/utils";
+import { formatRelative, sanitizeHtml } from "@/lib/utils";
 import BlockItem from "@/components/blocks/BlockItem";
 import ReadOnlyDatabaseView from "@/components/database/ReadOnlyDatabaseView";
 const ignore = () => {};
@@ -19,7 +19,7 @@ function ReadOnlyPageBody({ page, compact, databasesUnavailable, children }: { p
   return <>{background && <div className={compact ? "h-32" : "h-[28vh] max-h-72"} style={{ backgroundImage: background, backgroundPositionY: (page.coverPosition ?? 50) + "%", backgroundSize: "cover" }} />}<article className={"page-content font-page-" + (page.font ?? "default")} style={{ maxWidth: page.fullWidth ? "none" : undefined, fontSize: page.smallText ? 15 : 16 }}>
     {page.icon && <div style={{ fontSize: compact ? 44 : 68 }}>{page.icon}</div>}<h1 className="title-edit">{page.title || "Untitled"}</h1>
     {page.database ? databasesUnavailable ? <p>Database views can&apos;t be displayed right now.</p> : <ReadOnlyDatabaseView db={page.database} pages={data.pages} onOpenRow={data.openPage} /> : <ReadOnlyBlocks pageId={page.id} blocks={page.blocks} />}
-    {!!comments.length && <section className="mt-8 border-t border-border pt-4"><h2>Comments · {comments.length}</h2>{comments.map((c) => <div key={c.id} className="my-4"><p className="text-xs text-text-tertiary">🙂 {c.author || "Someone"}{c.authorType === "agent" ? " · Agent" : ""} · {formatRelative(c.createdAt)}</p><p className="whitespace-pre-wrap">{c.body}</p></div>)}</section>}{children}<p className="mt-8 text-xs text-text-tertiary">Edited {formatRelative(page.updatedAt)}</p>
+    {!!comments.length && <section className="mt-8 border-t border-border pt-4"><h2>Comments · {comments.length}</h2>{comments.map((c) => <div key={c.id} className="my-4"><p className="text-xs text-text-tertiary">🙂 {c.author || "Someone"}{c.authorType === "agent" ? " · Agent" : ""} · {formatRelative(c.createdAt)}</p><p className="whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: sanitizeHtml(c.body) }} /></div>)}</section>}{children}<p className="mt-8 text-xs text-text-tertiary">Edited {formatRelative(page.updatedAt)}</p>
   </article></>;
 }
 export default function ReadOnlyPage({ page, pages = {}, syncedBlocks = {}, linkBase = null, databasesUnavailable, children }: { page: Page; pages?: Record<string, Page>; syncedBlocks?: Record<string, Block[]>; linkBase?: string | null; databasesUnavailable?: boolean; children?: React.ReactNode }) {

@@ -9,6 +9,7 @@ import { newId } from "@/lib/factories";
 import { isAutoProperty, OptionPills } from "@/components/database/dbShared";
 import type { Database, DbProperty, DbRow, Page } from "@/lib/types";
 import type { DbOps } from "@/lib/dbOps";
+import PersonCell from "@/components/database/cells/PersonCell";
 import FilesCell from "@/components/database/cells/FilesCell";
 import RelationCell from "@/components/database/cells/RelationCell";
 import { safeHref } from "@/lib/utils";
@@ -28,6 +29,7 @@ export default function Cell({ ops, database, row, property, pages }: { ops: DbO
   if (property.type === "agentStatus" || property.type === "agentDelegate") return <AgentPropertyCell pageId={row.pageId} propertyId={property.id} kind={property.type} />;
   if (property.type === "button") return <button className="cell-button" disabled={ops.readOnly} onClick={() => { for (const action of property.buttonActions ?? []) ops.runButton(row.id, action); }}>{property.buttonLabel || "Run"}</button>;
   if (isAutoProperty(property, database)) return <span className={`cell-readonly ${text.startsWith("⚠") ? "danger" : ""}`} title={text.startsWith("⚠") ? text : property.type === "id" ? "Auto-generated ID (read-only)" : "Automatically updated"}>{text || "—"}</span>;
+  if (property.type === "person") return <PersonCell value={value} onChange={set} readOnly={ops.readOnly} />;
   if (property.type === "files") return <FilesCell value={value} onChange={set} readOnly={ops.readOnly} />;
   if (property.type === "relation") return <RelationCell property={property} value={value} pages={pages} onChange={set} onOpen={(id) => ops.openRow(id)} readOnly={ops.readOnly} />;
   if (ops.readOnly && ["url", "email", "phone"].includes(property.type)) return text ? <a className="cell-readonly text-accent" href={safeHref(property.type === "email" ? `mailto:${text}` : property.type === "phone" ? `tel:${text}` : text)} target="_blank" rel="noopener noreferrer">{text}</a> : <span className="cell-readonly">—</span>;
