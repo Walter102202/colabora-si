@@ -45,7 +45,7 @@ function HydratedShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false), [drawerAt, setDrawerAt] = useState<string | null>(null);
   const [width, setWidth] = useState(() => { try { const value = Number(localStorage.getItem("colabora-sidebar-width")); return value > 0 ? Math.max(200, Math.min(480, value)) : 260; } catch { return 260; } });
   const [resizing, setResizing] = useState(false);
-  const [modal, setModal] = useState<{ kind: string; pageId?: string } | null>(null);
+  const [modal, setModal] = useState<{ kind: string; pageId?: string; settingsTab?: string } | null>(null);
   const pageId = /^\/p\/([^/]+)/.exec(pathname)?.[1], page = pageId ? pages[pageId] : undefined;
   const user = useAuthStore((s) => s.user), workspaceId = useStore((s) => s.syncWorkspaceId);
   const sharedId = /^\/shared\/([^/]+)/.exec(pathname)?.[1], sharedWorkspace = useSharedPresenceScope((s) => sharedId ? s.byPage[sharedId] : undefined);
@@ -62,7 +62,7 @@ function HydratedShell({ children }: { children: React.ReactNode }) {
     return () => { unsubscribe(); stopSync(); };
   }, []);
   useEffect(() => {
-    const handler = (event: Event) => setModal((event as CustomEvent<{ kind: string; pageId?: string }>).detail);
+    const handler = (event: Event) => setModal((event as CustomEvent<{ kind: string; pageId?: string; settingsTab?: string }>).detail);
     window.addEventListener("colabora-modal", handler);
     return () => window.removeEventListener("colabora-modal", handler);
   }, []);
@@ -100,7 +100,7 @@ function HydratedShell({ children }: { children: React.ReactNode }) {
       {page && <><button className={`icon-button ${page.isFavorite ? "favorite-star" : ""}`} aria-label={page.isFavorite ? "Remove from Favorites" : "Add to Favorites"} onClick={() => useStore.getState().toggleFavorite(page.id)}><Star size={17} fill={page.isFavorite ? "currentColor" : "none"} /></button><button className="icon-button" aria-label="Style, export, and more" onClick={() => request("page-menu", page.id)}><MoreHorizontal size={18} /></button></>}
     </header><main className="min-h-0 flex-1">{children}</main></div>
     {modal?.kind === "search" && <SearchModal onClose={() => setModal(null)} />}
-    {modal?.kind === "settings" && <SettingsModal onClose={() => setModal(null)} />}
+    {modal?.kind === "settings" && <SettingsModal initialTab={modal.settingsTab} onClose={() => setModal(null)} />}
     {modal?.kind === "auth" && <AuthModal onClose={() => setModal(null)} />}
     {modal?.kind === "shortcuts" && <ShortcutsModal onClose={() => setModal(null)} />}
     {modal?.kind === "trash" && <TrashModal onClose={() => setModal(null)} />}

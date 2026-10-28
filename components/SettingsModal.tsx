@@ -20,10 +20,10 @@ export function workspaceExport() {
   const s = useStore.getState();
   return { app: "colabora-si", version: 1, exportedAt: new Date().toISOString(), pages: Object.fromEntries(Object.entries(s.pages).filter(([id]) => !foreignPageIds.has(id))), rootOrder: s.rootOrder.filter((id) => !foreignPageIds.has(id)), expanded: s.expanded, syncedBlocks: s.syncedBlocks ?? {}, reminders: s.reminders ?? [], settings: s.settings };
 }
-export default function SettingsModal({ onClose }: { onClose: () => void }) {
+export default function SettingsModal({ onClose, initialTab = "Appearance" }: { onClose: () => void; initialTab?: string }) {
   const settings = useStore((s) => s.settings) ?? DEFAULT_SETTINGS, pages = useStore((s) => s.pages), router = useRouter();
   const { user } = useAuth();
-  const [tab, setTab] = useState("Appearance"), [theme, setTheme] = useState(getThemeMode), [error, setError] = useState("");
+  const [tab, setTab] = useState(initialTab), [theme, setTheme] = useState(getThemeMode), [error, setError] = useState("");
   const [backingUp, setBackingUp] = useState(false);
   const [storage] = useState(() => { let bytes = 0; for (let i = 0; i < localStorage.length; i++) { const key = localStorage.key(i)!; bytes += (key.length + (localStorage.getItem(key)?.length ?? 0)) * 2; } return `${(bytes / 1024).toFixed(1)} KB in localStorage`; });
   const update = useStore((s) => s.updateSettings), trash = Object.values(pages).filter((p) => p.isDeleted).length;
