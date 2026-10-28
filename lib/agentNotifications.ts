@@ -171,6 +171,7 @@ export function notificationText(n: NotificationRow): string {
 export function notificationHref(n: NotificationRow): string | null {
   if (!n.page_id) return null;
   const path = n.task_id ? taskUrl(n.page_id, n.task_id) : pageUrl(n.page_id);
-  const hash = n.block_id ? `#${encodeURIComponent(n.block_id)}` : "";
+  // An approval lands on its card (the row panel focuses it); otherwise the block.
+  const hash = n.approval_id ? `#approval-${encodeURIComponent(n.approval_id)}` : n.block_id ? `#${encodeURIComponent(n.block_id)}` : "";
   return path + hash;
 }

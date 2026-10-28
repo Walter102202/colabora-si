@@ -44,6 +44,8 @@ export interface TaskViewProps {
   activities: ActivityRow[];
   subtasks: SubtaskItem[];
   reviewerName: string | null;
+  // Approval a deep link (#approval-<id>) asked to land on, if any.
+  focusApprovalId?: string | null;
   // Message to the agent: text with "feedback"/"continue", or an empty body with "continue"/"stop".
   onMessage: (body: string, signal: MessageSignal) => Promise<void>;
   onClose: (acceptance: "accepted" | "rejected", note: string | null) => Promise<void>;
@@ -105,7 +107,7 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ task, agent, run, approval, artifact, review, brief, activities, subtasks, reviewerName, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ task, agent, run, approval, artifact, review, brief, activities, subtasks, reviewerName, focusApprovalId = null, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -185,7 +187,9 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
 
       <SubtaskList subtasks={subtasks} onOpenTask={onOpenTask} />
 
-      {approval && (approval.kind === "action" ? <ApprovalCard approval={approval} onDecide={onDecide} /> : <DecisionCard approval={approval} onDecide={onDecide} />)}
+      {approval && (approval.kind === "action"
+        ? <ApprovalCard approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />
+        : <DecisionCard approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />)}
 
       {!terminal && !approval && (
         <section className="space-y-1">

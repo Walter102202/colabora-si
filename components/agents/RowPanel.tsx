@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useLocation, useNavigate, useSearchParams } from "react-router";
 import { pageUrl, taskUrl } from "@/lib/routes";
 import { useStore } from "@/lib/store";
 import { useAgentsStore } from "@/lib/agentsStore";
@@ -89,6 +89,12 @@ function AssignConnector({ pageId }: { pageId: string }) {
 }
 
 function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpenTask: (pageId: string, taskId: string) => void; onOpenPage: (pageId: string) => void }) {
+  const { hash } = useLocation();
+  // `#approval-<id>` (a deep link from a chat or a notification) lands on that approval.
+  const focusApprovalId = useMemo(() => {
+    const m = /^#approval-(.+)$/.exec(hash);
+    return m ? decodeURIComponent(m[1]) : null;
+  }, [hash]);
   const agents = useAgentsStore((s) => s.agents);
   const run = useAgentTasks((s) => activeRunFor(s, task));
   const approval = useAgentTasks((s) => pendingApprovalFor(s, task.id));
@@ -130,6 +136,7 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
       activities={activities ?? []}
       subtasks={subtasks}
       reviewerName={review ? (agents.find((a) => a.id === review.reviewer_id)?.name ?? null) : null}
+      focusApprovalId={focusApprovalId}
       onMessage={(body, signal) => sendMessage(task.id, body, signal).then(() => undefined)}
       onClose={(acceptance, note) => closeTask(task.id, acceptance, note)}
       onDecide={(decision, response) => (approval ? decideApproval(approval.id, decision, response).then(() => undefined) : Promise.resolve())}

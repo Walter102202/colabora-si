@@ -3,18 +3,22 @@ import type { ApprovalRow } from "@/lib/agentTasks";
 import type { ApprovalDecision } from "@/lib/agentActions";
 import { expiresIn } from "@/lib/agentTaskText";
 import { formatRelative } from "@/lib/utils";
+import { useApprovalFocus } from "@/components/agents/panel/useApprovalFocus";
 
 // An irreversible action waiting for a person. Approve runs it exactly once.
 export function ApprovalCard({
   approval,
   deciderName,
   onDecide,
+  focus = false,
 }: {
   approval: ApprovalRow;
   deciderName?: string | null;
   onDecide: (decision: ApprovalDecision, response: Record<string, unknown> | null) => Promise<void>;
+  focus?: boolean;
 }) {
   const id = useId();
+  const { ref: focusRef, id: focusId, ringClass } = useApprovalFocus(focus && approval.status === "pending", approval.id);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -47,7 +51,7 @@ export function ApprovalCard({
   const has = (o: ApprovalRow["options"][number]) => approval.options.includes(o);
 
   return (
-    <div className="space-y-2 rounded-md border border-accent/40 bg-accent/5 p-3 text-sm">
+    <div ref={focusRef} id={focusId} className={"space-y-2 rounded-md border border-accent/40 bg-accent/5 p-3 text-sm" + ringClass}>
       <p className="font-medium">Needs your approval{approval.question ? `: ${approval.question}` : ""}</p>
       <p className="text-xs text-text-secondary">Runs exactly this once: {what || "the requested action"}. Expires in {expiresIn(approval.expires_at)}.</p>
       {editing ? (
