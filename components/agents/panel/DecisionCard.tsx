@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import type { ApprovalRow } from "@/lib/agentTasks";
 import type { ApprovalDecision } from "@/lib/agentActions";
 import { expiresIn } from "@/lib/agentTaskText";
+import { useApprovalFocus } from "@/components/agents/panel/useApprovalFocus";
 
 const KIND = { elicitation: "Question", plan: "Plan to confirm", escalation: "Escalated to you", action: "Decision" } as const;
 
@@ -10,11 +11,14 @@ const KIND = { elicitation: "Question", plan: "Plan to confirm", escalation: "Es
 export function DecisionCard({
   approval,
   onDecide,
+  focus = false,
 }: {
   approval: ApprovalRow;
   onDecide: (decision: ApprovalDecision, response: Record<string, unknown> | null) => Promise<void>;
+  focus?: boolean;
 }) {
   const id = useId();
+  const { ref: focusRef, id: focusId, ringClass } = useApprovalFocus(focus, approval.id);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +38,7 @@ export function DecisionCard({
   };
 
   return (
-    <div className="space-y-2 rounded-md border border-accent/40 bg-accent/5 p-3 text-sm">
+    <div ref={focusRef} id={focusId} tabIndex={-1} className={"space-y-2 rounded-md border border-accent/40 bg-accent/5 p-3 text-sm" + ringClass}>
       <p className="font-medium">{KIND[approval.kind]}: {approval.question || "the agent is waiting for you"}</p>
       <p className="text-xs text-text-secondary">Expires in {expiresIn(approval.expires_at)}.</p>
       {choices.length > 0 && (

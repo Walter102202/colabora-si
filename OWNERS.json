@@ -15,6 +15,7 @@
       "supabase/migrations/*_0008_*",
       "supabase/migrations/*_0009_*",
       "supabase/migrations/*_0010_*",
+      "supabase/migrations/*_0011_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -96,6 +97,9 @@
     "a/mcp-app-card": [
       "apps/card.html",
       "package.json"
+    ],
+    "a/chat-decisions": [
+      "OWNERS.json"
     ]
   }
 }

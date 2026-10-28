@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
-import { cardDataFrom, pageLink, taskIdFrom, taskLink, toolFailure } from "@/lib/agentCard";
+import { approvalIdFromHash, approvalLink, cardDataFrom, pageLink, taskIdFrom, taskLink, toolFailure } from "@/lib/agentCard";
 import { windowPort } from "@/lib/agentCardHost";
 import { applyHostContext, applySystemTheme } from "@/components/agents/card/theme";
 import { mockCard } from "@/components/agents/card/mock";
@@ -28,6 +28,15 @@ describe("card data contract", () => {
   it("builds deep links on app_url with the app's route builders", () => {
     expect(taskLink("https://app.example/", "row 1", "t1")).toBe("https://app.example/p/row%201?task=t1");
     expect(pageLink("https://app.example", "p1")).toBe("https://app.example/p/p1");
+    expect(approvalLink("https://app.example.com/", "p1", "t1", "ap 1")).toBe("https://app.example.com/p/p1?task=t1#approval-ap%201");
+  });
+
+  it("reads the approval id back from a fragment and ignores anything malformed", () => {
+    expect(approvalIdFromHash("#approval-ap%201")).toBe("ap 1");
+    expect(approvalIdFromHash("#approval-%")).toBeNull();
+    expect(approvalIdFromHash("#approval-")).toBeNull();
+    expect(approvalIdFromHash("#block-1")).toBeNull();
+    expect(approvalIdFromHash("")).toBeNull();
     expect(taskIdFrom({ task_id: "t1" })).toBe("t1");
     expect(taskIdFrom({ task_id: "" })).toBeNull();
     expect(taskIdFrom("t1")).toBeNull();
