@@ -1,6 +1,6 @@
-"use client";
+import { pageUrl } from "@/lib/routes";
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router";
 import { Bell, X } from "lucide-react";
 import { useStore } from "@/lib/store";
 import type { Reminder } from "@/lib/types";
@@ -8,18 +8,18 @@ import { withViewTransition } from "@/lib/viewTransition";
 const firedIds = new Set<string>(), CHECK_MS = 30000, TOAST_MS = 8000;
 const dateLabel = (date: string) => new Date(date).toLocaleString("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }) + " UTC";
 export default function ReminderBell() {
-  const reminders = useStore((s) => s.reminders), pages = useStore((s) => s.pages), router = useRouter();
+  const reminders = useStore((s) => s.reminders), pages = useStore((s) => s.pages), navigate = useNavigate();
   const [open, setOpen] = useState(false), [now, setNow] = useState(0), [toasts, setToasts] = useState<Reminder[]>([]), timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const closeToast = (id: string) => { clearTimeout(timers.current.get(id)); timers.current.delete(id); setToasts((s) => s.filter((r) => r.id !== id)); };
   useEffect(() => {
     const activeTimers = timers.current;
     const announce = (r: Reminder) => { if (firedIds.has(r.id)) return; firedIds.add(r.id); if (r.dismissed) return; useStore.getState().updateReminder(r.id, { notified: true }); setToasts((s) => [...s, r]); activeTimers.set(r.id, setTimeout(() => { setToasts((s) => s.filter((t) => t.id !== r.id)); activeTimers.delete(r.id); }, TOAST_MS)); };
-    const check = () => { const now = Date.now(); setNow(now); for (const r of useStore.getState().reminders ?? []) if (!r.notified && !r.dismissed && new Date(r.date).getTime() <= now) { if (!firedIds.has(r.id) && document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted") { try { const notification = new Notification("Reminder", { body: r.text || "Reminder", tag: "reminder-" + r.id }); notification.onclick = () => { window.focus(); if (r.pageId) router.push("/p/" + r.pageId); }; } catch {} } announce(r); } };
+    const check = () => { const now = Date.now(); setNow(now); for (const r of useStore.getState().reminders ?? []) if (!r.notified && !r.dismissed && new Date(r.date).getTime() <= now) { if (!firedIds.has(r.id) && document.visibilityState !== "visible" && "Notification" in window && Notification.permission === "granted") { try { const notification = new Notification("Reminder", { body: r.text || "Reminder", tag: "reminder-" + r.id }); notification.onclick = () => { window.focus(); if (r.pageId) navigate(pageUrl(r.pageId)); }; } catch {} } announce(r); } };
     const message = (event: MessageEvent) => { const data = event.data; if (data?.type !== "reminder-push" || !data.reminder?.id) return; const payload = data.reminder, local = useStore.getState().reminders?.find((r) => r.id === payload.id); announce(local ?? { id: payload.id, date: new Date().toISOString(), pageId: /^\/p\/([^/?]+)/.exec(payload.url ?? "")?.[1] ?? "", text: payload.body ?? "Reminder", createdAt: Date.now() }); };
     const initial = setTimeout(check, 0), interval = setInterval(check, CHECK_MS); navigator.serviceWorker?.addEventListener("message", message);
     return () => { clearTimeout(initial); clearInterval(interval); navigator.serviceWorker?.removeEventListener("message", message); for (const timer of activeTimers.values()) clearTimeout(timer); activeTimers.clear(); };
-  }, [router]);
+  }, [navigate]);
   const active = (reminders ?? []).filter((r) => !r.dismissed), upcoming = active.filter((r) => new Date(r.date).getTime() > now && !r.notified).sort((a, b) => a.date.localeCompare(b.date)), past = active.filter((r) => new Date(r.date).getTime() <= now || r.notified).sort((a, b) => b.date.localeCompare(a.date));
-  const go = (r: Reminder) => { setOpen(false); closeToast(r.id); if (r.pageId) withViewTransition(() => router.push("/p/" + r.pageId)); };
+  const go = (r: Reminder) => { setOpen(false); closeToast(r.id); if (r.pageId) withViewTransition(() => navigate(pageUrl(r.pageId))); };
   return <><div className="relative"><button className="icon-button relative" aria-label="Reminders" title="Reminders" onClick={() => setOpen(!open)}><Bell size={17} />{!!upcoming.length && <span className="reminder-count">{upcoming.length}</span>}</button>{open && <><button className="menu-backdrop" aria-label="Close reminders" onClick={() => setOpen(false)} /><div className="reminder-menu menu-panel"><h2 className="section-label">Reminders</h2>{!active.length && <p className="p-2 text-sm text-text-tertiary">No reminders. Use “Remind” on a date mention to add one.</p>}{([["Upcoming", upcoming], ["Past", past]] as [string, Reminder[]][]).map(([label, list]) => list.length > 0 && <section key={label}><h3 className="section-label">{label}</h3>{list.map((r) => <div key={r.id} className="flex items-center gap-1 p-2"><button className="min-w-0 flex-1 text-left" onClick={() => go(r)}><span className="block truncate text-sm">{r.text || pages[r.pageId]?.title || "Reminder"}</span><small className="text-text-tertiary">{dateLabel(r.date)}{pages[r.pageId] ? " · " + (pages[r.pageId].title || "Untitled") : ""}</small></button><button title="Dismiss" aria-label="Dismiss reminder" onClick={() => useStore.getState().deleteReminder(r.id)}><X size={14} /></button></div>)}</section>)}</div></>}</div><div className="reminder-toasts">{toasts.map((r) => <div className="reminder-toast" role="status" key={r.id}><Bell size={18} /><button className="min-w-0 flex-1 text-left" onClick={() => go(r)}><small className="block text-text-tertiary">Reminder</small><span className="block truncate">{r.text || "Reminder"}</span></button><button aria-label="Close reminder" onClick={() => closeToast(r.id)}><X size={15} /></button></div>)}</div></>;
 }

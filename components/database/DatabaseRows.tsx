@@ -1,12 +1,12 @@
-"use client";
-import TableView from "@/components/database/TableView";
-import BoardView from "@/components/database/BoardView";
-import ListView from "@/components/database/ListView";
-import GalleryView from "@/components/database/GalleryView";
-import CalendarView from "@/components/database/CalendarView";
-import TimelineView from "@/components/database/TimelineView";
-import type { ViewProps } from "@/components/database/dbShared";
+import { lazy, Suspense } from "react";
+const TableView = lazy(() => import("@/components/database/TableView"));
+const BoardView = lazy(() => import("@/components/database/BoardView"));
+const ListView = lazy(() => import("@/components/database/ListView"));
+const GalleryView = lazy(() => import("@/components/database/GalleryView"));
+const CalendarView = lazy(() => import("@/components/database/CalendarView"));
+const TimelineView = lazy(() => import("@/components/database/TimelineView"));
+import type { ViewProps } from "@/lib/dbView";
 export default function DatabaseRows(props: ViewProps) {
   const View = { table: TableView, board: BoardView, list: ListView, gallery: GalleryView, calendar: CalendarView, timeline: TimelineView }[props.view.type];
-  return <View {...props} />;
+  return <Suspense fallback={<div className="min-h-40" />}><View {...props} /></Suspense>;
 }

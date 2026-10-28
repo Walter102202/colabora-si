@@ -1,25 +1,16 @@
 import { defineConfig, globalIgnores } from "eslint/config";
-import nextVitals from "eslint-config-next/core-web-vitals";
-import nextTs from "eslint-config-next/typescript";
+import tseslint from "typescript-eslint";
+import hooks from "eslint-plugin-react-hooks";
+import refresh from "eslint-plugin-react-refresh";
+import a11y from "eslint-plugin-jsx-a11y";
 
-const eslintConfig = defineConfig([
-  ...nextVitals,
-  ...nextTs,
-  globalIgnores([
-    ".next/**",
-    "out/**",
-    "build/**",
-    "next-env.d.ts",
-    // service worker: runs in a worker global scope, not in the browser page or Node
-    "public/sw.js",
-    // Deno (Edge Functions) and standalone Node processes have their own toolchains
-    "supabase/functions/**",
-    "agent/**",
-    "bridge/**",
-    // local, never-versioned folders
-    ".local/**",
-    ".superpowers/**",
-  ]),
+export default defineConfig([
+  globalIgnores([".next/**", "dist/**", "out/**", "build/**", "public/sw.js", "supabase/functions/**", "agent/**", "bridge/**", "connect/**", ".local/**", ".superpowers/**"]),
+  ...tseslint.configs.recommended,
+  { files: ["**/*.{ts,tsx}"], plugins: { "react-hooks": hooks }, rules: hooks.configs.recommended.rules },
+  { files: ["app/**/*.tsx", "components/**/*.tsx", "lib/**/*.tsx"], ignores: ["components/agents/**", "lib/agent*"],
+    plugins: { "jsx-a11y": a11y, "react-refresh": refresh },
+    settings: { "jsx-a11y": { components: { Link: "a" }, attributes: { href: ["to"] } } },
+    rules: { ...a11y.flatConfigs.strict.rules, "jsx-a11y/anchor-is-valid": ["error", { components: ["Link"], specialLink: ["to"], aspects: ["noHref", "invalidHref", "preferButton"] }], "react-refresh/only-export-components": ["error", { allowConstantExport: true }] },
+  },
 ]);
-
-export default eslintConfig;

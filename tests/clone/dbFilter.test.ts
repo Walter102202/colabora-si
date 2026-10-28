@@ -80,10 +80,10 @@ it("agent views filter and group authoritative task states without changing stor
   const status = prop({ id: "state", name: "Status", type: "agentStatus" }), worker = prop({ id: "worker", type: "agentDelegate" });
   const source = db([status, worker], [row({ state: "done" }, "queued-page"), row({}, "review-page"), row({}, "plain-page")]);
   const query = databaseTaskValues(source, {
-    queued: { row_page_id: "queued-page", state: "queued", delegate_agent_id: "worker", updated_at: "2026-10-27T00:00:00Z" },
-    old: { row_page_id: "review-page", state: "done", delegate_agent_id: "old-worker", updated_at: "2026-10-27T01:00:00Z" },
-    review: { row_page_id: "review-page", state: "ready_for_review", delegate_agent_id: "worker", updated_at: "2026-10-27T00:00:00Z" },
-  });
+    queued: { row_page_id: "queued-page", state: "queued", delegate_agent_id: "worker", parent_task_id: null, updated_at: "2026-10-27T00:00:00Z" },
+    old: { row_page_id: "review-page", state: "done", delegate_agent_id: "old-worker", parent_task_id: null, updated_at: "2026-10-27T01:00:00Z" },
+    review: { row_page_id: "review-page", state: "ready_for_review", delegate_agent_id: "worker", parent_task_id: null, updated_at: "2026-10-27T00:00:00Z" },
+  }, []);
   const waiting = view({ filters: [{ id: "f", propertyId: "state", operator: "is", value: "ready_for_review" }] });
   expect(filterRows(query.rows, waiting, query, {}).map((r) => r.pageId)).toEqual(["review-page"]);
   const groups = groupRows(query.rows, view({ type: "board", groupBy: "state" }), query, {});
@@ -93,4 +93,23 @@ it("agent views filter and group authoritative task states without changing stor
   expect(query.rows[1].cells.worker).toBe("worker");
   expect(source.properties[0].type).toBe("agentStatus");
   expect(source.rows[0].cells).toEqual({ state: "done" });
+});
+
+it("agent task Lead cells display the assigned lead name without changing stored people", () => {
+  const lead = prop({ id: "lead", name: "Lead", type: "person" }), status = prop({ id: "state", type: "agentStatus" });
+  const source = db([lead, status], [row({ lead: "stale" }, "parent-page"), row({}, "child-page"), row({}, "worker-page"), row({}, "missing-parent-page"), row({}, "plain-page")]);
+  const task = { state: "queued" as const, delegate_agent_id: "worker", parent_task_id: null, updated_at: "2026-10-28T00:00:00Z" };
+  const tasks = {
+    parent: { ...task, row_page_id: "parent-page", delegate_agent_id: "lead-agent" },
+    child: { ...task, row_page_id: "child-page", parent_task_id: "parent" },
+    worker: { ...task, row_page_id: "worker-page" },
+    missing: { ...task, row_page_id: "missing-parent-page", parent_task_id: "not-loaded" },
+  };
+  const agents = [{ id: "lead-agent", name: "Claude Code", role: "lead" as const }, { id: "worker", name: "Codex", role: "worker" as const }];
+  const query = databaseTaskValues(source, tasks, agents);
+  expect(query.rows.map((r) => computeCell(r, lead, query, {}))).toEqual(["Claude Code", "Claude Code", null, null, null]);
+  expect(filterRows(query.rows, view({ filters: [{ id: "f", propertyId: "lead", operator: "contains", value: "Claude" }] }), query, {}).map((r) => r.pageId)).toEqual(["parent-page", "child-page"]);
+  expect(source.rows[0].cells.lead).toBe("stale");
+  const ordinary = db([lead], source.rows);
+  expect(databaseTaskValues(ordinary, tasks, agents)).toBe(ordinary);
 });

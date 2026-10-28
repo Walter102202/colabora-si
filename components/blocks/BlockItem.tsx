@@ -1,4 +1,5 @@
-"use client";
+import { Input } from "@/components/FormControls";
+import { lazy, Suspense } from "react";
 import { memo, useCallback, useState } from "react";
 import { ChevronRight, GripVertical, Plus } from "lucide-react";
 import Editable, { type EditableHandle } from "@/components/Editable";
@@ -12,16 +13,16 @@ import BlockPresence from "@/components/BlockPresence";
 import BlockConflictNotice from "@/components/blocks/BlockConflictNotice";
 import ColumnsBlock from "@/components/blocks/ColumnsBlock";
 import TableBlock from "@/components/blocks/TableBlock";
-import EquationBlock from "@/components/blocks/EquationBlock";
+const EquationBlock = lazy(() => import("@/components/blocks/EquationBlock"));
 import BreadcrumbBlock from "@/components/blocks/BreadcrumbBlock";
 import SyncedBlock from "@/components/blocks/SyncedBlock";
 import PageLinkBlock from "@/components/blocks/PageLinkBlock";
 import TocBlock from "@/components/blocks/TocBlock";
-import InlineDatabaseBlock from "@/components/blocks/InlineDatabaseBlock";
+const InlineDatabaseBlock = lazy(() => import("@/components/blocks/InlineDatabaseBlock"));
 import BookmarkBlock from "@/components/blocks/BookmarkBlock";
 import MediaBlock from "@/components/blocks/MediaBlock";
-import CodeBlock from "@/components/blocks/CodeBlock";
-import EmojiPicker from "@/components/EmojiPicker";
+const CodeBlock = lazy(() => import("@/components/blocks/CodeBlock"));
+const EmojiPicker = lazy(() => import("@/components/EmojiPicker"));
 
 interface Props { block: Block; ops: BlockOps; ordinal?: number; spellCheck: boolean; selected?: boolean; pages: Record<string, Page>; insertBlocks: (id: string, blocks: Block[]) => void; commentCount?: number }
 function BlockItem({ block, ops, ordinal, spellCheck, selected, pages, insertBlocks, commentCount = 0 }: Props) {
@@ -34,24 +35,24 @@ function BlockItem({ block, ops, ordinal, spellCheck, selected, pages, insertBlo
   if (block.type === "button") body = <ButtonBlock block={block} ops={ops} pages={pages} onInsert={(blocks) => insertBlocks(block.id, blocks)} />;
   else if (block.type === "columns") body = <ColumnsBlock block={block} ops={ops} />;
   else if (block.type === "table") body = <TableBlock block={block} ops={ops} />;
-  else if (block.type === "equation") body = <EquationBlock block={block} ops={ops} />;
+  else if (block.type === "equation") body = <Suspense fallback={null}><EquationBlock block={block} ops={ops} /></Suspense>;
   else if (block.type === "breadcrumb") body = <BreadcrumbBlock pageId={ops.pageId} pages={pages} />;
   else if (block.type === "synced") body = <SyncedBlock block={block} ops={ops} />;
   else if (block.type === "page") body = <PageLinkBlock page={pages[block.pageId ?? ""]} />;
   else if (block.type === "toc") body = <TocBlock blocks={pages[ops.pageId]?.blocks ?? []} />;
-  else if (block.type === "database") body = <InlineDatabaseBlock block={block} ops={ops} pages={pages} />;
+  else if (block.type === "database") body = <Suspense fallback={null}><InlineDatabaseBlock block={block} ops={ops} pages={pages} /></Suspense>;
   else if (block.type === "bookmark") body = <BookmarkBlock block={block} ops={ops} />;
   else if (["image", "video", "audio", "file", "embed"].includes(block.type)) body = <MediaBlock block={block} ops={ops} />;
   else if (block.type === "divider") body = <div className="py-3"><hr className="border-border" /></div>;
-  else if (block.type === "code") body = <CodeBlock block={block} ops={ops} />;
-  else if (block.type === "todo") body = <div className="block-line"><input aria-label="Complete task" type="checkbox" checked={!!block.checked} disabled={ops.locked} onChange={() => ops.toggleChecked(block.id)} />{text}</div>;
+  else if (block.type === "code") body = <Suspense fallback={null}><CodeBlock block={block} ops={ops} /></Suspense>;
+  else if (block.type === "todo") body = <div className="block-line"><Input label="Complete task" aria-label="Complete task" type="checkbox" checked={!!block.checked} disabled={ops.locked} onChange={() => ops.toggleChecked(block.id)} />{text}</div>;
   else if (block.type === "bulleted" || block.type === "numbered") body = <div className="block-line"><span className="list-marker">{block.type === "bulleted" ? "•" : `${ordinal ?? 1}.`}</span>{text}</div>;
   else if (block.type === "toggle" || (heading && block.toggleable)) body = <div className="block-line"><button className={`toggle-marker ${heading ? `marker-${block.type}` : ""}`} aria-label={block.collapsed ? "Expand block" : "Collapse block"} onClick={() => ops.toggleCollapsed(block.id)}><ChevronRight size={17} className={block.collapsed ? "" : "rotate-90"} /></button>{text}</div>;
   else if (block.type === "quote") body = <div className="quote-block">{text}</div>;
-  else if (block.type === "callout") body = <div className={`callout-block ${color || "bc-gray"}`}><span className="relative"><button disabled={ops.locked} aria-label="Change callout icon" onClick={() => setPickingIcon(!pickingIcon)}>{block.icon ?? "💡"}</button>{pickingIcon && <EmojiPicker onSelect={(icon) => ops.updateBlock(block.id, { icon })} onClose={() => setPickingIcon(false)} />}</span>{text}</div>;
+  else if (block.type === "callout") body = <div className={`callout-block ${color || "bc-gray"}`}><span className="relative"><button disabled={ops.locked} aria-label="Change callout icon" onClick={() => setPickingIcon(!pickingIcon)}>{block.icon ?? "💡"}</button>{pickingIcon && <Suspense fallback={null}><EmojiPicker onSelect={(icon) => ops.updateBlock(block.id, { icon })} onClose={() => setPickingIcon(false)} /></Suspense>}</span>{text}</div>;
   else body = text;
   const drop = ops.dropTarget?.id === block.id ? ops.dropTarget.position : null;
-  return <div data-block-id={block.id} className={`block-item ${selected ? "selected-block" : ""} ${ops.draggingId === block.id ? "opacity-40" : ""} ${drop ? `block-drop-${drop}` : ""}`} style={{ marginLeft: block.indent * 26 }} onMouseDownCapture={(event) => ops.onBlockMouseDown(block.id, event)} onDragOver={(event) => ops.onDragOverBlock(block.id, event)} onDrop={(event) => { if (ops.draggingId) { event.preventDefault(); event.stopPropagation(); ops.onDrop(); } }}>
+  return <div role="presentation" aria-label={BLOCK_LABELS[block.type]} data-block-id={block.id} className={`block-item ${selected ? "selected-block" : ""} ${ops.draggingId === block.id ? "opacity-40" : ""} ${drop ? `block-drop-${drop}` : ""}`} style={{ marginLeft: block.indent * 26 }} onMouseDownCapture={(event) => ops.onBlockMouseDown(block.id, event)} onDragOver={(event) => ops.onDragOverBlock(block.id, event)} onDrop={(event) => { if (ops.draggingId) { event.preventDefault(); event.stopPropagation(); ops.onDrop(); } }}>
     <AttributionMargin blockId={block.id} attr={block.attr} />
     <BlockPresence blockId={block.id} />
     {block.attr?.by === "agent" && <span className="agent-dot" title="Edited by an agent" />}

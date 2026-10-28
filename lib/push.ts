@@ -1,6 +1,6 @@
 import { getSupabase } from "@/lib/supabase";
 export type PushState = "unsupported" | "denied" | "signed-out" | "off" | "on";
-const SW_PATH = "/sw.js", VAPID_PUBLIC = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+const SW_PATH = "/sw.js", VAPID_PUBLIC = import.meta.env.VITE_VAPID_PUBLIC_KEY;
 export function isPushSupported(): boolean { return typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window && !!VAPID_PUBLIC; }
 function b64urlToBytes(value: string): Uint8Array<ArrayBuffer> { const base = value.replace(/-/g, "+").replace(/_/g, "/"), binary = atob(base.padEnd(Math.ceil(base.length / 4) * 4, "=")); return Uint8Array.from(binary, (c) => c.charCodeAt(0)); }
 function b64url(buffer: ArrayBuffer | null): string { return buffer ? btoa(String.fromCharCode(...new Uint8Array(buffer))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") : ""; }

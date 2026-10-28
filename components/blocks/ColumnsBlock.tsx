@@ -1,4 +1,3 @@
-"use client";
 import { Fragment, useRef, useState } from "react";
 import type { Block, ColumnData } from "@/lib/types";
 import type { BlockOps } from "@/lib/blockOps";

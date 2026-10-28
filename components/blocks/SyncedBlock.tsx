@@ -1,4 +1,3 @@
-"use client";
 import { createContext, useContext, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { useStore } from "@/lib/store";

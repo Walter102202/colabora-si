@@ -16,9 +16,10 @@ Espacio colaborativo humanos y agentes.md
 # tests
 /coverage
 
-# next.js
+# generated output
 /.next/
 /out/
+/dist/
 
 # production
 /build
@@ -49,7 +50,6 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
-next-env.d.ts
 
 # brainstorming mockups (local)
 .superpowers/

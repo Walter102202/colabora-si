@@ -31,7 +31,10 @@ const git = (...gitArgs) => {
   }
 };
 
-const owners = JSON.parse(readFileSync(resolve(root, "OWNERS.json"), "utf8")).owners;
+const ownership = JSON.parse(readFileSync(resolve(root, "OWNERS.json"), "utf8"));
+const { owners } = ownership;
+const branch = process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME || git("rev-parse", "--abbrev-ref", "HEAD");
+const exceptions = new Set(ownership.branchExceptions?.[branch] ?? []);
 
 function inferOwner() {
   const forced = flag("--owner");
@@ -99,10 +102,10 @@ if (!owners[owner]) {
 }
 
 const files = changedFiles();
-const offending = files.filter((f) => ownerOf(f) !== owner).map((f) => `${f}  (owner: ${ownerOf(f) ?? "none"})`);
+const offending = files.filter((f) => ownerOf(f) !== owner && !exceptions.has(f)).map((f) => `${f}  (owner: ${ownerOf(f) ?? "none"})`);
 
 if (offending.length) {
   console.error(`check-ownership: branch owner is ${owner}, but these files belong to someone else:\n  ${offending.join("\n  ")}`);
   process.exit(1);
 }
-console.log(`check-ownership: ${files.length} changed file(s), all owned by ${owner}.`);
+console.log(`check-ownership: ${files.length} changed file(s), owned by ${owner} or explicitly allowed for ${branch}.`);

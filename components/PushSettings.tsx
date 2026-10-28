@@ -1,4 +1,3 @@
-"use client";
 import { useEffect, useState } from "react";
 import { disablePush, enablePush, getPushState, type PushState } from "@/lib/push";
 import { useAuth } from "@/lib/auth";

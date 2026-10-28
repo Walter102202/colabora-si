@@ -52,7 +52,30 @@
       "README.md",
       "LICENSE",
       "scripts/",
-      "docs/"
+      "docs/",
+      "vite.config.ts",
+      "index.html",
+      "apps/card.html",
+      "vercel.json"
+    ]
+  },
+  "branchExceptions": {
+    "b/vite": [
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "next.config.ts",
+      "eslint.config.mjs",
+      "postcss.config.mjs",
+      "vitest.config.ts",
+      ".gitignore",
+      ".env.example",
+      "OWNERS.json",
+      "scripts/check-ownership.mjs",
+      "vite.config.ts",
+      "index.html",
+      "apps/card.html",
+      "vercel.json"
     ]
   }
 }

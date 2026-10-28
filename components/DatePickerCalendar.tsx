@@ -1,7 +1,5 @@
-"use client";
 import { useState } from "react";
-export const isoLocalDate = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-export function formatIsoDate(iso: string): string { const date = new Date(iso + "T00:00:00"); return Number.isNaN(+date) ? iso : date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }); }
+import { isoLocalDate } from "@/lib/datePicker";
 export default function DatePickerCalendar({ value, onSelect }: { value?: string | null; onSelect: (iso: string) => void }) {
   const [month, setMonth] = useState(() => { const date = value ? new Date(value + "T00:00:00") : new Date(); return Number.isNaN(+date) ? new Date() : date; });
   const year = month.getFullYear(), m = month.getMonth(), days = new Date(year, m + 1, 0).getDate(), start = new Date(year, m, 1).getDay();

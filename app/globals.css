@@ -64,11 +64,11 @@
   --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont,
     "Segoe UI Variable Display", "Segoe UI", Helvetica, "Apple Color Emoji",
     Arial, sans-serif, "Segoe UI Emoji", "Segoe UI Symbol";
-  --font-mono: var(--font-mono), ui-monospace, "SF Mono", Menlo, monospace;
+  --font-mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
 }
 
 * { box-sizing: border-box; }
-html, body { padding: 0; margin: 0; height: 100%; }
+html, body, #root { padding: 0; margin: 0; height: 100%; }
 body {
   background: var(--bg); color: var(--text);
   font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display",
@@ -354,7 +354,7 @@ a.mention { text-decoration: none; font-weight: 500; border-radius: 3px; padding
 
 
 .database-list-row { display: flex; align-items: center; gap: 8px; min-height: 32px; border-bottom: 1px solid var(--border); padding: 4px; }
-.database-list-row[role="button"]:hover, .gallery-card[role="button"]:hover { background-color: var(--bg-hover); cursor: pointer; }
+.database-list-row:has(button:not(:disabled)):hover, .gallery-card:has(button:not(:disabled)):hover { background-color: var(--bg-hover); cursor: pointer; }
 .database-gallery { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
 .gallery-card { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
 .gallery-cover { aspect-ratio: 3/2; background-size: cover; background-position: center; background-color: var(--bg-secondary); display: flex; align-items: center; justify-content: center; font-size: 30px; }

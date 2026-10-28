@@ -1,4 +1,3 @@
-"use client";
 import Modal from "@/components/Modal";
 import { useSyncConflict } from "@/lib/sync";
 export default function SyncConflictModal() {

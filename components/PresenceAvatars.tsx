@@ -1,4 +1,3 @@
-"use client";
 import { presenceName, usePresence } from "@/lib/presence";
 export default function PresenceAvatars() {
   const users = usePresence((s) => s.others);

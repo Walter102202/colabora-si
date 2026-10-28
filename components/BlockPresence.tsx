@@ -1,4 +1,3 @@
-"use client";
 import { presenceName, usePresence } from "@/lib/presence";
 export default function BlockPresence({ blockId }: { blockId: string }) {
   const users = usePresence((s) => s.byBlock[blockId]);

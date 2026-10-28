@@ -1,6 +1,5 @@
-"use client";
 import { useState } from "react";
-import type { ViewProps } from "@/components/database/dbShared";
+import type { ViewProps } from "@/lib/dbView";
 import { rowColorClass } from "@/lib/dbFilter";
 export default function CalendarView({ ops, database, queryDatabase = database, view, rows, pages, canOpenRow }: ViewProps) {
   const [cursor, setCursor] = useState(() => { const d = new Date(); return { year: d.getUTCFullYear(), month: d.getUTCMonth() }; });

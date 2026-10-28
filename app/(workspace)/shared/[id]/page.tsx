@@ -1,4 +1,6 @@
-"use client";
-import { use } from "react";
+import { useParams } from "react-router";
 import SharedPageView from "@/components/SharedPageView";
-export default function SharedPage({ params }: { params: Promise<{ id: string }> }) { return <SharedPageView pageId={use(params).id} />; }
+export default function SharedPage() {
+  const { id } = useParams<{ id: string }>();
+  return <><title>Shared page · colabora.si</title>{id && <SharedPageView key={id} pageId={id} />}</>;
+}

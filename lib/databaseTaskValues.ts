@@ -1,11 +1,13 @@
 import type { Database, DbProperty } from "@/lib/types";
 import type { TaskRow } from "@/lib/agentTasks";
+import type { AgentRow } from "@/lib/agentsStore";
 import { TASK_STATE_LABEL } from "@/lib/agentState";
-type TaskValue = Pick<TaskRow, "row_page_id" | "state" | "delegate_agent_id" | "updated_at">;
+type TaskValue = Pick<TaskRow, "row_page_id" | "state" | "delegate_agent_id" | "parent_task_id" | "updated_at">;
 
 // Query-only cells; the source database keeps its rows and agent property types.
-export function databaseTaskValues(database: Database, tasks: Record<string, TaskValue>): Database {
-  const properties = database.properties.filter((p) => p.type === "agentStatus" || p.type === "agentDelegate");
+export function databaseTaskValues(database: Database, tasks: Record<string, TaskValue>, agents: Pick<AgentRow, "id" | "name" | "role">[]): Database {
+  const hasAgentStatus = database.properties.some((p) => p.type === "agentStatus");
+  const properties = database.properties.filter((p) => p.type === "agentStatus" || p.type === "agentDelegate" || (hasAgentStatus && p.name === "Lead"));
   if (!properties.length) return database;
   const byPage = new Map<string, TaskValue>();
   const terminal = (task: TaskValue) => ["done", "failed", "cancelled"].includes(task.state);
@@ -20,7 +22,9 @@ export function databaseTaskValues(database: Database, tasks: Record<string, Tas
       : p.type === "agentDelegate" ? { ...p, type: "text" } : p),
     rows: database.rows.map((row) => {
       const task = byPage.get(row.pageId), cells = { ...row.cells };
-      for (const property of properties) cells[property.id] = property.type === "agentStatus" ? task?.state ?? null : task?.delegate_agent_id ?? null;
+      const leadTask = task?.parent_task_id ? tasks[task.parent_task_id] : task;
+      const lead = agents.find((agent) => agent.id === leadTask?.delegate_agent_id && agent.role === "lead");
+      for (const property of properties) cells[property.id] = property.type === "agentStatus" ? task?.state ?? null : property.type === "agentDelegate" ? task?.delegate_agent_id ?? null : lead?.name ?? null;
       return { ...row, cells };
     }),
   };

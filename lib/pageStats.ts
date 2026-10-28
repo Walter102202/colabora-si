@@ -1,3 +1,4 @@
+import { pageUrl } from "@/lib/routes";
 import type { Block, Page } from "@/lib/types";
 import { stripHtml } from "@/lib/utils";
 
@@ -50,7 +51,7 @@ export function pageBlockCount(blocks: Block[]): number {
 // (menciones y enlaces); columnas (recursivo); o una celda relation que incluya el id.
 export function findBacklinks(pages: Record<string, Page>, targetId: string): Page[] {
   const out = new Set<string>();
-  const needleHref = `/p/${targetId}`;
+  const needleHref = pageUrl(targetId);
   const blocksReference = (blocks: Block[]): boolean => {
     for (const b of blocks) {
       if ((b.type === "page" || b.type === "database") && b.pageId === targetId) return true;
