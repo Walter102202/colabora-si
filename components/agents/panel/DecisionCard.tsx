@@ -1,9 +1,9 @@
-"use client";
-
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { ApprovalRow } from "@/lib/agentTasks";
 import type { ApprovalDecision } from "@/lib/agentActions";
-import { expiresIn } from "@/components/agents/panel/ApprovalCard";
+import { expiresIn } from "@/lib/agentTaskText";
+
+const KIND = { elicitation: "Question", plan: "Plan to confirm", escalation: "Escalated to you", action: "Decision" } as const;
 
 // A question from the agent (elicitation, plan or escalation). The person
 // answers in text or picks one of the offered options.
@@ -14,6 +14,7 @@ export function DecisionCard({
   approval: ApprovalRow;
   onDecide: (decision: ApprovalDecision, response: Record<string, unknown> | null) => Promise<void>;
 }) {
+  const id = useId();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,8 +33,6 @@ export function DecisionCard({
     }
   };
 
-  const KIND = { elicitation: "Question", plan: "Plan to confirm", escalation: "Escalated to you", action: "Decision" } as const;
-
   return (
     <div className="space-y-2 rounded-md border border-accent/40 bg-accent/5 p-3 text-sm">
       <p className="font-medium">{KIND[approval.kind]}: {approval.question || "the agent is waiting for you"}</p>
@@ -49,7 +48,8 @@ export function DecisionCard({
       )}
       {approval.options.includes("respond") && (
         <div className="space-y-1">
-          <textarea className="w-full rounded border border-border bg-bg px-2 py-1 text-sm" rows={2} value={text} placeholder="Answer in your own words…" disabled={busy} onChange={(e) => setText(e.target.value)} />
+          <label htmlFor={`${id}-answer`} className="sr-only">Your answer</label>
+          <textarea id={`${id}-answer`} className="w-full rounded border border-border bg-bg px-2 py-1 text-sm" rows={2} value={text} placeholder="Answer in your own words…" disabled={busy} onChange={(e) => setText(e.target.value)} />
           <div className="flex gap-2">
             <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" disabled={busy || !text.trim()} onClick={() => decide("respond", { text: text.trim() })}>Reply</button>
             {approval.options.includes("approve") && (
