@@ -51,6 +51,7 @@
       "supabase/config.toml",
       "OWNERS.json",
       "AGENTS.md",
+      "CLAUDE.md",
       "README.md",
       "LICENSE",
       "scripts/",
