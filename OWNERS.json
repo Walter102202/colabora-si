@@ -92,6 +92,10 @@
     "a/pub-html": [
       "supabase/config.toml",
       "vercel.json"
+    ],
+    "a/mcp-app-card": [
+      "apps/card.html",
+      "package.json"
     ]
   }
 }

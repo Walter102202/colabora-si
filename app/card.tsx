@@ -1,4 +1,2 @@
-import { createRoot } from "react-dom/client";
-import "@/components/agents/panel";
-
-createRoot(document.getElementById("root")!).render(null);
+// Vite entry of the MCP App card (apps/card.html). The card mounts itself.
+import "@/components/agents/card/main";
