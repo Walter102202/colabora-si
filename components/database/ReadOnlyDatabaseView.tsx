@@ -8,10 +8,11 @@ import { sortRows } from "@/lib/dbCompute";
 import { VIEW_ICONS } from "@/components/database/dbShared";
 import DatabaseRows from "@/components/database/DatabaseRows";
 import { useAgentTasks } from "@/lib/agentTasks";
+import { useAgentsStore } from "@/lib/agentsStore";
 import { databaseTaskValues } from "@/lib/databaseTaskValues";
 export default function ReadOnlyDatabaseView({ db, pages, onOpenRow }: { db: Database; pages: Record<string, Page>; onOpenRow?: (pageId: string) => void }) {
   const [active, setActive] = useState(0), [fallback] = useState(() => createView()), view = db.views[active] ?? db.views[0] ?? fallback;
-  const tasks = useAgentTasks((s) => s.tasks), queryDatabase = databaseTaskValues(db, tasks);
+  const tasks = useAgentTasks((s) => s.tasks), agents = useAgentsStore((s) => s.agents), queryDatabase = databaseTaskValues(db, tasks, agents);
   const rows = sortRows(filterRows(queryDatabase.rows, view, queryDatabase, pages), view, queryDatabase, pages), ignore = () => {};
   const ops: DbOps = {
     pageId: Object.values(pages).find((p) => p.database?.id === db.id)?.id ?? "", database: db, readOnly: true, locked: true,
