@@ -12,6 +12,7 @@ import ConditionInputs from "@/components/database/ConditionInputs";
 import { downloadCsv } from "@/lib/export";
 import type { ColorRule, DbViewType, FilterCondition } from "@/lib/types";
 import { useAgentTasks } from "@/lib/agentTasks";
+import { useAgentsStore } from "@/lib/agentsStore";
 import { databaseTaskValues } from "@/lib/databaseTaskValues";
 const VIEW_NAMES: Record<DbViewType, string> = { table: "Table", board: "Board", list: "List", gallery: "Gallery", calendar: "Calendar", timeline: "Timeline" };
 const COLORS = ["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
@@ -23,8 +24,8 @@ export default function DatabaseView({ pageId, locked = false, linkedPageId, lin
     return locked ? { ...base, get database() { return base.database; }, locked: true, readOnly: true } : base;
   }, [pageId, locked, linkedPageId, linkedBlockId]);
   const database = page?.database ? ops.database : undefined;
-  const tasks = useAgentTasks((s) => s.tasks);
-  const queryDatabase = useMemo(() => database ? databaseTaskValues(database, tasks) : undefined, [database, tasks]);
+  const tasks = useAgentTasks((s) => s.tasks), agents = useAgentsStore((s) => s.agents);
+  const queryDatabase = useMemo(() => database ? databaseTaskValues(database, tasks, agents) : undefined, [database, tasks, agents]);
   const view = database?.views[active] ?? database?.views[0];
   const rows = useMemo(() => queryDatabase && view ? sortRows(filterRows(queryDatabase.rows, view, queryDatabase, pages).filter((row) => !search.trim() || rowSearchText(row, queryDatabase, pages).includes(search.trim().toLowerCase())), view, queryDatabase, pages) : [], [queryDatabase, view, pages, search]);
   if (!database || !view) return null;
