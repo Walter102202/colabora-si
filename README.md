@@ -83,7 +83,7 @@ npm run dev        # http://localhost:3000
 Optional backend (Supabase, needs Docker):
 
 ```bash
-cp .env.example .env.local   # NEXT_PUBLIC_SUPABASE_URL and the publishable key
+cp .env.example .env.local   # VITE_SUPABASE_URL and the publishable key
 npx supabase start           # Postgres 17, Auth, Realtime, Storage, Edge Functions
 npx supabase db reset        # migrations 0001–0010 and seeds (demo workspace, two demo agents)
 npx supabase functions serve # mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, send-*

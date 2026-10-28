@@ -58,8 +58,8 @@ export function resolveConfig(env, argv) {
     mcpUrl,
     pat: (env.WORKSPACE_AGENT_PAT ?? "").trim(),
     tokenUrl: (env.WORKSPACE_AGENT_TOKEN_URL ?? "").trim() || (mcpUrl ? defaultTokenUrl(mcpUrl) : ""),
-    supabaseUrl: (env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim(),
-    supabaseKey: (env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").trim(),
+    supabaseUrl: (env.WORKSPACE_SUPABASE_URL ?? "").trim(),
+    supabaseKey: (env.WORKSPACE_SUPABASE_KEY ?? "").trim(),
     channelOnly: argv.includes("--channel-only"),
     noChannel: argv.includes("--no-channel"),
     demoEventAfterMs: Number.isFinite(demo) && demo >= 0 ? demo : null,
@@ -91,7 +91,7 @@ const DEMO_TOOLS = [
  * @param {{ supabaseUrl: string, supabaseKey: string, jwt: string }} opts
  */
 async function defaultRealtimeFactory({ supabaseUrl, supabaseKey, jwt }) {
-  if (!supabaseKey) throw new Error("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY is not set");
+  if (!supabaseKey) throw new Error("WORKSPACE_SUPABASE_KEY is not set");
   const { createClient } = await import("@supabase/supabase-js");
   const client = createClient(supabaseUrl, supabaseKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },

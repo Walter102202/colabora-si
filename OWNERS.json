@@ -56,10 +56,18 @@
       "vite.config.ts",
       "index.html",
       "apps/card.html",
-      "vercel.json"
+      "vercel.json",
+      "api/",
+      "tests/infra/"
     ]
   },
   "branchExceptions": {
+    "b/cleanup": [
+      "vite.config.ts",
+      "tsconfig.json",
+      "apps/card.html",
+      "OWNERS.json"
+    ],
     "b/vite": [
       "package.json",
       "package-lock.json",
@@ -75,6 +83,14 @@
       "vite.config.ts",
       "index.html",
       "apps/card.html",
+      "vercel.json"
+    ],
+    "a/env-docs": [
+      "AGENTS.md",
+      "public/llms.txt"
+    ],
+    "a/pub-html": [
+      "supabase/config.toml",
       "vercel.json"
     ]
   }

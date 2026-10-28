@@ -1,3 +1,23 @@
 {
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [
+    {
+      "source": "/pub/:id.md",
+      "destination": "https://xiuehxfljusakgblcfhm.supabase.co/functions/v1/pub-html/:id.md"
+    },
+    {
+      "source": "/pub/:id",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(facebookexternalhit|Twitterbot|Slackbot|LinkedInBot|Discordbot|WhatsApp|TelegramBot|Googlebot|bingbot|Applebot).*"
+        }
+      ],
+      "destination": "/api/pub?id=:id"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
 }

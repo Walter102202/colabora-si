@@ -6,8 +6,8 @@
       "env": {
         "WORKSPACE_MCP_URL": "https://<project>.supabase.co/functions/v1/mcp",
         "WORKSPACE_AGENT_PAT": "agt_...",
-        "NEXT_PUBLIC_SUPABASE_URL": "https://<project>.supabase.co",
-        "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_..."
+        "WORKSPACE_SUPABASE_URL": "https://<project>.supabase.co",
+        "WORKSPACE_SUPABASE_KEY": "sb_publishable_..."
       }
     }
   }
