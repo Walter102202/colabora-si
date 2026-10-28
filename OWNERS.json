@@ -60,6 +60,12 @@
     ]
   },
   "branchExceptions": {
+    "b/cleanup": [
+      "vite.config.ts",
+      "tsconfig.json",
+      "apps/card.html",
+      "OWNERS.json"
+    ],
     "b/vite": [
       "package.json",
       "package-lock.json",
