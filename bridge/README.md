@@ -22,8 +22,8 @@ Node 22 or later. Run it from a checkout of this repository (Realtime uses `@sup
 | `WORKSPACE_MCP_URL` | Remote MCP endpoint, e.g. `https://<project>.supabase.co/functions/v1/mcp` |
 | `WORKSPACE_AGENT_PAT` | The agent's personal access token (`agt_…`), shown once when the agent is created |
 | `WORKSPACE_AGENT_TOKEN_URL` | Token exchange endpoint. Default: `<origin of WORKSPACE_MCP_URL>/functions/v1/agent-token` |
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL, for Realtime |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (or `NEXT_PUBLIC_SUPABASE_ANON_KEY`) | Public key Realtime needs to open its socket. Without it the channel uses `wait_for_my_tasks` |
+| `WORKSPACE_SUPABASE_URL` | Supabase project URL of the workspace, for Realtime (usually the origin of `WORKSPACE_MCP_URL`) |
+| `WORKSPACE_SUPABASE_KEY` | Public (publishable) key of that project, `sb_publishable_…`; Realtime needs it to open its socket. Without it the channel uses `wait_for_my_tasks` |
 | `BRIDGE_LOG_FILE` | Optional. Appends every incoming and outgoing line, with a timestamp |
 | `BRIDGE_DEMO_EVENT_AFTER_MS` | Optional, `--channel-only` only. Emits one demo channel event that many ms after start |
 
@@ -40,8 +40,8 @@ Node 22 or later. Run it from a checkout of this repository (Realtime uses `@sup
       "env": {
         "WORKSPACE_MCP_URL": "https://<project>.supabase.co/functions/v1/mcp",
         "WORKSPACE_AGENT_PAT": "agt_…",
-        "NEXT_PUBLIC_SUPABASE_URL": "https://<project>.supabase.co",
-        "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_…"
+        "WORKSPACE_SUPABASE_URL": "https://<project>.supabase.co",
+        "WORKSPACE_SUPABASE_KEY": "sb_publishable_…"
       }
     }
   }

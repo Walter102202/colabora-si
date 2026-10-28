@@ -35,7 +35,7 @@ Ctrl+C stops after the current step; press it twice to quit at once.
 | `WORKSPACE_AGENT_TOKEN_URL` | no | PAT exchange endpoint; default `<MCP origin>/functions/v1/agent-token` |
 | `AGENT_HARNESS_NAME` | no | Name shown on each run; default `reference-agent` |
 | `AGENT_MAX_TURNS` | no | Model turns per run before giving up; default 40 |
-| `NEXT_PUBLIC_APP_URL` | no | App URL for deep links in notifications |
+| `WORKSPACE_APP_URL` | no | Public URL of the web app, for deep links in notifications |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_CHAT_ID` | no | Send notifications to a Telegram chat instead of the console |
 
 Example values for `MODEL_BASE_URL`: a hosted OpenAI-compatible API (`https://api.<provider>.com/v1`), an inference platform that serves open-weight models behind a chat completions endpoint, or a local server such as `http://localhost:11434/v1`. Pick a model that supports tool calling.

@@ -40,13 +40,13 @@ export const HARNESS_SNIPPETS: HarnessSnippet[] = [
         "WORKSPACE_MCP_URL": "${mcpUrl}",
         "WORKSPACE_AGENT_TOKEN_URL": "${tokenUrl}",
         "WORKSPACE_AGENT_PAT": "agt_...",
-        "NEXT_PUBLIC_SUPABASE_URL": "${originOf(mcpUrl)}",
-        "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_..."
+        "WORKSPACE_SUPABASE_URL": "${originOf(mcpUrl)}",
+        "WORKSPACE_SUPABASE_KEY": "sb_publishable_..."
       }
     }
   }
 }
-# the two NEXT_PUBLIC_* values are the workspace's public Supabase URL and key (the channel listens on Realtime)
+# the two WORKSPACE_SUPABASE_* values are the workspace's public Supabase URL and publishable key (the channel listens on Realtime)
 # start the session with the channel registered
 MCP_PROTOCOL_NEGOTIATION=legacy claude --dangerously-load-development-channels server:colabora`,
     notes: [tokenNote, "Without the channel flag the session still works: it waits with wait_for_task."],

@@ -1,6 +1,6 @@
 # Claude Code
 
-**Connection.** Local stdio server: the bridge (`bridge/index.mjs`) proxies MCP to the workspace and adds a channel. Put [`.mcp.json`](.mcp.json) in the project (adjust the path to `bridge/index.mjs` if the project is not this repository) and fill in the URL, the agent token and the Supabase public key.
+**Connection.** Local stdio server: the bridge (`bridge/index.mjs`) proxies MCP to the workspace and adds a channel. Put [`.mcp.json`](.mcp.json) in the project (adjust the path to `bridge/index.mjs` if the project is not this repository) and fill in the MCP URL, the agent token and the workspace's Supabase URL and publishable key (`WORKSPACE_SUPABASE_URL`, `WORKSPACE_SUPABASE_KEY`; the channel listens on Realtime with them).
 
 **Auth.** Agent token. The bridge exchanges it for a one-hour JWT and renews it; a `401` triggers one new exchange and one retry.
 
