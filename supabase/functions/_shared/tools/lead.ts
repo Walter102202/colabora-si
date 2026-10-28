@@ -190,12 +190,13 @@ const reviewTask: ToolDef = {
   name: 'review_task',
   title: 'Review a subtask deliverable',
   description:
-    'Lead review of a subtask in ready_for_review, from your own run on the parent task (run_id). One finding per ' +
-    '"done when" criterion, judged by evidence. changes_requested sends the findings to the worker; past the round limit ' +
-    'it escalates to a person. approved does not close the subtask: use close_subtask.',
+    'Review of a task in ready_for_review: as Lead from your own run on the parent task (run_id), or as a person ' +
+    '(no run_id). One finding per "done when" criterion, judged by evidence. changes_requested sends the findings to ' +
+    'the worker; past the round limit it escalates to a person. approved does not close the task: a person closes it ' +
+    '(close_task), or the Lead with close_subtask when the policy allows.',
   inputSchema: object({
     task_id: { type: 'string', minLength: 1 },
-    run_id: { type: 'string', minLength: 1, description: 'Your active run on the parent task' },
+    run_id: { type: 'string', minLength: 1, description: 'Agents: your active run on the parent task. People omit it.' },
     artifact_id: { type: 'string' },
     verdict: { type: 'string', enum: ['approved', 'changes_requested', 'blocked'] },
     findings: {
@@ -211,7 +212,7 @@ const reviewTask: ToolDef = {
       type: 'array',
       items: object({ kind: { type: 'string' }, ref: { type: 'string' }, hash: { type: 'string' }, command: { type: 'string' } }, ['kind', 'ref']),
     },
-  }, ['task_id', 'run_id', 'verdict', 'findings']),
+  }, ['task_id', 'verdict', 'findings']),
   outputSchema: output({ review_id: { type: 'string' }, task_state: { type: 'string' }, rounds: { type: 'integer' } }),
   annotations: WRITE,
   async handler(args, ctx) {
@@ -221,7 +222,7 @@ const reviewTask: ToolDef = {
       p_findings: args.findings,
       p_evidence: args.evidence ?? [],
       p_artifact_id: str(args.artifact_id),
-      p_run_id: args.run_id,
+      p_run_id: str(args.run_id),
     })) ?? {};
     return {
       text: `Review ${String(data.review_id)}: ${String(args.verdict)}; subtask ${String(data.task_state)} (round ${String(data.rounds)}).`,

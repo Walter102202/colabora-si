@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 3000",
     "build": "tsc --noEmit && vite build",
+    "build:card": "node components/agents/card/build.mjs",
     "lint": "eslint --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",

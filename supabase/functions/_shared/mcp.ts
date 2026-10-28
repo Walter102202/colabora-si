@@ -58,6 +58,8 @@ export interface ToolDef {
   cacheTtlMs?: number;
   /** Time budget of one call; the default is 20 s. */
   budgetMs?(args: Record<string, unknown>): number;
+  /** Tool metadata, e.g. the MCP Apps card that renders the result ({ui: {resourceUri}}). */
+  _meta?: Record<string, unknown>;
   handler(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutput>;
 }
 
@@ -69,11 +71,27 @@ export interface PromptDef {
   get(args: Record<string, string>, ctx: ToolContext): Promise<{ description: string; messages: unknown[] }>;
 }
 
+export interface ResourceEntry {
+  uri: string;
+  name: string;
+  title?: string;
+  mimeType: string;
+  description?: string;
+  _meta?: Record<string, unknown>;
+}
+
+export interface ResourceContent {
+  uri: string;
+  mimeType: string;
+  text: string;
+  _meta?: Record<string, unknown>;
+}
+
 export interface ResourceProvider {
-  list(ctx: ToolContext): Promise<{ uri: string; name: string; title?: string; mimeType: string; description?: string }[]>;
+  list(ctx: ToolContext): Promise<ResourceEntry[]>;
   templates: { uriTemplate: string; name: string; title: string; mimeType: string; description: string }[];
   /** null when the uri is unknown or unreadable. */
-  read(uri: string, ctx: ToolContext): Promise<{ uri: string; mimeType: string; text: string } | null>;
+  read(uri: string, ctx: ToolContext): Promise<ResourceContent | null>;
 }
 
 export interface McpServer {
@@ -140,6 +158,7 @@ export function describeTool(tool: ToolDef, inline: boolean) {
     inputSchema: inline ? inlineRefs(tool.inputSchema) : tool.inputSchema,
     outputSchema: inline ? inlineRefs(tool.outputSchema) : tool.outputSchema,
     annotations: { title: tool.title, openWorldHint: false, ...tool.annotations },
+    ...(tool._meta ? { _meta: tool._meta } : {}),
   };
 }
 
