@@ -2,8 +2,8 @@
 // The card is one self-contained HTML document served as a ui:// resource; get_task, decide_approval,
 // close_task and list_waiting_on_me point at it through `_meta.ui.resourceUri` and return the data it
 // renders as structuredContent. The tools call the control RPCs the row panel calls (decide_approval,
-// close_task) as the person; an agent gets humans_only. decide_approval and close_task need a direct
-// session in the database: an OAuth chat connection gets direct_session_required with the task link.
+// close_task) as the person; an agent gets humans_only. Approving or editing an action needs a direct
+// session in the database: an OAuth chat connection gets direct_session_required with a link to the approval.
 import { type Db, type Filter, messageFor, must, ToolError } from '../db.ts';
 import type { ResourceProvider, ToolContext, ToolDef } from '../mcp.ts';
 import { CARD_HTML } from '../cardHtml.ts';

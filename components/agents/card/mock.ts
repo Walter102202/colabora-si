@@ -138,11 +138,12 @@ export function mockActions(scenario: string): CardActions {
             activities: [...current.activities, { id: `ac${current.activities.length + 1}`, task_id: current.task.id, run_id: null, seq: current.activities.length + 1, type: "prompt", body: { text: String(args.body), signal: String(args.signal) }, ephemeral: false, author_type: "human", author_id: "u1", created_at: new Date().toISOString() }] };
           return ok({ activity_id: "ac-new", delivery: "queued" });
         case "decide_approval":
-          if (denied) return fail("direct_session_required", "This needs the person to act from the app directly.", { url: `${APP_URL}/p/row1?task=${task.id}` });
+          if (denied && current.approval?.kind === "action" && (args.decision === "approve" || args.decision === "edit")) {
+            return fail("direct_session_required", "This needs the person to act from the app directly.", { url: `${APP_URL}/p/row1?task=${task.id}#approval-${current.approval.id}` });
+          }
           current = { ...current, task: { ...current.task, state: "working", waiting_on: null }, approval: null };
           return ok({ status: "decided", ...current });
         case "close_task":
-          if (denied) return fail("direct_session_required", "This needs the person to act from the app directly.", { url: `${APP_URL}/p/row1?task=${task.id}` });
           current = { ...current, task: { ...current.task, state: "done", acceptance: args.acceptance as TaskRow["acceptance"], closed_at: new Date().toISOString() }, approval: null, run: null };
           return ok({ task_state: "done", ...current });
         case "review_task":

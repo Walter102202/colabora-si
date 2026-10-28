@@ -188,7 +188,7 @@ Deno.test('decide_approval calls the RPC as the person and returns the refreshed
   await assert.rejects(tool('decide_approval').handler({ approval_id: 'nope', decision: 'approve' }, h.ctx), (err: unknown) => err instanceof ToolError && err.code === 'not_found');
 });
 
-Deno.test('a chat connection that the database refuses gets direct_session_required with the task link', async () => {
+Deno.test('a control RPC the database refuses becomes direct_session_required with the task link', async () => {
   const h = harness(world(), {
     principal: { type: 'human', userId: 'u-owner', agentId: null, workspaceId: 'w1', clientId: 'chatgpt' },
     onRpc: () => ({ error: { code: 'PT403', message: 'direct_session_required' } }),
