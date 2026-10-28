@@ -15,7 +15,7 @@
     "@supabase/supabase-js": "2.112.3",
     "clsx": "2.1.1",
     "lucide-react": "1.18.0",
-    "nanoid": "5.1.11",
+    "nanoid": "5.1.16",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-router": "7.18.5",
@@ -31,11 +31,11 @@
     "eslint-plugin-jsx-a11y": "6.10.2",
     "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "0.5.7",
-    "happy-dom": "20.0.0",
+    "happy-dom": "21.0.4",
     "tailwindcss": "4.3.1",
     "typescript": "5.9.3",
     "typescript-eslint": "8.72.1",
     "vite": "7.3.7",
-    "vitest": "3.2.4"
+    "vitest": "4.1.12"
   }
 }
