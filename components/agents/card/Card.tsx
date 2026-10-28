@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { MessageSignal } from "@/lib/agentActions";
-import { cardDataFrom, pageLink, taskLink, toolFailure, type CardData, type TaskCardData, type WaitingItem, type WaitingListData } from "@/lib/agentCard";
+import { approvalLink, cardDataFrom, pageLink, taskLink, toolFailure, type CardData, type TaskCardData, type WaitingItem, type WaitingListData } from "@/lib/agentCard";
 import type { ToolResult } from "@/lib/agentCardHost";
 import { TaskView, type SubtaskItem } from "@/components/agents/panel";
 import { WaitingList } from "@/components/agents/card/WaitingList";
@@ -45,7 +45,10 @@ export function Card({ initial, actions }: { initial: CardData; actions: CardAct
     const failure = toolFailure(result);
     if (failure) {
       const detailUrl = isObject(failure.detail) && typeof failure.detail.url === "string" ? failure.detail.url : null;
-      const url = detailUrl ?? (link && canOpen ? taskLink(appUrl, link.pageId, link.taskId) : null);
+      const approvalId = name === "decide_approval" && typeof args.approval_id === "string" ? args.approval_id : null;
+      const fallback = !link || !canOpen ? null
+        : approvalId ? approvalLink(appUrl, link.pageId, link.taskId, approvalId) : taskLink(appUrl, link.pageId, link.taskId);
+      const url = detailUrl ?? fallback;
       if (failure.code === "direct_session_required") setNotice({ text: failure.message, url });
       throw new Error(failure.message);
     }

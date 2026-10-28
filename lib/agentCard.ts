@@ -113,6 +113,11 @@ export function taskLink(appUrl: string, pageId: string, taskId: string): string
   return `${appUrl.replace(/\/+$/, "")}${taskUrl(pageId, taskId)}`;
 }
 
+// Link to one approval: the task link plus a fragment the row panel focuses (Task 3).
+export function approvalLink(appUrl: string, pageId: string, taskId: string, approvalId: string): string {
+  return `${taskLink(appUrl, pageId, taskId)}#approval-${encodeURIComponent(approvalId)}`;
+}
+
 export function pageLink(appUrl: string, pageId: string): string {
   return `${appUrl.replace(/\/+$/, "")}${pageUrl(pageId)}`;
 }

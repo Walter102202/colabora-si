@@ -204,6 +204,19 @@ Deno.test('a chat connection that the database refuses gets direct_session_requi
   assert.equal(taskLink('https://app.example', 'row 1', 'a/b'), 'https://app.example/p/row%201?task=a%2Fb');
 });
 
+Deno.test('a refused decide_approval links straight to the approval with an #approval fragment', async () => {
+  const h = harness(world(), {
+    principal: { type: 'human', userId: 'u-owner', agentId: null, workspaceId: 'w1', clientId: 'chatgpt' },
+    onRpc: () => ({ error: { code: 'PT403', message: 'direct_session_required' } }),
+  });
+  await assert.rejects(tool('decide_approval').handler({ approval_id: 'ap1', decision: 'approve' }, h.ctx), (err: unknown) => {
+    assert.ok(err instanceof ToolError);
+    assert.equal(err.code, 'direct_session_required');
+    assert.deepEqual(err.detail, { task_id: 't1', url: 'https://app.example/p/row1?task=t1#approval-ap1' });
+    return true;
+  });
+});
+
 Deno.test('close_task calls the RPC and returns the closed task as a card', async () => {
   const tables = world();
   const h = harness(tables, {

@@ -68,6 +68,11 @@ export function taskLink(appUrl: string, pageId: string, taskId: string): string
   return `${appUrl}/p/${encodeURIComponent(pageId)}?task=${encodeURIComponent(taskId)}`;
 }
 
+/** The task link plus the fragment the row panel focuses: one tap lands on the approval. */
+export function approvalLink(appUrl: string, pageId: string, taskId: string, approvalId: string): string {
+  return `${taskLink(appUrl, pageId, taskId)}#approval-${encodeURIComponent(approvalId)}`;
+}
+
 function unique(ids: unknown[]): string[] {
   return [...new Set(ids.filter((v): v is string => typeof v === 'string' && v.length > 0))];
 }
@@ -146,16 +151,14 @@ function humanOnly(ctx: ToolContext): void {
 }
 
 /** A control RPC as the person. When the database wants a direct session, the error carries the task link. */
-async function controlRpc(ctx: ToolContext, fn: string, params: Record<string, unknown>, task: Row): Promise<Row> {
+async function controlRpc(ctx: ToolContext, fn: string, params: Record<string, unknown>, task: Row, approvalId?: string): Promise<Row> {
   try {
     return (await must(ctx.db.rpc<Row>(fn, params))) ?? {};
   } catch (err) {
     if (err instanceof ToolError && err.code === 'direct_session_required') {
-      throw new ToolError(
-        err.code,
-        `${err.message} Open the task in colabora to decide there.`,
-        { task_id: task.id, url: taskLink(ctx.appUrl, String(task.row_page_id), String(task.id)) },
-      );
+      const pageId = String(task.row_page_id), taskId = String(task.id);
+      const url = approvalId ? approvalLink(ctx.appUrl, pageId, taskId, approvalId) : taskLink(ctx.appUrl, pageId, taskId);
+      throw new ToolError(err.code, `${err.message} Open the task in colabora to decide there.`, { task_id: task.id, url });
     }
     throw err;
   }
@@ -185,7 +188,7 @@ const decideApproval: ToolDef = {
       p_approval_id: approvalId,
       p_decision: args.decision,
       p_response: args.response ?? null,
-    }, task);
+    }, task, approvalId);
     const card = await loadTaskCard(ctx.db, String(task.id), ctx.appUrl);
     return {
       text: `Decision recorded: ${String(args.decision)}. Task "${String(card.task.title || card.task.id)}" is now ${String(card.task.state)}.`,
