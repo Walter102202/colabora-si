@@ -1,5 +1,5 @@
 begin;
-select plan(9);
+select plan(13);
 
 select tests.fixture() as f \gset
 
@@ -15,6 +15,20 @@ select is(tests.error_of(format('select public.decide_approval(%L::uuid, %L)', :
 select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'mcp-client-1');
 select is(tests.error_of(format('select public.decide_approval(%L::uuid, %L)', :'ap1', 'approve')), 'direct_session_required', 'an OAuth session cannot decide an approval');
+-- Irreversible: edit from an OAuth session is refused like approve.
+select is(tests.error_of(format('select public.decide_approval(%L::uuid, %L, %L::jsonb)', :'ap1', 'edit', '{"params":{"to":"x@example.com"}}')), 'direct_session_required', 'an OAuth session cannot edit-approve an action');
+
+-- Decisions that execute nothing may come from a chat: a question, a go-ahead on a question, a rejection.
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.request_input(:'run'::uuid, 'Which tone?') ->> 'approval_id' as q1 \gset
+select public.request_input(:'run'::uuid, 'Go ahead with the draft?', array['respond','approve','ignore']) ->> 'approval_id' as q2 \gset
+select public.request_approval(:'run'::uuid, 'send_email', '{"to":"r@example.com"}'::jsonb) ->> 'approval_id' as ap0 \gset
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'mcp-client-1');
+select is(tests.error_of(format('select public.decide_approval(%L::uuid, %L, %L::jsonb)', :'q1', 'respond', '{"text":"Formal"}')), '', 'an OAuth session may answer a question');
+select is(tests.error_of(format('select public.decide_approval(%L::uuid, %L)', :'q2', 'approve')), '', 'an OAuth session may answer a question with approve');
+select is(tests.error_of(format('select public.decide_approval(%L::uuid, %L)', :'ap0', 'reject')), '', 'an OAuth session may reject an action');
 
 select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
