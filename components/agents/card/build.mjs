@@ -24,11 +24,7 @@ await build({
   root,
   logLevel: "warn",
   plugins: [react(), tailwindcss()],
-  resolve: { alias: { "@": root, "next/navigation": path.join(root, "lib", "routerCompat.ts") } },
-  define: {
-    "process.env.NEXT_PUBLIC_MCP_URL": JSON.stringify(""),
-    "process.env.NEXT_PUBLIC_SUPABASE_URL": JSON.stringify(""),
-  },
+  resolve: { alias: { "@": root } },
   build: {
     outDir,
     emptyOutDir: true,
