@@ -1,9 +1,8 @@
-"use client";
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { aggregate, aggregationsFor, AGG_LABELS } from "@/lib/dbCompute";
 import type { DbProperty } from "@/lib/types";
-import type { ViewProps } from "@/components/database/dbShared";
+import type { ViewProps } from "@/lib/dbView";
 export default function AggregationCell({ property, ops, database, queryDatabase = database, view, rows, pages }: ViewProps & { property: DbProperty }) {
   const [anchor, setAnchor] = useState<DOMRect | null>(null), fn = view.aggregations?.[property.id] ?? "none", options = aggregationsFor(property.type);
   const label = fn === "none" ? "Calculate" : `${AGG_LABELS[fn]} ${aggregate(fn, rows, queryDatabase.properties.find((p) => p.id === property.id) ?? property, queryDatabase, pages)}`;

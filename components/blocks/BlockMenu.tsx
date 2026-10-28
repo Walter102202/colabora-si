@@ -1,4 +1,3 @@
-"use client";
 import { useEffect, useRef, useState } from "react";
 import type { Block, BlockColor, BlockType } from "@/lib/types";
 import { BLOCK_LABELS, SLASH_ITEMS } from "@/lib/blockMeta";

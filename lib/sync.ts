@@ -333,7 +333,7 @@ async function openQueue(sb: SupabaseClient, user: User): Promise<void> {
   unsubStore = useStore.subscribe(onStoreChange);
 }
 export async function initSync(user: User): Promise<void> {
-  if (typeof window === "undefined" || (started && currentUserId === user.id)) return;
+  if (started && currentUserId === user.id) return;
   if (started) stopSync(); const sb = getSupabase(); if (!sb) return;
   started = true; currentUserId = user.id; last = useStore.getState(); const token = ++generation;
   setStatus("syncing"); window.addEventListener("online", online); window.addEventListener("offline", offline);

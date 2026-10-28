@@ -7,8 +7,8 @@ import { sanitizeHtml } from "@/lib/utils";
 export function sanitizeBlocks(blocks: Block[]): Block[] {
   return blocks.map((block) => ({
     ...block,
-    html: block.type === "code" || typeof window === "undefined" ? block.html : sanitizeHtml(block.html),
-    ...(block.table ? { table: block.table.map((row) => row.map((cell) => typeof window === "undefined" ? cell : sanitizeHtml(cell))) } : {}),
+    html: block.type === "code" ? block.html : sanitizeHtml(block.html),
+    ...(block.table ? { table: block.table.map((row) => row.map((cell) => sanitizeHtml(cell))) } : {}),
     ...(block.columns ? { columns: block.columns.map((column) => ({ ...column, blocks: sanitizeBlocks(column.blocks) })) } : {}),
     ...(block.buttonActions ? { buttonActions: block.buttonActions.map((action) => action.kind === "insertBlocks" ? { ...action, blocks: sanitizeBlocks(action.blocks) } : action) } : {}),
   }));

@@ -2,14 +2,13 @@ import { useEffect } from "react";
 import { create } from "zustand";
 import type { User } from "@supabase/supabase-js";
 import { getSupabase } from "@/lib/supabase";
-import { useHydrated } from "@/lib/useHydrated";
 
 import { cleanupPushOnSignOut, syncPushSubscription } from "@/lib/push";
 interface AuthState { user: User | null; loading: boolean }
 export const useAuthStore = create<AuthState>(() => ({ user: null, loading: true }));
 let initialized = false;
 export function initAuth(): void {
-  if (initialized || typeof window === "undefined") return;
+  if (initialized) return;
   initialized = true;
   const invite = new URLSearchParams(location.search).get("invite"); if (invite) sessionStorage.setItem("colabora-invitation", invite);
   const supabase = getSupabase();
@@ -25,9 +24,9 @@ export function initAuth(): void {
   }).catch(() => { if (!receivedEvent) useAuthStore.setState({ user: null, loading: false }); });
 }
 export function useAuth(): AuthState {
-  const hydrated = useHydrated(), state = useAuthStore();
+  const state = useAuthStore();
   useEffect(initAuth, []);
-  return hydrated ? state : { user: null, loading: true };
+  return state;
 }
 export async function signOut(): Promise<void> {
   const supabase = getSupabase();

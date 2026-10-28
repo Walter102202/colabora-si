@@ -1,6 +1,7 @@
-"use client";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { pageUrl } from "@/lib/routes";
+import { Input } from "@/components/FormControls";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 import { useStore } from "@/lib/store";
 import { createBlock, newId } from "@/lib/factories";
 import { applyType, indentBlock, mergeWithPrevious, numbering, outdentBlock, splitBlock, visibleBlocks, type BlockOps } from "@/lib/blockOps";
@@ -17,19 +18,19 @@ import BlockMenu from "@/components/blocks/BlockMenu";
 import SlashMenu from "@/components/SlashMenu";
 import InlineToolbar from "@/components/InlineToolbar";
 import BlockCommentsPopover from "@/components/BlockCommentsPopover";
-import MentionMenu, { filteredMentions, type MentionItem } from "@/components/MentionMenu";
+import MentionMenu from "@/components/MentionMenu";
+import { filteredMentions, type MentionItem } from "@/lib/mentions";
 import DateMentionPopover from "@/components/DateMentionPopover";
-import { formatIsoDate } from "@/components/DatePickerCalendar";
+import { formatIsoDate } from "@/lib/datePicker";
 import { withViewTransition } from "@/lib/viewTransition";
 import { setLocalActiveBlock } from "@/lib/presence";
 import { DeletedBlockConflicts } from "@/components/blocks/BlockConflictNotice";
-import { blocksToMarkdown } from "@/lib/export";
 import { getCopiedSyncKey } from "@/lib/syncRef";
-import EmojiMenu from "@/components/EmojiMenu";
-import { searchEmoji, type EmojiEntry } from "@/lib/emojiData";
+const EmojiMenu = lazy(() => import("@/components/EmojiMenu"));
+const MathPreview = lazy(() => import("@/components/MathPreview"));
+import type { EmojiEntry } from "@/lib/emojiData";
 import { putFile } from "@/lib/fileStore";
 import { requestNotifyPermission } from "@/lib/push";
-import { renderMath } from "@/lib/math";
 
 export default function BlockEditor({ pageId }: { pageId: string }) {
   const page = useStore((s) => s.pages[pageId]), spellCheck = useStore((s) => s.settings?.spellcheck ?? true), actorId = useStore((s) => s.syncUserId ?? "local");
@@ -42,13 +43,15 @@ type SlashState = { id: string; query: string; index: number; rect: DOMRect };
 type Focus = { id: string; offset?: number; end?: boolean };
 export function EditorSurface({ pageId, blocks, onChange, locked = false, spellCheck = true, actorId = "local", nested = false, pages = {} }: SurfaceProps) {
   const container = useRef<HTMLDivElement>(null), handles = useRef(new Map<string, EditableHandle>()), latest = useRef({ blocks, onChange, locked, actorId, pages });
-  const router = useRouter();
+  const navigate = useNavigate();
   const active = useRef<string | null>(null), pending = useRef<Focus | null>(null), slashRef = useRef<SlashState | null>(null);
   const [slash, setSlash] = useState<SlashState | null>(null), [menu, setMenu] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [selection, setSelection] = useState<{ range: Range; rect: DOMRect; link?: boolean } | null>(null);
   const [comments, setComments] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [mention, setMention] = useState<SlashState | null>(null), mentionRef = useRef<SlashState | null>(null);
+  const emojiSearch = useRef<typeof import("@/lib/emojiData").searchEmoji | null>(null);
   const [emoji, setEmoji] = useState<SlashState | null>(null), emojiRef = useRef<SlashState | null>(null);
+  useEffect(() => { if (emoji) void import("@/lib/emojiData").then((module) => { emojiSearch.current = module.searchEmoji; }); }, [emoji]);
   const [equationEdit, setEquationEdit] = useState<{ source: string; rect: DOMRect } | null>(null), equationElement = useRef<HTMLElement | null>(null);
   const [datePick, setDatePick] = useState<SlashState | null>(null);
   const [dateChip, setDateChip] = useState<{ iso: string; rect: DOMRect } | null>(null), dateChipElement = useRef<HTMLElement | null>(null);
@@ -80,7 +83,7 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
     handle.el.focus();
     const node = document.createElement(item.kind === "page" ? "a" : "span");
     if (item.kind === "page") {
-      node.className = "mention"; node.setAttribute("href", "/p/" + item.id); node.dataset.page = item.id; node.textContent = (item.icon ? item.icon + " " : "") + item.title;
+      node.className = "mention"; node.setAttribute("href", pageUrl(item.id)); node.dataset.page = item.id; node.textContent = (item.icon ? item.icon + " " : "") + item.title;
     } else if (item.kind === "person") {
       node.className = "mention person-mention"; node.dataset.user = item.id; node.contentEditable = "false"; node.textContent = "@" + item.title;
     } else {
@@ -224,7 +227,7 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
         const mod = event.ctrlKey || event.metaKey;
         const emojiState = emojiRef.current;
         if (!nested && emojiState?.id === id && ["ArrowUp", "ArrowDown", "Enter", "Tab", "Escape", ":"].includes(event.key)) {
-          const items = searchEmoji(emojiState.query, 12);
+          const items = emojiSearch.current?.(emojiState.query, 12) ?? [];
           if (event.key === "Escape") { event.preventDefault(); emojiRef.current = null; setEmoji(null); }
           else if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); const count = Math.max(1, items.length), next = { ...emojiState, index: (emojiState.index + (event.key === "ArrowDown" ? 1 : count - 1)) % count }; emojiRef.current = next; setEmoji(next); }
           else if (items[emojiState.index]) { event.preventDefault(); selectEmoji(items[emojiState.index]); }
@@ -232,7 +235,7 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
         }
         if (!nested && event.key === "$") {
           const match = /\$([^$\s][^$]*)$/.exec(textBeforeCaret(handle.el));
-          if (match) { event.preventDefault(); const span = document.createElement("span"); span.className = "inline-eq"; span.dataset.eq = match[1]; span.contentEditable = "false"; span.innerHTML = renderMath(match[1]); insertMentionNode(handle.el, match[0].length - 1, span); update(id, { html: sanitizeHtml(handle.getHtml()) }); return; }
+          if (match) { event.preventDefault(); const span = document.createElement("span"); span.className = "inline-eq"; span.dataset.eq = match[1]; span.contentEditable = "false"; span.textContent = match[1]; void import("@/lib/math").then(({ renderMath }) => { if (span.isConnected) { span.innerHTML = renderMath(match[1]); update(id, { html: sanitizeHtml(handle.getHtml()) }); } }); insertMentionNode(handle.el, match[0].length - 1, span); update(id, { html: sanitizeHtml(handle.getHtml()) }); return; }
         }
         if (!nested && mod && event.key.toLowerCase() === "a") {
           const selection = window.getSelection();
@@ -349,8 +352,11 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
     const next = [...list]; next.splice(last + 1, 0, ...copies); latest.current.onChange(next); selectBlocks(copies.map((b) => b.id));
   }, [selectBlocks]);
   const copySelected = useCallback((cut: boolean) => {
-    const markdown = blocksToMarkdown(latest.current.blocks.filter((b) => selected.current.includes(b.id)), latest.current.pages);
-    void navigator.clipboard.writeText(markdown).then(() => { if (cut) deleteSelected(); });
+    const blocks = latest.current.blocks.filter((b) => selected.current.includes(b.id)), pages = latest.current.pages;
+    void import("@/lib/export").then(({ blocksToMarkdown }) => {
+    const markdown = blocksToMarkdown(blocks, pages);
+    return navigator.clipboard.writeText(markdown).then(() => { if (cut) deleteSelected(); });
+    });
   }, [deleteSelected]);
   useEffect(() => {
     if (nested || !selectedIds.length) return;
@@ -385,9 +391,9 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
   const changeType = (id: string, type: BlockType) => ops.convert(id, type);
   const selectSlash = (item: SlashItem) => ops.chooseSlash(item);
   const menuBlock = menu ? blocks.find((b) => b.id === menu.id) : undefined;
-  return <div ref={container} className={`block-editor ${nested ? "nested-editor" : ""}`} onMouseDown={(event) => { if (!event.shiftKey && selected.current.length) selectBlocks([]); }} onClickCapture={(event) => {
+  return <div role="presentation" aria-label="Page blocks" ref={container} className={`block-editor ${nested ? "nested-editor" : ""}`} onMouseDown={(event) => { if (!event.shiftKey && selected.current.length) selectBlocks([]); }} onClickCapture={(event) => {
     const target = event.target as HTMLElement, link = target.closest<HTMLAnchorElement>("a.mention[data-page]"), chip = target.closest<HTMLElement>("span.date-mention[data-date]");
-    if (link?.dataset.page) { event.preventDefault(); withViewTransition(() => router.push("/p/" + link.dataset.page)); }
+    if (link?.dataset.page && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) { event.preventDefault(); withViewTransition(() => navigate(pageUrl(link.dataset.page!))); }
     const equation = target.closest<HTMLElement>(".inline-eq[data-eq]");
     if (equation && !locked) { event.preventDefault(); equationElement.current = equation; setEquationEdit({ source: equation.dataset.eq ?? "", rect: equation.getBoundingClientRect() }); }
     if (chip && !locked) { event.preventDefault(); dateChipElement.current = chip; setDateChip({ iso: chip.dataset.date!, rect: chip.getBoundingClientRect() }); }
@@ -396,15 +402,15 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
       const next = [...latest.current.blocks], index = next.findIndex((b) => b.id === id);
       next.splice(index + 1, 0, ...cloneWithNewIds(inserted)); latest.current.blocks = next; latest.current.onChange(next);
     }} />)}
-    {!locked && <div className="h-24 cursor-text" aria-label="Add a block" onClick={() => { const last = blocks.at(-1); if (last?.type === "paragraph" && !last.html) handles.current.get(last.id)?.focus(); else if (last) ops.addBlockBelow(last.id); else { const next = createBlock(); pending.current = { id: next.id }; onChange([next]); } }} />}
+    {!locked && <button className="block h-24 w-full cursor-text" aria-label="Add a block" onClick={() => { const last = blocks.at(-1); if (last?.type === "paragraph" && !last.html) handles.current.get(last.id)?.focus(); else if (last) ops.addBlockBelow(last.id); else { const next = createBlock(); pending.current = { id: next.id }; onChange([next]); } }} />}
     {slash && <SlashMenu nested={nested} query={slash.query} index={slash.index} rect={slash.rect} onIndex={(index) => { const next = { ...slash, index }; slashRef.current = next; setSlash(next); }} onSelect={selectSlash} />}
-    {emoji && <EmojiMenu query={emoji.query} index={emoji.index} rect={emoji.rect} onSelect={selectEmoji} onIndex={(index) => { const next = { ...emoji, index }; emojiRef.current = next; setEmoji(next); }} />}
+    {emoji && <Suspense fallback={null}><EmojiMenu query={emoji.query} index={emoji.index} rect={emoji.rect} onSelect={selectEmoji} onIndex={(index) => { const next = { ...emoji, index }; emojiRef.current = next; setEmoji(next); }} /></Suspense>}
     {menu && menuBlock && <BlockMenu block={menuBlock} rect={menu.rect} onClose={() => setMenu(null)} onType={(type) => changeType(menu.id, type)} onUpdate={(patch) => ops.updateBlock(menu.id, patch)} onComment={() => { setComments(menu); setMenu(null); }} onDuplicate={() => { const next = [...blocks], copy = cloneWithNewIds([menuBlock])[0]; next.splice(next.findIndex((b) => b.id === menu.id) + 1, 0, copy); pending.current = { id: copy.id, end: true }; onChange(next); }} onDelete={() => { const next = blocks.filter((b) => b.id !== menu.id); onChange(next.length ? next : [createBlock()]); }} />}
-    {selectedIds.length > 1 && <div className="block-selection-toolbar" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}><span>{selectedIds.length} selected</span>{!locked && <button onClick={duplicateSelected}>Duplicate</button>}<button onClick={() => copySelected(false)}>Copy</button>{!locked && <button className="danger" onClick={deleteSelected}>Delete</button>}<button aria-label="Clear selection" onClick={() => selectBlocks([])}>×</button></div>}
+    {selectedIds.length > 1 && <div role="toolbar" aria-label="Selected blocks" className="block-selection-toolbar" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}><span>{selectedIds.length} selected</span>{!locked && <button onClick={duplicateSelected}>Duplicate</button>}<button onClick={() => copySelected(false)}>Copy</button>{!locked && <button className="danger" onClick={deleteSelected}>Delete</button>}<button aria-label="Clear selection" onClick={() => selectBlocks([])}>×</button></div>}
     {selection && !slash && !mention && !emoji && <InlineToolbar key={selection.link ? "link" : "format"} range={selection.range} rect={selection.rect} initialLink={selection.link} locked={locked} onClose={() => setSelection(null)} onTurnInto={(type) => { if (active.current) changeType(active.current, type); }} onComment={() => { if (active.current) setComments({ id: active.current, rect: selection.rect }); setSelection(null); }} onChange={() => { for (const [id, handle] of handles.current) if (handle.el?.contains(selection.range.commonAncestorContainer)) ops.saveBlock(id, handle.getHtml()); }} />}
     {comments && <BlockCommentsPopover pageId={pageId} blockId={comments.id} rect={comments.rect} onClose={() => setComments(null)} />}
     {mention && <MentionMenu items={filteredMentions(pages, pageId, mention.query)} index={mention.index} rect={mention.rect} onIndex={(index) => { const next = { ...mention, index }; mentionRef.current = next; setMention(next); }} onSelect={selectMention} />}
-    {equationEdit && <><button className="menu-backdrop" aria-label="Close equation editor" onClick={() => setEquationEdit(null)} /><form className="menu-panel fixed z-[70] w-64 p-2" style={{ left: Math.max(8, Math.min(equationEdit.rect.left, innerWidth - 264)), top: Math.min(equationEdit.rect.bottom + 6, innerHeight - 160) }} onSubmit={(event) => { event.preventDefault(); const element = equationElement.current; if (!element) return; element.dataset.eq = equationEdit.source; element.innerHTML = renderMath(equationEdit.source); element.closest('[contenteditable="true"]')?.dispatchEvent(new Event("input", { bubbles: true })); setEquationEdit(null); }}><input autoFocus aria-label="Inline equation" className="cell-input" value={equationEdit.source} onChange={(e) => setEquationEdit({ ...equationEdit, source: e.target.value })} onKeyDown={(e) => { if (e.key === "Escape") setEquationEdit(null); }} /><div className="math-render p-2" dangerouslySetInnerHTML={{ __html: renderMath(equationEdit.source) }} /><button className="action-button">Save</button></form></>}
+    {equationEdit && <><button className="menu-backdrop" aria-label="Close equation editor" onClick={() => setEquationEdit(null)} /><form className="menu-panel fixed z-[70] w-64 p-2" style={{ left: Math.max(8, Math.min(equationEdit.rect.left, innerWidth - 264)), top: Math.min(equationEdit.rect.bottom + 6, innerHeight - 160) }} onSubmit={async (event) => { event.preventDefault(); const { renderMath } = await import("@/lib/math"); const element = equationElement.current; if (!element) return; element.dataset.eq = equationEdit.source; element.innerHTML = renderMath(equationEdit.source); element.closest('[contenteditable="true"]')?.dispatchEvent(new Event("input", { bubbles: true })); setEquationEdit(null); }}><Input label="Inline equation" focusOnMount aria-label="Inline equation" className="cell-input" value={equationEdit.source} onChange={(e) => setEquationEdit({ ...equationEdit, source: e.target.value })} onKeyDown={(e) => { if (e.key === "Escape") setEquationEdit(null); }} /><Suspense fallback={null}><MathPreview source={equationEdit.source} /></Suspense><button className="action-button">Save</button></form></>}
     {datePick && <DateMentionPopover rect={datePick.rect} onChangeDate={(iso) => selectMention({ kind: "date", iso, label: "" }, datePick)} onClose={() => setDatePick(null)} />}
     {dateChip && <DateMentionPopover iso={dateChip.iso} rect={dateChip.rect} onClose={() => setDateChip(null)} onChangeDate={(iso) => {
       const element = dateChipElement.current;

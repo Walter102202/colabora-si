@@ -1,4 +1,3 @@
-"use client";
 import { Cloud, CloudOff, RefreshCw, TriangleAlert } from "lucide-react";
 import { useSyncStatus } from "@/lib/sync";
 export default function SyncStatus() {

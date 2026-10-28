@@ -16,6 +16,6 @@ function subscribe(callback: () => void) {
   return () => observer.disconnect();
 }
 export function useTheme(): { theme: "light" | "dark"; toggle: () => void } {
-  const theme = useSyncExternalStore(subscribe, () => document.documentElement.classList.contains("dark") ? "dark" : "light", () => "light") as "light" | "dark";
+  const theme = useSyncExternalStore(subscribe, () => document.documentElement.classList.contains("dark") ? "dark" : "light") as "light" | "dark";
   return { theme, toggle: () => applyThemeMode(theme === "dark" ? "light" : "dark") };
 }

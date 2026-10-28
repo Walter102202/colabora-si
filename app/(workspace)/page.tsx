@@ -1,5 +1,5 @@
-"use client";
-import { useRouter } from "next/navigation";
+import { pageUrl } from "@/lib/routes";
+import { useNavigate } from "react-router";
 import { Database, Plus } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { formatRelative } from "@/lib/utils";
@@ -7,12 +7,12 @@ import { withViewTransition } from "@/lib/viewTransition";
 import Emoji from "@/components/Emoji";
 
 export default function Home() {
-  const pages = useStore((s) => s.pages), router = useRouter();
+  const pages = useStore((s) => s.pages), navigate = useNavigate();
   const recent = Object.values(pages).filter((p) => !p.isDeleted).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 8);
   const hour = new Date().getHours();
-  const open = (id: string) => withViewTransition(() => router.push(`/p/${id}`));
+  const open = (id: string) => withViewTransition(() => navigate(pageUrl(id)));
   return <div className="h-full overflow-y-auto scrollbar-thin"><div className="mx-auto max-w-4xl px-8 py-14">
-    <h1 className="mb-8 text-3xl font-bold">{hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"}</h1>
+    <title>Home · colabora.si</title><h1 className="mb-8 text-3xl font-bold">{hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"}</h1>
     <div className="mb-12 flex gap-2">
       <button className="action-button" onClick={() => open(useStore.getState().createPage())}><Plus size={16} />New page</button>
       <button className="action-button" onClick={() => open(useStore.getState().createDatabasePage())}><Database size={16} />New database</button>

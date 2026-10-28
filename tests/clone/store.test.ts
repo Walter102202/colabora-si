@@ -85,6 +85,21 @@ it("ST-1 seed has four roots and the Agent Tasks contract", () => {
   expect(tasks.database!.views.map((v) => v.name)).toEqual(["Table", "Waiting on you", "Working", "Board"]);
 });
 
+it("persists the initial page IDs before any edit so direct links survive a reload", async () => {
+  const seed = seedWorkspace(); reset(seed.pages, seed.rootOrder);
+  localStorage.removeItem("colabora-workspace");
+  useStore.getState().persistInitialWorkspace();
+  const saved = localStorage.getItem("colabora-workspace")!;
+  expect(JSON.parse(saved).state.rootOrder).toEqual(seed.rootOrder);
+  expect(useStore.getState().pages).toBe(seed.pages);
+  expect(canUndo()).toBe(false);
+  useStore.getState().persistInitialWorkspace();
+  expect(localStorage.getItem("colabora-workspace")).toBe(saved);
+  useStore.setState({ pages: {} }); localStorage.setItem("colabora-workspace", saved);
+  await useStore.persist.rehydrate();
+  expect(Object.keys(useStore.getState().pages)).toEqual(Object.keys(seed.pages));
+});
+
 it("CM-1 comments identify their author and anchor and touch the page", () => {
   const p = page({ id: "comments" }); useStore.setState({ pages: { [p.id]: p }, syncUserId: null });
   useStore.getState().addComment(p.id, "  A note  ", "block");

@@ -1,7 +1,6 @@
-"use client";
-import { use } from "react";
+import { useParams } from "react-router";
 import PageView from "@/components/PageView";
-export default function PageRoute({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
-  return <PageView pageId={id} />;
+export default function PageRoute() {
+  const { id } = useParams<{ id: string }>();
+  return id ? <PageView key={id} pageId={id} /> : null;
 }

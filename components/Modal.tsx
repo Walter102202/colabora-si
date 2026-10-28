@@ -1,4 +1,3 @@
-"use client";
 import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 export default function Modal({ title, children, onClose, wide = false, dismissible = true }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean; dismissible?: boolean }) {
@@ -19,7 +18,7 @@ export default function Modal({ title, children, onClose, wide = false, dismissi
     document.addEventListener("keydown", key);
     return () => { document.removeEventListener("keydown", key); previous?.focus(); };
   }, [dismissible]);
-  return <div className="modal-overlay" onMouseDown={(event) => { if (dismissible && event.target === event.currentTarget) onClose(); }}><div ref={panel} className={`modal-panel ${wide ? "modal-wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
+  return <div className="modal-overlay"><button className="absolute inset-0" aria-label={`Close ${title}`} disabled={!dismissible} onClick={onClose} /><div ref={panel} className={`relative modal-panel ${wide ? "modal-wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
     <div className="modal-header"><h2>{title}</h2>{dismissible && <button className="icon-button" aria-label={`Close ${title}`} onClick={onClose}><X size={18} /></button>}</div>{children}
   </div></div>;
 }

@@ -7,7 +7,7 @@ import { getFile } from "@/lib/fileStore";
 import { safeCover } from "@/lib/cover";
 
 export function inlineToMarkdown(html: string): string {
-  if (typeof window === "undefined") return html.replace(/<[^>]*>/g, "");
+  if (typeof DOMParser === "undefined") return html.replace(/<[^>]*>/g, "");
   const doc = new DOMParser().parseFromString(html, "text/html");
   const walk = (node: Node): string => {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";

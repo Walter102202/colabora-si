@@ -1,4 +1,3 @@
-"use client";
 import Editable from "@/components/Editable";
 import type { Block } from "@/lib/types";
 import type { BlockOps } from "@/lib/blockOps";

@@ -19,7 +19,7 @@ const ALLOWED_CLASS_PREFIXES = ["tc-", "bc-", "math-"];
 const ALLOWED_CLASSES = new Set(["mention", "date-mention", "inline-eq", "math-render", "person-mention"]);
 
 export function sanitizeHtml(html: string): string {
-  if (typeof window === "undefined") return html;          // sin DOM (SSR) es identidad
+  if (typeof DOMParser === "undefined") return html; // Pure Node consumers have no DOM.
   const doc = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
   const root = doc.body.firstChild as HTMLElement | null;
   if (!root) return "";
@@ -82,7 +82,7 @@ export function sanitizeHtml(html: string): string {
 
 /** Texto plano de un HTML (títulos, búsqueda, previsualizaciones). */
 export function stripHtml(html: string): string {
-  if (typeof window === "undefined") return html.replace(/<[^>]*>/g, "");
+  if (typeof DOMParser === "undefined") return html.replace(/<[^>]*>/g, "");
   return new DOMParser().parseFromString(html, "text/html").body.textContent || "";
 }
 

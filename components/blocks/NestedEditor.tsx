@@ -1,4 +1,3 @@
-"use client";
 import { EditorSurface } from "@/components/BlockEditor";
 import type { Block } from "@/lib/types";
 import { useStore } from "@/lib/store";

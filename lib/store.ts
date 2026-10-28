@@ -20,6 +20,7 @@ export interface RemotePatch {
 interface SyncState { syncWorkspaceId: string | null; syncUserId: string | null }
 export type Store = WorkspaceState & SyncState & Actions;
 interface Actions {
+  persistInitialWorkspace: () => void;
   // sincronización (§II.7)
   setSyncWorkspaceId: (id: string | null, userId?: string | null) => void;
   applyRemotePages: (patch: RemotePatch) => void;
@@ -139,6 +140,11 @@ export const useStore = create<Store>()(persist((set, get) => {
   };
   return {
     ...seedWorkspace(), expanded: {}, syncWorkspaceId: null, syncUserId: null,
+    persistInitialWorkspace: () => {
+      try {
+        if (!localStorage.getItem("colabora-workspace")) set({});
+      } catch { /* Storage can be unavailable; the workspace remains usable in memory. */ }
+    },
     setSyncWorkspaceId: (id, userId = null) => set({ syncWorkspaceId: id, syncUserId: userId }),
     applyRemotePages: (patch) => set((state) => applyRemotePatch(state, {
       ...patch,

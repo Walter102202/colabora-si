@@ -1,4 +1,3 @@
-"use client";
 import { forwardRef, useImperativeHandle, useLayoutEffect, useMemo, useRef } from "react";
 import { caretOffset, focusAtEnd, focusAtStart, setCaretAtOffset } from "@/lib/caret";
 
@@ -61,7 +60,7 @@ const Editable = forwardRef<EditableHandle, EditableProps>(function Editable(pro
     getText: () => element.current?.textContent ?? "",
     setHtml: (html) => { if (element.current) { element.current.innerHTML = sanitizeHtml(html); markEmpty(element.current); } },
   }), []);
-  return <div ref={element} contentEditable={!props.readOnly} suppressContentEditableWarning role="textbox" aria-multiline="true" data-placeholder={props.readOnly ? "" : props.placeholder} spellCheck={props.spellCheck ?? true} className={`outline-none ${props.className ?? ""}`}
+  return <div ref={element} contentEditable={!props.readOnly} suppressContentEditableWarning role="textbox" tabIndex={0} aria-multiline="true" data-placeholder={props.readOnly ? "" : props.placeholder} spellCheck={props.spellCheck ?? true} className={`outline-none ${props.className ?? ""}`}
     onInput={(event) => { markEmpty(event.currentTarget); props.onInput?.(event.currentTarget.innerHTML); }} onBlur={(event) => props.onBlurSave?.(event.currentTarget.innerHTML)} onKeyDown={props.onKeyDown} onPaste={(event) => {
       if (props.readOnly) { event.preventDefault(); return; }
       props.onPaste?.(event);

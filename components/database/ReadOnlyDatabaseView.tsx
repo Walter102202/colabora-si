@@ -1,11 +1,10 @@
-"use client";
 import { useState } from "react";
 import type { Database, Page } from "@/lib/types";
 import type { DbOps } from "@/lib/dbOps";
 import { createView } from "@/lib/factories";
 import { filterRows } from "@/lib/dbFilter";
 import { sortRows } from "@/lib/dbCompute";
-import { VIEW_ICONS } from "@/components/database/dbShared";
+import { VIEW_ICONS } from "@/lib/dbView";
 import DatabaseRows from "@/components/database/DatabaseRows";
 import { useAgentTasks } from "@/lib/agentTasks";
 import { databaseTaskValues } from "@/lib/databaseTaskValues";

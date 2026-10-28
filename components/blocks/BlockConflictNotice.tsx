@@ -1,4 +1,3 @@
-"use client";
 import { useState } from "react";
 import { useBlockConflicts } from "@/lib/syncConflicts";
 import { useStore } from "@/lib/store";

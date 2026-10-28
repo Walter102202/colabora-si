@@ -1,4 +1,3 @@
-"use client";
 import type { Block } from "@/lib/types";
 import { stripHtml } from "@/lib/utils";
 export default function TocBlock({ blocks }: { blocks: Block[] }) {
