@@ -66,6 +66,18 @@ describe("bridge proxy", () => {
     expect(config().tokenUrl).toBe(TOKEN_URL);
   });
 
+  it("reads the Supabase URL and key for Realtime from WORKSPACE_SUPABASE_*", () => {
+    const cfg = resolveConfig({ WORKSPACE_MCP_URL: MCP_URL, WORKSPACE_AGENT_PAT: "agt_secret", WORKSPACE_SUPABASE_URL: " https://ws.test ", WORKSPACE_SUPABASE_KEY: "sb_publishable_1 " }, []);
+    expect(cfg.supabaseUrl).toBe("https://ws.test");
+    expect(cfg.supabaseKey).toBe("sb_publishable_1");
+  });
+
+  it("ignores the old NEXT_PUBLIC_* names", () => {
+    const cfg = resolveConfig({ WORKSPACE_MCP_URL: MCP_URL, NEXT_PUBLIC_SUPABASE_URL: "https://old.test", NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "k1", NEXT_PUBLIC_SUPABASE_ANON_KEY: "k2" }, []);
+    expect(cfg.supabaseUrl).toBe("");
+    expect(cfg.supabaseKey).toBe("");
+  });
+
   it("exchanges the PAT at start and sends the JWT on tools/list", async () => {
     const { bridge, out, fetch } = setup(() => undefined);
     await bridge.start();

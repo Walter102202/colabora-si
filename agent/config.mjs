@@ -80,7 +80,7 @@ export function readConfig(env) {
     agentPat: /** @type {string} */ (env.WORKSPACE_AGENT_PAT),
     tokenUrl: env.WORKSPACE_AGENT_TOKEN_URL || `${new URL(mcpUrl).origin}/functions/v1/agent-token`,
     harness: env.AGENT_HARNESS_NAME || "reference-agent",
-    appUrl: (env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/+$/, ""),
+    appUrl: (env.WORKSPACE_APP_URL ?? "").replace(/\/+$/, ""),
     telegramBotToken: env.TELEGRAM_BOT_TOKEN ?? "",
     telegramOwnerChatId: env.TELEGRAM_OWNER_CHAT_ID ?? "",
     maxTurns: num(env.AGENT_MAX_TURNS, 40),
