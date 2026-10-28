@@ -1,14 +1,12 @@
 "use client";
 
 import { useMemo } from "react";
-import { useRouter } from "next/navigation";
 import { useAgentsStore } from "@/lib/agentsStore";
 import { useAgentTasks } from "@/lib/agentTasks";
 import { StatusBadge } from "@/components/agents/AgentPropertyCell";
 
 // Subtasks a Lead opened under this task, with their state and worker.
-export function SubtaskList({ parentId }: { parentId: string }) {
-  const router = useRouter();
+export function SubtaskList({ parentId, onOpenTask }: { parentId: string; onOpenTask: (pageId: string, taskId: string) => void }) {
   const tasks = useAgentTasks((s) => s.tasks);
   const runs = useAgentTasks((s) => s.runs);
   const agents = useAgentsStore((s) => s.agents);
@@ -32,7 +30,7 @@ export function SubtaskList({ parentId }: { parentId: string }) {
               <button
                 type="button"
                 className="flex w-full items-center gap-2 px-2 py-1 text-left text-sm hover:bg-bg-secondary"
-                onClick={() => router.push(`/p/${encodeURIComponent(t.row_page_id)}?task=${encodeURIComponent(t.id)}`)}
+                onClick={() => onOpenTask(t.row_page_id, t.id)}
               >
                 <span className="min-w-0 flex-1 truncate">{t.title || "Untitled subtask"}</span>
                 <span className="shrink-0 text-xs text-text-tertiary">{agent?.name ?? "unassigned"}</span>

@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router";
+import { pageUrl, taskUrl } from "@/lib/routes";
 import { useStore } from "@/lib/store";
 import { useAgentsStore } from "@/lib/agentsStore";
 import {
@@ -35,7 +37,18 @@ export function RowPanel({ pageId }: RowPanelProps) {
   const workspaceId = useStore((s) => s.syncWorkspaceId);
   const subscribe = useAgentTasks((s) => s.subscribe);
   const loadAgents = useAgentsStore((s) => s.load);
-  const task = useAgentTasks((s) => taskForPage(s, pageId));
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const requestedId = params.get("task");
+  const status = useAgentTasks((s) => s.status);
+  const requested = useAgentTasks((s) => (requestedId ? (s.tasks[requestedId] ?? null) : null));
+  const pageTask = useAgentTasks((s) => taskForPage(s, pageId));
+  // `?task=<id>` selects that task when it belongs to this row; otherwise the
+  // person is told explicitly instead of being shown another task as if it were it.
+  const task = requested && requested.row_page_id === pageId ? requested : pageTask;
+  const mismatch = requestedId && status === "ready" && (!requested || requested.row_page_id !== pageId) ? (requested ? "elsewhere" : "missing") : null;
+  const onOpenTask = (rowPageId: string, taskId: string) => { void navigate(taskUrl(rowPageId, taskId)); };
+  const onOpenPage = (id: string) => { void navigate(pageUrl(id)); };
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -52,7 +65,21 @@ export function RowPanel({ pageId }: RowPanelProps) {
   }
   return (
     <section className="mt-6 space-y-4 rounded-md border border-border p-3 text-sm" aria-label="Agent task">
-      {task ? <TaskPanel task={task} /> : <AssignCard pageId={pageId} />}
+      {mismatch === "missing" && (
+        <p className="rounded border border-yellow-500/40 bg-yellow-500/10 px-2 py-1 text-xs" role="status">
+          The task in this link no longer exists, or you cannot see it. Below is this row&apos;s own task.
+        </p>
+      )}
+      {mismatch === "elsewhere" && requested && (
+        <p className="rounded border border-yellow-500/40 bg-yellow-500/10 px-2 py-1 text-xs" role="status">
+          The task in this link belongs to another row.{" "}
+          <a className="text-accent underline" href={taskUrl(requested.row_page_id, requested.id)} onClick={(e) => { e.preventDefault(); onOpenTask(requested.row_page_id, requested.id); }}>
+            Open {requested.title || "it"} there
+          </a>
+          . Below is this row&apos;s own task.
+        </p>
+      )}
+      {task ? <TaskPanel task={task} onOpenTask={onOpenTask} onOpenPage={onOpenPage} /> : <AssignCard pageId={pageId} />}
     </section>
   );
 }
@@ -104,7 +131,7 @@ function AssignCard({ pageId }: { pageId: string }) {
   );
 }
 
-function TaskPanel({ task }: { task: TaskRow }) {
+function TaskPanel({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpenTask: (pageId: string, taskId: string) => void; onOpenPage: (pageId: string) => void }) {
   const agents = useAgentsStore((s) => s.agents);
   const run = useAgentTasks((s) => activeRunFor(s, task));
   const approval = useAgentTasks((s) => pendingApprovalFor(s, task.id));
@@ -182,7 +209,7 @@ function TaskPanel({ task }: { task: TaskRow }) {
           <p className="text-xs">
             v{artifact.version} · {artifact.kind}{" "}
             {artifact.kind === "page" ? (
-              <a className="text-accent underline" href={`/p/${encodeURIComponent(artifact.ref)}`}>{artifact.title || "page"}</a>
+              <a className="text-accent underline" href={pageUrl(artifact.ref)} onClick={(e) => { e.preventDefault(); onOpenPage(artifact.ref); }}>{artifact.title || "page"}</a>
             ) : /^https?:\/\//.test(artifact.ref) ? (
               <a className="text-accent underline" href={artifact.ref} target="_blank" rel="noreferrer noopener">{artifact.title || artifact.ref}</a>
             ) : (
@@ -206,7 +233,7 @@ function TaskPanel({ task }: { task: TaskRow }) {
         />
       </section>
 
-      <SubtaskList parentId={task.id} />
+      <SubtaskList parentId={task.id} onOpenTask={onOpenTask} />
 
       {approval && (approval.kind === "action" ? <ApprovalCard approval={approval} onDecide={onDecide} /> : <DecisionCard approval={approval} onDecide={onDecide} />)}
 
