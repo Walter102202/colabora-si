@@ -21,9 +21,9 @@ Agents today work in the dark: in a terminal, a chat, or a tab nobody else sees.
 - **Editor.** Blocks (text, headings, lists, to-dos, toggles, quotes, callouts, code, dividers, media, embeds, tables, equations, columns, synced blocks), slash menu, Markdown shortcuts, inline formatting, drag and drop, smart paste, sanitized HTML.
 - **Pages.** Tree with favorites and trash, icons and covers, backlinks, templates, version history, reminders, Markdown import and export.
 - **Databases.** Table, board, list, gallery, calendar and timeline views; formulas, relations, rollups, filters, sorts, grouping, row templates, linked databases with independent views, CSV export.
-- **Agents.** An "Agent Tasks" database as the control room, a Lead/Worker protocol, per-block attribution, decision and approval cards, task panel with "what was asked and what changed", heartbeats and cost per run, kill switch per workspace and per agent.
-- **Remote MCP server.** Read and write tools for pages and databases, task tools, waiting tools that hold the call until something changes, and a connection recipe per harness.
-- **Cloud (optional).** Accounts, sync by block operations (no lost edits, conflicts shown on the block), presence, sharing and public pages, members and invitations, file uploads, web push reminders, email notifications.
+- **Agents.** An "Agent Tasks" database as the control room, a Lead/Worker protocol, per-block attribution, decision and approval cards, task panel with "what was asked and what changed", heartbeats and cost per run, kill switch per workspace and per agent. Chat hosts that support MCP Apps render the same task card inline.
+- **Remote MCP server.** Read and write tools for pages and databases, task tools, waiting tools that hold the call until something changes, prompts and resources for briefs and pages, and a connection recipe per harness.
+- **Cloud (optional).** Accounts, sync by block operations (no lost edits, conflicts shown on the block), presence, sharing and public pages (served as HTML to crawlers and as Markdown to agents at `/pub/<id>.md`), members and invitations, file uploads, web push reminders, email notifications.
 
 Without a backend the app is 100 % local: everything lives in the browser.
 
@@ -41,6 +41,8 @@ person accepts and closes, or sends feedback      done / queued again with the f
 
 A Lead agent runs the same loop one level up: `create_task` from its own session, `create_subtask` to delegate, `review_task` on the worker's deliverable, `close_subtask` when the brief's policy allows it. A worker that is waiting is woken by the server, not by polling the model.
 
+Questions, choices and closing a task can be answered from a chat app too. Approving an action that runs outside the workspace always happens in the app.
+
 ## Tools exposed over MCP
 
 | Area | Tools |
@@ -48,8 +50,11 @@ A Lead agent runs the same loop one level up: `create_task` from its own session
 | Read | `search`, `fetch`, `list_pages`, `read_page`, `query_database` |
 | Write | `append_blocks`, `edit_page`, `update_block`, `add_row`, `update_row`, `add_comment` |
 | Tasks | `list_my_tasks`, `get_task`, `claim_task`, `post_activity`, `add_artifact`, `request_input`, `request_approval`, `submit_for_review`, `send_message`, `heartbeat`, `end_run`, `ack_stop`, `begin_external_op`, `finish_external_op` |
-| Lead | `create_task`, `create_subtask`, `list_subtasks`, `review_task`, `close_subtask`, `continue_task` |
+| Lead | `create_task`, `create_subtask`, `list_subtasks`, `review_task`, `close_subtask` |
 | Wait | `wait_for_task`, `wait_for_my_tasks` (the server holds the call up to 120 s and answers on the first change) |
+| People (chat hosts) | `list_waiting_on_me`, `decide_approval`, `close_task`; with `get_task`, each renders the task card in hosts that support MCP Apps |
+
+Prompts: `continue_task`, `review_as_lead`. Resources: `workspace://page/<id>` (Markdown) and `workspace://task/<id>/brief` (JSON).
 
 Writes are partial and idempotent: an agent appends blocks or edits one block by its current text, never the whole page. Content reaches the database as block operations applied in order; a conflict is reported on the block, the person's version wins, and the agent re-reads.
 
@@ -65,6 +70,7 @@ Create an agent in **Settings → Agents**. Its token (`agt_…`) is shown once 
 | Codex | remote MCP over HTTP, or the bridge | yes, through a Stop hook |
 | Claude, ChatGPT (chat apps) | OAuth, as a person linked to an agent | ask it to check its tasks |
 | Cursor, Antigravity, Gemini CLI, Muse Code | the bridge | `wait_for_task` |
+| Grok | agent JWT | no |
 | Reference agent (`agent/`) | direct | yes, its main loop is `wait_for_my_tasks` |
 
 ## Reference agent
@@ -77,7 +83,7 @@ It is designed to run as two instances: a Lead on a hosted frontier model and a 
 
 ```bash
 npm ci
-npm run dev        # http://localhost:3000
+npm run dev        # http://127.0.0.1:3000
 ```
 
 Optional backend (Supabase, needs Docker):
@@ -85,8 +91,9 @@ Optional backend (Supabase, needs Docker):
 ```bash
 cp .env.example .env.local   # VITE_SUPABASE_URL and the publishable key
 npx supabase start           # Postgres 17, Auth, Realtime, Storage, Edge Functions
-npx supabase db reset        # migrations 0001–0010 and seeds (demo workspace, two demo agents)
-npx supabase functions serve # mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, send-*
+npx supabase db reset        # migrations 0001–0012 and seeds (demo workspace, two demo agents)
+cp supabase/functions/.env.example supabase/functions/.env   # function secrets; the local pepper unlocks the two seeded agent tokens
+npx supabase functions serve --env-file supabase/functions/.env   # mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, pub-html, send-*
 ```
 
 Reference agent:
@@ -99,28 +106,31 @@ node agent/index.mjs --env agent/.env
 Checks:
 
 ```bash
-node scripts/check-ownership.mjs   # one owner per file
+node scripts/check-ownership.mjs         # one owner per file
 npm run lint
-npm test                            # Vitest
-npx supabase test db                # pgTAP
-npm run build
+npm test                                  # Vitest
+cd supabase/functions && deno task test   # Deno tests of the Edge Functions
+npx supabase test db                      # pgTAP
+npm run build                             # tsc + vite build
 ```
 
 ## Project layout
 
 ```text
-app/            Next.js App Router routes (client components only)
-components/     UI; components/agents/ holds the agent-layer surfaces
-lib/            domain types, store, pure engines (markdown, formulas, sync operations)
+app/            SPA routes (Vite, React Router); app/main.tsx is the entry, app/card.tsx the MCP Apps card
+components/     UI; components/agents/ holds the agent-layer surfaces, components/agents/panel/ the pure views
+lib/            domain types, store, pure engines (markdown, formulas, block operations, sync)
 supabase/
-  migrations/   0001 core, 0002 agents, 0003 core RPCs, 0004–0010 tasks, writes, control, dispatch, lead, retention
-  functions/    mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, send-reminders, send-email
+  migrations/   0001 core, 0002 agents, 0003 core RPCs, 0004–0012 tasks, writes, control, dispatch, lead, retention, chat decisions
+  functions/    mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, pub-html, send-reminders, send-email
   tests/        pgTAP suites (clone/, agents/)
   seeds/        demo workspace and demo agents
 agent/          reference agent over an OpenAI-compatible model slot
 bridge/         stdio MCP bridge with token exchange and the Claude Code channel
 connect/        connection recipe per harness
-tests/          Vitest suites (clone/, agents/)
+api/            Vercel function that serves public pages to crawlers
+public/         llms.txt (how an agent connects, in plain text) and the service worker
+tests/          Vitest suites (clone/, agents/, infra/)
 ```
 
 ## Design principles
