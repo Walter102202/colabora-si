@@ -1,8 +1,9 @@
 // Task tools (§IV.9.3): each one validates, calls the RPC of §IV.5.1 as the caller, and formats the result.
 import { type Filter, must } from '../db.ts';
 import type { ToolContext, ToolDef } from '../mcp.ts';
+import { CARD_OUTPUT, CARD_TOOL_META, loadTaskCard } from './card.ts';
 import { bool, num, object, output, plural, READ, str, WRITE, WRITE_IDEMPOTENT } from './common.ts';
-import { loadTaskBundle, type Row } from './taskData.ts';
+import type { Row } from './taskData.ts';
 
 const TASK_STATES = ['queued', 'working', 'input_required', 'ready_for_review', 'done', 'failed', 'cancelled'];
 const idempotencyKey = { type: 'string', minLength: 1, maxLength: 200, description: 'Retry-safe key: the same key returns the first result.' } as const;
@@ -96,7 +97,9 @@ const listMyTasks: ToolDef = {
 const getTask: ToolDef = {
   name: 'get_task',
   title: 'Get task brief, artifacts and recent activity',
-  description: 'Everything needed to continue a task without re-explanation: state, current brief, deliverables, pending approvals and recent activity.',
+  description:
+    'Everything needed to continue a task without re-explanation: state, current brief, deliverables, pending approvals ' +
+    'and recent activity, plus the active run, the latest review, the subtasks and the agent names (the task card).',
   inputSchema: object({
     task_id: { type: 'string', minLength: 1 },
     activities_limit: { type: 'integer', minimum: 0, maximum: 200, default: 20 },
@@ -108,11 +111,13 @@ const getTask: ToolDef = {
     artifacts: { type: 'array', items: { type: 'object' } },
     approvals_pending: { type: 'array', items: { type: 'object' } },
     activities: { type: 'array', items: { type: 'object' } },
+    ...CARD_OUTPUT,
   }),
   annotations: READ,
   cacheTtlMs: 0,
+  _meta: CARD_TOOL_META,
   async handler(args, ctx) {
-    const t = await loadTaskBundle(ctx.db, String(args.task_id), {
+    const t = await loadTaskCard(ctx.db, String(args.task_id), ctx.appUrl, {
       activitiesLimit: num(args.activities_limit) ?? 20,
       includeEphemeral: bool(args.include_ephemeral) ?? false,
     });

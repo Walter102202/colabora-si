@@ -12,9 +12,9 @@ export interface TaskBundle {
 }
 
 export const TASK_COLUMNS =
-  'id,workspace_id,context_id,db_page_id,row_page_id,title,delegate_agent_id,owner_user_id,parent_task_id,' +
+  'id,workspace_id,context_id,db_page_id,row_page_id,title,delegate_agent_id,owner_user_id,parent_task_id,depends_on_task_ids,' +
   'state,review_state,acceptance,waiting_on,brief_version,brief_stale,active_run_id,review_rounds,max_review_rounds,' +
-  'cost_usd,last_activity_at,created_at,updated_at,closed_at';
+  'cost_usd,last_activity_at,created_at,updated_at,closed_at,closed_by';
 
 export async function loadTask(db: Db, taskId: string): Promise<Row> {
   const rows = await must(db.select<Row>({
@@ -32,7 +32,7 @@ export async function loadBrief(db: Db, taskId: string, version: unknown): Promi
   if (typeof version !== 'number' || version < 1) return null;
   const rows = await must(db.select<Row>({
     table: 'task_briefs',
-    columns: 'version,objective,constraints,done_when,decisions,sources,open_questions,next_step,policies,author_type,created_at',
+    columns: 'task_id,version,objective,constraints,done_when,decisions,sources,open_questions,next_step,policies,author_type,created_at',
     filters: [{ col: 'task_id', op: 'eq', value: taskId }, { col: 'version', op: 'eq', value: version }],
     limit: 1,
   }));
@@ -51,19 +51,20 @@ export async function loadTaskBundle(
     loadBrief(db, taskId, task.brief_version),
     must(db.select<Row>({
       table: 'agent_artifacts',
-      columns: 'id,run_id,kind,ref,version,page_revision,title,satisfies,author_type,created_at',
+      columns: 'id,task_id,run_id,kind,ref,version,page_revision,title,satisfies,author_type,author_id,superseded_by,created_at',
       filters: [{ col: 'task_id', op: 'eq', value: taskId }, { col: 'superseded_by', op: 'is', value: null }],
       order: [{ column: 'created_at', ascending: true }],
     })),
     must(db.select<Row>({
       table: 'agent_approvals',
-      columns: 'id,run_id,kind,action,params,question,options,status,expires_at,created_at',
+      columns: 'id,task_id,run_id,kind,action,params,artifact_id,artifact_version,question,options,status,decision,response,' +
+        'decided_by,decided_at,expires_at,created_at',
       filters: [{ col: 'task_id', op: 'eq', value: taskId }, { col: 'status', op: 'eq', value: 'pending' }],
       order: [{ column: 'created_at', ascending: true }],
     })),
     must(db.select<Row>({
       table: 'agent_activities',
-      columns: 'id,run_id,seq,type,body,ephemeral,author_type,author_id,created_at',
+      columns: 'id,task_id,run_id,seq,type,body,ephemeral,author_type,author_id,created_at',
       filters: activityFilters,
       order: [{ column: 'seq', ascending: false }],
       limit: opts.activitiesLimit ?? 20,
