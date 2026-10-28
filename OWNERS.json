@@ -82,6 +82,10 @@
       "index.html",
       "apps/card.html",
       "vercel.json"
+    ],
+    "a/env-docs": [
+      "AGENTS.md",
+      "public/llms.txt"
     ]
   }
 }
