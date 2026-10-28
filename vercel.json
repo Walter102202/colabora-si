@@ -13,7 +13,7 @@
           "value": ".*(facebookexternalhit|Twitterbot|Slackbot|LinkedInBot|Discordbot|WhatsApp|TelegramBot|Googlebot|bingbot|Applebot).*"
         }
       ],
-      "destination": "https://xiuehxfljusakgblcfhm.supabase.co/functions/v1/pub-html/:id"
+      "destination": "/api/pub?id=:id"
     },
     {
       "source": "/(.*)",

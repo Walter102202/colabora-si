@@ -56,7 +56,9 @@
       "vite.config.ts",
       "index.html",
       "apps/card.html",
-      "vercel.json"
+      "vercel.json",
+      "api/",
+      "tests/infra/"
     ]
   },
   "branchExceptions": {
