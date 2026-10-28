@@ -334,8 +334,13 @@ export function waitingOnYou(state: AgentTasksState): TaskRow[] {
     .sort((a, b) => (b.last_activity_at ?? b.updated_at).localeCompare(a.last_activity_at ?? a.updated_at));
 }
 
-export function pendingApprovalFor(state: AgentTasksState, taskId: string): ApprovalRow | null {
-  return Object.values(state.approvals).find((a) => a.task_id === taskId && a.status === "pending") ?? null;
+// The pending approval the panel shows for a task: the one a deep link names
+// when it is pending here, otherwise the oldest (the order the chat card uses).
+export function pendingApprovalFor(state: AgentTasksState, taskId: string, preferId: string | null = null): ApprovalRow | null {
+  const pending = Object.values(state.approvals).filter((a) => a.task_id === taskId && a.status === "pending");
+  const preferred = preferId ? pending.find((a) => a.id === preferId) : null;
+  if (preferred) return preferred;
+  return pending.sort((a, b) => a.created_at.localeCompare(b.created_at))[0] ?? null;
 }
 
 export function activeRunFor(state: AgentTasksState, task: TaskRow): RunRow | null {

@@ -18,11 +18,15 @@ select public.add_artifact(:'run'::uuid, 'page', 'page_A2', 'Result', '{}') ->> 
 select public.submit_for_review(:'run'::uuid, 'Done', array[:'art'::uuid]);
 select tests.reset_role();
 update public.agent_tasks set state = 'input_required', waiting_on = 'human', review_rounds = 3 where id = :'sub'::uuid;
+-- A question still open on the task when the person closes it.
+insert into public.agent_approvals (workspace_id, task_id, run_id, kind, question, options, requested_by_type, requested_by_id)
+values ((:'f'::jsonb->>'ws')::uuid, :'sub'::uuid, :'run'::uuid, 'elicitation', 'Which tone?', array['respond','ignore'], 'agent', (:'f'::jsonb->>'agent')::uuid)
+returning id as q \gset
 
 -- Closing executes nothing irreversible (Reopen exists), so a chat session may do it.
 select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'mcp-client-1');
 select is(tests.error_of(format('select public.close_task(%L::uuid, %L, %L)', :'sub', 'accepted', 'Good enough')), '', 'an OAuth session may close a task that is ready for a person');
-select is((select count(*) from public.agent_approvals where task_id = :'sub'::uuid and status = 'pending'), 0::bigint, 'closing leaves no pending approval');
+select is((select status from public.agent_approvals where id = :'q'::uuid), 'cancelled', 'closing cancels the open question');
 select tests.reset_role();
 select is((select state from public.agent_tasks where id = :'sub'::uuid), 'done', 'a person closes the escalated subtask');
 select is((select acceptance from public.agent_tasks where id = :'sub'::uuid), 'accepted', 'the subtask is accepted');

@@ -118,6 +118,18 @@ export function approvalLink(appUrl: string, pageId: string, taskId: string, app
   return `${taskLink(appUrl, pageId, taskId)}#approval-${encodeURIComponent(approvalId)}`;
 }
 
+// The approval id a fragment names (`#approval-<id>`), or null: a malformed
+// percent-encoding is a broken link, not a crash.
+export function approvalIdFromHash(hash: string): string | null {
+  const m = /^#approval-(.+)$/.exec(hash);
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return null;
+  }
+}
+
 export function pageLink(appUrl: string, pageId: string): string {
   return `${appUrl.replace(/\/+$/, "")}${pageUrl(pageId)}`;
 }

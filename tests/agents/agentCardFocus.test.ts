@@ -4,6 +4,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApprovalCard } from "@/components/agents/panel/ApprovalCard";
 import { DecisionCard } from "@/components/agents/panel/DecisionCard";
+import { TaskView } from "@/components/agents/panel";
+import { cardDataFrom, type TaskCardData } from "@/lib/agentCard";
+import { mockCard } from "@/components/agents/card/mock";
 import type { ApprovalRow } from "@/lib/agentTasks";
 
 // A deep link that names an approval (#approval-<id>) lands on it: the card
@@ -33,14 +36,20 @@ afterEach(() => {
 });
 
 describe("ApprovalCard focus", () => {
-  it("names itself, rings for two seconds and focuses Approve when focused", () => {
+  it("names itself, rings for two seconds and focuses the card itself (never Approve) when focused", () => {
     act(() => root.render(createElement(ApprovalCard, { approval: base, onDecide, focus: true })));
     const card = container.querySelector("#approval-ap-1");
     expect(card).not.toBeNull();
     expect(card!.className).toContain("ring-2");
-    expect((document.activeElement as HTMLElement).textContent).toBe("Approve");
+    expect(document.activeElement).toBe(card);
     act(() => { vi.advanceTimersByTime(2000); });
     expect(card!.className).not.toContain("ring-2");
+  });
+
+  it("drops the ring as soon as the focus moves away", () => {
+    act(() => root.render(createElement(ApprovalCard, { approval: base, onDecide, focus: true })));
+    act(() => root.render(createElement(ApprovalCard, { approval: base, onDecide, focus: false })));
+    expect(container.querySelector("#approval-ap-1")!.className).not.toContain("ring-2");
   });
 
   it("does nothing without focus", () => {
@@ -52,11 +61,12 @@ describe("ApprovalCard focus", () => {
 });
 
 describe("DecisionCard focus", () => {
-  it("focuses the first choice when there are choices", () => {
-    const withChoices = { ...question, params: { choices: ["Formal", "Casual"] } };
-    act(() => root.render(createElement(DecisionCard, { approval: withChoices, onDecide, focus: true })));
-    expect(container.querySelector("#approval-q-1")!.className).toContain("ring-2");
-    expect((document.activeElement as HTMLElement).textContent).toBe("Formal");
+  it("focuses the card, not a choice, when there is no answer box", () => {
+    const choicesOnly = { ...question, params: { choices: ["Formal", "Casual"] }, options: ["ignore"] as ApprovalRow["options"] };
+    act(() => root.render(createElement(DecisionCard, { approval: choicesOnly, onDecide, focus: true })));
+    const card = container.querySelector("#approval-q-1");
+    expect(card!.className).toContain("ring-2");
+    expect(document.activeElement).toBe(card);
   });
 
   it("focuses the answer box when the question is open", () => {
@@ -68,5 +78,27 @@ describe("DecisionCard focus", () => {
     act(() => root.render(createElement(DecisionCard, { approval: question, onDecide })));
     expect(container.querySelector("#approval-q-1")!.className).not.toContain("ring-2");
     expect(document.activeElement).toBe(document.body);
+  });
+});
+
+describe("TaskView keeps approvals apart", () => {
+  it("does not carry a half-typed answer from one approval to the next", () => {
+    const data = cardDataFrom(mockCard("question")) as TaskCardData;
+    const noop = async () => {};
+    const view = (approval: ApprovalRow) => createElement(TaskView, {
+      ...data, approval, subtasks: [], reviewerName: null, agent: null,
+      onMessage: noop, onClose: noop, onDecide: noop, onReview: noop, onOpenTask: () => {}, onOpenPage: () => {},
+    });
+    expect(data.approval?.kind).not.toBe("action");
+    act(() => root.render(view(data.approval!)));
+    const box = container.querySelector("textarea") as HTMLTextAreaElement;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(box, "Formal, please");
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("Formal, please");
+    act(() => root.render(view({ ...data.approval!, id: "q-next", question: "Another question" })));
+    expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("");
   });
 });

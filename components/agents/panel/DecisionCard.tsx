@@ -38,7 +38,7 @@ export function DecisionCard({
   };
 
   return (
-    <div ref={focusRef} id={focusId} className={"space-y-2 rounded-md border border-accent/40 bg-accent/5 p-3 text-sm" + ringClass}>
+    <div ref={focusRef} id={focusId} tabIndex={-1} className={"space-y-2 rounded-md border border-accent/40 bg-accent/5 p-3 text-sm" + ringClass}>
       <p className="font-medium">{KIND[approval.kind]}: {approval.question || "the agent is waiting for you"}</p>
       <p className="text-xs text-text-secondary">Expires in {expiresIn(approval.expires_at)}.</p>
       {choices.length > 0 && (

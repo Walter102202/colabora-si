@@ -51,7 +51,7 @@ export function ApprovalCard({
   const has = (o: ApprovalRow["options"][number]) => approval.options.includes(o);
 
   return (
-    <div ref={focusRef} id={focusId} className={"space-y-2 rounded-md border border-accent/40 bg-accent/5 p-3 text-sm" + ringClass}>
+    <div ref={focusRef} id={focusId} tabIndex={-1} className={"space-y-2 rounded-md border border-accent/40 bg-accent/5 p-3 text-sm" + ringClass}>
       <p className="font-medium">Needs your approval{approval.question ? `: ${approval.question}` : ""}</p>
       <p className="text-xs text-text-secondary">Runs exactly this once: {what || "the requested action"}. Expires in {expiresIn(approval.expires_at)}.</p>
       {editing ? (

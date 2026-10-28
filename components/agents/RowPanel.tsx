@@ -16,6 +16,7 @@ import {
   type TaskRow,
 } from "@/lib/agentTasks";
 import { briefFromRow, closeTask, createTask, decideApproval, reviewTask, sendMessage } from "@/lib/agentActions";
+import { approvalIdFromHash } from "@/lib/agentCard";
 import { AssignView, TaskView, type SubtaskItem } from "@/components/agents/panel";
 
 // Agent layer plug. Mounted by the page view of a database row, under the row
@@ -91,13 +92,10 @@ function AssignConnector({ pageId }: { pageId: string }) {
 function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpenTask: (pageId: string, taskId: string) => void; onOpenPage: (pageId: string) => void }) {
   const { hash } = useLocation();
   // `#approval-<id>` (a deep link from a chat or a notification) lands on that approval.
-  const focusApprovalId = useMemo(() => {
-    const m = /^#approval-(.+)$/.exec(hash);
-    return m ? decodeURIComponent(m[1]) : null;
-  }, [hash]);
+  const focusApprovalId = useMemo(() => approvalIdFromHash(hash), [hash]);
   const agents = useAgentsStore((s) => s.agents);
   const run = useAgentTasks((s) => activeRunFor(s, task));
-  const approval = useAgentTasks((s) => pendingApprovalFor(s, task.id));
+  const approval = useAgentTasks((s) => pendingApprovalFor(s, task.id, focusApprovalId));
   const artifact = useAgentTasks((s) => currentArtifactFor(s, task.id));
   const review = useAgentTasks((s) => latestReviewFor(s, task.id));
   const brief = useAgentTasks((s) => currentBriefFor(s, task));

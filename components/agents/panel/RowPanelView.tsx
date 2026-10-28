@@ -188,8 +188,8 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
       <SubtaskList subtasks={subtasks} onOpenTask={onOpenTask} />
 
       {approval && (approval.kind === "action"
-        ? <ApprovalCard approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />
-        : <DecisionCard approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />)}
+        ? <ApprovalCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />
+        : <DecisionCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />)}
 
       {!terminal && !approval && (
         <section className="space-y-1">
