@@ -27,7 +27,8 @@ select public.request_approval(:'run'::uuid, 'send_email', '{"to":"r@example.com
 select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'mcp-client-1');
 select is(tests.error_of(format('select public.decide_approval(%L::uuid, %L, %L::jsonb)', :'q1', 'respond', '{"text":"Formal"}')), '', 'an OAuth session may answer a question');
-select is(tests.error_of(format('select public.decide_approval(%L::uuid, %L)', :'q2', 'approve')), '', 'an OAuth session may answer a question with approve');
+select public.decide_approval(:'q2'::uuid, 'approve') as q2res \gset
+select is(:'q2res'::jsonb ->> 'receipt', null, 'a go-ahead on a question is accepted from an OAuth session and mints no receipt');
 select is(tests.error_of(format('select public.decide_approval(%L::uuid, %L)', :'ap0', 'reject')), '', 'an OAuth session may reject an action');
 
 select tests.reset_role();
