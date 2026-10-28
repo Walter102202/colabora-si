@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router";
+import { taskUrl } from "@/lib/routes";
 import { Inbox } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { notificationHref, notificationText, useAgentNotifications } from "@/lib/agentNotifications";
@@ -12,7 +13,7 @@ import { formatRelative } from "@/lib/utils";
 // what is waiting on the person: tasks that need a decision and unread
 // notifications. Hidden without a session.
 export function InboxBell() {
-  const router = useRouter();
+  const navigate = useNavigate();
   const userId = useStore((s) => s.syncUserId);
   const subscribe = useAgentNotifications((s) => s.subscribe);
   const markRead = useAgentNotifications((s) => s.markRead);
@@ -60,7 +61,7 @@ export function InboxBell() {
                   className="flex w-full flex-col items-start rounded px-2 py-1 text-left hover:bg-bg-secondary"
                   onClick={() => {
                     setOpen(false);
-                    router.push(`/p/${encodeURIComponent(t.row_page_id)}?task=${encodeURIComponent(t.id)}`);
+                    void navigate(taskUrl(t.row_page_id, t.id));
                   }}
                 >
                   <span className="truncate">{t.title || "Untitled task"}</span>
@@ -78,7 +79,7 @@ export function InboxBell() {
                     onClick={() => {
                       setOpen(false);
                       void markRead([n.id]);
-                      if (href) router.push(href);
+                      if (href) void navigate(href);
                     }}
                   >
                     <span className="truncate">{notificationText(n)}</span>

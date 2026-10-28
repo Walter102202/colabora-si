@@ -1,7 +1,6 @@
-"use client";
+import { useId, useState } from "react";
 
-import { useState } from "react";
-
+// Free-text message to the agent. Ctrl+Enter sends.
 export function FeedbackComposer({
   disabled,
   placeholder = "Tell the agent what to change or what you decided…",
@@ -11,6 +10,7 @@ export function FeedbackComposer({
   placeholder?: string;
   onSend: (text: string) => Promise<void>;
 }) {
+  const id = useId();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const send = async () => {
@@ -26,7 +26,9 @@ export function FeedbackComposer({
   };
   return (
     <div className="space-y-1">
+      <label htmlFor={`${id}-message`} className="sr-only">Message to the agent</label>
       <textarea
+        id={`${id}-message`}
         className="w-full resize-y rounded-md border border-border bg-bg px-2 py-1.5 text-sm"
         rows={2}
         value={text}

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { pageUrl, taskUrl } from "@/lib/routes";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { agentErrorMessage, getAgentClient } from "@/lib/agentClient";
 
@@ -165,9 +166,11 @@ export function notificationText(n: NotificationRow): string {
   return `${subject} ${KIND_TEXT[n.kind] ?? n.kind}`;
 }
 
+// Deep link of a notification: the row page, the task it is about and the
+// comment block it points at (the fragment keeps the editor scroll target).
 export function notificationHref(n: NotificationRow): string | null {
   if (!n.page_id) return null;
-  const q = n.task_id ? `?task=${encodeURIComponent(n.task_id)}` : "";
+  const path = n.task_id ? taskUrl(n.page_id, n.task_id) : pageUrl(n.page_id);
   const hash = n.block_id ? `#${encodeURIComponent(n.block_id)}` : "";
-  return `/p/${encodeURIComponent(n.page_id)}${q}${hash}`;
+  return path + hash;
 }

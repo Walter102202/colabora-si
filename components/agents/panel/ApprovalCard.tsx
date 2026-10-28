@@ -1,19 +1,8 @@
-"use client";
-
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { ApprovalRow } from "@/lib/agentTasks";
 import type { ApprovalDecision } from "@/lib/agentActions";
+import { expiresIn } from "@/lib/agentTaskText";
 import { formatRelative } from "@/lib/utils";
-
-export function expiresIn(iso: string): string {
-  const ms = Date.parse(iso) - Date.now();
-  if (ms <= 0) return "expired";
-  const min = Math.round(ms / 60000);
-  if (min < 60) return `${min} min`;
-  const h = Math.round(min / 60);
-  if (h < 48) return `${h} h`;
-  return `${Math.round(h / 24)} d`;
-}
 
 // An irreversible action waiting for a person. Approve runs it exactly once.
 export function ApprovalCard({
@@ -25,6 +14,7 @@ export function ApprovalCard({
   deciderName?: string | null;
   onDecide: (decision: ApprovalDecision, response: Record<string, unknown> | null) => Promise<void>;
 }) {
+  const id = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -61,7 +51,10 @@ export function ApprovalCard({
       <p className="font-medium">Needs your approval{approval.question ? `: ${approval.question}` : ""}</p>
       <p className="text-xs text-text-secondary">Runs exactly this once: {what || "the requested action"}. Expires in {expiresIn(approval.expires_at)}.</p>
       {editing ? (
-        <textarea className="w-full rounded border border-border bg-bg p-2 font-mono text-xs" rows={6} value={params} onChange={(e) => setParams(e.target.value)} />
+        <>
+          <label htmlFor={`${id}-params`} className="sr-only">Parameters as JSON</label>
+          <textarea id={`${id}-params`} className="w-full rounded border border-border bg-bg p-2 font-mono text-xs" rows={6} value={params} onChange={(e) => setParams(e.target.value)} />
+        </>
       ) : (
         paramsText !== "{}" && <pre className="max-h-40 overflow-auto rounded bg-bg p-2 font-mono text-xs">{JSON.stringify(approval.params, null, 2)}</pre>
       )}

@@ -1,11 +1,14 @@
-"use client";
-
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { ArtifactRow, BriefRow, ReviewRow, TaskRow } from "@/lib/agentTasks";
-import { reviewTask } from "@/lib/agentActions";
 import { VerificationCard } from "@/components/agents/panel/VerificationCard";
 
-type FindingStatus = "verified" | "not_found" | "contradicted" | "unverified";
+export type FindingStatus = "verified" | "not_found" | "contradicted" | "unverified";
+export type ReviewVerdict = "approved" | "changes_requested" | "blocked";
+export interface ReviewFinding {
+  criterion_id: string;
+  status: FindingStatus;
+  note?: string;
+}
 const STATUSES: { value: FindingStatus; label: string }[] = [
   { value: "verified", label: "verified" },
   { value: "not_found", label: "not found" },
@@ -15,19 +18,23 @@ const STATUSES: { value: FindingStatus; label: string }[] = [
 
 // Verification of the deliverable: what the Lead (or a person) found per
 // criterion, the review round, and a way for the person to take the review.
+// Pure: `onReview` performs the review for this task and the deliverable shown.
 export function LeadReviewCard({
   task,
   review,
   brief,
   artifact,
   reviewerName,
+  onReview,
 }: {
   task: TaskRow;
   review: ReviewRow | null;
   brief: BriefRow | null;
   artifact: ArtifactRow | null;
   reviewerName?: string | null;
+  onReview: (verdict: ReviewVerdict, findings: ReviewFinding[], artifactId: string | null) => Promise<void>;
 }) {
+  const id = useId();
   const [taking, setTaking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,15 +50,13 @@ export function LeadReviewCard({
         ? `Round ${task.review_rounds} of ${task.max_review_rounds}${task.review_rounds >= task.max_review_rounds ? " · escalated to you" : ""}`
         : null;
 
-  const submit = async (verdict: "approved" | "changes_requested" | "blocked") => {
+  const submit = async (verdict: ReviewVerdict) => {
     setBusy(true);
     setError(null);
     try {
-      await reviewTask(
-        task.id,
+      await onReview(
         verdict,
         criteria.map((c) => ({ criterion_id: c.id, status: findings[c.id]?.status ?? "unverified", note: findings[c.id]?.note || undefined })),
-        [],
         artifact?.id ?? null,
       );
       setTaking(false);
@@ -79,14 +84,18 @@ export function LeadReviewCard({
             {criteria.map((c) => (
               <li key={c.id} className="flex flex-wrap items-center gap-2">
                 <span className="min-w-0 flex-1">{c.text}</span>
+                <label htmlFor={`${id}-status-${c.id}`} className="sr-only">Status of: {c.text}</label>
                 <select
+                  id={`${id}-status-${c.id}`}
                   className="rounded border border-border bg-bg px-1 py-0.5"
                   value={findings[c.id]?.status ?? "unverified"}
                   onChange={(e) => setFindings({ ...findings, [c.id]: { status: e.target.value as FindingStatus, note: findings[c.id]?.note ?? "" } })}
                 >
                   {STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
                 </select>
+                <label htmlFor={`${id}-note-${c.id}`} className="sr-only">Note on: {c.text}</label>
                 <input
+                  id={`${id}-note-${c.id}`}
                   className="w-40 rounded border border-border bg-bg px-1 py-0.5"
                   placeholder="note"
                   value={findings[c.id]?.note ?? ""}
