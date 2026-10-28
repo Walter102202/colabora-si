@@ -18,7 +18,7 @@ export function decodeEntities(text: string): string {
   });
 }
 
-function attrs(raw: string): Record<string, string> {
+export function attrs(raw: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const m of raw.matchAll(/([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*"([^"]*)"|\s*=\s*'([^']*)')?/g)) {
     out[m[1].toLowerCase()] = decodeEntities(m[2] ?? m[3] ?? '');
@@ -84,10 +84,12 @@ export interface RenderContext {
   syncedBlocks: Record<string, Block[]>;
   /** Prefix of page links, e.g. "https://app.example" (empty = relative "/p/<id>"). */
   linkBase: string;
+  /** Path between linkBase and the page id: "/p/" by default, "/pub/" for public pages. */
+  pagePath?: string;
   maxTableRows?: number;
 }
 
-const pageLink = (ctx: RenderContext, id: string) => `${ctx.linkBase}/p/${id}`;
+const pageLink = (ctx: RenderContext, id: string) => `${ctx.linkBase}${ctx.pagePath ?? '/p/'}${id}`;
 
 function titleOf(ctx: RenderContext, id: string | undefined): string {
   return (id && ctx.pages[id]?.title) || 'Untitled';
