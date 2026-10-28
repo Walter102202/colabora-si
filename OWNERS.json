@@ -86,6 +86,10 @@
     "a/env-docs": [
       "AGENTS.md",
       "public/llms.txt"
+    ],
+    "a/pub-html": [
+      "supabase/config.toml",
+      "vercel.json"
     ]
   }
 }
