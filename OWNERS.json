@@ -16,6 +16,7 @@
       "supabase/migrations/*_0009_*",
       "supabase/migrations/*_0010_*",
       "supabase/migrations/*_0011_*",
+      "supabase/migrations/*_0012_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -99,6 +100,9 @@
       "package.json"
     ],
     "a/chat-decisions": [
+      "OWNERS.json"
+    ],
+    "a/chat-decisions-followups": [
       "OWNERS.json"
     ]
   }
