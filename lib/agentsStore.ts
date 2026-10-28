@@ -204,9 +204,11 @@ export const useAgentsStore = create<AgentsState>()((set, get) => ({
   },
 }));
 
+// MCP endpoint shown to people and agents: the explicit public URL wins, then
+// the one derived from the Supabase URL, then a placeholder for the snippets.
 export function mcpUrls(): { mcpUrl: string; tokenUrl: string } {
-  const explicit = process.env.NEXT_PUBLIC_MCP_URL;
-  const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const explicit = import.meta.env.VITE_MCP_URL;
+  const base = import.meta.env.VITE_SUPABASE_URL;
   const mcpUrl = explicit || (base ? `${base}/functions/v1/mcp` : "https://<project>.supabase.co/functions/v1/mcp");
   const tokenUrl = mcpUrl.replace(/\/functions\/v1\/mcp.*$/, "/functions/v1/agent-token");
   return { mcpUrl, tokenUrl };
