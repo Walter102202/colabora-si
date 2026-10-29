@@ -430,10 +430,12 @@ begin
 end $$;
 
 -- The actions a brief's require_approval names: one string, the strings of a list or the keys of an object; none when
--- it is absent or jsonb null. null for any other shape, which validate_brief refuses: then every action asks.
+-- it is absent or jsonb null. null for any other shape, or for policies that are not an object, which validate_brief
+-- refuses: then every action asks.
 create or replace function private.required_actions(p_policies jsonb)
 returns text[] language sql immutable set search_path = '' as $$
   select case
+    when jsonb_typeof(p_policies) not in ('object', 'null') then null
     when coalesce(jsonb_typeof(p_policies -> 'require_approval'), 'null') = 'null' then array[]::text[]
     when jsonb_typeof(p_policies -> 'require_approval') = 'string' then array[p_policies ->> 'require_approval']
     when jsonb_typeof(p_policies -> 'require_approval') = 'object' then array(select jsonb_object_keys(p_policies -> 'require_approval'))
@@ -443,7 +445,7 @@ returns text[] language sql immutable set search_path = '' as $$
     else null end;
 $$;
 
--- 0006 plus require_approval: a shape the server cannot read is refused, so a brief never asks less than it says.
+-- 0006 plus policies: a shape the server cannot read is refused, so a brief never asks less than it says.
 create or replace function private.validate_brief(p_brief jsonb)
 returns void language plpgsql immutable set search_path = '' as $$
 begin
@@ -459,6 +461,9 @@ begin
           (select count(distinct c->>'id') from jsonb_array_elements(p_brief->'done_when') c) then
       raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'done_when ids must be unique';
     end if;
+  end if;
+  if jsonb_typeof(p_brief->'policies') not in ('object', 'null') then
+    raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'policies must be an object';
   end if;
   if private.required_actions(p_brief->'policies') is null then
     raise exception using errcode = 'PT400', message = 'invalid_input',

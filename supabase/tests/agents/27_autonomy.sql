@@ -2,7 +2,7 @@
 -- exceeds the parent, a workspace at ask that caps every task, recorded automatic approvals, and questions and
 -- payments that always reach a person.
 begin;
-select plan(79);
+select plan(81);
 
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A')
@@ -277,6 +277,9 @@ select is(tests.error_of(format('select public.create_agent_task(%L, %L::jsonb, 
           'invalid_input', 'and so is a list of anything but strings');
 select is(tests.error_of(format('select public.update_brief(%L::uuid, %L::jsonb)', :'t11', '{"policies":{"require_approval":1}}')), 'invalid_input',
           'update_brief refuses it too');
+select is(tests.error_of(format('select public.create_agent_task(%L, %L::jsonb, %L::uuid)', 'page_A11',
+                                '{"objective":"Anything","policies":["publish_page"]}', :'f'::jsonb->>'agent')), 'invalid_input',
+          'policies that are not an object are refused');
 select public.create_agent_task('page_A11', '{"objective":"Email the team","policies":{"require_approval":null,"preapproved":["send_email"]}}'::jsonb,
                                 (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as t12 \gset
 select is(public.task_autonomy(:'t12'::uuid) -> 'require_approval', '[]'::jsonb, 'a null require_approval is no restriction');
@@ -294,6 +297,11 @@ select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select is(public.task_autonomy(:'t12'::uuid) -> 'auto_approved', '[]'::jsonb, 'task_autonomy shows nothing running on its own');
 select is(public.task_autonomy(:'t12'::uuid) -> 'require_approval', '["publish_page","send_email"]'::jsonb,
           'and lists as asking every action that would otherwise run on its own');
+select tests.reset_role();
+update public.task_briefs set policies = '["send_email"]'::jsonb where task_id = :'t12'::uuid;
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select is(public.request_approval(:'r12'::uuid, 'publish_page', '{"page_id":"page_A1"}'::jsonb) ->> 'status', 'pending',
+          'stored policies that are not an object ask even for what the preset allows');
 select tests.reset_role();
 
 select * from finish();
