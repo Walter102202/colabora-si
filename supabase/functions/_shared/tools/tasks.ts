@@ -120,6 +120,7 @@ const getTask: ToolDef = {
   _meta: CARD_TOOL_META,
   async handler(args, ctx) {
     const t = await loadTaskCard(ctx.db, String(args.task_id), ctx.appUrl, {
+      autonomy: true,
       activitiesLimit: num(args.activities_limit) ?? 20,
       includeEphemeral: bool(args.include_ephemeral) ?? false,
       afterSeq: num(args.after_seq),
@@ -258,14 +259,15 @@ const addArtifact: ToolDef = {
 const requestInput: ToolDef = {
   name: 'request_input',
   title: 'Ask the human a question',
-  description: 'Asks the task owner a question. The task becomes input_required; wait with wait_for_task, heartbeat or list_my_tasks.',
+  description: 'Asks the task owner a question. By default the task becomes input_required until the answer; wait with wait_for_task, heartbeat or list_my_tasks. With blocking: false the task keeps its state and you keep working on what does not depend on the answer; it arrives later as a message (heartbeat or wait_for_task) carrying this approval_id. When only the answers are left, call await_questions.',
   inputSchema: object({
     run_id: { type: 'string', minLength: 1 },
     question: { type: 'string', minLength: 1, maxLength: 4000 },
     options: { type: 'array', items: { type: 'string', enum: ['respond', 'ignore', 'approve', 'reject', 'edit'] }, minItems: 1 },
     kind: { type: 'string', enum: ['elicitation', 'plan', 'escalation'] },
+    blocking: { type: 'boolean', default: true },
   }, ['run_id', 'question']),
-  outputSchema: output({ approval_id: { type: 'string' } }),
+  outputSchema: output({ approval_id: { type: 'string' }, blocking: { type: 'boolean' }, status: { type: 'string' } }),
   annotations: WRITE,
   async handler(args, ctx) {
     const data = await must(ctx.db.rpc<Row>('request_input', {
@@ -273,9 +275,31 @@ const requestInput: ToolDef = {
       p_question: args.question,
       p_options: args.options,
       p_kind: str(args.kind),
+      p_blocking: args.blocking !== false,
     })) ?? {};
+    const blocking = data.blocking !== false;
     return {
-      text: `Question sent (${String(data.approval_id)}). The task is now input_required; wait with wait_for_task or poll with heartbeat or list_my_tasks.`,
+      text: blocking ? `Question sent (${String(data.approval_id)}). The task is now input_required; wait with wait_for_task or poll with heartbeat or list_my_tasks.`
+        : `Question sent (${String(data.approval_id)}) without blocking. Keep working on what does not depend on it; the answer arrives as a message with this approval_id.`,
+      structured: { status: 'pending', blocking, ...data },
+    };
+  },
+};
+
+const awaitQuestions: ToolDef = {
+  name: 'await_questions',
+  title: 'Wait on my open questions',
+  description: 'Call it when only the answers to your questions asked with blocking: false are left. They start to block: the ' +
+    'task becomes input_required, shows that it waits on a person, and resumes once the last one is answered. Then wait with ' +
+    'wait_for_task; a delivery waits for the last answer too. From then on they block for good: end_run cancels them, while ' +
+    'hand_over keeps them for the next session.',
+  inputSchema: object({ run_id: { type: 'string', minLength: 1 } }, ['run_id']),
+  outputSchema: output({ questions: { type: 'integer' }, task_state: { type: 'string' } }),
+  annotations: WRITE_IDEMPOTENT,
+  async handler(args, ctx) {
+    const data = await must(ctx.db.rpc<Row>('await_questions', { p_run_id: String(args.run_id) })) ?? {};
+    return {
+      text: `${plural(Number(data.questions ?? 0), 'question')} now block; the task is ${String(data.task_state)}. Wait with wait_for_task.`,
       structured: data,
     };
   },
@@ -285,8 +309,7 @@ const requestApproval: ToolDef = {
   name: 'request_approval',
   title: 'Request approval for an irreversible action',
   description:
-    'For actions you will run outside the workspace (email, pull request…). A person approves, edits or rejects; ' +
-    'never act before the decision. Actions inside the workspace ask for approval on their own.',
+    'For actions you will run outside the workspace (email, pull request…). A person approves, edits or rejects; never act before the decision. When the autonomy level or the brief allows the action, the answer comes back at once with status approved and a receipt, and the approval is recorded. Payments always wait for a person. Actions inside the workspace ask for approval on their own.',
   inputSchema: object({
     run_id: { type: 'string', minLength: 1 },
     action: { type: 'string', minLength: 1, maxLength: 200 },
@@ -294,7 +317,8 @@ const requestApproval: ToolDef = {
     question: { type: 'string', minLength: 1, maxLength: 4000 },
     artifact_id: { type: 'string' },
   }, ['run_id', 'action', 'params', 'question']),
-  outputSchema: output({ approval_id: { type: 'string' }, action_hash: { type: 'string' }, status: { type: 'string' } }),
+  outputSchema: output({ approval_id: { type: 'string' }, action_hash: { type: 'string' }, status: { type: 'string' },
+    receipt: { type: 'string' }, receipt_expires_at: { type: 'string' }, auto_approved: { type: 'object' } }),
   annotations: WRITE_IDEMPOTENT,
   async handler(args, ctx) {
     const data = await must(ctx.db.rpc<Row>('request_approval', {
@@ -305,7 +329,11 @@ const requestApproval: ToolDef = {
       p_question: args.question,
     })) ?? {};
     const structured: Row = { status: 'pending', ...data };
-    return { text: `Approval ${String(structured.approval_id)} is ${String(structured.status)}. Wait for the decision with wait_for_task.`, structured };
+    const auto = structured.auto_approved as Row | undefined;
+    const text = structured.status === 'approved'
+      ? `Approved automatically (${String(auto?.by)}, ${String(auto?.level)}): go ahead. Pass receipt ${String(structured.receipt)} to begin_external_op within 15 minutes.`
+      : `Approval ${String(structured.approval_id)} is ${String(structured.status)}. Wait for the decision with wait_for_task.`;
+    return { text, structured };
   },
 };
 
@@ -372,7 +400,9 @@ const submitForReview: ToolDef = {
   title: 'Submit the task for review',
   description:
     'Delivers the run: needs at least one artifact and an artifact for every "done when" criterion that is not checked by a person. ' +
-    'Ends the run. A person (or the Lead) reviews; you never mark the task done.',
+    'Ends the run and cancels your questions still open. While a request still blocks (after await_questions, every open question ' +
+    'does) it fails with waiting_on_human and the ids of those requests: wait for their answers first. ' +
+    'A person (or the Lead) reviews; you never mark the task done.',
   inputSchema: object({
     run_id: { type: 'string', minLength: 1 },
     summary: { type: 'string', minLength: 1, maxLength: 10_000 },
@@ -451,6 +481,6 @@ const sendMessage: ToolDef = {
 };
 
 export const taskTools: ToolDef[] = [
-  listMyTasks, getTask, claimTask, heartbeat, postActivity, addArtifact, requestInput, requestApproval,
+  listMyTasks, getTask, claimTask, heartbeat, postActivity, addArtifact, requestInput, awaitQuestions, requestApproval,
   beginExternalOp, finishExternalOp, submitForReview, endRun, ackStop, sendMessage,
 ];

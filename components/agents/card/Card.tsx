@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { MessageSignal } from "@/lib/agentActions";
-import { approvalLink, cardDataFrom, pageLink, taskLink, toolFailure, type CardData, type TaskCardData, type WaitingItem, type WaitingListData } from "@/lib/agentCard";
+import { approvalLink, cardDataFrom, openQuestionsFor, pageLink, taskLink, toolFailure, type CardData, type TaskCardData, type WaitingItem, type WaitingListData } from "@/lib/agentCard";
 import type { ToolResult } from "@/lib/agentCardHost";
 import { TaskView, type SubtaskItem } from "@/components/agents/panel";
 import { WaitingList } from "@/components/agents/card/WaitingList";
@@ -64,12 +64,13 @@ export function Card({ initial, actions }: { initial: CardData; actions: CardAct
     return next;
   };
 
-  // Write tools return the refreshed card; anything else is followed by get_task.
+  // Write tools return the refreshed card; anything else is followed by get_task. Only get_task reads the
+  // autonomy, so a refreshed card of the same task keeps the line it had.
   const applyResult = async (result: ToolResult, taskId: string) => {
     const next = cardDataFrom(result.structuredContent);
     if (next?.kind === "task") {
       setNotice(null);
-      setData(next);
+      setData((prev) => (next.autonomy === undefined && prev.kind === "task" && prev.task.id === next.task.id ? { ...next, autonomy: prev.autonomy } : next));
     } else {
       await showTask(taskId);
     }
@@ -159,6 +160,12 @@ function TaskCard({
       agent={agent}
       run={data.run}
       approval={approval}
+      openQuestions={data.approvals_pending ? openQuestionsFor(data.approvals_pending, task.id, approval?.id ?? null) : (data.questions ?? [])}
+      autonomy={data.autonomy ?? null}
+      onDecideQuestion={async (id, decision, response) => {
+        const result = await call("decide_approval", { approval_id: id, decision, ...(response ? { response } : {}) }, link);
+        await applyResult(result, task.id);
+      }}
       artifact={data.artifact}
       review={review}
       brief={data.brief}

@@ -1,7 +1,9 @@
+import { autonomyLine, AUTONOMY_LABEL, AUTONOMY_LEVELS, type AutonomyLevel, type TaskAutonomy } from "@/lib/agentAutonomy";
 import { useEffect, useId, useRef, useState } from "react";
 import { continuityText, type ContinuityInfo } from "@/lib/agentContinuity";
 import type { TaskDiff } from "@/lib/agentRunDiff";
 import { RunDiffCard } from "@/components/agents/panel/RunDiffCard";
+import { useQueuedChoice } from "@/components/agents/panel/useQueuedChoice";
 import type { ActivityRow, ApprovalRow, ArtifactRow, BriefRow, ReviewRow, RunRow, TaskRow } from "@/lib/agentTasks";
 import type { ApprovalDecision, MessageSignal } from "@/lib/agentActions";
 import type { AgentRole } from "@/lib/agentsStore";
@@ -61,6 +63,12 @@ export interface TaskViewProps {
   onHandOver?: (toAgentId: string | null, note: string) => Promise<void>;
   // Approval a deep link (#approval-<id>) asked to land on, if any.
   focusApprovalId?: string | null;
+  // The other pending questions, each answered by its own id: those asked with blocking false and those waiting behind `approval`.
+  openQuestions?: ApprovalRow[];
+  // What the task may do without asking; the select appears only with onSetAutonomy (not in the chat card).
+  autonomy?: TaskAutonomy | null;
+  onSetAutonomy?: (level: AutonomyLevel | null) => Promise<void>;
+  onDecideQuestion?: (approvalId: string, decision: ApprovalDecision, response: Record<string, unknown> | null) => Promise<void>;
   // Message to the agent: text with "feedback"/"continue", or an empty body with "continue"/"stop".
   onMessage: (body: string, signal: MessageSignal) => Promise<void>;
   onClose: (acceptance: "accepted" | "rejected", note: string | null) => Promise<void>;
@@ -122,7 +130,7 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ task, agent, run, approval, artifact, review, brief, activities, subtasks, reviewerName, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ task, agent, run, approval, artifact, review, brief, activities, subtasks, reviewerName, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -135,6 +143,7 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
   const [handoverError, setHandoverError] = useState<string | null>(null);
   const handOverToggle = useRef<HTMLButtonElement>(null);
   const refocusHandOver = useRef(false);
+  const autonomyChoice = useQueuedChoice<AutonomyLevel | null>();
 
   const agentLike = agent ? { name: agent.name, capabilities: agent.capabilities } : null;
   const terminal = isTerminal(task.state);
@@ -200,6 +209,26 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
         <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">What was asked and what changed</h4>
         <p>{brief?.objective ?? task.title ?? "Loading brief…"}</p>
         {brief?.next_step && <p className="text-xs text-text-secondary">Next step: {brief.next_step}</p>}
+        {autonomy && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
+            <span>{autonomyLine(autonomy)}</span>
+            {onSetAutonomy && !terminal && (
+              <>
+                {/* A save in progress keeps it enabled, so the keyboard focus stays on it. */}
+                <select aria-label="Autonomy for this task" className="rounded border border-border bg-bg px-1 py-0.5 text-xs disabled:opacity-50"
+                  value={(autonomyChoice.pending ? autonomyChoice.pending.value : autonomy.requested) ?? ""}
+                  disabled={autonomy.can_edit === false} aria-busy={autonomyChoice.busy}
+                  aria-describedby={autonomy.can_edit === false ? `${id}-autonomy-owner` : undefined}
+                  onChange={(e) => { const v = e.target.value; void autonomyChoice.choose(v ? (v as AutonomyLevel) : null, onSetAutonomy); }}>
+                  <option value="">Workspace default ({AUTONOMY_LABEL[autonomy.workspace_level]})</option>
+                  {AUTONOMY_LEVELS.map((l) => <option key={l} value={l}>{AUTONOMY_LABEL[l]}</option>)}
+                </select>
+                {autonomy.can_edit === false && <span id={`${id}-autonomy-owner`} className="text-text-tertiary">Only a workspace owner can change this.</span>}
+              </>
+            )}
+            {autonomyChoice.error && <p role="alert" className="w-full text-red-700 dark:text-red-400">{autonomyChoice.error}</p>}
+          </div>
+        )}
         {recentActions.length > 0 ? (
           <ul className="text-xs text-text-secondary">
             {recentActions.map((a) => (
@@ -245,6 +274,11 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
       {approval && (approval.kind === "action"
         ? <ApprovalCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />
         : <DecisionCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />)}
+
+      {openQuestions.map((q) => (
+        <DecisionCard key={q.id} approval={q} nonBlocking={q.blocking === false} focus={focusApprovalId === q.id}
+          onDecide={(decision, response) => (onDecideQuestion ? onDecideQuestion(q.id, decision, response) : Promise.resolve())} />
+      ))}
 
       {!terminal && !approval && (
         <section className="space-y-1">

@@ -20,6 +20,10 @@ describe("texts for the errors of a person's agent actions", () => {
     expect(agentErrorMessage({ message: "item_not_found" })).toBe("That change is no longer in the list.");
   });
 
+  it("a question someone already answered elsewhere says so", () => {
+    expect(agentErrorMessage({ message: "approval_not_pending" })).toBe("This was already answered.");
+  });
+
   it("a handover the task's state does not allow keeps its own text; closing the task gets the generic one", async () => {
     rpc.mockResolvedValue({ data: null, error: { message: "invalid_state", code: "PT422" } });
     await expect(handOver("t1", "agent-2", "")).rejects.toThrow("The task cannot be handed over in its current state.");

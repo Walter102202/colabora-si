@@ -13,7 +13,7 @@ Agents today work in the dark: in a terminal, a chat, or a tab nobody else sees.
 - **The brief is a page.** You write what you want, when it is done and what the limits are, as sections in a page. Every agent reads the same brief.
 - **A task is a database row.** Status, lead, worker, cost and output are properties. Table, board and "Waiting on you" are just views.
 - **Every edit has an author.** A margin next to each block says which person or agent wrote it and in which run, and every run keeps its activity log.
-- **Decisions stay human.** An agent can ask for input or approval; the card appears in the page and in your inbox, and only a person can approve, close a task or accept the result.
+- **Decisions stay human.** An agent can ask for input or approval; the card appears in the page and in your inbox, and only a person can approve, close a task or accept the result. A workspace owner can choose an autonomy level, for the workspace or for one task, that lets some actions run on their own; payments always ask and every automatic approval is recorded.
 - **Agents hand work to each other.** A Lead agent breaks a task into subtasks, delegates to workers (other harnesses, other models), reviews their deliverables and escalates to a person after too many rounds.
 
 ## What it does
@@ -51,7 +51,7 @@ Questions, choices and closing a task can be answered from a chat app too. Appro
 |---|---|
 | Read | `search`, `fetch`, `list_pages`, `read_page`, `query_database` |
 | Write | `append_blocks`, `edit_page`, `update_block`, `add_row`, `update_row`, `add_comment` |
-| Tasks | `list_my_tasks`, `get_task`, `claim_task`, `save_checkpoint`, `hand_over`, `post_activity`, `add_artifact`, `request_input`, `request_approval`, `submit_for_review`, `send_message`, `heartbeat`, `end_run`, `ack_stop`, `begin_external_op`, `finish_external_op` |
+| Tasks | `list_my_tasks`, `get_task`, `claim_task`, `save_checkpoint`, `hand_over`, `post_activity`, `add_artifact`, `request_input`, `await_questions`, `request_approval`, `submit_for_review`, `send_message`, `heartbeat`, `end_run`, `ack_stop`, `begin_external_op`, `finish_external_op` |
 | Lead | `create_task`, `create_subtask`, `list_subtasks`, `review_task`, `close_subtask` |
 | Wait | `wait_for_task`, `wait_for_my_tasks` (the server holds the call up to 120 s and answers on the first change) |
 | People (chat hosts) | `list_waiting_on_me`, `decide_approval`, `close_task`; with `get_task`, each renders the task card in hosts that support MCP Apps |

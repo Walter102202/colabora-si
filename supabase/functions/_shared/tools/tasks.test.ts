@@ -34,6 +34,17 @@ Deno.test('claim_task surfaces task_unavailable as a ToolError the model can act
   );
 });
 
+Deno.test('submit_for_review says that a delivery waits for the last blocking answer, and which requests block', async () => {
+  const ctx = ctxWith(() => Promise.resolve({ data: null, error: { code: 'PT409', message: 'waiting_on_human', details: '{"approval_ids":["q2"]}' } }));
+  await assert.rejects(
+    () => tool('submit_for_review').handler({ run_id: 'run-1', summary: 'Done', artifact_ids: ['art-1'] }, ctx),
+    (err: unknown) => err instanceof ToolError && err.code === 'waiting_on_human' && /still has to answer/.test(err.message)
+      && JSON.stringify(err.detail) === '{"approval_ids":["q2"]}',
+  );
+  assert.match(tool('submit_for_review').description, /waiting_on_human/);
+  assert.match(tool('await_questions').description, /delivery waits/);
+});
+
 // ---------------------------------------------------------------------------
 // get_task over in-memory tables (the same fake card.test.ts uses).
 // ---------------------------------------------------------------------------
@@ -182,4 +193,57 @@ Deno.test('claim_task without resume sends p_resume false and keeps the descript
   await tool('claim_task').handler({ task_id: 't1', harness: 'codex' }, ctx);
   assert.equal(calls[0].p_resume, false);
   assert.match(tool('claim_task').description, /only a person reopens it/);
+});
+
+Deno.test('request_input passes blocking false and tells the agent to keep working', async () => {
+  const calls: { fn: string; params: Record<string, unknown> }[] = [];
+  const ctx = ctxWith(<T>(fn: string, params: Record<string, unknown>): Promise<DbResult<T>> => {
+    calls.push({ fn, params });
+    return Promise.resolve({ data: { approval_id: 'q1', blocking: false, status: 'pending' } as T, error: null });
+  });
+  const out = await tool('request_input').handler({ run_id: 'run-1', question: 'Formal or casual?', blocking: false }, ctx);
+  assert.equal(calls[0].fn, 'request_input');
+  assert.equal(calls[0].params.p_blocking, false);
+  assert.equal(out.structured.blocking, false);
+  assert.equal(out.structured.status, 'pending');
+  assert.match(out.text, /without blocking/);
+});
+
+Deno.test('request_input blocks by default and declares the flag in its schema', async () => {
+  const calls: Record<string, unknown>[] = [];
+  const ctx = ctxWith(<T>(_fn: string, params: Record<string, unknown>): Promise<DbResult<T>> => {
+    calls.push(params);
+    return Promise.resolve({ data: { approval_id: 'q2', blocking: true, status: 'pending' } as T, error: null });
+  });
+  const out = await tool('request_input').handler({ run_id: 'run-1', question: 'Which list?' }, ctx);
+  assert.equal(calls[0].p_blocking, true);
+  assert.equal(out.structured.blocking, true);
+  assert.match(out.text, /input_required/);
+  const schema = tool('request_input').inputSchema as { properties: Record<string, { type: string }> };
+  assert.equal(schema.properties.blocking.type, 'boolean');
+});
+
+Deno.test('await_questions makes the open questions block and says how to wait', async () => {
+  const calls: { fn: string; params: Record<string, unknown> }[] = [];
+  const ctx = ctxWith(<T>(fn: string, params: Record<string, unknown>): Promise<DbResult<T>> => {
+    calls.push({ fn, params });
+    return Promise.resolve({ data: { questions: 2, task_state: 'input_required' } as T, error: null });
+  });
+  const out = await tool('await_questions').handler({ run_id: 'run-1' }, ctx);
+  assert.deepEqual(calls, [{ fn: 'await_questions', params: { p_run_id: 'run-1' } }]);
+  assert.equal(out.structured.task_state, 'input_required');
+  assert.match(out.text, /2 questions now block/);
+});
+
+Deno.test('request_approval answers approved at once when the autonomy allows the action', async () => {
+  const ctx = ctxWith(<T>(_fn: string, _params: Record<string, unknown>): Promise<DbResult<T>> => Promise.resolve({
+    data: { approval_id: 'ap9', action_hash: 'h', status: 'approved', receipt: 'r-9', receipt_expires_at: '2026-10-30T10:15:00+00:00',
+            auto_approved: { by: 'preset', level: 'balanced' } } as T,
+    error: null,
+  }));
+  const out = await tool('request_approval').handler({ run_id: 'run-1', action: 'publish_page', params: { page_id: 'p1' }, question: 'Publish?' }, ctx);
+  assert.equal(out.structured.status, 'approved');
+  assert.equal(out.structured.receipt, 'r-9');
+  assert.match(out.text, /^Approved automatically \(preset, balanced\)/);
+  assert.match(tool('request_approval').description, /status approved/);
 });

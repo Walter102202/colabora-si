@@ -7,7 +7,9 @@ import type { CardActions } from "@/components/agents/card/Card";
 // Fake data for `apps/card.html?mock=<scenario>`: renders the card without a
 // host, so the views can be checked in a browser. Scenarios: 1 (ready for
 // review, Lead review attached), approval (irreversible action), question
-// (elicitation), done, list (waiting on you), denied (server wants the app).
+// (elicitation), side-question (asked without blocking, the run keeps going),
+// diff (changes of the runs), handover (checkpoint and handover), done,
+// list (waiting on you), denied (server wants the app).
 
 const APP_URL = "https://colabora.example";
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
@@ -118,9 +120,13 @@ export function mockCard(scenario: string): CardData {
           body: { from_harness: "claude_code", to_harness: "codex", summary: "1 approval pending." }, ephemeral: false,
           author_type: "agent", author_id: "a-worker", created_at: minutesAgo(4) }] };
     case "approval":
-      return { ...base, task: { ...task, state: "input_required", waiting_on: "human", active_run_id: run.id }, run, approval: actionApproval };
+      return { ...base, task: { ...task, state: "input_required", waiting_on: "human", active_run_id: run.id }, run, approval: actionApproval,
+        autonomy: { level: "balanced", requested: null, source: "workspace", workspace_level: "balanced", auto_approved: ["publish_page"], require_approval: [] } };
     case "question":
       return { ...base, task: { ...task, state: "input_required", waiting_on: "human", active_run_id: run.id }, run, approval: question };
+    case "side-question":
+      return { ...base, task: { ...task, state: "working", waiting_on: null, active_run_id: run.id }, run: { ...run, status: "running" }, approval: null,
+        questions: [{ ...question, id: "ap-side", params: {}, question: "Should the summary mention the two rows we merged?", blocking: false }] };
     case "done":
       return { ...base, task: { ...task, state: "done", acceptance: "accepted", closed_at: minutesAgo(1), closed_by: "u1" } };
     case "list":
@@ -131,6 +137,12 @@ export function mockCard(scenario: string): CardData {
 }
 
 const ok = (structured: Record<string, unknown>): ToolResult => ({ content: [{ type: "text", text: JSON.stringify(structured) }], structuredContent: structured });
+// Like the server, the refreshed card of decide_approval and close_task does not read the autonomy.
+const withoutAutonomy = (data: TaskCardData): TaskCardData => {
+  const card = { ...data };
+  delete card.autonomy;
+  return card;
+};
 const fail = (code: string, message: string, detail: unknown = null): ToolResult => ({
   isError: true, content: [{ type: "text", text: `Error ${code}: ${message}` }], structuredContent: { code, message, detail },
 });
@@ -157,10 +169,10 @@ export function mockActions(scenario: string): CardActions {
             return fail("direct_session_required", "This needs the person to act from the app directly.", { url: `${APP_URL}/p/row1?task=${task.id}#approval-${current.approval.id}` });
           }
           current = { ...current, task: { ...current.task, state: "working", waiting_on: null }, approval: null };
-          return ok({ status: "decided", ...current });
+          return ok({ status: "decided", ...withoutAutonomy(current) });
         case "close_task":
           current = { ...current, task: { ...current.task, state: "done", acceptance: args.acceptance as TaskRow["acceptance"], closed_at: new Date().toISOString() }, approval: null, run: null };
-          return ok({ task_state: "done", ...current });
+          return ok({ task_state: "done", ...withoutAutonomy(current) });
         case "review_task":
           current = { ...current, review: { ...review, id: "rev-2", reviewer_type: "human", reviewer_id: "u1", verdict: args.verdict as ReviewRow["verdict"], findings: args.findings as ReviewRow["findings"], created_at: new Date().toISOString() }, task: { ...current.task, state: args.verdict === "approved" ? "ready_for_review" : "working", review_state: args.verdict === "approved" ? "approved" : "changes_requested" } };
           return ok({ review_id: "rev-2", task_state: current.task.state, rounds: 2 });

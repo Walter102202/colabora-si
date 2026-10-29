@@ -1,3 +1,4 @@
+import type { AutonomyLevel, AutonomyPolicy, TaskAutonomy } from "@/lib/agentAutonomy";
 import type { ButtonAction } from "@/lib/types";
 import type { TaskDiff } from "@/lib/agentRunDiff";
 import { useStore } from "@/lib/store";
@@ -133,6 +134,39 @@ export async function updateBrief(
   const version = await rpc<number>("update_brief", { p_task_id: taskId, p_patch: patch });
   await refresh(taskId);
   return version;
+}
+
+export function getTaskAutonomy(taskId: string): Promise<TaskAutonomy> {
+  return rpc<TaskAutonomy>("task_autonomy", { p_task_id: taskId });
+}
+
+export function setTaskAutonomy(taskId: string, level: AutonomyLevel | null): Promise<TaskAutonomy> {
+  return rpc<TaskAutonomy>("set_task_autonomy", { p_task_id: taskId, p_level: level });
+}
+
+export function getAutonomyPolicy(workspaceId: string): Promise<AutonomyPolicy> {
+  return rpc<AutonomyPolicy>("get_autonomy_policy", { p_workspace_id: workspaceId });
+}
+
+// Bumped after this browser changes the workspace level, so an open task panel reads its autonomy again
+// (useSyncExternalStore). Settings opens over the page, which stays mounted.
+let workspaceAutonomyRevision = 0;
+const workspaceAutonomyListeners = new Set<() => void>();
+
+export function workspaceAutonomyVersion(): number {
+  return workspaceAutonomyRevision;
+}
+
+export function subscribeWorkspaceAutonomy(listener: () => void): () => void {
+  workspaceAutonomyListeners.add(listener);
+  return () => { workspaceAutonomyListeners.delete(listener); };
+}
+
+export async function setWorkspaceAutonomy(workspaceId: string, level: AutonomyLevel): Promise<{ level: AutonomyLevel; previous: AutonomyLevel }> {
+  const result = await rpc<{ level: AutonomyLevel; previous: AutonomyLevel }>("set_workspace_autonomy", { p_workspace_id: workspaceId, p_level: level });
+  workspaceAutonomyRevision++;
+  for (const listener of workspaceAutonomyListeners) listener();
+  return result;
 }
 
 export async function loadTaskDiff(taskId: string): Promise<TaskDiff> {

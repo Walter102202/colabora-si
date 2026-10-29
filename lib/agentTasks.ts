@@ -74,6 +74,10 @@ export interface ApprovalRow {
   decided_at: string | null;
   expires_at: string;
   created_at: string;
+  // false: asked with request_input blocking false; the task keeps working.
+  blocking?: boolean;
+  // Set when the autonomy level or the brief approved it without a person.
+  auto_by?: "preset" | "brief" | null;
 }
 
 export interface ReviewRow {
@@ -451,11 +455,12 @@ export function waitingOnYou(state: AgentTasksState): TaskRow[] {
 // The pending approval the panel shows for a task: the one a deep link names
 // when it is pending here, otherwise the oldest (the order the chat card uses).
 export function pendingApprovalFor(state: AgentTasksState, taskId: string, preferId: string | null = null): ApprovalRow | null {
-  const pending = Object.values(state.approvals).filter((a) => a.task_id === taskId && a.status === "pending");
+  const pending = Object.values(state.approvals).filter((a) => a.task_id === taskId && a.status === "pending" && a.blocking !== false);
   const preferred = preferId ? pending.find((a) => a.id === preferId) : null;
   if (preferred) return preferred;
   return pending.sort((a, b) => a.created_at.localeCompare(b.created_at))[0] ?? null;
 }
+
 
 export function activeRunFor(state: AgentTasksState, task: TaskRow): RunRow | null {
   return task.active_run_id ? (state.runs[task.active_run_id] ?? null) : null;

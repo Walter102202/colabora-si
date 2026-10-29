@@ -141,7 +141,7 @@ Deno.test('get_task returns the card: run, pending approval, current artifact, l
   assert.deepEqual(subtasks.map((x) => [x.task.id, x.run?.id ?? null, x.agent_name]), [['sub1', 'run-2', 'Lead']]);
   assert.deepEqual((s.agents as Row[]).map((a) => a.name).sort(), ['Codex worker', 'Lead']);
   assert.equal(s.app_url, 'https://app.example');
-  assert.deepEqual(h.rpcs, [{ fn: 'task_diff', params: { p_task_id: 't1' } }]);
+  assert.deepEqual(h.rpcs.filter((r) => r.fn !== 'task_autonomy'), [{ fn: 'task_diff', params: { p_task_id: 't1' } }]);
 });
 
 Deno.test('currentArtifact picks the highest version, then the latest', () => {
@@ -343,7 +343,7 @@ Deno.test('get_task card carries continuity: the agent declares resume and the l
     const out = await tool('get_task').handler({ task_id: 't1' }, h.ctx);
     assert.deepEqual(out.structured.continuity, { resume: true, checkpoint: { seq: 9, created_at: '2026-10-30T10:00:00+00:00',
       harness: 'claude_code', next_step: 'Email the team', handover: !ephemeral } });
-    assert.deepEqual(h.rpcs, []);
+    assert.deepEqual(h.rpcs, [{ fn: 'task_autonomy', params: { p_task_id: 't1' } }]);
   }
 });
 
@@ -354,7 +354,10 @@ Deno.test('get_task card carries the diff when the task is ready for review', as
     const h = harness(tables, { onRpc: ({ fn }) => fn === 'task_diff' ? { data: diff } : undefined });
     const out = await tool('get_task').handler({ task_id: 't1' }, h.ctx);
     assert.deepEqual(out.structured.diff, state === 'input_required' ? null : diff);
-    assert.deepEqual(h.rpcs, state === 'input_required' ? [] : [{ fn: 'task_diff', params: { p_task_id: 't1' } }]);
+    assert.deepEqual(h.rpcs, [
+      ...(state === 'input_required' ? [] : [{ fn: 'task_diff', params: { p_task_id: 't1' } }]),
+      { fn: 'task_autonomy', params: { p_task_id: 't1' } },
+    ]);
   }
 });
 
@@ -362,7 +365,7 @@ Deno.test('get_task with after_seq skips the diff, and the diff is the last key 
   const diff = { task_id: 't1', hidden_items: 0, runs: [] };
   const h = harness(world(), { onRpc: ({ fn }) => fn === 'task_diff' ? { data: diff } : undefined });
   const paged = await tool('get_task').handler({ task_id: 't1', after_seq: 1 }, h.ctx);
-  assert.deepEqual(h.rpcs, []);
+  assert.deepEqual(h.rpcs, [{ fn: 'task_autonomy', params: { p_task_id: 't1' } }]);
   assert.equal(paged.structured.diff, null);
   const full = await tool('get_task').handler({ task_id: 't1' }, h.ctx);
   assert.deepEqual(full.structured.diff, diff);
@@ -373,6 +376,56 @@ Deno.test('the card diff is null when task_diff fails', async () => {
   const h = harness(world(), { onRpc: () => ({ error: { code: 'PT404', message: 'not_found' } }) });
   const out = await tool('get_task').handler({ task_id: 't1' }, h.ctx);
   assert.equal(out.structured.diff, null);
+  assert.equal(out.structured.autonomy, null);
   assert.equal((out.structured.task as Row).id, 't1');
   assert.equal(out.structured.kind, 'task');
+});
+
+Deno.test('get_task keeps questions that do not block apart from the approval the card shows, and brings late answers', async () => {
+  const tables = world();
+  tables.agent_approvals = [
+    approval({ id: 'side', kind: 'elicitation', action: null, question: 'Formal or casual?', options: ['respond', 'ignore'], blocking: false, created_at: '2026-10-27T10:03:00+00:00' }),
+    approval({ id: 'ap1', blocking: true }),
+    approval({ id: 'late', kind: 'elicitation', action: null, question: 'Add a P.S.?', options: ['respond'], blocking: false, status: 'decided', decision: 'respond', response: { text: 'Yes' }, decided_at: '2026-10-27T10:00:40+00:00' }),
+  ];
+  tables.agent_runs.push({ ...tables.agent_runs[0], id: 'run-0', status: 'completed', ended_at: '2026-10-27T10:00:30+00:00' });
+  const out = await tool('get_task').handler({ task_id: 't1' }, harness(tables).ctx);
+  assert.equal((out.structured.approval as Row).id, 'ap1');
+  assert.deepEqual((out.structured.questions as Row[]).map((q) => q.id), ['side']);
+  assert.deepEqual((out.structured.answered_questions as Row[]).map((q) => [q.approval_id, q.text]), [['late', 'Yes']]);
+});
+
+Deno.test('list_waiting_on_me keeps the reason of the task and lists questions that do not block on their own', async () => {
+  const tables: Record<string, Row[]> = {
+    agent_tasks: [
+      task({ id: 'w', title: 'Newsletter', state: 'working', row_page_id: 'row9', updated_at: '2026-10-27T10:06:00+00:00' }),
+      task({ id: 'r', title: 'Report', state: 'ready_for_review', review_state: 'pending', row_page_id: 'row8', updated_at: '2026-10-27T10:05:00+00:00' }),
+      task({ id: 'gone', title: 'Stopped', state: 'cancelled', row_page_id: 'row7', updated_at: '2026-10-27T10:04:00+00:00' }),
+      task({ id: 'other', title: 'Not mine', state: 'working', owner_user_id: 'u-other', updated_at: '2026-10-27T10:03:00+00:00' }),
+    ],
+    agent_approvals: [
+      approval({ id: 'q-side', task_id: 'w', kind: 'elicitation', action: null, question: 'Formal or casual?', options: ['respond', 'ignore'], blocking: false }),
+      approval({ id: 'q-review', task_id: 'r', kind: 'elicitation', action: null, question: 'Keep the appendix?', options: ['respond', 'ignore'], blocking: false }),
+      approval({ id: 'q-gone', task_id: 'gone', kind: 'elicitation', action: null, question: 'Stale?', options: ['respond'], blocking: false }),
+      approval({ id: 'q-theirs', task_id: 'other', kind: 'elicitation', action: null, question: 'Hidden?', options: ['respond'], blocking: false }),
+    ],
+    agents: [{ id: 'agent-1', name: 'Codex worker', role: 'worker', capabilities: {} }],
+  };
+  const out = await tool('list_waiting_on_me').handler({}, harness(tables).ctx);
+  const items = out.structured.items as Row[];
+  assert.deepEqual(items.map((i) => [i.task_id, i.reason, i.approval, (i.questions as Row[]).map((q) => q.id)]), [
+    ['w', 'input', null, ['q-side']],
+    ['r', 'review', null, ['q-review']],
+  ]);
+  assert.equal(items[0].url, 'https://app.example/p/row9?task=w');
+  assert.match(out.text, /- Newsletter: has a question for you \(Formal or casual\?\)/);
+  assert.match(out.text, /- Report: ready for your review https/);
+});
+
+Deno.test('get_task reads the task autonomy for the card', async () => {
+  const autonomy = { level: 'balanced', requested: null, source: 'workspace', workspace_level: 'balanced', auto_approved: ['publish_page'], require_approval: [] };
+  const h = harness(world(), { onRpc: ({ fn }) => (fn === 'task_autonomy' ? { data: autonomy } : undefined) });
+  const out = await tool('get_task').handler({ task_id: 't1' }, h.ctx);
+  assert.deepEqual(out.structured.autonomy, autonomy);
+  assert.deepEqual(h.rpcs.filter((r) => r.fn === 'task_autonomy'), [{ fn: 'task_autonomy', params: { p_task_id: 't1' } }]);
 });
