@@ -1,3 +1,4 @@
+import { mark, pageDataSizes, recordHydration } from "@/lib/metrics";
 import { VERSION_CAP } from "@/lib/pageOps";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
@@ -295,6 +296,7 @@ export const useStore = create<Store>()(persist((set, get) => {
   };
 }, {
   name: "colabora-workspace", version: 1,
+  onRehydrateStorage: () => (state) => { mark("colabora:hydrate:end"); if (import.meta.env.DEV && state) recordHydration(pageDataSizes(state.pages)); },
   partialize: (state): WorkspaceState & SyncState => ({
     pages: Object.fromEntries(Object.entries(state.pages).filter(([id]) => !foreignPageIds.has(id))),
     rootOrder: state.rootOrder, expanded: state.expanded, syncedBlocks: state.syncedBlocks,

@@ -1,3 +1,4 @@
+import { mark, measureSince, reportStartup } from "@/lib/metrics";
 import { create } from "zustand";
 import type { RealtimeChannel, SupabaseClient, User } from "@supabase/supabase-js";
 import type { Block, BlockAttr, Page, Reminder, WorkspaceState } from "@/lib/types";
@@ -107,6 +108,7 @@ export class PageSyncEngine {
   }
 }
 
+let fetchedPages = 0, fetchBytes = 0;
 let started = false, ready = false, currentUserId: string | null = null, wsId: string | null = null, generation = 0;
 let queue: IndexedDbQueue | null = null, engine: PageSyncEngine | null = null, channel: RealtimeChannel | null = null;
 let unsubStore: (() => void) | null = null, last: Store | null = null, applyingRemote = false, pushing = false, dirty = false, attempts = 0;
@@ -148,11 +150,13 @@ function onStoreChange(state: Store): void {
   if (before.pages !== state.pages || before.rootOrder !== state.rootOrder || before.settings !== state.settings || before.syncedBlocks !== state.syncedBlocks || before.reminders !== state.reminders) scheduleFlush();
 }
 async function fetchAllPages(sb: SupabaseClient): Promise<PageRow[]> {
+  mark("colabora:pages:fetch:start");
   const rows: PageRow[] = [];
   for (let from = 0; ; from += 500) {
     const result = await sb.from("pages").select(PAGE_COLS).eq("workspace_id", wsId).order("id").range(from, from + 499);
     if (result.error) throw result.error;
-    rows.push(...result.data as PageRow[]); if (result.data.length < 500) return rows;
+    rows.push(...result.data as PageRow[]);
+    if (result.data.length < 500) { measureSince("colabora:pages:fetch", "colabora:pages:fetch:start"); fetchedPages = rows.length; if (import.meta.env.DEV) fetchBytes = new TextEncoder().encode(JSON.stringify(rows)).byteLength; return rows; }
   }
 }
 async function readPage(sb: SupabaseClient, id: string): Promise<PageRow | null> {
@@ -272,7 +276,7 @@ function startRealtime(sb: SupabaseClient): void {
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "pages", filter: `workspace_id=eq.${wsId}` }, (payload) => { if (token === generation) handlePageRow(payload.new as PageRow); })
     .on("postgres_changes", { event: "DELETE", schema: "public", table: "pages" }, (payload) => { if (token === generation && known.has(payload.old.id)) { queue?.clearPage(payload.old.id); applyRemote({ pages: { [payload.old.id]: null } }); } })
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "workspaces", filter: `id=eq.${wsId}` }, (payload) => { if (token === generation) handleWorkspaceRow(payload.new as WorkspaceRow); })
-    .subscribe((status) => { if (token !== generation) return; if (status === "SUBSCRIBED") void pullSince(); else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setStatus(navigator.onLine ? "error" : "offline"); });
+    .subscribe((status) => { if (token !== generation) return; if (status === "SUBSCRIBED") { measureSince("colabora:realtime:subscribed", "colabora:bootstrap:start"); reportStartup({ channels: sb.getChannels().length, pagesFetched: fetchedPages, fetchBytes }); void pullSince(); } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setStatus(navigator.onLine ? "error" : "offline"); });
 }
 function makeEngine(sb: SupabaseClient, user: User): PageSyncEngine {
   const token = generation;
@@ -291,6 +295,7 @@ function makeEngine(sb: SupabaseClient, user: User): PageSyncEngine {
   });
 }
 async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise<void> {
+  mark("colabora:bootstrap:start");
   const initial = useStore.getState(), switched = !!initial.syncUserId && initial.syncUserId !== user.id;
   let linked = switched ? null : initial.syncWorkspaceId;
   const invitation = sessionStorage.getItem("colabora-invitation");
@@ -355,6 +360,7 @@ async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise
   const rem = mergeReminders(choice === "server" ? [] : useStore.getState().reminders ?? [], reminders.data as ReminderRow[], useStore.getState().reminders?.length ?? 0);
   if (rem.changed) applyRemote({ reminders: rem.merged });
   for (const page of Object.values(useStore.getState().pages)) if (!foreignPageIds.has(page.id) && !known.has(page.id) && !page.isDeleted) await insertPage(sb, page);
+  measureSince("colabora:bootstrap", "colabora:bootstrap:start");
   useStore.getState().setSyncWorkspaceId(wsId, user.id); last = useStore.getState();
 }
 async function openQueue(sb: SupabaseClient, user: User): Promise<void> {
@@ -397,6 +403,7 @@ export function stopSync(): void {
   if (channel) void getSupabase()?.removeChannel(channel); channel = null;
   if (queue) void queue.close().catch(() => {}); queue = null; engine = null;
   last = null; pushing = dirty = applyingRemote = false; attempts = lastWorkspaceRevision = 0;
+  fetchedPages = fetchBytes = 0;
   known.clear(); for (const key of Object.keys(cursors)) delete cursors[key as PullFlow]; lastEditAt.clear(); recentlyDeleted.clear(); deferred.clear(); setStatus("idle");
 }
 export async function forceFullPush(): Promise<void> {
