@@ -90,6 +90,7 @@ Deno.test('wait_for_task without after_seq answers at once with next_seq', async
   assert.equal(out.structured.next_seq, 3);
   assert.deepEqual(out.structured.activities, []);
   assert.equal(h.sleeps(), 0);
+  assert.equal(h.selects.filter((t) => t === 'agent_events').length, 0, 'no event mark on a call that does not wait');
 });
 
 Deno.test('wait_for_task: a state change between two polls returns changed before the timeout', async () => {
@@ -130,6 +131,7 @@ Deno.test('wait_for_task with timeout_s = 0 registers the wait with touch_run_wa
   assert.equal(out.structured.changed, false);
   assert.deepEqual(h.rpcs, [{ fn: 'touch_run_wait', params: { p_run_id: 'lead-run', p_task_id: 't1' } }]);
   assert.equal(h.sleeps(), 0);
+  assert.equal(h.selects.filter((t) => t === 'agent_events').length, 0, 'no event mark on a call that does not wait');
 });
 
 Deno.test('wait_for_task with run_id clears the wait when it returns, and reports a stop request', async () => {
@@ -287,6 +289,8 @@ Deno.test('wait_for_task: full snapshots are never more than SLOW_POLL_MS apart 
   const at = snapshotTimes(h);
   assert.ok(at.length >= 6, `snapshots at ${at.join(', ')}`);
   for (let i = 1; i < at.length; i++) assert.ok(at[i] - at[i - 1] <= SLOW_POLL_MS, `${at[i] - at[i - 1]} ms between the snapshots at ${at[i - 1]} and ${at[i]}`);
+  const selectsAt = (ms: number) => h.selectAt.filter((s) => s.table === 'agent_tasks' && s.at === ms).length;
+  assert.equal(selectsAt(60_000), selectsAt(10_000), 'the deadline does not add a second snapshot when the slow poll already took one');
 });
 
 Deno.test('wait_for_task with a short timeout re-reads the task at the deadline, so a change without an event is reported by this call', async () => {

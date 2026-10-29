@@ -181,8 +181,10 @@ const waitForTask: ToolDef = {
     const started = ctx.now();
     const deadline = started + timeoutS * 1000;
 
-    // The event mark comes before the baseline: a change committed after it is in the baseline or brings a fresh event.
-    let mark = await latestEventMark(ctx);
+    // Only a call that will wait needs the event mark. It comes before the baseline, so a change committed after it is
+    // either in the baseline or brings a fresh event.
+    const willWait = afterSeq !== undefined && timeoutS > 0;
+    let mark: EventMark = willWait ? await latestEventMark(ctx) : { t: '', k: [] };
     let snap = await snapshotTask(ctx, taskId, afterSeq, runId);
     const baseline = fingerprint(snap);
     const finish = (changed: boolean) => {
@@ -211,8 +213,10 @@ const waitForTask: ToolDef = {
     let delay = POLL_MS;
     let lastFull = ctx.now();
     let lastProgress = started;
+    let snapped = false; // whether the current iteration took a full snapshot
     try {
       while (!isChanged() && ctx.now() < deadline) {
+        snapped = false;
         if (!await nap(ctx, Math.min(delay, deadline - ctx.now(), Math.max(0, lastFull + SLOW_POLL_MS - ctx.now())))) break;
         if (ctx.now() - lastProgress >= PROGRESS_EVERY_MS) {
           lastProgress = ctx.now();
@@ -222,15 +226,16 @@ const waitForTask: ToolDef = {
         mark = signal.mark;
         if (signal.fresh.length || ctx.now() - lastFull >= SLOW_POLL_MS) {
           snap = await snapshotTask(ctx, taskId, afterSeq, runId);
+          snapped = true;
           lastFull = ctx.now();
           delay = signal.fresh.length ? POLL_MS : nextDelay(delay);
         } else {
           delay = nextDelay(delay);
         }
       }
-      // The last nap may end at the deadline right after a cheap poll: re-read once, so a change without an event is
-      // reported by this call instead of being absorbed by the next call's baseline.
-      if (!isChanged() && ctx.now() >= deadline) snap = await snapshotTask(ctx, taskId, afterSeq, runId);
+      // The last nap may end at the deadline right after a cheap poll: re-read once (unless this iteration already did),
+      // so a change without an event is reported by this call instead of being absorbed by the next call's baseline.
+      if (!snapped && !isChanged() && ctx.now() >= deadline) snap = await snapshotTask(ctx, taskId, afterSeq, runId);
     } finally {
       // Leaving the wait clears waiting_on_task_id; a failure here must not hide the result.
       if (runId) await ctx.db.rpc('touch_run_wait', { p_run_id: runId, p_task_id: null }).catch(() => {});
