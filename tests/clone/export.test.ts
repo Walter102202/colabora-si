@@ -2,7 +2,9 @@
 import { expect, it } from "vitest";
 import { blocksToMarkdown as md, inlineToMarkdown, pageToMarkdown, pageToHtml, rowsToCsv } from "@/lib/export";
 import { markdownToBlocks } from "@/lib/markdown";
-import { b, column, db, page, prop, row } from "./fixtures";
+import { buildGitExport, exportPath, frontMatter, rewriteInternalLinks, slugify } from "@/lib/gitExport";
+import { readZip, writeZip } from "@/lib/zip";
+import { b, column, db, page, prop, row, T } from "./fixtures";
 import type { Block, BlockType } from "@/lib/types";
 
 const inlineCases: [number, [string, string][]][] = [
@@ -143,3 +145,29 @@ it("A-6-222 multiselect display", () => { const multi = prop({ id: "multi", name
 import { stripHtml, blockColorClass } from "@/lib/utils";
 it("A-6-253 strip markup", () => { expect(stripHtml("<b>bold</b> and <i>italic</i>")).toBe("bold and italic"); expect(stripHtml("<p>hi</p>")).toBe("hi"); });
 it("A-6-254 block color class", () => expect(["red", "bg-red", "default", undefined].map(blockColorClass)).toEqual(["tc-red", "bc-red", "", ""]));
+
+it("GE-1 slugify", () => {
+  expect(slugify("Café Plan!")).toBe("cafe-plan"); expect(slugify("")).toBe("untitled");
+  expect(slugify("a".repeat(80))).toHaveLength(60); expect(slugify("--x--")).toBe("x");
+});
+it("GE-2 exportPath uses the short id", () => expect(exportPath(page({ id: "abcdefghijkl", title: "Hello" }))).toBe("hello-abcdefgh.md"));
+it("GE-3 front matter of a row page carries its properties", () => {
+  const d = page({ id: "d", database: db([prop({ id: "title", name: "Name" }), prop({ id: "status", name: "Status", type: "select", options: [{ id: "done", name: "Done", color: "green" }] })], [row({ title: "Row", status: "done" }, "r")]) });
+  const r = page({ id: "r", parentId: d.id }), matter = frontMatter(r, { d, r });
+  expect(matter).toContain(`parent: "${exportPath(d)}"`);
+  expect(matter).toContain('"Status": "Done"'); expect(matter).not.toContain('"Name"');
+});
+it("GE-4 internal links are rewritten only when the page exists", () => {
+  expect(rewriteInternalLinks("[a](/p/abcdefghijkl) [b](/p/zzz)", { abcdefghijkl: page({ id: "abcdefghijkl", title: "A" }) })).toBe("[a](a-abcdefgh.md) [b](/p/zzz)");
+});
+it("GE-5 layout", () => {
+  const a = page({ id: "aaaaaaaa1111", title: "Alpha" }), b = page({ id: "bbbbbbbb2222", title: "Beta" }), trash = page({ id: "cccccccc3333", title: "Gone", isDeleted: true });
+  const entries = buildGitExport({ a, b, trash }, new Set(), new Date(T));
+  expect(entries.map((entry) => entry.name).sort()).toEqual(["README.md", "alpha-aaaaaaaa.md", "beta-bbbbbbbb.md", "memory/README.md", "procedures/README.md"]);
+  expect(new TextDecoder().decode(entries.find((entry) => entry.name === "memory/README.md")!.data)).toContain("later");
+});
+it("GE-6 round trip through the zip", async () => {
+  const a = page({ id: "aaaaaaaa1111", title: "Alpha" });
+  const entries = await readZip(await writeZip(buildGitExport({ a }, new Set(), new Date(T)), new Date(T)).arrayBuffer());
+  expect(entries.some((entry) => new TextDecoder().decode(entry.data).startsWith("---\nid: "))).toBe(true);
+});
