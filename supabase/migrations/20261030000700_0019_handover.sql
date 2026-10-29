@@ -583,7 +583,7 @@ create or replace function private.run_revert_items(p_run_id uuid)
 returns jsonb language plpgsql stable security definer set search_path = '' as $$
 declare v_a public.agent_activities%rowtype; v_map jsonb := '{}'; v_candidates jsonb; v_op jsonb; v_item jsonb; v_old jsonb;
         v_key text; v_page text; v_id text; v_kind text; v_change text; v_rev jsonb; v_ops jsonb; v_patch jsonb;
-        v_result jsonb := '[]'; v_data jsonb; v_current jsonb; v_status text; v_task uuid; v_row_page text;
+        v_result jsonb := '[]'; v_data jsonb; v_current jsonb; v_status text; v_task uuid; v_row_page text; v_mirrored boolean;
 begin
   select t.id, t.row_page_id into v_task, v_row_page from public.agent_runs r join public.agent_tasks t on t.id = r.task_id where r.id = p_run_id;
   for v_a in select * from public.agent_activities where run_id = p_run_id and type = 'action' and author_type = 'agent'
@@ -591,6 +591,7 @@ begin
   loop
     v_page := coalesce(v_a.body->>'page_id', v_row_page);
     v_candidates := coalesce(v_a.inverse_ops, '[]');
+    v_mirrored := v_a.body->>'op' = 'set_cells' and exists (select 1 from jsonb_array_elements(v_candidates) x where x ? 'page_id');
     if v_a.body->>'op' = 'add_row' then v_candidates := jsonb_build_array(jsonb_build_object('op', 'row_added', 'rowId', v_a.body->'row_id')); end if;
     if v_a.body->>'op' = 'external' then v_candidates := jsonb_build_array(jsonb_build_object('op', 'external', 'id', v_a.body->'external_op_id')); end if;
     for v_op in select value from jsonb_array_elements(v_candidates) loop
@@ -600,7 +601,8 @@ begin
       elsif v_a.body->>'op' = 'edit_block' and v_op->>'op' = 'update_block' then
         v_kind := 'block'; v_id := v_op->>'id'; v_change := 'edited'; v_ops := jsonb_build_array(v_op);
       elsif v_a.body->>'op' = 'set_cells' then
-        if v_op->>'op' = 'db_cell_set' then
+        -- A title cell mirrored on the row page stays with the manual title item, so a revert never splits the two.
+        if v_op->>'op' = 'db_cell_set' and not (v_mirrored and v_op->>'propertyId' = 'title') then
           v_kind := 'row'; v_id := v_op->>'rowId'; v_change := 'cells'; v_ops := jsonb_build_array(v_op);
         elsif v_op->>'op' like 'db_prop_%' then v_kind := 'schema';
         elsif v_op ? 'page_id' then v_kind := 'title';
@@ -628,8 +630,13 @@ begin
       v_item := jsonb_build_object('key', v_key, 'kind', v_kind, 'change', v_change,
         'page_id', case when v_kind = 'title' then v_op->>'page_id' else v_page end,
         'status', case when v_change = 'manual' or v_rev is null or v_rev = 'null'::jsonb or v_old->>'status' = 'manual' then 'manual' else 'revertable' end,
-        'before_text', case when v_change = 'added' then '' when v_kind = 'block' then left(private.html_to_text(v_ops->0->'patch'->>'html'), 2000) end,
-        'after_text', null, 'after_rev', v_rev, 'current_rev', null, 'summary', coalesce(v_a.body->>'summary', v_kind || ' change'),
+        'before_text', case when v_change = 'added' then '' when v_kind = 'block' and v_ops->0->'patch' ? 'html'
+          then left(private.html_to_text(v_ops->0->'patch'->>'html'), 2000) end,
+        'after_text', null, 'after_rev', v_rev, 'current_rev', null,
+        -- An external effect is described by its operation: the agent writes the body of its own activities.
+        'summary', case when v_kind = 'external' then coalesce((select o.provider || ' ' || o.action || ': ' || o.status
+            from public.external_ops o where o.op_id::text = v_id and o.task_id = v_task), 'External effect')
+          else coalesce(v_a.body->>'summary', v_kind || ' change') end,
         'first_seq', coalesce((v_old->>'first_seq')::bigint, v_a.seq), 'last_seq', v_a.seq, 'ops', v_ops)
         || case when v_kind = 'block' then jsonb_build_object('block_id', v_id)
                 when v_kind in ('row','row_added') then jsonb_build_object('row_id', v_id) else '{}'::jsonb end;
@@ -645,8 +652,10 @@ begin
     end if;
     v_status := case
       when v_item->>'status' = 'manual' then 'manual'
-      when exists (select 1 from public.agent_activities where task_id = v_task and body->>'op' = 'revert_run'
-        and body->>'run_id' = p_run_id::text and body->'keys' ? (v_item->>'key') and seq > (v_item->>'last_seq')::bigint) then 'reverted'
+      -- Only a person's revert counts: an agent can post any action body about its own run.
+      when exists (select 1 from public.agent_activities where task_id = v_task and author_type = 'human' and run_id is null
+        and body->>'op' = 'revert_run' and body->>'run_id' = p_run_id::text and body->'keys' ? (v_item->>'key')
+        and seq > (v_item->>'last_seq')::bigint) then 'reverted'
       when v_current is null then 'gone'
       when v_current->'rev' = v_item->'after_rev' then 'revertable'
       else 'changed_since' end;
@@ -705,7 +714,10 @@ begin
     select value into v_item from jsonb_array_elements(v_items) where value->>'key' = v_key;
     if not found then raise exception using errcode = 'PT404', message = 'item_not_found', detail = jsonb_build_object('key', v_key)::text; end if;
     select * into v_page from public.pages where id = v_item->>'page_id';
-    if not found or v_page.deleted_at is not null or v_page.data is null then
+    if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+    -- Who may write the page is decided before any detail about it (lock owner, revisions, trash) is returned.
+    if not private.can_write_page(v_page.id, v_page.workspace_id) then raise exception using errcode = 'PT403', message = 'forbidden'; end if;
+    if v_page.deleted_at is not null or v_page.data is null then
       raise exception using errcode = 'PT404', message = 'not_found', detail = jsonb_build_object('page_id', v_item->>'page_id')::text;
     end if;
     if coalesce((v_page.data->>'locked')::boolean, false) then
@@ -715,7 +727,6 @@ begin
       raise exception using errcode = 'PT409', message = 'revert_conflict',
         detail = jsonb_build_object('key', v_key, 'status', v_item->'status', 'after_rev', v_item->'after_rev', 'current_rev', v_item->'current_rev')::text;
     end if;
-    if not private.can_write_page(v_page.id, v_page.workspace_id) then raise exception using errcode = 'PT403', message = 'forbidden'; end if;
   end loop;
   perform set_config('app.run_id', '', true);
   for v_page in select * from public.pages where id in (
@@ -730,6 +741,10 @@ begin
       select jsonb_agg(value order by i) into v_batch from jsonb_array_elements(v_ops) with ordinality x(value, i)
         where i > v_offset and i <= v_offset + 200;
       v_result := private.apply_page_ops_core(v_page.id, v_batch, 'revert:' || p_run_id::text);
+      -- The checks above hold the page lock, so a skipped operation means the page moved under us: undo everything.
+      if exists (select 1 from jsonb_array_elements(v_result->'results') x where x->>'ok' = 'false') then
+        raise exception using errcode = 'PT409', message = 'revert_conflict', detail = jsonb_build_object('page_id', v_page.id)::text;
+      end if;
       v_inverse := v_result->'inverse' || v_inverse;
       v_offset := v_offset + 200;
     end loop;
