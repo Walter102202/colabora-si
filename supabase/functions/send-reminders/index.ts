@@ -428,10 +428,27 @@ Deno.serve(async (req) => {
       if (outcome !== "retry") notificationIds.push(reminder.notificationId);
     } else if (outcome === "delivered") reminderIds.push(reminder.id);
   };
-  // Eight rows go out at a time, so a few slow push services at the head of the queue cannot use up the pass.
+  // Eight people are served at a time, each person's rows in order, and people come in a new random order
+  // each pass: a person whose push service is slow holds one worker for one timeout, and nobody is always last.
+  const byPerson = new Map<string, DueReminder[]>();
+  for (const r of due) {
+    const list = byPerson.get(r.user_id);
+    if (list) list.push(r);
+    else byPerson.set(r.user_id, [r]);
+  }
+  const people = [...byPerson.values()];
+  for (let i = people.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [people[i], people[j]] = [people[j], people[i]];
+  }
   let next = 0;
   await Promise.all(Array.from({ length: 8 }, async () => {
-    while (next < due.length && Date.now() <= deadline) await send(due[next++]);
+    while (next < people.length && Date.now() <= deadline) {
+      for (const reminder of people[next++]) {
+        if (Date.now() > deadline) break;
+        await send(reminder);
+      }
+    }
   }));
 
   if (notificationIds.length) {
