@@ -171,3 +171,27 @@ it("GE-6 round trip through the zip", async () => {
   const entries = await readZip(await writeZip(buildGitExport({ a }, new Set(), new Date(T)), new Date(T)).arrayBuffer());
   expect(entries.some((entry) => new TextDecoder().decode(entry.data).startsWith("---\nid: "))).toBe(true);
 });
+it("GE-7 the id part of a file name keeps only safe characters", () => {
+  expect(exportPath(page({ id: "../../x", title: "T" }))).toBe("t-x.md");
+  expect(exportPath(page({ id: "///", title: "T" }))).toBe("t-page.md");
+});
+it("GE-8 an invalid updatedAt exports as null instead of aborting the archive", () => {
+  const broken = page({ id: "bbbbbbbb0000", title: "Broken", updatedAt: Number.NaN });
+  expect(frontMatter(broken, { bbbbbbbb0000: broken })).toContain("updated_at: null");
+  expect(() => buildGitExport({ bbbbbbbb0000: broken }, new Set(), new Date(T))).not.toThrow();
+});
+it("GE-9 an excluded page leaves no file, no parent and no rewritten link", () => {
+  const x = page({ id: "xxxxxxxx1111", title: "Foreign" }), c = page({ id: "cccccccc1111", title: "Child", parentId: x.id });
+  const a = page({ id: "aaaaaaaa1111", title: "Alpha", blocks: [b("paragraph", { html: '<a href="/p/xxxxxxxx1111">foreign</a>' })] });
+  const entries = buildGitExport({ x, c, a }, new Set([x.id]), new Date(T)), text = (name: string) => new TextDecoder().decode(entries.find((entry) => entry.name === name)!.data);
+  expect(entries.map((entry) => entry.name)).not.toContain("foreign-xxxxxxxx.md");
+  expect(text("child-cccccccc.md")).toContain("parent: null");
+  expect(text("alpha-aaaaaaaa.md")).toContain("(/p/xxxxxxxx1111)");
+});
+it("GE-10 two pages with the same slug and id prefix get distinct files, and links follow the distinct name", () => {
+  const one = page({ id: "database-row-1", title: "Row" }), two = page({ id: "database-row-2", title: "Row" });
+  const a = page({ id: "aaaaaaaa1111", title: "Alpha", blocks: [b("paragraph", { html: '<a href="/p/database-row-2">two</a>' })] });
+  const entries = buildGitExport({ one, two, a }, new Set(), new Date(T)), names = entries.map((entry) => entry.name);
+  expect(names.filter((name) => name.startsWith("row-database"))).toEqual(["row-database.md", "row-database-2.md"]);
+  expect(new TextDecoder().decode(entries.find((entry) => entry.name === "alpha-aaaaaaaa.md")!.data)).toContain("](row-database-2.md)");
+});
