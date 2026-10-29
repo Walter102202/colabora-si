@@ -47,6 +47,7 @@ yarn-error.log*
 # supabase CLI local state; migrations/ and functions/ ARE versioned
 /supabase/.temp/
 /supabase/.branches/
+/supabase/functions/deno.lock
 
 # typescript
 *.tsbuildinfo
