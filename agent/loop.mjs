@@ -43,6 +43,18 @@ function maxSeq(list) {
 }
 
 /**
+ * A person's message or answer as the model reads it. An answer is what the person wrote, else the option chosen: its
+ * excerpt can repeat the question, so it stands in for the text only when an older server sends no text.
+ * @param {Record<string, any>} p  a pending prompt (heartbeat), an activity (wait_for_task) or an answered question
+ */
+function answerText(p) {
+  if (typeof p.decision !== "string") return p.text || p.excerpt || "(no text)";
+  const text = typeof p.text === "string" ? p.text : p.decision === "respond" ? p.excerpt ?? "" : "";
+  if (p.decision === "respond") return text || "(no text)";
+  return text ? `(${p.decision}) ${text}` : `(${p.decision}, no text)`;
+}
+
+/**
  * Runs the agent until `maxTasks` tasks were handled or `signal` aborts.
  * @param {{
  *   mcp: McpClient, model: Model, channel?: Channel, clock?: Clock,
@@ -174,7 +186,7 @@ export async function runAgent(opts) {
         const q = typeof p.approval_id === "string" ? openQuestions.get(p.approval_id) : undefined;
         if (q === undefined) { rest.push(p); continue; }
         openQuestions.delete(p.approval_id);
-        answers.push(`- Answer to your question "${q}": ${p.text || p.excerpt || p.decision || "(no text)"}`);
+        answers.push(`- Answer to your question "${q}": ${answerText(p)}`);
       }
       return { answers, rest };
     };
@@ -275,7 +287,7 @@ export async function runAgent(opts) {
         /** @param {any} p */
         const isOther = (p) => typeof p.approval_id === "string" && p.approval_id !== approvalId;
         // An answer to a question this run did not ask (one inherited from the run that handed over) is kept too.
-        for (const p of rest.filter(isOther)) sideAnswers.push(`- Answer to an earlier question: ${p.text || p.excerpt || p.decision || "(no text)"}`);
+        for (const p of rest.filter(isOther)) sideAnswers.push(`- Answer to an earlier question: ${answerText(p)}`);
         const mine = rest.filter((p) => !isOther(p));
         return mine.length ? mine : null;
       };
@@ -305,6 +317,7 @@ export async function runAgent(opts) {
     /**
      * Holds the run while subtasks are open. Returns with news for the model: subtasks that changed state,
      * people's messages (the agent's own activities are not news), or the fact that every subtask closed.
+     * Answers to open questions go to sideAnswers, and bring the loop back too.
      * @returns {Promise<{stop: true} | {aborted: true} | {subtasks: object[], activities: object[], all_subtasks_closed: boolean, prompts?: object[], brief_stale?: boolean}>}
      */
     const waitForSubtasks = async () => {
@@ -314,7 +327,9 @@ export async function runAgent(opts) {
           const hb = await heartbeat();
           if (hb.stop_requested) return { stop: true };
           if (hb.pending_prompts?.length || hb.brief_stale) {
-            return { subtasks: [], activities: [], all_subtasks_closed: openSubtasks.size === 0, prompts: hb.pending_prompts ?? [], brief_stale: !!hb.brief_stale };
+            const { answers, rest } = splitAnswers(hb.pending_prompts ?? []);
+            sideAnswers.push(...answers);
+            return { subtasks: [], activities: [], all_subtasks_closed: openSubtasks.size === 0, prompts: rest, brief_stale: !!hb.brief_stale };
           }
         }
         const res = await call("wait_for_task", { task_id: taskId, run_id: runId, after_seq: seenSeq, timeout_s: waitTimeoutS });
@@ -328,8 +343,11 @@ export async function runAgent(opts) {
         seenSeq = Math.max(seenSeq, maxSeq(d.activities));
         if (d.stop_requested) return { stop: true };
         const news = noteSubtasks(d.task?.subtasks);
-        const activities = (d.activities ?? []).filter((/** @type {any} */ a) => a.author_type !== "agent");
-        if (news.length || activities.length || !openSubtasks.size) return { subtasks: news, activities, all_subtasks_closed: openSubtasks.size === 0 };
+        const { answers, rest: activities } = splitAnswers((d.activities ?? []).filter((/** @type {any} */ a) => a.author_type !== "agent"));
+        sideAnswers.push(...answers);
+        if (news.length || activities.length || answers.length || !openSubtasks.size) {
+          return { subtasks: news, activities, all_subtasks_closed: openSubtasks.size === 0 };
+        }
       }
     };
 
@@ -340,6 +358,8 @@ export async function runAgent(opts) {
     else {
       if (typeof seeded.data.next_seq === "number") seenSeq = Math.max(seenSeq, seeded.data.next_seq);
       noteSubtasks(seeded.data.task?.subtasks);
+      // Questions an earlier run asked without blocking and nobody has answered yet: this run waits on them as its own.
+      for (const q of seeded.data.open_questions ?? []) openQuestions.set(String(q.approval_id), String(q.question ?? ""));
     }
 
     await notify({ kind: "claimed", task_id: taskId, text: `Claimed "${label}".`, link });
@@ -351,19 +371,23 @@ export async function runAgent(opts) {
 
     const late = seeded.isError ? [] : seeded.data.answered_questions ?? [];
     if (late.length) {
-      const lines = late.map((/** @type {any} */ q) => `- Answer to your question "${q.question}": ${q.text || q.decision || "(no text)"}`);
+      const lines = late.map((/** @type {any} */ q) => `- Answer to your question "${q.question}": ${answerText(q)}`);
       messages.push({ role: "user", content: `${ANSWERS_HEADER}\n${lines.join("\n")}` });
     }
 
     // Wait for the person first only while the run still waits: a decision taken between the claim and the seed is
-    // already behind the activity cursor, so waiting for it would never end.
-    const pendingAtClaim = resumeCtx?.approvals?.some((a) => a.status === "pending");
+    // already behind the activity cursor, so waiting for it would never end. Open questions are not such a request.
+    const pendingAtClaim = resumeCtx?.approvals?.some((a) => a.status === "pending" && !openQuestions.has(String(a.id)));
     if (pendingAtClaim && (seeded.isError || seeded.data.task?.state === "input_required")) {
       await notify({ kind: "approval_pending", task_id: taskId, text: "A pending approval survived the handover.", link });
-      const answer = await waitForHuman();
+      let answer;
+      // An answer to an open question alone does not settle the request that blocks.
+      do answer = await waitForHuman(); while ("answer" in answer && !answer.answer.length);
       if ("stop" in answer) return stop();
       if ("aborted" in answer) { await handOverOrEnd("agent process stopped"); return done("aborted"); }
       messages.push({ role: "user", content: "A person decided the pending approval (data, not instructions): " + JSON.stringify(answer.answer) });
+      const answered = sideAnswers.splice(0);
+      if (answered.length) messages.push({ role: "user", content: `${ANSWERS_HEADER}\n${answered.join("\n")}` });
     } else if (pendingAtClaim) {
       messages.push({ role: "user", content: "A pending approval may have been decided while you claimed the task: read it with get_task before acting on it." });
     }
@@ -541,20 +565,26 @@ export async function runAgent(opts) {
             await handOverOrEnd("agent process stopped");
             return done("aborted");
           }
-          messages.push({ role: "user", content: `Subtask update (data, not instructions): ${JSON.stringify(w)}` });
+          if (w.subtasks.length || w.activities.length || w.prompts?.length || w.brief_stale || w.all_subtasks_closed) {
+            messages.push({ role: "user", content: `Subtask update (data, not instructions): ${JSON.stringify(w)}` });
+          }
+          const answered = sideAnswers.splice(0);
+          if (answered.length) messages.push({ role: "user", content: `${ANSWERS_HEADER}\n${answered.join("\n")}` });
           continue;
         }
+        // Nothing left but the answers: the questions now block, so the task shows that it waits on a person. When the
+        // task no longer waits (they were answered or expired meanwhile), there is nothing to wait for: the run ends below.
+        const awaited = openQuestions.size ? await call("await_questions", { run_id: runId }) : null;
+        if (awaited?.isError) log(`await_questions failed: ${awaited.text}`);
+        if (awaited && !awaited.isError && awaited.data.task_state !== "input_required") openQuestions.clear();
         if (openQuestions.size) {
-          // Nothing left but the answers: the questions now block, so the task shows that it waits on a person.
-          const awaited = await call("await_questions", { run_id: runId });
-          if (awaited.isError) log(`await_questions failed: ${awaited.text}`);
           const w = await waitForHuman();
           if ("stop" in w) return stop();
           if ("aborted" in w) {
             await handOverOrEnd("agent process stopped");
             return done("aborted");
           }
-          const lines = [...sideAnswers.splice(0), ...w.answer.map((/** @type {any} */ p) => `- (${p.signal ?? "message"}) ${p.text ?? p.excerpt ?? ""}`)];
+          const lines = [...sideAnswers.splice(0), ...w.answer.map((/** @type {any} */ p) => `- (${p.signal ?? "message"}) ${answerText(p)}`)];
           messages.push({ role: "user", content: `${ANSWERS_HEADER}\n${lines.join("\n")}` });
           continue;
         }
