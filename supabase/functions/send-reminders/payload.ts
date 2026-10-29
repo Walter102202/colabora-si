@@ -31,7 +31,14 @@ export interface PushPayload {
   url: string;
 }
 
-const truncate = (text: string) => text.length > 180 ? `${text.slice(0, 179)}…` : text;
+// Control characters become spaces and the cut never splits a character, so a push never shows "�".
+const truncate = (text: string) => {
+  const chars = Array.from(text, (c) => (c < " " || c === "\u007f" ? " " : c));
+  return chars.length > 180 ? `${chars.slice(0, 179).join("")}…` : chars.join("");
+};
+
+// Web Push carries at most 4096 bytes. Title and body stay under 1.5 KB, so a longer link opens the home page instead.
+const MAX_URL = 1500;
 
 export function agentPush(n: AgentNotification, taskTitle: string | null, approval: PushApproval | null): PushPayload {
   const task = taskTitle || "a task";
@@ -65,9 +72,29 @@ export function agentPush(n: AgentNotification, taskTitle: string | null, approv
       title = task;
       body = n.kind.replace(/_/g, " ");
   }
-  return { id: `notification:${n.id}`, kind: n.kind, title: truncate(title), body: truncate(body), url: notificationPath(n) ?? "/" };
+  const url = notificationPath(n) ?? "/";
+  return { id: `notification:${n.id}`, kind: n.kind, title: truncate(title), body: truncate(body), url: url.length > MAX_URL ? "/" : url };
 }
 
 export function shouldPush(n: AgentNotification, approval: PushApproval | null): boolean {
   return !n.approval_id || !approval || approval.status === "pending";
+}
+
+// After one pass over a person's subscriptions: delivered, worth another try, or never deliverable.
+export type PushOutcome = "delivered" | "retry" | "drop";
+
+export function pushOutcome(results: (number | "threw")[]): PushOutcome {
+  if (results.some((r) => typeof r === "number" && r >= 200 && r < 300)) return "delivered";
+  // A 4xx other than 429 fails the same way every time: an expired endpoint (404, 410), keys the push
+  // service rejects (400, 401, 403) or a payload that is too large (413).
+  const permanent = (r: number | "threw") => typeof r === "number" && r >= 400 && r < 500 && r !== 429;
+  return results.length > 0 && results.every(permanent) ? "drop" : "retry";
+}
+
+// sendPush asks the push service to keep a message for 24 hours; a notification older than that is not
+// pushed any more (the inbox still shows it), so a push that keeps failing leaves the queue.
+export const PUSH_TTL_MS = 86_400_000;
+
+export function tooOldToPush(createdAt: string, now: number): boolean {
+  return now - Date.parse(createdAt) > PUSH_TTL_MS;
 }

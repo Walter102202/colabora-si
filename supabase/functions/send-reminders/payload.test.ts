@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { agentPush, shouldPush, type AgentNotification, type PushApproval } from "./payload.ts";
+import { agentPush, pushOutcome, shouldPush, tooOldToPush, type AgentNotification, type PushApproval } from "./payload.ts";
 
 const n = (over: Partial<AgentNotification> = {}): AgentNotification => ({
   id: "n1", kind: "approval_requested", page_id: "row 1", task_id: "t1", approval_id: "ap1", block_id: null, payload: {}, ...over,
@@ -49,4 +49,34 @@ Deno.test("a decision already taken is not pushed", () => {
   assert.equal(shouldPush(n({ kind: "input_required" }), { ...question, status: "cancelled" }), false);
   assert.equal(shouldPush(n({ kind: "ready_for_review", approval_id: null }), null), true);
   assert.equal(shouldPush(n(), null), true, "a failed lookup still sends the push, with a generic text");
+});
+
+Deno.test("the cut keeps whole characters and a push shows no control characters", () => {
+  const p = agentPush(n({ kind: "input_required" }), "𝔘".repeat(200), { ...question, question: "Which" + String.fromCharCode(1, 10) + "tone?" });
+  assert.equal(Array.from(p.title).length, 180);
+  assert.ok(p.title.endsWith("𝔘…"));
+  assert.equal(p.body, "Which  tone?");
+});
+
+Deno.test("a link too long for a push opens the home page", () => {
+  assert.equal(agentPush(n({ page_id: "😀".repeat(200) }), "Weekly summary", action).url, "/");
+  assert.equal(agentPush(n({ page_id: "😀".repeat(20) }), "Weekly summary", action).url.startsWith("/p/"), true);
+});
+
+Deno.test("a push leaves the queue when delivered or refused for good, and is tried again otherwise", () => {
+  assert.equal(pushOutcome([201]), "delivered");
+  assert.equal(pushOutcome([400, 201]), "delivered");
+  assert.equal(pushOutcome([400]), "drop");
+  assert.equal(pushOutcome([403, 410, 413]), "drop");
+  assert.equal(pushOutcome([429]), "retry");
+  assert.equal(pushOutcome([503]), "retry");
+  assert.equal(pushOutcome(["threw"]), "retry");
+  assert.equal(pushOutcome([400, "threw"]), "retry");
+  assert.equal(pushOutcome([]), "retry", "no subscription was tried in this pass");
+});
+
+Deno.test("a notification older than the push TTL is not pushed any more", () => {
+  const now = Date.parse("2026-10-30T12:00:00Z");
+  assert.equal(tooOldToPush("2026-10-29T12:30:00Z", now), false);
+  assert.equal(tooOldToPush("2026-10-29T11:30:00Z", now), true);
 });

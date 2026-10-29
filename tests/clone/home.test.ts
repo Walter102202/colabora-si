@@ -44,7 +44,7 @@ it("HOME-1 shows the decisions above the recent pages for a signed-in person", (
   expect(recent).toBeDefined();
   expect(decisions!.compareDocumentPosition(recent!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
-it("HOME-2 shows nothing of the agent layer without a session", () => {
+it("HOME-2 shows nothing of the agent layer without a synced workspace", () => {
   useStore.setState({ syncWorkspaceId: null, syncUserId: null });
   mount();
   expect(container.querySelector('section[aria-label="Decisions"]')).toBeNull();

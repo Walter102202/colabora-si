@@ -9,7 +9,7 @@
 // implemented directly on WebCrypto — no third-party push library.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { agentPush, shouldPush, type AgentNotification, type PushApproval, type PushPayload } from "./payload.ts";
+import { agentPush, pushOutcome, shouldPush, tooOldToPush, type AgentNotification, type PushApproval, type PushPayload } from "./payload.ts";
 
 const enc = new TextEncoder();
 
@@ -236,6 +236,9 @@ interface DueReminder {
   user_id: string;
   page_id: string | null;
   body: string;
+  // Set only for an agent notification. A reminder's id is free text its author picks, so the id never tells the two apart.
+  notificationId?: string;
+  push?: PushPayload;
 }
 
 const serviceKey = (() => {
@@ -296,9 +299,9 @@ Deno.serve(async (req) => {
   }
 
   const due = (dueRows ?? []) as DueReminder[];
-  const pending = await supabase.from("notifications").select("id,user_id,page_id,task_id,approval_id,block_id,kind,payload").is("pushed_at", null).in("kind", ["input_required", "ready_for_review", "task_failed", "approval_requested"]).order("created_at", { ascending: true }).limit(200);
+  const pending = await supabase.from("notifications").select("id,user_id,page_id,task_id,approval_id,block_id,kind,payload,created_at").is("pushed_at", null).in("kind", ["input_required", "ready_for_review", "task_failed", "approval_requested"]).order("created_at", { ascending: true }).limit(200);
   if (pending.error && pending.error.code !== "42P01" && pending.error.code !== "PGRST205") return new Response("Query failed", { status: 500 });
-  const agentRows = (pending.data ?? []) as (AgentNotification & { user_id: string })[];
+  const agentRows = (pending.data ?? []) as (AgentNotification & { user_id: string; created_at: string })[];
   const approvalIds = [...new Set(agentRows.map((r) => r.approval_id).filter((id): id is string => !!id))];
   const taskIds = [...new Set(agentRows.map((r) => r.task_id).filter((id): id is string => !!id))];
   const approvals = new Map<string, PushApproval>();
@@ -313,20 +316,23 @@ Deno.serve(async (req) => {
     if (error) console.error("task lookup failed", error);
     for (const t of (data ?? []) as { id: string; title: string }[]) titles.set(t.id, t.title);
   }
-  const agentPayloads = new Map<string, PushPayload>();
-  // Rows that need no push: their approval was already decided. Marked now, so they never hold the queue.
+  // Rows that need no push: their approval was already decided, or they outlived the push TTL. Marked now,
+  // so they never hold the queue.
   const settled: string[] = [];
+  const now = Date.now();
   for (const row of agentRows) {
     const approval = row.approval_id ? (approvals.get(row.approval_id) ?? null) : null;
-    if (!shouldPush(row, approval)) {
+    if (!shouldPush(row, approval) || tooOldToPush(row.created_at, now)) {
       settled.push(row.id);
       continue;
     }
     const p = agentPush(row, row.task_id ? (titles.get(row.task_id) ?? null) : null, approval);
-    agentPayloads.set(p.id, p);
-    due.push({ id: p.id, user_id: row.user_id, page_id: row.page_id, body: p.body });
+    due.push({ id: p.id, user_id: row.user_id, page_id: row.page_id, body: p.body, notificationId: row.id, push: p });
   }
-  if (settled.length) await supabase.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", settled);
+  if (settled.length) {
+    const { error } = await supabase.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", settled);
+    if (error) console.error("marking settled notifications failed", error);
+  }
   if (due.length === 0) {
     return Response.json({ due: 0, sent: 0, notified: 0, removed: 0 });
   }
@@ -350,7 +356,9 @@ Deno.serve(async (req) => {
 
   const expired = new Set<string>();
   const deliveredIds: string[] = [];
-  const noSubscription: string[] = [];
+  const reminderIds: string[] = [];
+  // Agent notifications that leave the queue: delivered, nobody to push to, or refused for good.
+  const notificationIds: string[] = [];
   const statuses: Record<string, number> = {};
   let sent = 0;
 
@@ -360,18 +368,18 @@ Deno.serve(async (req) => {
     // in-app checker still fires the toast next time the app is open.
     if (!subs?.length) {
       // Agent notifications already show in the inbox: mark them so the 200 oldest never block newer ones.
-      if (reminder.id.startsWith("notification:")) noSubscription.push(reminder.id.slice(13));
+      if (reminder.notificationId) notificationIds.push(reminder.notificationId);
       continue;
     }
 
-    const payload = JSON.stringify(agentPayloads.get(reminder.id) ?? {
+    const payload = JSON.stringify(reminder.push ?? {
       id: reminder.id,
       title: "Reminder",
       body: reminder.body || "Reminder",
       url: reminder.page_id ? `/p/${reminder.page_id}` : "/",
     });
 
-    let anyDelivered = false;
+    const results: (number | "threw")[] = [];
     for (const sub of subs) {
       if (expired.has(sub.endpoint)) continue;
       let status: number;
@@ -379,24 +387,32 @@ Deno.serve(async (req) => {
         status = await sendPush(sub, payload, cfg);
       } catch (e) {
         console.error("push send threw", sub.endpoint, e);
+        results.push("threw");
         continue;
       }
+      results.push(status);
       statuses[String(status)] = (statuses[String(status)] ?? 0) + 1;
       if (status === 404 || status === 410) {
         expired.add(sub.endpoint);
       } else if (status >= 200 && status < 300) {
-        anyDelivered = true;
         sent++;
       } else {
         console.error("push rejected", status, sub.endpoint);
       }
     }
-    if (anyDelivered) deliveredIds.push(reminder.id);
+    const outcome = pushOutcome(results);
+    if (outcome === "delivered") deliveredIds.push(reminder.id);
+    // A reminder that was not delivered keeps `notified` false. An agent notification also leaves the queue
+    // when every subscription refused it for good.
+    if (reminder.notificationId) {
+      if (outcome !== "retry") notificationIds.push(reminder.notificationId);
+    } else if (outcome === "delivered") reminderIds.push(reminder.id);
   }
 
-  const notificationIds = [...deliveredIds.filter((id) => id.startsWith("notification:")).map((id) => id.slice(13)), ...noSubscription];
-  const reminderIds = deliveredIds.filter((id) => !id.startsWith("notification:"));
-  if (notificationIds.length) await supabase.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", notificationIds);
+  if (notificationIds.length) {
+    const { error } = await supabase.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", notificationIds);
+    if (error) console.error("marking pushed failed", error);
+  }
   if (reminderIds.length) {
     const { error } = await supabase
       .from("reminders")
