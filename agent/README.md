@@ -40,16 +40,38 @@ Ctrl+C stops after the current step; press it twice to quit at once.
 
 Example values for `MODEL_BASE_URL`: a hosted OpenAI-compatible API (`https://api.<provider>.com/v1`), an inference platform that serves open-weight models behind a chat completions endpoint, or a local server such as `http://localhost:11434/v1`. Pick a model that supports tool calling.
 
-## Two instances
+## Run as the workspace's Colabora agent
 
-Each instance is one agent with its own token and model. Register two agents in Settings > Agents, then give each its own file:
+In Settings > Agents, press "Enable the Colabora agent" and copy the token shown once. Copy `agent/.env.example` to `agent/.env.colabora` and fill in these settings:
 
-```bash
-node agent/index.mjs --env agent/.env.lead
-node agent/index.mjs --env agent/.env.worker
+```text
+MODEL_BASE_URL=<Meta Model API base URL ending in /v1>   # see the compatibility check below
+MODEL_API_KEY=<Meta Model API key>
+MODEL_NAME=muse-spark-1.3                                 # must equal the model_prices row
+MODEL_PRICE_IN=1.25
+MODEL_PRICE_OUT=4.25
+WORKSPACE_MCP_URL=https://<project-ref>.supabase.co/functions/v1/mcp
+WORKSPACE_AGENT_PAT=agt_...                               # the token shown once by "Enable the Colabora agent"
+AGENT_HARNESS_NAME=colabora
+AGENT_MAX_TURNS=40
+WORKSPACE_APP_URL=https://<app>
 ```
 
-The files only differ in `WORKSPACE_AGENT_PAT`, `AGENT_HARNESS_NAME` and, if you want, the model settings. Files named `.env*` are ignored by git.
+Run the instance with `node agent/index.mjs --env agent/.env.colabora`. Files named `.env*` are ignored by git.
+
+### Compatibility check
+
+Before running Colabora against the Meta Model API, run this manual check with your actual base URL and key. It must return `get_weather` as `tool_calls[0].function.name`:
+
+```bash
+curl -s "$MODEL_BASE_URL/chat/completions" -H "Authorization: Bearer $MODEL_API_KEY" -H "Content-Type: application/json" -d '{
+  "model": "muse-spark-1.3",
+  "messages": [{"role":"user","content":"What is the weather in Madrid? Use the tool."}],
+  "tools": [{"type":"function","function":{"name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}],
+  "tool_choice": "auto"}' | python -c "import json,sys; r=json.load(sys.stdin); print(r['choices'][0]['message']['tool_calls'][0]['function'], r['usage'])"
+```
+
+If the response lacks `choices[0].message.tool_calls` or `usage.prompt_tokens`, the API does not match `agent/model.mjs`. Put an OpenAI-compatible endpoint in front of it before using this instance.
 
 ## Notifications
 

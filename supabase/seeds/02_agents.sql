@@ -22,6 +22,7 @@ on conflict (name) do nothing;
 -- ============ demo agents ============
 -- Workspace 00000000-0000-4000-8000-000000000010, owner 00000000-0000-4000-8000-000000000001 (from 01_workspace.sql).
 -- Claude Code (Lead): agent ...0021, auth user ...0031. Codex (worker): agent ...0022, auth user ...0032.
+-- Colabora (platform Lead): agent ...0023, auth user ...0033.
 
 insert into auth.users(instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,raw_app_meta_data,raw_user_meta_data,created_at,updated_at,confirmation_token,email_change,email_change_token_new,recovery_token)
 values
@@ -32,21 +33,28 @@ values
   ('00000000-0000-0000-0000-000000000000','00000000-0000-4000-8000-000000000032','authenticated','authenticated',
    'agent+00000000-0000-4000-8000-000000000022@agents.invalid',extensions.crypt(encode(extensions.hmac('00000000-0000-4000-8000-000000000032','local-dev-login-pepper','sha256'),'hex'),extensions.gen_salt('bf')),now(),
    '{"provider":"email","providers":["email"],"principal_type":"agent","agent_id":"00000000-0000-4000-8000-000000000022","workspace_id":"00000000-0000-4000-8000-000000000010"}',
+   '{}',now(),now(),'','','',''),
+  ('00000000-0000-0000-0000-000000000000','00000000-0000-4000-8000-000000000033','authenticated','authenticated',
+   'agent+00000000-0000-4000-8000-000000000023@agents.invalid',extensions.crypt(encode(extensions.hmac('00000000-0000-4000-8000-000000000033','local-dev-login-pepper','sha256'),'hex'),extensions.gen_salt('bf')),now(),
+   '{"provider":"email","providers":["email"],"principal_type":"agent","agent_id":"00000000-0000-4000-8000-000000000023","workspace_id":"00000000-0000-4000-8000-000000000010"}',
    '{}',now(),now(),'','','','')
 on conflict(id) do nothing;
 insert into auth.identities(id,user_id,provider_id,identity_data,provider,last_sign_in_at,created_at,updated_at)
 select id,id,id::text,jsonb_build_object('sub',id::text,'email',email,'email_verified',true,'phone_verified',false),'email',now(),now(),now()
-from auth.users where id in ('00000000-0000-4000-8000-000000000031','00000000-0000-4000-8000-000000000032')
+from auth.users where id in ('00000000-0000-4000-8000-000000000031','00000000-0000-4000-8000-000000000032','00000000-0000-4000-8000-000000000033')
 on conflict(provider_id,provider) do nothing;
 
-insert into public.agents (id, workspace_id, auth_user_id, name, kind, delivery, role, sponsor_user_id, capabilities, connection, created_by)
+insert into public.agents (id, workspace_id, auth_user_id, name, kind, delivery, role, sponsor_user_id, capabilities, connection, created_by, is_platform, monthly_budget_usd)
 values
   ('00000000-0000-4000-8000-000000000021','00000000-0000-4000-8000-000000000010','00000000-0000-4000-8000-000000000031',
    'Claude Code','acp_local','pull','lead','00000000-0000-4000-8000-000000000001',
-   '{"start":true,"continue":true,"cancel":true,"approval":true}','{"harness":"claude_code"}','00000000-0000-4000-8000-000000000001'),
+   '{"start":true,"continue":true,"cancel":true,"approval":true}','{"harness":"claude_code"}','00000000-0000-4000-8000-000000000001', false, null),
   ('00000000-0000-4000-8000-000000000022','00000000-0000-4000-8000-000000000010','00000000-0000-4000-8000-000000000032',
    'Codex','acp_local','pull','worker','00000000-0000-4000-8000-000000000001',
-   '{"start":true,"continue":true,"cancel":true,"approval":true}','{"harness":"codex"}','00000000-0000-4000-8000-000000000001')
+   '{"start":true,"continue":true,"cancel":true,"approval":true}','{"harness":"codex"}','00000000-0000-4000-8000-000000000001', false, null),
+  ('00000000-0000-4000-8000-000000000023','00000000-0000-4000-8000-000000000010','00000000-0000-4000-8000-000000000033',
+   'Colabora','managed','pull','lead','00000000-0000-4000-8000-000000000001',
+   '{"start":true,"continue":true,"cancel":true,"approval":true,"cost":true}','{"harness":"agent","model":"muse-spark-1.3","platform":true}','00000000-0000-4000-8000-000000000001', true, 20)
 on conflict(id) do nothing;
 
 insert into public.agent_grants (id, workspace_id, agent_id, page_id, scopes, inherit, granted_by)
@@ -65,7 +73,8 @@ select t.id, '00000000-0000-4000-8000-000000000010', t.agent_id, 'local developm
        '00000000-0000-4000-8000-000000000001'
 from (values
   ('00000000-0000-4000-8000-000000000061'::uuid, '00000000-0000-4000-8000-000000000021'::uuid, 'agt_LOCALDEVLEAD0000000000000000000000000001'),
-  ('00000000-0000-4000-8000-000000000062'::uuid, '00000000-0000-4000-8000-000000000022'::uuid, 'agt_LOCALDEVCODEX000000000000000000000000002')
+  ('00000000-0000-4000-8000-000000000062'::uuid, '00000000-0000-4000-8000-000000000022'::uuid, 'agt_LOCALDEVCODEX000000000000000000000000002'),
+  ('00000000-0000-4000-8000-000000000063'::uuid, '00000000-0000-4000-8000-000000000023'::uuid, 'agt_LOCALDEVCOLABORA000000000000000000000003')
 ) as t(id, agent_id, token)
 join private.app_secrets s on s.name = 'agent_token_pepper' and s.value = 'local-dev-token-pepper'
 on conflict (id) do nothing;

@@ -65,6 +65,10 @@
     ]
   },
   "branchExceptions": {
+    "a/platform-agent": [
+      "supabase/tests/clone/02_rpcs.sql",
+      "OWNERS.json"
+    ],
     "b/cleanup": [
       "vite.config.ts",
       "tsconfig.json",

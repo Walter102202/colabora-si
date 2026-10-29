@@ -25,6 +25,23 @@ function callerApi(client: SupabaseClient): CallerApi {
       );
       return owned !== null;
     },
+    async isWorkspaceOwner(workspaceId, userId) {
+      const member = unwrap(
+        await client.from('workspace_members').select('role')
+          .eq('workspace_id', workspaceId).eq('user_id', userId).eq('role', 'owner').maybeSingle(),
+      );
+      if (member) return true;
+      const owned = unwrap(
+        await client.from('workspaces').select('id').eq('id', workspaceId).eq('owner_id', userId).maybeSingle(),
+      );
+      return owned !== null;
+    },
+    async getPlatformAgent(workspaceId) {
+      return unwrap(
+        await client.from('agents').select('id, workspace_id, auth_user_id, connection')
+          .eq('workspace_id', workspaceId).eq('is_platform', true).is('revoked_at', null).maybeSingle(),
+      ) as AgentRecord | null;
+    },
     async getAgent(agentId) {
       return unwrap(
         await client.from('agents').select('id, workspace_id, auth_user_id, connection').eq('id', agentId)

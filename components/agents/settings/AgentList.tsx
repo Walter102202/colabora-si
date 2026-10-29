@@ -12,6 +12,10 @@ const KIND_LABEL: Record<AgentRow["kind"], string> = {
   acp_local: "Local harness",
 };
 
+export function agentSubtitle(a: AgentRow): string {
+  return `${a.is_platform ? "Platform · " : ""}${a.role === "lead" ? "Lead" : "Worker"} · ${KIND_LABEL[a.kind]} · updated ${formatRelative(Date.parse(a.updated_at))}`;
+}
+
 export function AgentList({ agents, onOpen }: { agents: AgentRow[]; onOpen: (id: string) => void }) {
   if (agents.length === 0) {
     return <p className="text-sm text-text-secondary">Register your first agent.</p>;
@@ -34,7 +38,7 @@ export function AgentList({ agents, onOpen }: { agents: AgentRow[]; onOpen: (id:
             <span className="min-w-0 flex-1">
               <span className="block truncate font-medium">{a.name}</span>
               <span className="block truncate text-xs text-text-secondary">
-                {a.role === "lead" ? "Lead" : "Worker"} · {KIND_LABEL[a.kind]} · updated {formatRelative(Date.parse(a.updated_at))}
+                {agentSubtitle(a)}
               </span>
             </span>
             <span

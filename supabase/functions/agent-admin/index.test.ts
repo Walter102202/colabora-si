@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { hmacSha256Hex } from '../_shared/hmac.ts';
-import { type AgentAdminDeps, handleAgentAdmin } from './handler.ts';
+import { type AgentAdminDeps, type AgentRecord, handleAgentAdmin } from './handler.ts';
 
 const HUMAN = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const WORKSPACE = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -8,7 +8,7 @@ const AGENT_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const AUTH_USER = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const PEPPER = 'login-pepper';
 
-function makeDeps(opts: { member?: boolean; rpcFails?: boolean } = {}) {
+function makeDeps(opts: { member?: boolean; rpcFails?: boolean; owner?: boolean; platformAgent?: AgentRecord | null; rpcCreated?: boolean } = {}) {
   const calls: Array<{ op: string; args: unknown[] }> = [];
   const log = (op: string, ...args: unknown[]) => calls.push({ op, args });
   const deps: AgentAdminDeps = {
@@ -20,6 +20,14 @@ function makeDeps(opts: { member?: boolean; rpcFails?: boolean } = {}) {
         return Promise.resolve(opts.member ?? true);
       },
       getAgent: () => Promise.resolve(null),
+      isWorkspaceOwner: (ws, uid) => {
+        log('isWorkspaceOwner', ws, uid);
+        return Promise.resolve(opts.owner ?? true);
+      },
+      getPlatformAgent: (ws) => {
+        log('getPlatformAgent', ws);
+        return Promise.resolve(opts.platformAgent ?? null);
+      },
       rpc: (fn, args) => {
         log('callerRpc', fn, args);
         return Promise.resolve(null);
@@ -43,7 +51,9 @@ function makeDeps(opts: { member?: boolean; rpcFails?: boolean } = {}) {
       log('serviceRpc', fn, args);
       return opts.rpcFails
         ? Promise.reject({ code: '23505', message: 'duplicate key' })
-        : Promise.resolve({ agent_id: AGENT_ID });
+        : Promise.resolve(fn === 'ensure_platform_agent'
+          ? { agent_id: AGENT_ID, auth_user_id: AUTH_USER, created: opts.rpcCreated ?? true }
+          : { agent_id: AGENT_ID });
     },
     newId: () => AGENT_ID,
     randomSecret: () => 'temporary-secret',
@@ -56,6 +66,14 @@ function create(): Request {
     method: 'POST',
     headers: { Authorization: 'Bearer human-jwt', 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'create_agent', workspace_id: WORKSPACE, name: 'Researcher', kind: 'mcp_client' }),
+  });
+}
+
+function enable(): Request {
+  return new Request('http://localhost/functions/v1/agent-admin', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer human-jwt', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'enable_platform_agent', workspace_id: WORKSPACE }),
   });
 }
 
@@ -98,4 +116,40 @@ Deno.test('RPC failure deletes the auth user and returns 500', async () => {
   const last = calls[calls.length - 1];
   assert.equal(last.op, 'deleteUser');
   assert.equal(last.args[0], AUTH_USER);
+});
+
+Deno.test('enable_platform_agent: a non-owner gets 403 and nothing is created', async () => {
+  const { deps, calls } = makeDeps({ owner: false });
+  const res = await handleAgentAdmin(enable(), deps);
+  assert.equal(res.status, 403);
+  assert.equal((await res.json()).error, 'forbidden');
+  assert.deepEqual(calls.map((c) => c.op), ['isWorkspaceOwner']);
+});
+Deno.test('enable_platform_agent returns the existing platform agent without creating a user', async () => {
+  const existing = { id: AGENT_ID, workspace_id: WORKSPACE, auth_user_id: AUTH_USER, connection: {} };
+  const { deps, calls } = makeDeps({ platformAgent: existing });
+  const res = await handleAgentAdmin(enable(), deps);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { agent_id: AGENT_ID, auth_user_id: AUTH_USER, created: false });
+  assert.deepEqual(calls.map((c) => c.op), ['isWorkspaceOwner', 'getPlatformAgent']);
+});
+Deno.test('enable_platform_agent creates the user, sets its login and calls ensure_platform_agent', async () => {
+  const { deps, calls } = makeDeps();
+  const res = await handleAgentAdmin(enable(), deps);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { agent_id: AGENT_ID, auth_user_id: AUTH_USER, created: true });
+  assert.deepEqual(calls.map((c) => c.op), ['isWorkspaceOwner', 'getPlatformAgent', 'createUser', 'updateUserById', 'serviceRpc']);
+  const [fn, args] = calls[4].args as [string, Record<string, unknown>];
+  assert.equal(fn, 'ensure_platform_agent');
+  assert.deepEqual(args, { p_workspace_id: WORKSPACE, p_created_by: HUMAN, p_auth_user_id: AUTH_USER, p_id: AGENT_ID });
+  const [, updateAttrs] = calls[3].args as [string, { password: string }];
+  assert.equal(updateAttrs.password, await hmacSha256Hex(PEPPER, AUTH_USER));
+});
+Deno.test('enable_platform_agent deletes the new user when the RPC reports the agent already existed', async () => {
+  const { deps, calls } = makeDeps({ rpcCreated: false });
+  const res = await handleAgentAdmin(enable(), deps);
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).created, false);
+  assert.equal(calls.at(-1)?.op, 'deleteUser');
+  assert.equal(calls.at(-1)?.args[0], AUTH_USER);
 });
