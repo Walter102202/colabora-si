@@ -137,6 +137,12 @@ export function mockCard(scenario: string): CardData {
 }
 
 const ok = (structured: Record<string, unknown>): ToolResult => ({ content: [{ type: "text", text: JSON.stringify(structured) }], structuredContent: structured });
+// Like the server, the refreshed card of decide_approval and close_task does not read the autonomy.
+const withoutAutonomy = (data: TaskCardData): TaskCardData => {
+  const card = { ...data };
+  delete card.autonomy;
+  return card;
+};
 const fail = (code: string, message: string, detail: unknown = null): ToolResult => ({
   isError: true, content: [{ type: "text", text: `Error ${code}: ${message}` }], structuredContent: { code, message, detail },
 });
@@ -163,10 +169,10 @@ export function mockActions(scenario: string): CardActions {
             return fail("direct_session_required", "This needs the person to act from the app directly.", { url: `${APP_URL}/p/row1?task=${task.id}#approval-${current.approval.id}` });
           }
           current = { ...current, task: { ...current.task, state: "working", waiting_on: null }, approval: null };
-          return ok({ status: "decided", ...current });
+          return ok({ status: "decided", ...withoutAutonomy(current) });
         case "close_task":
           current = { ...current, task: { ...current.task, state: "done", acceptance: args.acceptance as TaskRow["acceptance"], closed_at: new Date().toISOString() }, approval: null, run: null };
-          return ok({ task_state: "done", ...current });
+          return ok({ task_state: "done", ...withoutAutonomy(current) });
         case "review_task":
           current = { ...current, review: { ...review, id: "rev-2", reviewer_type: "human", reviewer_id: "u1", verdict: args.verdict as ReviewRow["verdict"], findings: args.findings as ReviewRow["findings"], created_at: new Date().toISOString() }, task: { ...current.task, state: args.verdict === "approved" ? "ready_for_review" : "working", review_state: args.verdict === "approved" ? "approved" : "changes_requested" } };
           return ok({ review_id: "rev-2", task_state: current.task.state, rounds: 2 });

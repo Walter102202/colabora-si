@@ -64,12 +64,13 @@ export function Card({ initial, actions }: { initial: CardData; actions: CardAct
     return next;
   };
 
-  // Write tools return the refreshed card; anything else is followed by get_task.
+  // Write tools return the refreshed card; anything else is followed by get_task. Only get_task reads the
+  // autonomy, so a refreshed card of the same task keeps the line it had.
   const applyResult = async (result: ToolResult, taskId: string) => {
     const next = cardDataFrom(result.structuredContent);
     if (next?.kind === "task") {
       setNotice(null);
-      setData(next);
+      setData((prev) => (next.autonomy === undefined && prev.kind === "task" && prev.task.id === next.task.id ? { ...next, autonomy: prev.autonomy } : next));
     } else {
       await showTask(taskId);
     }

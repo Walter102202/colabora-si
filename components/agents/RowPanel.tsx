@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 import { pageUrl, taskUrl } from "@/lib/routes";
 import { useStore } from "@/lib/store";
@@ -16,9 +16,9 @@ import {
   useAgentTasks,
   type TaskRow,
 } from "@/lib/agentTasks";
-import { briefFromRow, closeTask, createTask, decideApproval, getTaskAutonomy, setTaskAutonomy, handOver, loadTaskDiff, revertRun, reviewTask, sendMessage } from "@/lib/agentActions";
+import { briefFromRow, closeTask, createTask, decideApproval, getTaskAutonomy, setTaskAutonomy, handOver, loadTaskDiff, revertRun, reviewTask, sendMessage, subscribeWorkspaceAutonomy, workspaceAutonomyVersion } from "@/lib/agentActions";
 import { continuityFrom } from "@/lib/agentContinuity";
-import type { TaskAutonomy } from "@/lib/agentAutonomy";
+import type { AutonomyLevel, TaskAutonomy } from "@/lib/agentAutonomy";
 import type { TaskDiff } from "@/lib/agentRunDiff";
 import { approvalIdFromHash, openQuestionsFor } from "@/lib/agentCard";
 import { AssignView, TaskView, type SubtaskItem } from "@/components/agents/panel";
@@ -94,7 +94,12 @@ function AssignConnector({ pageId }: { pageId: string }) {
 }
 
 function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpenTask: (pageId: string, taskId: string) => void; onOpenPage: (pageId: string) => void }) {
-  const [autonomy, setAutonomy] = useState<TaskAutonomy | null>(null);
+  // Tagged with its task, like the diff: a value read for another task never shows on this one.
+  const [autonomy, setAutonomy] = useState<{ taskId: string; value: TaskAutonomy | null } | null>(null);
+  // A read that started before a change of this panel returned may predate it: the change's answer wins.
+  const autonomyClock = useRef(0);
+  const autonomySetAt = useRef(new Map<string, number>());
+  const workspaceAutonomy = useSyncExternalStore(subscribeWorkspaceAutonomy, workspaceAutonomyVersion);
   const [diff, setDiff] = useState<TaskDiff | null>(null);
   const { hash } = useLocation();
   // `#approval-<id>` (a deep link from a chat or a notification) lands on that approval.
@@ -115,12 +120,21 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
 
   useEffect(() => {
     let alive = true;
-    void getTaskAutonomy(task.id).then(
-      (value) => { if (alive) setAutonomy(value); },
-      () => { if (alive) setAutonomy(null); },
-    );
+    const taskId = task.id;
+    const startedAt = ++autonomyClock.current;
+    const apply = (value: TaskAutonomy | null) => {
+      if (alive && (autonomySetAt.current.get(taskId) ?? 0) < startedAt) setAutonomy({ taskId, value });
+    };
+    void getTaskAutonomy(taskId).then(apply, () => apply(null));
     return () => { alive = false; };
-  }, [task.id, task.brief_version]);
+  }, [task.id, task.brief_version, workspaceAutonomy]);
+  const onSetAutonomy = (level: AutonomyLevel | null) => {
+    const taskId = task.id;
+    return setTaskAutonomy(taskId, level).then((value) => {
+      autonomySetAt.current.set(taskId, ++autonomyClock.current);
+      setAutonomy((current) => (current && current.taskId !== taskId ? current : { taskId, value }));
+    });
+  };
 
   // The workspace page holds the rows; briefs, artifacts and reviews load when the panel opens.
   useEffect(() => {
@@ -164,8 +178,8 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
       run={run}
       approval={approval}
       openQuestions={openQuestions}
-      autonomy={autonomy}
-      onSetAutonomy={(level) => setTaskAutonomy(task.id, level).then((next) => { setAutonomy(next); })}
+      autonomy={autonomy?.taskId === task.id ? autonomy.value : null}
+      onSetAutonomy={onSetAutonomy}
       onDecideQuestion={(id, decision, response) => decideApproval(id, decision, response).then(() => undefined)}
       artifact={artifact}
       review={review}

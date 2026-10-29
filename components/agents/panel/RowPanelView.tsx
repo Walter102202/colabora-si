@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { continuityText, type ContinuityInfo } from "@/lib/agentContinuity";
 import type { TaskDiff } from "@/lib/agentRunDiff";
 import { RunDiffCard } from "@/components/agents/panel/RunDiffCard";
+import { useQueuedChoice } from "@/components/agents/panel/useQueuedChoice";
 import type { ActivityRow, ApprovalRow, ArtifactRow, BriefRow, ReviewRow, RunRow, TaskRow } from "@/lib/agentTasks";
 import type { ApprovalDecision, MessageSignal } from "@/lib/agentActions";
 import type { AgentRole } from "@/lib/agentsStore";
@@ -142,6 +143,7 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
   const [handoverError, setHandoverError] = useState<string | null>(null);
   const handOverToggle = useRef<HTMLButtonElement>(null);
   const refocusHandOver = useRef(false);
+  const autonomyChoice = useQueuedChoice<AutonomyLevel | null>();
 
   const agentLike = agent ? { name: agent.name, capabilities: agent.capabilities } : null;
   const terminal = isTerminal(task.state);
@@ -211,13 +213,20 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
           <div className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
             <span>{autonomyLine(autonomy)}</span>
             {onSetAutonomy && !terminal && (
-              <select aria-label="Autonomy for this task" className="rounded border border-border bg-bg px-1 py-0.5 text-xs"
-                value={autonomy.requested ?? ""} disabled={busy !== null}
-                onChange={(e) => { const v = e.target.value; void act("autonomy", () => onSetAutonomy(v ? (v as AutonomyLevel) : null)); }}>
-                <option value="">Workspace default ({AUTONOMY_LABEL[autonomy.workspace_level]})</option>
-                {AUTONOMY_LEVELS.map((l) => <option key={l} value={l}>{AUTONOMY_LABEL[l]}</option>)}
-              </select>
+              <>
+                {/* A save in progress keeps it enabled, so the keyboard focus stays on it. */}
+                <select aria-label="Autonomy for this task" className="rounded border border-border bg-bg px-1 py-0.5 text-xs disabled:opacity-50"
+                  value={(autonomyChoice.pending ? autonomyChoice.pending.value : autonomy.requested) ?? ""}
+                  disabled={autonomy.can_edit === false} aria-busy={autonomyChoice.busy}
+                  aria-describedby={autonomy.can_edit === false ? `${id}-autonomy-owner` : undefined}
+                  onChange={(e) => { const v = e.target.value; void autonomyChoice.choose(v ? (v as AutonomyLevel) : null, onSetAutonomy); }}>
+                  <option value="">Workspace default ({AUTONOMY_LABEL[autonomy.workspace_level]})</option>
+                  {AUTONOMY_LEVELS.map((l) => <option key={l} value={l}>{AUTONOMY_LABEL[l]}</option>)}
+                </select>
+                {autonomy.can_edit === false && <span id={`${id}-autonomy-owner`} className="text-text-tertiary">Only a workspace owner can change this.</span>}
+              </>
             )}
+            {autonomyChoice.error && <p role="alert" className="w-full text-red-700 dark:text-red-400">{autonomyChoice.error}</p>}
           </div>
         )}
         {recentActions.length > 0 ? (
