@@ -6,8 +6,9 @@ export interface ContinuityInfo {
   checkpoint: { seq: number; created_at: string; harness: string | null; next_step: string; handover: boolean } | null;
 }
 
-export function continuityFrom(agent: { capabilities: Record<string, boolean> } | null, checkpoint: ActivityRow | null): ContinuityInfo | null {
-  if (!agent) return null;
+// `checkpoint` is undefined while the activities are still loading: nothing is said until they are known.
+export function continuityFrom(agent: { capabilities: Record<string, boolean> } | null, checkpoint: ActivityRow | null | undefined): ContinuityInfo | null {
+  if (!agent || checkpoint === undefined) return null;
   return { resume: agent.capabilities.resume === true, checkpoint: checkpoint ? {
     seq: checkpoint.seq, created_at: checkpoint.created_at,
     harness: typeof checkpoint.body.harness === "string" ? checkpoint.body.harness : null,
@@ -17,7 +18,11 @@ export function continuityFrom(agent: { capabilities: Record<string, boolean> } 
 }
 
 export function continuityText(info: ContinuityInfo): string {
-  if (!info.resume) return "No checkpoints: a new run starts from the brief and the activity";
+  if (!info.resume) {
+    return info.checkpoint
+      ? `Checkpoint #${info.checkpoint.seq} saved, but this agent starts from the brief and the activity`
+      : "No checkpoints: a new run starts from the brief and the activity";
+  }
   if (!info.checkpoint) return "Can continue from a checkpoint; none saved yet";
   const cp = info.checkpoint;
   return `Can continue from checkpoint #${cp.seq} (${cp.harness ?? "unknown harness"}, ${formatRelative(Date.parse(cp.created_at))})`;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 import { pageUrl, taskUrl } from "@/lib/routes";
 import { useStore } from "@/lib/store";
@@ -16,8 +16,9 @@ import {
   useAgentTasks,
   type TaskRow,
 } from "@/lib/agentTasks";
-import { briefFromRow, closeTask, createTask, decideApproval, handOver, reviewTask, sendMessage } from "@/lib/agentActions";
+import { briefFromRow, closeTask, createTask, decideApproval, handOver, loadTaskDiff, revertRun, reviewTask, sendMessage } from "@/lib/agentActions";
 import { continuityFrom } from "@/lib/agentContinuity";
+import type { TaskDiff } from "@/lib/agentRunDiff";
 import { approvalIdFromHash } from "@/lib/agentCard";
 import { AssignView, TaskView, type SubtaskItem } from "@/components/agents/panel";
 
@@ -92,6 +93,7 @@ function AssignConnector({ pageId }: { pageId: string }) {
 }
 
 function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpenTask: (pageId: string, taskId: string) => void; onOpenPage: (pageId: string) => void }) {
+  const [diff, setDiff] = useState<TaskDiff | null>(null);
   const { hash } = useLocation();
   // `#approval-<id>` (a deep link from a chat or a notification) lands on that approval.
   const focusApprovalId = useMemo(() => approvalIdFromHash(hash), [hash]);
@@ -114,8 +116,19 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
   useEffect(() => {
     void loadActivities(task.id);
   }, [task.id, task.last_activity_at, loadActivities]);
+  useEffect(() => {
+    let cancelled = false;
+    if (["ready_for_review", "input_required", "done"].includes(task.state)) {
+      void loadTaskDiff(task.id).then((value) => { if (!cancelled) setDiff(value); }, () => { if (!cancelled) setDiff(null); });
+    }
+    return () => { cancelled = true; };
+  }, [task.id, task.state, task.last_activity_at]);
 
   const agent = agents.find((a) => a.id === task.delegate_agent_id) ?? null;
+  // A person's edit leaves no activity, so the diff can be stale: it reloads after every revert, failed or not,
+  // and on request. A failed load keeps the diff on screen; only the Refresh button reports it.
+  const loadDiff = () => loadTaskDiff(task.id).then(setDiff);
+  const reloadDiff = () => loadDiff().catch(() => {});
   const subtasks = useMemo<SubtaskItem[]>(
     () =>
       Object.values(tasks)
@@ -129,7 +142,10 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
     <TaskView
       task={task}
       agent={agent}
-      continuity={continuityFrom(agent, lastCheckpointFor(activities))}
+      continuity={continuityFrom(agent, activities && lastCheckpointFor(activities))}
+      diff={["ready_for_review", "input_required", "done"].includes(task.state) && diff?.task_id === task.id ? diff : null}
+      onRevert={(runId, keys) => revertRun(task.id, runId, keys).then(() => undefined).finally(reloadDiff)}
+      onRefreshDiff={loadDiff}
       handOverAgents={agents.filter((a) => a.status === "enabled")}
       onHandOver={(to, note) => handOver(task.id, to, note).then(() => undefined)}
       run={run}

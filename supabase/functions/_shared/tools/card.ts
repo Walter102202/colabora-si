@@ -28,6 +28,7 @@ export const CARD_RESOURCE_META: Record<string, unknown> = { ui: { prefersBorder
 export const CARD_OUTPUT: Record<string, JsonSchema> = {
   kind: { type: 'string', enum: ['task'] },
   continuity: { type: ['object', 'null'] },
+  diff: { type: ['object', 'null'] },
   run: { type: ['object', 'null'] },
   approval: { type: ['object', 'null'] },
   artifact: { type: ['object', 'null'] },
@@ -55,6 +56,7 @@ const REASON_LABEL: Record<WaitingReason, string> = {
 
 export interface TaskCard extends TaskBundle {
   continuity: Row | null;
+  diff: Row | null;
   kind: 'task';
   run: Row | null;
   approval: Row | null;
@@ -136,6 +138,12 @@ export async function loadTaskCard(
     const name = agents.find((a) => a.id === id)?.name;
     return typeof name === 'string' ? name : null;
   };
+  // A paged read (after_seq) follows the activity and does not resend the diff.
+  let diff: Row | null = null;
+  if ((task.state === 'ready_for_review' || task.state === 'done') && opts.afterSeq === undefined) {
+    try { diff = await must(db.rpc<Row>('task_diff', { p_task_id: taskId })); }
+    catch { /* The rest of the card stays usable when the diff is unavailable. */ }
+  }
   const delegate = agents.find((a) => a.id === task.delegate_agent_id);
   const cp = checkpoints?.[0];
   const body = (cp?.body ?? {}) as Row;
@@ -158,6 +166,8 @@ export async function loadTaskCard(
     })),
     agents,
     app_url: appUrl,
+    // Last, so a text cut at the size limit drops the diff before the rest of the card.
+    diff,
   };
 }
 
