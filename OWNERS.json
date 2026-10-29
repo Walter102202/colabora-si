@@ -115,12 +115,6 @@
     "a/write-boundary": [
       "supabase/tests/clone/02_rpcs.sql"
     ],
-    "a/platform-agent": [
-      "supabase/tests/clone/02_rpcs.sql"
-    ],
-    "a/reviewer-agent": [
-      "supabase/tests/clone/02_rpcs.sql"
-    ],
     "infra/ci-base": [
       "components/agents/settings/NewAgentWizard.tsx"
     ],
