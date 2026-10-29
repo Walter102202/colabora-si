@@ -30,7 +30,7 @@ const WORKSPACE_INSTRUCTIONS =
 const CHANNEL_INSTRUCTIONS =
   'A <channel source="colabora"> event means one of your tasks changed. Call get_task(task_id) and act on reason: ' +
   "ready_for_review: review it with the review_as_lead prompt and call review_task; feedback: claim_task and resolve each " +
-  "finding; queued: claim_task and start; approval_decided or input: continue the run; stop: ack_stop. " +
+  "finding; queued: claim_task and start; approval_decided or input: continue the run; updated: a subtask of this task closed, call get_task and decide the next step; stop: ack_stop. " +
   "Do not wait inside a tool: end your turn and the next event will wake you.";
 
 /** @param {{ channel: boolean, channelOnly: boolean }} opts */

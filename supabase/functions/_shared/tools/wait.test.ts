@@ -23,6 +23,7 @@ function matches(row: Row, f: Filter): boolean {
 /** In-memory tables; `onSleep` mutates them to simulate changes between two polls. */
 function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = () => {}) {
   const rpcs: { fn: string; params: Record<string, unknown> }[] = [];
+  const selects: string[] = [];
   let clock = 1_000_000;
   let sleeps = 0;
   const db: Db = {
@@ -31,6 +32,7 @@ function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = (
       return Promise.resolve({ data: null, error: null });
     },
     select: <T>(spec: SelectSpec) => {
+      selects.push(spec.table);
       let rows = (tables[spec.table] ?? []).filter((r) => (spec.filters ?? []).every((f) => matches(r, f)));
       for (const o of [...(spec.order ?? [])].reverse()) {
         rows = [...rows].sort((a, b) => {
@@ -56,7 +58,7 @@ function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = (
     },
     progress: () => {},
   };
-  return { ctx, rpcs, sleeps: () => sleeps, elapsed: () => clock - 1_000_000 };
+  return { ctx, rpcs, selects, sleeps: () => sleeps, elapsed: () => clock - 1_000_000 };
 }
 
 function task(overrides: Row = {}): Row {
@@ -75,6 +77,10 @@ function activity(seq: number, overrides: Row = {}): Row {
   };
 }
 
+function event(id: string, createdAt: string, overrides: Row = {}): Row {
+  return { event_id: id, agent_id: 'agent-1', task_id: 't1', run_id: null, type: 'task.feedback', payload: {}, seq: 1, created_at: createdAt, ...overrides };
+}
+
 Deno.test('wait_for_task without after_seq answers at once with next_seq', async () => {
   const h = harness({ agent_tasks: [task()], agent_activities: [activity(1), activity(2), activity(3)] });
   const out = await tool('wait_for_task').handler({ task_id: 't1', timeout_s: 120 }, h.ctx);
@@ -85,9 +91,12 @@ Deno.test('wait_for_task without after_seq answers at once with next_seq', async
 });
 
 Deno.test('wait_for_task: a state change between two polls returns changed before the timeout', async () => {
-  const tables = { agent_tasks: [task()], agent_activities: [activity(1)], agent_runs: [] as Row[] };
+  const tables = { agent_tasks: [task()], agent_activities: [activity(1)], agent_runs: [] as Row[], agent_events: [] as Row[] };
   const h = harness(tables, (n) => {
-    if (n === 2) tables.agent_tasks[0] = task({ state: 'ready_for_review', review_state: 'pending' });
+    if (n === 2) {
+      tables.agent_tasks[0] = task({ state: 'ready_for_review', review_state: 'pending' });
+      tables.agent_events.push(event('e1', '2026-10-27T10:00:05+00:00'));
+    }
   });
   const out = await tool('wait_for_task').handler({ task_id: 't1', after_seq: 1, timeout_s: 60 }, h.ctx);
   assert.equal(out.structured.changed, true);
@@ -97,9 +106,10 @@ Deno.test('wait_for_task: a state change between two polls returns changed befor
 });
 
 Deno.test('wait_for_task: a new activity after after_seq is returned with next_seq', async () => {
-  const tables = { agent_tasks: [task()], agent_activities: [activity(1)] };
+  const tables = { agent_tasks: [task()], agent_activities: [activity(1)], agent_events: [] as Row[] };
   const h = harness(tables, (n) => {
     if (n === 1) {
+      tables.agent_events.push(event('e2', '2026-10-27T10:00:02+00:00'));
       tables.agent_activities.push(activity(2, { type: 'prompt', author_type: 'agent', body: { text: 'Fix row 4', signal: 'feedback', source: 'lead' } }));
     }
   });
@@ -121,9 +131,12 @@ Deno.test('wait_for_task with timeout_s = 0 registers the wait with touch_run_wa
 });
 
 Deno.test('wait_for_task with run_id clears the wait when it returns, and reports a stop request', async () => {
-  const tables = { agent_tasks: [task()], agent_activities: [activity(1)], agent_runs: [{ id: 'run-1', stop_requested_at: null, stop_acked_at: null }] as Row[] };
+  const tables = { agent_tasks: [task()], agent_activities: [activity(1)], agent_runs: [{ id: 'run-1', stop_requested_at: null, stop_acked_at: null }] as Row[], agent_events: [] as Row[] };
   const h = harness(tables, (n) => {
-    if (n === 3) tables.agent_runs[0] = { id: 'run-1', stop_requested_at: '2026-10-27T10:05:00+00:00', stop_acked_at: null };
+    if (n === 3) {
+      tables.agent_runs[0] = { id: 'run-1', stop_requested_at: '2026-10-27T10:05:00+00:00', stop_acked_at: null };
+      tables.agent_events.push(event('e3', '2026-10-27T10:05:00+00:00', { type: 'task.stop' }));
+    }
   });
   const out = await tool('wait_for_task').handler({ task_id: 't1', after_seq: 1, timeout_s: 20, run_id: 'run-1' }, h.ctx);
   assert.equal(out.structured.changed, true);
@@ -131,13 +144,13 @@ Deno.test('wait_for_task with run_id clears the wait when it returns, and report
   assert.deepEqual(h.rpcs.map((r) => r.params.p_task_id), ['t1', null]);
 });
 
-Deno.test('wait_for_task times out with changed:false after timeout_s, polling every 1.5 s', async () => {
+Deno.test('wait_for_task times out with changed:false, backing off 1.5 s, 2.25 s and the remainder', async () => {
   const h = harness({ agent_tasks: [task()], agent_activities: [activity(1)] });
   const out = await tool('wait_for_task').handler({ task_id: 't1', after_seq: 1, timeout_s: 6 }, h.ctx);
   assert.equal(out.structured.changed, false);
   assert.equal(out.structured.next_seq, 1);
   assert.equal(h.elapsed(), 6000);
-  assert.equal(h.sleeps(), 6000 / POLL_MS);
+  assert.equal(h.sleeps(), 3);
 });
 
 Deno.test('wait_for_my_tasks without after answers at once with pending tasks and a cursor', async () => {
@@ -164,10 +177,12 @@ Deno.test('wait_for_my_tasks with after returns only tasks updated after the cur
       task({ id: 't1', state: 'ready_for_review', updated_at: '2026-10-27T10:00:00+00:00' }),
     ],
     agent_activities: [] as Row[],
+    agent_events: [] as Row[],
   };
   const after = encodeTaskCursor({ t: normTs('2026-10-27T10:00:00+00:00'), k: ['t:t1:' + normTs('2026-10-27T10:00:00+00:00')] });
   const h = harness(tables, (n) => {
     if (n === 1) {
+      tables.agent_events.push(event('e5', '2026-10-27T10:01:00.123456+00:00'));
       tables.agent_tasks[1] = task({ id: 't1', state: 'ready_for_review', review_state: 'changes_requested', updated_at: '2026-10-27T10:01:00.123456+00:00' });
       tables.agent_activities.push(activity(5, {
         type: 'prompt', author_type: 'agent', created_at: '2026-10-27T10:01:00.123456+00:00',
@@ -216,4 +231,46 @@ Deno.test('wait_for_my_tasks reports a stop, an approval decision and a closed t
   const out = await tool('wait_for_my_tasks').handler({ after: encodeTaskCursor({ t: normTs('2026-10-27T10:00:30+00:00'), k: [] }) }, h.ctx);
   const reasons = Object.fromEntries((out.structured.tasks as Row[]).map((t) => [t.task_id, t.reason]));
   assert.deepEqual(reasons, { s1: 'stop', a1: 'approval_decided', d1: 'closed' });
+});
+
+Deno.test('wait_for_task without events runs one cheap select per poll and a full snapshot every 10 s', async () => {
+  const tables = { agent_tasks: [task()], agent_activities: [activity(1)], agent_events: [] as Row[] };
+  const h = harness(tables, (n) => {
+    if (h.elapsed() >= 11_000 && tables.agent_tasks[0].state === 'working') tables.agent_tasks[0] = task({ state: 'ready_for_review' });
+  });
+  const out = await tool('wait_for_task').handler({ task_id: 't1', after_seq: 1, timeout_s: 120 }, h.ctx);
+  assert.equal(out.structured.changed, true);
+  assert.ok(h.elapsed() >= 10_000 && h.elapsed() < 40_000, `elapsed ${h.elapsed()}`);
+  const taskSelects = h.selects.filter((t) => t === 'agent_tasks').length;
+  assert.ok(taskSelects <= 6, `full snapshots: ${taskSelects}`); // baseline (2) + slow polls (2 each), never one per poll
+  assert.ok(h.selects.filter((t) => t === 'agent_events').length >= 4); // 1.5 + 2.25 + 3.4 + 5.1 s: four cheap polls before the slow pass at ~12 s
+});
+
+Deno.test('wait_for_my_tasks: an event resets the backoff and triggers one full snapshot', async () => {
+  const t0 = '2026-10-27T10:00:00+00:00';
+  const tables = { agent_tasks: [task({ id: 'p1', updated_at: t0 })], agent_activities: [] as Row[], agent_events: [] as Row[] };
+  const h = harness(tables, (n) => {
+    if (n === 3) { // at 7.1 s, before the 10 s slow pass: the full snapshot that follows is due to the event alone
+      tables.agent_events.push(event('e9', '2026-10-27T10:00:20+00:00', { task_id: 'p1', type: 'task.updated', payload: { subtask_id: 's1', acceptance: 'accepted' } }));
+      tables.agent_activities.push(activity(7, { task_id: 'p1', type: 'prompt', created_at: '2026-10-27T10:00:20+00:00', body: { text: 'Subtask "Report" closed by a person: accepted', signal: 'feedback', source: 'row_panel', subtask_id: 's1' } }));
+    }
+  });
+  const after = encodeTaskCursor({ t: normTs('2026-10-27T10:00:01+00:00'), k: [] });
+  const out = await tool('wait_for_my_tasks').handler({ after, timeout_s: 120 }, h.ctx);
+  assert.equal(out.structured.changed, true);
+  assert.deepEqual((out.structured.tasks as Row[]).map((t) => [t.task_id, t.reason]), [['p1', 'feedback']]);
+  assert.equal(h.sleeps(), 3);
+  assert.equal(h.selects.filter((t) => t === 'agent_tasks').length, 3); // first full pass (2 selects: updated + missing is skipped) + the one after the event
+  assert.ok(decodeTaskCursor(String(out.structured.next_cursor)).k.includes('e:e9'));
+});
+
+Deno.test('wait_for_my_tasks for a person (no agent id) never queries agent_events and keeps the slow poll', async () => {
+  const tables = { agent_tasks: [task({ owner_user_id: 'u-h', delegate_agent_id: 'agent-9', updated_at: '2026-10-27T10:00:00+00:00' })], agent_activities: [] as Row[], agent_events: [] as Row[] };
+  const h = harness(tables);
+  h.ctx.principal = { type: 'human', userId: 'u-h', agentId: null, workspaceId: 'w1', clientId: null };
+  const after = encodeTaskCursor({ t: normTs('2026-10-27T10:00:01+00:00'), k: [] });
+  const out = await tool('wait_for_my_tasks').handler({ after, timeout_s: 20 }, h.ctx);
+  assert.equal(out.structured.changed, false);
+  assert.equal(h.selects.filter((t) => t === 'agent_events').length, 0);
+  assert.ok(h.selects.filter((t) => t === 'agent_tasks').length >= 2); // first pass and the 10 s slow poll (at ~12 s)
 });
