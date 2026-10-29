@@ -34,6 +34,7 @@ beforeEach(() => {
     if (name === "task_autonomy") return new Promise((resolve) => reads.push({ taskId: args.p_task_id, answer: (data) => resolve({ data, error: null }) }));
     if (name === "set_task_autonomy") return Promise.resolve({ data: autonomous, error: null });
     if (name === "set_workspace_autonomy") return Promise.resolve({ data: { level: args.p_level, previous: "balanced" }, error: null });
+    if (name === "task_metrics") return Promise.resolve({ data: { tasks: 0, metrics: [] }, error: null });
     return Promise.resolve({ data: null, error: null });
   });
   useAgentTasks.setState({ status: "ready", tasks: { [task.id]: task }, activities: { [task.id]: [] },

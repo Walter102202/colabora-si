@@ -210,3 +210,70 @@ Deno.test('every real tool has a title, hints and an output schema; $defs are al
   const prompts = await call(post({ jsonrpc: '2.0', id: 3, method: 'prompts/list' }), real);
   assert.deepEqual(prompts.body.result.prompts.map((p: { name: string }) => p.name), ['continue_task', 'review_as_lead']);
 });
+
+Deno.test('a denied agent call is recorded for the metrics, best effort; other errors and people are not', async () => {
+  const calls: { fn: string; params: Record<string, unknown> }[] = [];
+  const db: Db = {
+    rpc: <T>(fn: string, params: Record<string, unknown>) => {
+      calls.push({ fn, params });
+      return Promise.resolve({ data: null as T, error: null });
+    },
+    select: () => Promise.resolve({ data: [], error: null }),
+  };
+  let denialCode = 'forbidden';
+  const deny = { ...server.tools[1], name: 'deny', handler: () => Promise.reject(new ToolError(denialCode, 'no')) };
+  const srv: McpServer = { ...server, tools: [...server.tools, deny] };
+  const taskId = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+  const callDeny = (args: Record<string, unknown>) => post({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'deny', arguments: args } });
+
+  const denied = await call(callDeny({ task_id: taskId }), srv, deps({ makeDb: () => db }));
+  assert.equal(denied.body.result.isError, true);
+  assert.deepEqual(calls, [{ fn: 'record_access_denial', params: { p_tool: 'deny', p_code: 'forbidden', p_task_id: taskId } }]);
+
+  for (const code of ['humans_only', 'lead_only', 'direct_session_required']) {
+    denialCode = code;
+    calls.length = 0;
+    await call(callDeny({ task_id: taskId }), srv, deps({ makeDb: () => db }));
+    assert.deepEqual(calls.map((c) => c.params.p_code), [code]);
+  }
+  denialCode = 'forbidden';
+  calls.length = 0;
+  await call(callDeny({ task_id: 'not-a-uuid' }), srv, deps({ makeDb: () => db }));
+  assert.deepEqual(calls.map((c) => c.params.p_task_id), [null]);
+
+  calls.length = 0;
+  await call(post({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'conflict', arguments: {} } }), srv, deps({ makeDb: () => db }));
+  const human: VerifiedBearer = { ...BEARER, principal: { ...BEARER.principal, type: 'human', agentId: null } };
+  await call(callDeny({}), srv, deps({ makeDb: () => db, verify: () => Promise.resolve(human) }));
+  for (const code of ['waiting_on_human', 'invalid_input']) {
+    denialCode = code;
+    await call(callDeny({}), srv, deps({ makeDb: () => db }));
+  }
+  assert.deepEqual(calls, []);
+  denialCode = 'forbidden';
+
+  const down: Db = { ...db, rpc: () => Promise.reject(new Error('down')) };
+  const still = await call(callDeny({}), srv, deps({ makeDb: () => down }));
+  assert.deepEqual(still.body.result, denied.body.result);
+});
+
+Deno.test('a stalled denial log times out without changing the original denial', async () => {
+  const parent = new AbortController();
+  const watchdog = setTimeout(() => parent.abort(), 3_000);
+  let logAborted = false;
+  const deny = { ...server.tools[1], name: 'deny', handler: () => Promise.reject(new ToolError('forbidden', 'no')) };
+  const req = new Request(post({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'deny' } }), { signal: parent.signal });
+  try {
+    const result = await call(req, { ...server, tools: [deny] }, deps({ makeDb: (_token, signal) => ({
+      ...fakeDb,
+      rpc: () => new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => { logAborted = true; reject(signal.reason); }, { once: true });
+      }),
+    }) }));
+    assert.equal(logAborted, true);
+    assert.equal(parent.signal.aborted, false);
+    assert.deepEqual(result.body.result.structuredContent, { code: 'forbidden', message: 'no', detail: null });
+  } finally {
+    clearTimeout(watchdog);
+  }
+});

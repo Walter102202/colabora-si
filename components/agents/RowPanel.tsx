@@ -16,7 +16,8 @@ import {
   useAgentTasks,
   type TaskRow,
 } from "@/lib/agentTasks";
-import { briefFromRow, closeTask, createTask, decideApproval, getTaskAutonomy, setTaskAutonomy, handOver, loadTaskDiff, revertRun, reviewTask, sendMessage, subscribeWorkspaceAutonomy, workspaceAutonomyVersion } from "@/lib/agentActions";
+import { briefFromRow, closeTask, createTask, decideApproval, fetchTaskMetrics, getTaskAutonomy, setTaskAutonomy, handOver, loadTaskDiff, revertRun, reviewTask, sendMessage, subscribeWorkspaceAutonomy, workspaceAutonomyVersion } from "@/lib/agentActions";
+import type { Metric } from "@/lib/agentMetrics";
 import { continuityFrom } from "@/lib/agentContinuity";
 import type { AutonomyLevel, TaskAutonomy } from "@/lib/agentAutonomy";
 import type { TaskDiff } from "@/lib/agentRunDiff";
@@ -102,6 +103,9 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
   const autonomySetAt = useRef(new Map<string, number>());
   const workspaceAutonomy = useSyncExternalStore(subscribeWorkspaceAutonomy, workspaceAutonomyVersion);
   const [diff, setDiff] = useState<TaskDiff | null>(null);
+  const [metrics, setMetrics] = useState<Metric[] | null>(null);
+  // A revert changes the results without changing the state or the acceptance: it bumps this to read them again.
+  const [revertedAt, setRevertedAt] = useState(0);
   const { hash } = useLocation();
   // `#approval-<id>` (a deep link from a chat or a notification) lands on that approval.
   const focusApprovalId = useMemo(() => approvalIdFromHash(hash), [hash]);
@@ -118,6 +122,12 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
   const runs = useAgentTasks((s) => s.runs);
   const loadTaskDetail = useAgentTasks((s) => s.loadTaskDetail);
   const loadActivities = useAgentTasks((s) => s.loadActivities);
+
+  useEffect(() => {
+    let alive = true;
+    void fetchTaskMetrics(task.id).then((result) => { if (alive) setMetrics(result.metrics); }, () => { if (alive) setMetrics(null); });
+    return () => { alive = false; };
+  }, [task.id, task.state, task.acceptance, revertedAt]);
 
   useEffect(() => {
     let alive = true;
@@ -169,10 +179,11 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
   return (
     <TaskView
       task={task}
+      metrics={metrics}
       agent={agent}
       continuity={continuityFrom(agent, activities && lastCheckpointFor(activities))}
       diff={["ready_for_review", "input_required", "done"].includes(task.state) && diff?.task_id === task.id ? diff : null}
-      onRevert={(runId, keys) => revertRun(task.id, runId, keys).then(() => undefined).finally(reloadDiff)}
+      onRevert={(runId, keys) => revertRun(task.id, runId, keys).then(() => { setRevertedAt((n) => n + 1); }).finally(reloadDiff)}
       onRefreshDiff={loadDiff}
       handOverAgents={agents.filter((a) => a.status === "enabled")}
       onHandOver={(to, note) => handOver(task.id, to, note).then(() => undefined)}

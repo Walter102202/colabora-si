@@ -238,6 +238,24 @@ interface RequestState {
   code?: string;
 }
 
+const DENIAL_CODES = new Set(['forbidden', 'humans_only', 'lead_only', 'direct_session_required']);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// A denied RPC rolls back. Record it afterwards with a short independent budget so a stalled
+// metrics log cannot hold the original denial open. The database client honors this abort signal.
+async function recordDenial(state: RequestState, tool: string, code: string, args: Record<string, unknown>): Promise<void> {
+  if (state.bearer.principal.type !== 'agent' || !DENIAL_CODES.has(code)) return;
+  const taskId = typeof args.task_id === 'string' && UUID_RE.test(args.task_id) ? args.task_id : null;
+  const budget = abortAfter(1_000, state.signal);
+  try {
+    await state.deps.makeDb(state.bearer.token, budget.signal).rpc('record_access_denial', { p_tool: tool, p_code: code, p_task_id: taskId });
+  } catch {
+    /* the denial log is best effort */
+  } finally {
+    budget.clear();
+  }
+}
+
 function makeContext(state: RequestState, signal: AbortSignal): ToolContext {
   const { deps } = state;
   return {
@@ -279,6 +297,7 @@ async function callTool(state: RequestState, params: Record<string, unknown>) {
     if (toolErr) {
       if (budget.timedOut() && toolErr.code !== 'timeout') toolErr = new ToolError('timeout', messageFor('timeout'));
       state.code = toolErr.code;
+      await recordDenial(state, tool.name, toolErr.code, args);
       return toolErrorResult(toolErr);
     }
     throw err;

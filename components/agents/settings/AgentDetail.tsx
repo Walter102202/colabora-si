@@ -1,6 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { fetchAgentMetrics } from "@/lib/agentActions";
+import type { Metric } from "@/lib/agentMetrics";
+import { MetricsList } from "@/components/agents/panel";
 import { useStore } from "@/lib/store";
 import { useAgentsStore, type AgentRow } from "@/lib/agentsStore";
 import { formatRelative } from "@/lib/utils";
@@ -30,6 +33,13 @@ export function AgentDetail({ agent, onBack }: { agent: AgentRow; onBack: () => 
   const [pageId, setPageId] = useState("");
   const [scopes, setScopes] = useState<string[]>(["read"]);
   const [confirmDisable, setConfirmDisable] = useState(false);
+  const [results, setResults] = useState<Metric[] | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    void fetchAgentMetrics(agent.id).then((result) => { if (alive) setResults(result.metrics); }, () => { if (alive) setResults(null); });
+    return () => { alive = false; };
+  }, [agent.id]);
 
   const harness = typeof agent.connection.harness === "string" ? agent.connection.harness : "claude-code";
   const pageList = Object.values(pages).filter((p) => !p.isDeleted);
@@ -122,6 +132,8 @@ export function AgentDetail({ agent, onBack }: { agent: AgentRow; onBack: () => 
         <h4 className="font-medium">Connection</h4>
         <ConnectionSnippet harness={harness} />
       </section>
+
+      {results && <MetricsList title="Results (last 30 days)" metrics={results} />}
 
       <section className="space-y-2">
         <h4 className="font-medium">Controls</h4>
