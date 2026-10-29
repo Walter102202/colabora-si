@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const SHARED = ["agentInput", "types", "dbCompute", "dbFilter"];
+const SHARED = ["agentInput", "types", "dbCompute", "dbFilter", "routes", "agentApprovalText", "agentLinks"];
 
 function asCopied(source: string): string {
   return source.replace(/from "@\/lib\/([A-Za-z]+)"/g, 'from "./$1.ts"');

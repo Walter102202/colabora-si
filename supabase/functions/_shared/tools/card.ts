@@ -7,6 +7,8 @@
 import { type Db, type Filter, messageFor, must, ToolError } from '../db.ts';
 import type { ResourceProvider, ToolContext, ToolDef } from '../mcp.ts';
 import { CARD_HTML } from '../cardHtml.ts';
+import { taskUrl } from '../lib/routes.ts';
+import { approvalPath } from '../lib/agentLinks.ts';
 import type { JsonSchema } from '../jsonSchema.ts';
 import { num, object, output, plural, READ, str, WRITE } from './common.ts';
 import { answeredQuestions, loadTask, loadTaskBundle, type Row, TASK_COLUMNS, type TaskBundle } from './taskData.ts';
@@ -75,12 +77,12 @@ export interface TaskCard extends TaskBundle {
 
 /** Deep link to a task in the app (the app's taskUrl: /p/<page>?task=<id>). */
 export function taskLink(appUrl: string, pageId: string, taskId: string): string {
-  return `${appUrl}/p/${encodeURIComponent(pageId)}?task=${encodeURIComponent(taskId)}`;
+  return `${appUrl}${taskUrl(pageId, taskId)}`;
 }
 
 /** The task link plus the fragment the row panel focuses: one tap lands on the approval. */
 export function approvalLink(appUrl: string, pageId: string, taskId: string, approvalId: string): string {
-  return `${taskLink(appUrl, pageId, taskId)}#approval-${encodeURIComponent(approvalId)}`;
+  return `${appUrl}${approvalPath(pageId, taskId, approvalId)}`;
 }
 
 function unique(ids: unknown[]): string[] {
