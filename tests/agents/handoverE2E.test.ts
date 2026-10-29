@@ -83,7 +83,7 @@ describe("handover between harnesses", () => {
 
     // 4. Concurrent human edit: reported at the claim, the stale edit is refused, the person's text survives.
     expect(claimB.result?.resume.blocks).toContainEqual(expect.objectContaining({ block_id: draftId, changed_by_other: true }));
-    expect(String(modelB.requests[0].messages[1].content)).toContain(draftId);
+    expect(String(modelB.requests[0].messages[1].content)).toMatch(new RegExp(`Blocks changed by someone else[^\n]*"${draftId}"`));
     expect(world.calls(CODEX).filter((c) => c.name === "edit_page").map((c) => c.outcome)).toEqual(["error:block_conflict", "ok"]);
     expect(world.blocks(page).find((b) => b.id === draftId)!.text).toBe("Draft v2 by Ana, final");
 
@@ -118,7 +118,7 @@ describe("handover between harnesses", () => {
     expect(b.tasks[0].outcome).toBe("submitted");
   });
 
-  it("two codex sessions claim with resume at once: one run, one handover activity", async () => {
+  it("a second resume claim while codex's first run is active gets run_active: one run, one handover activity", async () => {
     const world = createStubWorld();
     const task = world.human.createTask({ title: "Draft", delegate: CLAUDE_CODE });
     await world.client(CLAUDE_CODE).callTool("claim_task", { task_id: task, harness: "claude_code" });
@@ -140,6 +140,7 @@ describe("handover between harnesses", () => {
     expect(world.calls(PLAIN).filter((c) => c.name === "claim_task").map((c) => [c.args.resume, c.outcome]))
       .toEqual([[true, "error:resume_unsupported"], [undefined, "ok"], [undefined, "ok"]]);
     expect(String(model.requests[0].messages[1].content)).not.toContain("Handover");
+    expect(String(model.requests[0].messages[1].content)).not.toMatch(/\n\n\n/);
   });
 
   it("a checkpoint from a newer schema is not trusted: the model is told to read the task", async () => {
@@ -152,6 +153,83 @@ describe("handover between harnesses", () => {
     await runAgent({ mcp: world.client(CODEX), model, clock: fakeClock(), maxTasks: 1, harness: "codex" });
     expect(String(model.requests[0].messages[1].content)).toContain("newer format (v2)");
     expect(world.calls(CODEX).filter((c) => c.name === "append_blocks")).toHaveLength(1);
+  });
+
+  it("a person approves before codex claims: codex, already waiting, picks the task up, consumes the approval once and delivers", async () => {
+    const world = createStubWorld();
+    const taskId = world.human.createTask({ title: "Email the summary", delegate: CLAUDE_CODE, done_when: [{ id: "c1", text: "Summary sent" }] });
+    const page = String(world.task(taskId).row_page_id);
+    const closeA = new AbortController();
+    world.script(CLAUDE_CODE, "request_approval", 1, () => closeA.abort());
+    await runAgent({ mcp: world.client(CLAUDE_CODE), model: createStubModel([
+      { tool_calls: [toolCall("request_approval", { action: "send_email", params: { to: "team@example.com" }, question: "Send the summary?" })] },
+    ]), clock: fakeClock(), maxTasks: 1, harness: "claude_code", signal: closeA.signal });
+    expect(world.task(taskId).state).toBe("input_required");
+
+    // codex holds a cursor when the person hands the task over and then approves: the newest prompt is the decision.
+    world.script(CODEX, "wait_for_my_tasks", 1, () => {
+      world.human.releaseForHandover(taskId, CODEX, "Codex, send it");
+      world.human.decide(world.approvals(taskId)[0].id, "approve");
+    });
+    const modelB = createStubModel([
+      { tool_calls: [toolCall("begin_external_op", { provider: "smtp", action: "send_email", params: { to: "team@example.com" } })] },
+      { tool_calls: [toolCall("finish_external_op", { op_id: "op-1", status: "done", provider_ref: "msg-1" })] },
+      { tool_calls: [toolCall("add_artifact", { kind: "page", ref: page, title: "Summary", satisfies: ["c1"] })] },
+      { tool_calls: [toolCall("submit_for_review", { summary: "Summary sent", artifact_ids: ["art-1"] })] },
+    ]);
+    const b = await runAgent({ mcp: world.client(CODEX), model: modelB, clock: fakeClock(), maxTasks: 1, harness: "codex" });
+    expect(b.tasks[0].outcome).toBe("submitted");
+    expect(world.calls(CODEX).filter((c) => c.name === "wait_for_my_tasks").at(-1)?.result?.tasks)
+      .toEqual([expect.objectContaining({ task_id: taskId, state: "queued", reason: "handover" })]);
+    expect(world.approvals(taskId)).toEqual([expect.objectContaining({ status: "consumed", run_id: world.runs(taskId).at(-1)!.id })]);
+    expect(world.calls(CODEX).filter((c) => c.name === "begin_external_op").map((c) => c.result?.status)).toEqual(["pending"]);
+    expect(world.externalOps(taskId)).toEqual([expect.objectContaining({ action: "send_email", status: "done" })]);
+    expect(world.task(taskId).state).toBe("ready_for_review");
+  });
+
+  it("a decision that lands between the claim and the first read does not leave the new run waiting", async () => {
+    const world = createStubWorld();
+    const taskId = world.human.createTask({ title: "Email", delegate: CLAUDE_CODE });
+    const page = String(world.task(taskId).row_page_id);
+    const closeA = new AbortController();
+    world.script(CLAUDE_CODE, "request_approval", 1, () => closeA.abort());
+    await runAgent({ mcp: world.client(CLAUDE_CODE), model: createStubModel([
+      { tool_calls: [toolCall("request_approval", { action: "send_email", params: { to: "team@example.com" }, question: "Send?" })] },
+    ]), clock: fakeClock(), maxTasks: 1, harness: "claude_code", signal: closeA.signal });
+    world.human.releaseForHandover(taskId, CODEX);
+    world.script(CODEX, "claim_task", 1, () => world.human.decide(world.approvals(taskId)[0].id, "approve"));
+    const giveUp = new AbortController();
+    world.script(CODEX, "wait_for_task", 20, () => giveUp.abort());
+    const modelB = createStubModel([
+      { tool_calls: [toolCall("begin_external_op", { provider: "smtp", action: "send_email", params: { to: "team@example.com" } })] },
+      { tool_calls: [toolCall("finish_external_op", { op_id: "op-1", status: "done", provider_ref: "msg-1" })] },
+      { tool_calls: [toolCall("add_artifact", { kind: "page", ref: page, title: "Email", satisfies: [] })] },
+      { tool_calls: [toolCall("submit_for_review", { summary: "Sent", artifact_ids: ["art-1"] })] },
+    ]);
+    const b = await runAgent({ mcp: world.client(CODEX), model: modelB, clock: fakeClock(), maxTasks: 1, harness: "codex", signal: giveUp.signal });
+    expect(b.tasks[0].outcome).toBe("submitted");
+    expect(String(modelB.requests[0].messages.at(-1)?.content)).toContain("decided right after you claimed");
+    expect(world.approvals(taskId)).toEqual([expect.objectContaining({ status: "consumed" })]);
+  });
+
+  it("after a delivery, the same agent's next run is not guarded by the delivered writes and records no handover", async () => {
+    const world = createStubWorld();
+    const task = world.human.createTask({ title: "Sources", delegate: CODEX });
+    const page = String(world.task(task).row_page_id);
+    world.script(CODEX, "submit_for_review", 1, () => world.human.feedback(task, "Write the sources again, with links"));
+    const model = createStubModel([
+      { tool_calls: [toolCall("append_blocks", { page_id: page, markdown: "## Sources" })] },
+      { tool_calls: [toolCall("add_artifact", { kind: "page", ref: page, title: "Sources", satisfies: [] })] },
+      { tool_calls: [toolCall("submit_for_review", { summary: "Done", artifact_ids: ["art-1"] })] },
+      { tool_calls: [toolCall("append_blocks", { page_id: page, markdown: "## Sources" })] },
+      { tool_calls: [toolCall("submit_for_review", { summary: "Done again", artifact_ids: ["art-1"] })] },
+    ]);
+    const out = await runAgent({ mcp: world.client(CODEX), model, clock: fakeClock(), maxTasks: 2, harness: "codex" });
+    expect(out.tasks.map((t) => t.outcome)).toEqual(["submitted", "submitted"]);
+    expect(world.calls(CODEX).filter((c) => c.name === "claim_task").map((c) => c.args.resume)).toEqual([true, true]);
+    expect(world.calls(CODEX).filter((c) => c.name === "append_blocks")).toHaveLength(2);
+    expect(toolMessages(model).join("\n")).not.toContain("already_done");
+    expect(world.activities(task).filter((a) => a.type === "handover")).toHaveLength(0);
   });
 
   it("a lost write response is retried once with the same idempotency key and lands once", async () => {

@@ -9,11 +9,30 @@ const clone = (value) => structuredClone(value);
 const active = (run) => run && ["running", "waiting"].includes(run.status);
 const fail = (code) => { throw Object.assign(new Error(code), { domain: code }); };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const OPEN_STATES = ["queued", "working", "input_required", "ready_for_review"];
+
+// tools/wait.ts reasonFor: why wait_for_my_tasks lists a task (null: it does not).
+export function taskReason(task, prompt) {
+  if (task.state === "done" || task.state === "failed") return "closed";
+  if (task.state === "cancelled") return "stop";
+  if (prompt) {
+    const body = prompt.body ?? {};
+    if (body.signal === "stop") return "stop";
+    if (body.handover === true) return "handover";
+    if (body.approval_id !== undefined || body.decision !== undefined) return task.active_run_id ? "approval_decided" : "handover";
+    if (body.signal === "feedback" || body.signal === "continue") return "feedback";
+    if (body.signal === "start" && task.state === "queued") return "queued";
+  }
+  if (task.state === "input_required" && !task.active_run_id) return "handover";
+  if (task.brief_stale === true) return "brief";
+  if (task.state === "queued") return "queued";
+  return null;
+}
 
 export function createStubWorld() {
   const tasks = [], runs = [], activities = [], approvals = [], external = [], artifacts = [];
   const pages = new Map(), receipts = new Map(), counts = new Map(), scripts = new Map(), losses = new Map(), kills = new Map();
-  const dead = new Set(), calls = [];
+  const dead = new Set(), calls = [], cursors = [];
   let nextBlock = 0;
   const taskFor = (id) => tasks.find((t) => t.id === id) ?? fail("not_found");
   const runFor = (id, agent) => runs.find((r) => r.id === id && r.agent_id === agent) ?? fail("forbidden");
@@ -37,14 +56,17 @@ export function createStubWorld() {
     task.state = waiting(task) ? "input_required" : "queued";
   };
   const receiptKey = (agent, tool, key) => JSON.stringify([agent, tool, key]);
-  // private.resume_context: receipts belong to the previous actor, not the claimant.
+  // private.resume_context: receipts belong to the checkpoint's actor, not the claimant; "from" is the last run that
+  // ended, and a checkpoint from an earlier run is stale (its pending writes without a receipt are unknown).
   const resumeFor = (task, newRun) => {
     const cp = rows(activities, task.id).filter((a) => a.type === "checkpoint").at(-1);
-    const from = runs.find((r) => r.id === cp?.run_id) ?? rows(runs, task.id).filter((r) => r.id !== newRun.id && !active(r)).at(-1);
+    const cpRun = runs.find((r) => r.id === cp?.run_id);
+    const from = rows(runs, task.id).filter((r) => r.id !== newRun.id && !active(r)).at(-1) ?? cpRun;
+    const stale = !!cp && from?.id !== cp.run_id;
     const readable = cp?.body.v === 1;
     const pending = readable ? (cp.body.ops?.pending ?? []).map((op) => {
-      const receipt = receipts.get(receiptKey(from?.agent_id, op.tool, op.key));
-      return { ...clone(op), status: receipt ? "confirmed" : "not_executed", ...(receipt ? { result: clone(receipt) } : {}) };
+      const receipt = receipts.get(receiptKey(cpRun?.agent_id, op.tool, op.key));
+      return { ...clone(op), status: receipt ? "confirmed" : stale ? "unknown" : "not_executed", ...(receipt ? { result: clone(receipt) } : {}) };
     }) : [];
     const blocks = new Map();
     for (const op of [...(readable ? cp.body.ops?.confirmed ?? [] : []), ...pending]) {
@@ -55,12 +77,23 @@ export function createStubWorld() {
           changed_by_other: !!block && !rows(runs, task.id).some((r) => r.id === block.attr.runId) });
       }
     }
-    return { checkpoint: cp ? { seq: cp.seq, readable, version: cp.body.v, body: clone(cp.body), run_id: cp.run_id, harness: cp.body.harness } : null,
+    return { checkpoint: cp ? { seq: cp.seq, readable, version: cp.body.v, body: clone(cp.body), run_id: cp.run_id, harness: cp.body.harness, stale } : null,
       from: from ? { run_id: from.id, agent_id: from.agent_id, harness: from.harness, status: from.status } : null,
       pending_ops: pending, blocks: [...blocks.values()], approvals: clone(rows(approvals, task.id).filter((a) => ["pending", "decided"].includes(a.status))),
       external_ops_open: clone(rows(external, task.id).filter((op) => ["pending", "unknown"].includes(op.status))),
       summary: cp ? `Continuing from checkpoint #${cp.seq} by ${from?.harness}.` : "No checkpoint yet." };
   };
+  // claim_task records a handover only when the previous run ended with hand_over or a person released it after it started.
+  const handedOver = (task, from) => {
+    if (!from) return false;
+    const list = rows(activities, task.id), start = list.find((a) => a.run_id === from.run_id)?.seq ?? Infinity;
+    return list.some((a) => (a.type === "checkpoint" && a.run_id === from.run_id && a.body.handover === true)
+      || (a.type === "prompt" && a.body.handover === true && a.seq > start));
+  };
+  // wait_for_my_tasks: a cursor is the activity count and each task's state when it was issued.
+  const taskView = (t) => JSON.stringify([t.state, t.active_run_id, t.delegate_agent_id]);
+  const myTask = (t, reason, prompts) => ({ task_id: t.id, title: t.title, state: t.state, waiting_on: t.state === "input_required" ? "human" : null,
+    active_run_id: t.active_run_id, pending_prompts: prompts, reason });
   const requestApproval = (task, run, args) => {
     let a = rows(approvals, task.id).find((a) => a.status === "pending" && a.action === args.action && same(a.params, args.params));
     if (!a) {
@@ -74,10 +107,18 @@ export function createStubWorld() {
 
   function apply(agent, name, args) {
     if (name === "wait_for_my_tasks") {
-      if (args.after === String(activities.length)) return { changed: false, next_cursor: args.after, tasks: [] };
-      const available = tasks.filter((t) => t.delegate_agent_id === agent && !t.active_run_id && ["queued", "input_required"].includes(t.state));
-      return { changed: !!available.length, next_cursor: String(activities.length), tasks: available.map((t) => ({ task_id: t.id, title: t.title, state: t.state,
-        reason: rows(activities, t.id).at(-1)?.body.handover ? "handover" : "queued" })) };
+      // Without a cursor: the open tasks by their state alone. With one: the tasks that changed or got a prompt since,
+      // by their latest new prompt. The cursor always moves past what it saw, as on the server.
+      const mine = tasks.filter((t) => t.delegate_agent_id === agent);
+      const since = args.after === undefined ? null : cursors[Number(args.after)] ?? fail("invalid_input");
+      const listed = mine.flatMap((t) => {
+        if (!since) return OPEN_STATES.includes(t.state) ? [myTask(t, taskReason(t, undefined), 0)] : [];
+        const prompts = activities.slice(since.activities).filter((a) => a.task_id === t.id && a.type === "prompt");
+        if (since.views.get(t.id) === taskView(t) && !prompts.length) return [];
+        return [myTask(t, taskReason(t, prompts.at(-1)), prompts.length)];
+      }).filter((t) => t.reason);
+      cursors.push({ activities: activities.length, views: new Map(tasks.map((t) => [t.id, taskView(t)])) });
+      return { changed: listed.length > 0, next_cursor: String(cursors.length - 1), tasks: listed };
     }
     if (name === "claim_task") {
       if (args.resume && agent === PLAIN) fail("resume_unsupported");
@@ -92,7 +133,7 @@ export function createStubWorld() {
       if (waiting(task)) { run.status = "waiting"; task.state = "input_required"; }
       activity(task, run, "action", { op: "claim" });
       const resume = args.resume ? resumeFor(task, run) : null;
-      if (resume?.from) activity(task, run, "handover", { from_harness: resume.from.harness, to_harness: args.harness,
+      if (handedOver(task, resume?.from)) activity(task, run, "handover", { from_harness: resume.from.harness, to_harness: args.harness,
         from_run_id: resume.from.run_id, from_agent_id: resume.from.agent_id, to_run_id: run.id, to_agent_id: agent,
         checkpoint_seq: resume.checkpoint?.seq ?? null, counts: {}, summary: resume.summary });
       return { task_id: task.id, run_id: run.id, row_page_id: task.row_page_id, brief: task.brief,
@@ -146,8 +187,10 @@ export function createStubWorld() {
     if (["save_checkpoint", "hand_over"].includes(name)) {
       if (!args.idempotency_key) fail("invalid_input");
       const old = rows(activities, task.id).find((a) => a.idempotency_key === args.idempotency_key);
+      if (old && old.type !== "checkpoint") fail("idempotency_conflict");
       if (old) return { activity_id: old.id, seq: old.seq, task_state: task.state, replayed: true };
       if (!active(run) || task.active_run_id !== run.id) fail("run_not_active");
+      if (name === "hand_over" && run.stop_requested_at) fail("stop_requested");
       if (args.checkpoint?.v !== 1) fail("checkpoint_version_unsupported");
       if (!args.checkpoint.next_step || (name === "hand_over" && !args.checkpoint.handover_note)) fail("invalid_input");
       const a = activity(task, run, "checkpoint", { ...args.checkpoint, harness: run.harness, handover: name === "hand_over" }, agent,
@@ -213,6 +256,11 @@ export function createStubWorld() {
         activity(task, null, "prompt", { signal: "feedback", approval_id: id, decision });
       },
       editBlock(page, id, text) { const b = pages.get(page).find((b) => b.id === id); b.text = text; b.rev++; b.attr = { by: "human" }; },
+      feedback(id, text) { activity(taskFor(id), null, "prompt", { signal: "feedback", text }); },
+      stop(id) {
+        const task = taskFor(id), run = runs.find((r) => r.id === task.active_run_id);
+        if (run) run.stop_requested_at = new Date().toISOString(); else task.state = "cancelled";
+      },
       releaseForHandover(id, to, note = "") {
         const task = taskFor(id), run = runs.find((r) => r.id === task.active_run_id);
         if (run) run.stop_requested_at = new Date().toISOString();

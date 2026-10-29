@@ -47,6 +47,14 @@ describe("Codex stop hook", () => {
     expect(output.decision).toBe("block");
     expect(output.reason).toContain("resume: true");
   });
+  it("continues a handover that waits on a person: the new session claims it and waits in its run", async () => {
+    const { fetchImpl } = fakeRemote([none, { tasks: [{ task_id: TASK, state: "input_required", waiting_on: "human", reason: "handover" }], next_cursor: "c-1" }]);
+    const result = await runStopHook({ input: {}, env: ENV, fetchImpl, now: clock(1000), sleep });
+    const output = JSON.parse(result.output ?? "{}");
+    expect(output.decision).toBe("block");
+    expect(output.reason).toContain("resume: true");
+    expect(output.reason).toContain("wait_for_task");
+  });
   it("blocks with the task id and the findings when feedback is pending", async () => {
     const longNote = "Missing evidence for the deduplication criterion. ".repeat(200);
     const { fetchImpl, calls } = fakeRemote(

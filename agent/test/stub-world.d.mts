@@ -1,12 +1,15 @@
 import type { McpClient } from "../mcpClient.mjs";
 export const CLAUDE_CODE: string; export const CODEX: string; export const PLAIN: string;
 export function createStubWorld(): StubWorld;
+export function taskReason(task: Record<string, unknown>, prompt?: { body?: Record<string, unknown> }): string | null;
 export interface StubWorld {
   client(agentId: string): McpClient & { calls: WorldCall[] };
   human: {
     createTask(input: { title: string; delegate: string; done_when?: { id: string; text: string }[] }): string;
     decide(approvalId: string, decision: "approve" | "reject"): void;
     editBlock(pageId: string, blockId: string, text: string): void;
+    feedback(taskId: string, text: string): void;
+    stop(taskId: string): void;
     releaseForHandover(taskId: string, toAgentId: string | null, note?: string): void;
     insertCheckpoint(taskId: string, body: Record<string, unknown>, harness: string): void;
   };

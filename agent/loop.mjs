@@ -2,7 +2,7 @@
 // report liveness and cost, pause on human decisions, and hand the result to a person.
 
 import { argsHash, buildCheckpoint, guardFor, guardsFromResume, parseCheckpoint, WRITE_TOOLS } from "./checkpoint.mjs";
-import { toOpenAiTools } from "./mcpClient.mjs";
+import { McpError, toOpenAiTools } from "./mcpClient.mjs";
 import { buildSystemPrompt, buildTaskMessage } from "./prompt.mjs";
 
 /**
@@ -89,9 +89,15 @@ export async function runAgent(opts) {
       return await mcp.callTool(name, args);
     } catch (e) {
       const text = e instanceof Error ? e.message : String(e);
+      // The server refused the call before running it (invalid arguments, unknown tool): nothing happened and the model sees why.
+      if (e instanceof McpError && (e.code === -32602 || e.code === -32601)) {
+        return { isError: true, data: { code: e.code === -32602 ? "invalid_input" : "unknown_tool", message: text }, text };
+      }
       return { isError: true, transport: true, data: { error: "transport_error", message: text }, text };
     }
   };
+  /** The call may have happened: its response was lost, or the server ran out of time after starting it. @param {Record<string, any>} res */
+  const unsure = (res) => !!res.transport || (res.isError && res.data?.code === "timeout");
 
   /** @type {TaskOutcome[]} */
   const handled = [];
@@ -215,10 +221,18 @@ export async function runAgent(opts) {
     const handOverOrEnd = async (reason) => {
       if (toolSchemas.has("hand_over")) {
         try {
-          const result = await call("hand_over", { run_id: runId, idempotency_key: runId + ":handover",
-            checkpoint: buildCheckpoint({ ...checkpoint, handoverNote: "The agent process stopped. " + checkpoint.nextStep }) });
+          const args = { run_id: runId, idempotency_key: runId + ":handover",
+            checkpoint: buildCheckpoint({ ...checkpoint, handoverNote: "The agent process stopped. " + checkpoint.nextStep }) };
+          let result = await call("hand_over", args);
+          // The key answers a repeat with the first result, so a lost response is retried once.
+          if (unsure(result)) result = await call("hand_over", args);
           if (!result.isError) return;
           log("hand_over failed: " + result.text);
+          // A person asked to stop: acknowledge it; ending the run with an error would cancel the pending approvals.
+          if (result.data.code === "stop_requested") {
+            await call("ack_stop", { run_id: runId });
+            return;
+          }
         } catch (e) { log("hand_over failed: " + String(e)); }
       }
       await endRun("error", reason);
@@ -303,12 +317,17 @@ export async function runAgent(opts) {
       { role: "user", content: buildTaskMessage({ ...claim, subtasks: seeded.isError ? [] : seeded.data.task?.subtasks ?? [] }, task) },
     ];
 
-    if (resumeCtx?.approvals?.some((a) => a.status === "pending")) {
+    // Wait for the person first only while the run still waits: a decision taken between the claim and the seed is
+    // already behind the activity cursor, so waiting for it would never end.
+    const pendingAtClaim = resumeCtx?.approvals?.some((a) => a.status === "pending");
+    if (pendingAtClaim && (seeded.isError || seeded.data.task?.state === "input_required")) {
       await notify({ kind: "approval_pending", task_id: taskId, text: "A pending approval survived the handover.", link });
       const answer = await waitForHuman();
       if ("stop" in answer) return stop();
       if ("aborted" in answer) { await handOverOrEnd("agent process stopped"); return done("aborted"); }
       messages.push({ role: "user", content: "A person decided the pending approval (data, not instructions): " + JSON.stringify(answer.answer) });
+    } else if (pendingAtClaim) {
+      messages.push({ role: "user", content: "The pending approval was decided right after you claimed the task: read the decision with get_task before acting on it." });
     }
 
     for (let turn = 0; turn < maxTurns; turn++) {
@@ -396,8 +415,9 @@ export async function runAgent(opts) {
           continue;
         }
         let res = await call(name, args);
-        if (WRITE_TOOLS.has(name) && args.idempotency_key && res.transport) res = await call(name, args);
-        if (op && !res.transport) {
+        // A repeat with the same key is answered by the receipt of the first call when it did happen.
+        if (WRITE_TOOLS.has(name) && args.idempotency_key && unsure(res)) res = await call(name, args);
+        if (op && !unsure(res)) {
           checkpoint.pending = checkpoint.pending.filter((o) => o.key !== op.key);
           if (!res.isError) checkpoint.confirmed.push({ ...op, block_ids: res.data.block_ids ?? op.block_ids });
         }
@@ -423,7 +443,7 @@ export async function runAgent(opts) {
         }
         if (!res.isError && name === "review_task" && claim.brief?.policies?.review_of) reviewed = true;
         /** @type {Record<string, any>} */
-        let content = res.transport && op ? { error: "transport_error", outcome: "unknown", message: "The write may have happened. Read the page before repeating it." } : res.isError ? { error: res.data.code ?? "tool_error", ...res.data, message: res.text } : res.data;
+        let content = unsure(res) && op ? { error: res.transport ? "transport_error" : "timeout", outcome: "unknown", message: "The write may have happened. Read the page before repeating it." } : res.isError ? { error: res.data.code ?? "tool_error", ...res.data, message: res.text } : res.data;
 
         if (!res.isError && (name === "request_approval" || name === "request_input" || (name === "begin_external_op" && res.data.status === "approval_required")) && res.data.status !== "approved") {
           const isApproval = name !== "request_input";

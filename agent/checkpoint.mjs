@@ -4,7 +4,11 @@ export const CHECKPOINT_VERSION = 1;
 export const WRITE_TOOLS = new Set(["append_blocks", "edit_page", "update_block", "update_row", "add_row"]);
 const list = (value) => Array.isArray(value) ? value : [];
 const record = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : {};
-const text = (value, max) => Array.from(String(value ?? "")).slice(0, max).join("");
+// Cut by UTF-16 code units, as the server's maxLength counts, and never leave half of a surrogate pair at the end.
+const text = (value, max) => {
+  const cut = String(value ?? "").slice(0, max);
+  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
+};
 
 function ordered(value) {
   if (Array.isArray(value)) return value.map(ordered);
@@ -25,7 +29,7 @@ export function buildCheckpoint(state) {
     ...(o.summary ? { summary: text(o.summary, 280) } : {}),
     ...(o.page_id ? { page_id: text(o.page_id, 64) } : {}),
     ...(o.args_hash ? { args_hash: text(o.args_hash, 128) } : {}),
-    ...(o.block_ids ? { block_ids: list(o.block_ids).filter((id) => typeof id === "string" && id.length > 0 && Array.from(id).length <= 64).slice(0, 200) } : {}),
+    ...(o.block_ids ? { block_ids: list(o.block_ids).filter((id) => typeof id === "string" && id.length > 0 && id.length <= 64).slice(0, 200) } : {}),
   });
   const effect = (e) => ({ action: text(e.action, 200), ...(e.summary ? { summary: text(e.summary, 280) } : {}),
     ...(e.external_op_id ? { external_op_id: e.external_op_id } : {}), ...(e.approval_id ? { approval_id: e.approval_id } : {}) });
@@ -71,8 +75,18 @@ export function guardsFromResume(resume) {
   if (resume?.checkpoint?.readable !== true) return guards;
   const parsed = parseCheckpoint(resume.checkpoint.body);
   if (parsed.status !== "ok") return guards;
+  // A confirmed write guards only a run that did not finish: after a delivery (feedback, a revert) the next run writes
+  // freely. A write that may have happened still asks to verify first, once.
+  const delivered = parsed.checkpoint.handover !== true && resume.from?.status === "completed";
+  const gone = new Set(list(resume.blocks).filter((b) => b?.exists === false).map((b) => `${b.page_id}:${b.block_id}`));
+  // A write whose blocks are all gone (reverted or deleted) may be done again.
+  const allGone = (op) => {
+    const ids = [...list(op.block_ids), ...list(op.result?.block_ids)];
+    return ids.length > 0 && ids.every((id) => gone.has(`${op.page_id}:${id}`));
+  };
   for (const op of [...parsed.checkpoint.ops.confirmed.map((o) => ({ ...o, status: "confirmed" })), ...list(resume.pending_ops)]) {
-    if (op.args_hash && (op.status === "confirmed" || op.status === "unknown")) {
+    if (allGone(op)) continue;
+    if (op.args_hash && (op.status === "unknown" || (op.status === "confirmed" && !delivered))) {
       guards.set(op.args_hash, { status: op.status, key: op.key, summary: op.summary ?? "" });
     }
   }

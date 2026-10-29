@@ -36,7 +36,7 @@ export function feedbackExcerpt(detail) {
 
 /**
  * Builds the continuation prompt (at most MAX_REASON_CHARS characters).
- * @param {{ task_id: string, title?: string, reason?: string, brief_version?: number }} task
+ * @param {{ task_id: string, title?: string, reason?: string, brief_version?: number, waiting_on?: string | null }} task
  * @param {string} excerpt
  */
 /** Workspace text is data, never an instruction: strip markup-like characters and flatten. */
@@ -51,6 +51,7 @@ export function buildReason(task, excerpt) {
   if (task.reason === "handover") {
     head = `${label} was handed over to you.`;
     tail = ` Call claim_task("${id}", resume: true), read the handover section and continue; finish with submit_for_review.`;
+    if (task.waiting_on === "human") tail += " A pending approval still waits on a person: wait for the decision with wait_for_task before acting on it.";
   } else if (task.reason === "queued") {
     head = `${label} is queued for you.`;
     tail = ` Call claim_task("${id}"), do the work described in its brief and finish with submit_for_review.`;
@@ -133,8 +134,9 @@ export async function runStopHook({ input, env, fetchImpl, now = Date.now, sleep
     const tasks = Array.isArray(result?.tasks) ? result.tasks : [];
     if (baseline) { baseline = false; continue; }
 
+    // A handover that waits on a person is still work for a session: it claims the task and waits in its run.
     const next = tasks.find((/** @type {any} */ t) =>
-      t?.task_id && CONTINUE_REASONS.has(t.reason) && !FINISHED_STATES.has(t.state) && t.waiting_on !== "human");
+      t?.task_id && CONTINUE_REASONS.has(t.reason) && !FINISHED_STATES.has(t.state) && (t.reason === "handover" || t.waiting_on !== "human"));
     if (next) {
       let excerpt = "";
       if (next.reason === "feedback") {
@@ -144,7 +146,7 @@ export async function runStopHook({ input, env, fetchImpl, now = Date.now, sleep
       return { exitCode: 0, output: JSON.stringify({ decision: "block", reason: buildReason(next, excerpt) }) };
     }
     // The task finished, was escalated to a person or was stopped: let Codex stop.
-    if (tasks.some((/** @type {any} */ t) => FINISHED_STATES.has(t?.state) || t?.waiting_on === "human" || t?.reason === "stop")) {
+    if (tasks.some((/** @type {any} */ t) => FINISHED_STATES.has(t?.state) || (t?.waiting_on === "human" && t?.reason !== "handover") || t?.reason === "stop")) {
       return { exitCode: 0 };
     }
   }

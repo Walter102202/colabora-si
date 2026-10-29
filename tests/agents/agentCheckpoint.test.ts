@@ -29,6 +29,13 @@ describe("runtime checkpoints", () => {
     const capped = buildCheckpoint({ nextStep: "x", confirmed: heavy, pending: [], effects: { confirmed: [], not_executed: [], unknown: [] }, evidence: [] });
     expect(Buffer.byteLength(JSON.stringify(capped))).toBeLessThanOrEqual(200_000);   // under the server's 256 KB cap
   });
+  it("buildCheckpoint cuts text by UTF-16 code units, like the server's maxLength, without leaving half of a pair", () => {
+    const body = buildCheckpoint({ nextStep: "🚀" + "a".repeat(2500), confirmed: [], pending: [], effects: { confirmed: [], not_executed: [], unknown: [] },
+      evidence: [], handoverNote: "a".repeat(3999) + "🚀" }) as { next_step: string; handover_note: string };
+    expect(body.next_step.length).toBe(2000);
+    expect(body.next_step.startsWith("🚀")).toBe(true);
+    expect(body.handover_note).toBe("a".repeat(3999));
+  });
   it("parseCheckpoint reads v1, flags a newer version and rejects a malformed body", () => {
     expect(parseCheckpoint({ v: 1, next_step: "a" }).status).toBe("ok");
     expect(parseCheckpoint({ v: 2, next_step: "a" })).toEqual({ status: "newer_schema", version: 2 });
@@ -46,6 +53,19 @@ describe("runtime checkpoints", () => {
     expect(guardFor("append_blocks", { page_id: "p1", markdown: "k3" }, guards)?.error).toBe("verify_first");
     expect(guardFor("append_blocks", { page_id: "p1", markdown: "k3" }, guards)).toBeNull();   // verify_first only once
     expect(guardFor("append_blocks", { page_id: "p1", markdown: "k4" }, guards)).toBeNull();
+  });
+  it("guards skip writes whose blocks are all gone, and a run that delivered guards no confirmed write unless it handed over", () => {
+    const body = { v: 1, next_step: "a", handover: false, ops: { confirmed: [{ ...op("k1"), block_ids: ["b1"] }, { ...op("k2"), block_ids: ["b2", "b3"] }], pending: [] } };
+    const blocks = [{ page_id: "p1", block_id: "b1", exists: false }, { page_id: "p1", block_id: "b2", exists: false }, { page_id: "p1", block_id: "b3", exists: true }];
+    const pending_ops = [{ ...op("k3"), status: "confirmed", result: { block_ids: ["b4"] } }];
+    const cancelled = guardsFromResume({ checkpoint: { readable: true, body }, from: { status: "cancelled" }, blocks: [...blocks, { page_id: "p1", block_id: "b4", exists: false }], pending_ops });
+    expect(guardFor("append_blocks", { page_id: "p1", markdown: "k1" }, cancelled)).toBeNull();
+    expect(guardFor("append_blocks", { page_id: "p1", markdown: "k2" }, cancelled)?.error).toBe("already_done");
+    expect(guardFor("append_blocks", { page_id: "p1", markdown: "k3" }, cancelled)).toBeNull();
+    expect(guardsFromResume({ checkpoint: { readable: true, body }, from: { status: "completed" }, blocks }).size).toBe(0);
+    const maybe = guardsFromResume({ checkpoint: { readable: true, body }, from: { status: "completed" }, blocks, pending_ops: [{ ...op("k5"), status: "unknown" }] });
+    expect(guardFor("append_blocks", { page_id: "p1", markdown: "k5" }, maybe)?.error).toBe("verify_first");
+    expect(guardsFromResume({ checkpoint: { readable: true, body: { ...body, handover: true } }, from: { status: "completed" }, blocks }).size).toBe(1);
   });
   it("handoverText lists what happened, what did not, what someone else changed and what is pending", () => {
     const text = handoverText({

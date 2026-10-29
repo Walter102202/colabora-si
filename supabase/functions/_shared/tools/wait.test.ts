@@ -330,3 +330,23 @@ Deno.test('wait_for_my_tasks: full passes are never more than SLOW_POLL_MS apart
 Deno.test('reasonFor maps a handover prompt to handover', () => {
   assert.equal(reasonFor({ state: 'queued' }, { body: { signal: 'continue', handover: true } }), 'handover');
 });
+
+Deno.test('reasonFor: a handed-over task that waits on a person, or whose approval was decided without a run, is a handover', () => {
+  assert.equal(reasonFor({ state: 'input_required', waiting_on: 'human', active_run_id: null }, undefined), 'handover');
+  assert.equal(reasonFor({ state: 'input_required', waiting_on: 'human', active_run_id: 'run-1' }, undefined), null);
+  const decided = { body: { signal: 'feedback', source: 'row_panel', approval_id: 'ap1', decision: 'approve' } };
+  assert.equal(reasonFor({ state: 'queued', active_run_id: null }, decided), 'handover');
+  assert.equal(reasonFor({ state: 'working', active_run_id: 'run-1' }, decided), 'approval_decided');
+});
+
+Deno.test('wait_for_my_tasks without after lists a handed-over task that waits on a person', async () => {
+  const h = harness({
+    agent_tasks: [
+      task({ id: 'h1', state: 'input_required', waiting_on: 'human', active_run_id: null, updated_at: '2026-10-27T09:00:00+00:00' }),
+      task({ id: 'w1', state: 'input_required', waiting_on: 'human', updated_at: '2026-10-27T09:30:00+00:00' }),
+    ],
+    agent_activities: [],
+  });
+  const out = await tool('wait_for_my_tasks').handler({ timeout_s: 120 }, h.ctx);
+  assert.deepEqual((out.structured.tasks as Row[]).map((t) => [t.task_id, t.reason, t.waiting_on]), [['h1', 'handover', 'human']]);
+});

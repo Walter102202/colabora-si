@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { type Db, type DbResult, ToolError } from '../db.ts';
 import { validate } from '../jsonSchema.ts';
 import type { ToolContext, ToolDef } from '../mcp.ts';
+import { buildCheckpoint } from '../../../../agent/checkpoint.mjs';
 import { WORLD_TOOLS } from '../../../../agent/test/stub-world-tools.mjs';
+import { taskReason } from '../../../../agent/test/stub-world.mjs';
 import { CHECKPOINT_VERSION, handoverTools } from './handover.ts';
 import { taskTools } from './tasks.ts';
-import { waitTools } from './wait.ts';
+import { reasonFor, waitTools } from './wait.ts';
 import { readTools } from './read.ts';
 import { writeTools } from './write.ts';
 
@@ -42,6 +44,22 @@ Deno.test('hand_over requires a handover_note and reports the task state', async
   assert.match(out.text, /input_required/);
 });
 
+Deno.test('hand_over refused by a stop request or a reused key reaches the model with a message', async () => {
+  for (const code of ['stop_requested', 'idempotency_conflict']) {
+    const ctx = ctxWith(() => Promise.resolve({ data: null, error: { code: 'PT409', message: code } }));
+    await assert.rejects(() => tool('hand_over').handler({ run_id: 'r1', checkpoint: { ...cp, handover_note: 'Closing' }, idempotency_key: 'k' }, ctx),
+      (err: unknown) => err instanceof ToolError && err.code === code && !err.message.includes(code));
+  }
+});
+
+Deno.test('the runtime checkpoint passes the hand_over schema with text outside the BMP cut at the limits', () => {
+  const body = buildCheckpoint({
+    nextStep: '\u{1F680} ' + 'a'.repeat(2500), confirmed: [], pending: [{ key: 'k1', tool: 'append_blocks', summary: '\u{1F4DD}'.repeat(200) }],
+    effects: { confirmed: [], not_executed: [], unknown: [] }, evidence: [], handoverNote: 'a'.repeat(3999) + '\u{1F680}',
+  });
+  assert.deepEqual(validate(tool('hand_over').inputSchema, { run_id: 'r1', idempotency_key: 'k', checkpoint: body }), []);
+});
+
 Deno.test('checkpoint_version_unsupported and resume_unsupported reach the model with a message', async () => {
   for (const code of ['checkpoint_version_unsupported', 'resume_unsupported']) {
     const ctx = ctxWith(() => Promise.resolve({ data: null, error: { code: 'PT422', message: code } }));
@@ -55,7 +73,27 @@ Deno.test('the stub world offers the same tool inputs as the server', () => {
   for (const w of WORLD_TOOLS as { name: string; inputSchema: Row }[]) {
     const s = server.get(w.name) as Row | undefined;
     assert.ok(s, `server has no tool ${w.name}`);
-    assert.deepEqual(Object.keys(w.inputSchema.properties as Row).sort(), Object.keys(s.properties as Row).sort(), `properties of ${w.name}`);
-    assert.deepEqual([...((w.inputSchema.required as string[]) ?? [])].sort(), [...((s.required as string[]) ?? [])].sort(), `required of ${w.name}`);
+    assert.deepEqual(w.inputSchema, s, `input schema of ${w.name}`);
   }
+});
+
+Deno.test('the stub world lists my tasks for the same reasons as the server', () => {
+  const decided = { body: { signal: 'feedback', approval_id: 'ap1', decision: 'approve' } };
+  const cases: [Row, Row | undefined][] = [
+    [{ state: 'queued', active_run_id: null }, undefined],
+    [{ state: 'working', active_run_id: 'r1' }, undefined],
+    [{ state: 'input_required', active_run_id: null }, undefined],
+    [{ state: 'input_required', active_run_id: 'r1' }, undefined],
+    [{ state: 'ready_for_review', active_run_id: null }, undefined],
+    [{ state: 'queued', active_run_id: null, brief_stale: true }, undefined],
+    [{ state: 'done' }, undefined],
+    [{ state: 'cancelled' }, undefined],
+    [{ state: 'queued', active_run_id: null }, decided],
+    [{ state: 'working', active_run_id: 'r1' }, decided],
+    [{ state: 'input_required', active_run_id: null }, { body: { signal: 'continue', handover: true } }],
+    [{ state: 'working', active_run_id: 'r1' }, { body: { signal: 'stop' } }],
+    [{ state: 'ready_for_review', active_run_id: null }, { body: { signal: 'feedback', text: 'Fix it' } }],
+    [{ state: 'queued', active_run_id: null }, { body: { signal: 'start' } }],
+  ];
+  for (const [task, prompt] of cases) assert.equal(taskReason(task, prompt), reasonFor(task, prompt), JSON.stringify([task, prompt]));
 });
