@@ -27,6 +27,23 @@ describe("formatMetric", () => {
     expect(formatMetric(m("repeated_corrections", { status: "not_measured", value: 0 }))).toBe("Not measured yet");
     expect(formatMetric(m("interventions_per_accepted", { status: "no_data", value: null, sample: 0 }))).toBe("No data yet");
   });
+  it("says why a metric is not measured", () => {
+    const denied = (reason: string | null) => formatMetric(m("out_of_scope_attempts", { status: "not_measured", value: null, unit: "attempts", reason }));
+    expect(denied("owners_only")).toBe("Owners only");
+    expect(denied("per_agent_only")).toBe("Counted per agent in Settings");
+    expect(denied("webhook_agent")).toBe("Not logged for webhook agents");
+    expect(denied("needs_denial_log")).toBe("Not measured yet");
+    expect(denied(null)).toBe("Not measured yet");
+  });
+  it("never shows a cost that reads as zero, or as exact when some runs reported nothing", () => {
+    const usd = (value: number | null, over: Partial<Metric> = {}) => formatMetric(m("cost_per_accepted_usd", { unit: "usd", value, ...over }));
+    expect(usd(0.0049)).toBe("<$0.01");
+    expect(usd(0.01)).toBe("$0.01");
+    expect(usd(0)).toBe("$0.00"); // a harness that reported a cost of zero
+    expect(usd(0.2, { reason: "cost_partial" })).toBe("At least $0.20");
+    expect(usd(0.0049, { reason: "cost_partial" })).toBe("At least $0.0049");
+    expect(usd(null, { status: "no_data", sample: 2, reason: "cost_unreported" })).toBe("No cost reported");
+  });
   it("has a label for every metric the server returns", () => {
     for (const key of KEYS) expect(METRIC_LABEL[key]).toBeTruthy();
     expect(METRIC_LABEL.out_of_scope_attempts).toBe("Denied tool calls");
@@ -52,6 +69,13 @@ describe("metrics views", () => {
     expect(container.querySelectorAll("dt")).toHaveLength(10);
     expect(container.querySelector("dt")?.textContent).toBe("Interventions per accepted deliverable");
     expect(container.textContent).not.toMatch(/\b0\b/);
+  });
+  it("shows the reason in the list", () => {
+    act(() => root.render(createElement(MetricsList, { title: "Results", metrics: [
+      m("out_of_scope_attempts", { status: "not_measured", value: null, unit: "attempts", reason: "per_agent_only" }),
+      m("cost_per_accepted_usd", { status: "no_data", value: null, unit: "usd", reason: "cost_unreported" }),
+    ] })));
+    expect([...container.querySelectorAll("dd")].map((d) => d.textContent)).toEqual(["Counted per agent in Settings", "No cost reported"]);
   });
   it("shows Results in the task panel only when metrics are given", () => {
     const data = cardDataFrom(mockCard("side-question")) as TaskCardData;

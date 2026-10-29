@@ -23,10 +23,17 @@ export const METRIC_LABEL: Record<string, string> = {
   out_of_scope_attempts: "Denied tool calls",
 };
 
+// Why a metric has no number, when the reason tells the person more than "not measured".
+const NOT_MEASURED: Record<string, string> = {
+  owners_only: "Owners only",
+  per_agent_only: "Counted per agent in Settings",
+  webhook_agent: "Not logged for webhook agents",
+};
+
 export function formatMetric(m: Metric): string {
   // Nothing measured never reads as 0.
-  if (m.status === "not_measured") return "Not measured yet";
-  if (m.status !== "measured" || m.value === null) return "No data yet";
+  if (m.status === "not_measured") return (m.reason && NOT_MEASURED[m.reason]) || "Not measured yet";
+  if (m.status !== "measured" || m.value === null) return m.reason === "cost_unreported" ? "No cost reported" : "No data yet";
   switch (m.unit) {
     case "s": {
       const seconds = Math.round(m.value);
@@ -35,7 +42,12 @@ export function formatMetric(m: Metric): string {
       const rest = seconds % 60;
       return [hours && `${hours} h`, minutes && `${minutes} min`, rest && `${rest} s`].filter(Boolean).join(" ") || "0 s";
     }
-    case "usd": return `$${m.value.toFixed(2)}`;
+    case "usd": {
+      const small = m.value > 0 && m.value < 0.01;
+      // Some runs reported no cost: the sum of the others is a lower bound.
+      if (m.reason === "cost_partial") return `At least $${small ? Number(m.value.toFixed(4)) : m.value.toFixed(2)}`;
+      return small ? "<$0.01" : `$${m.value.toFixed(2)}`;
+    }
     case "per_deliverable": return String(Number(m.value.toFixed(2)));
     case "tasks":
     case "ops": return `${m.value} of ${m.sample}`;

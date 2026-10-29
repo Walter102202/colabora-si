@@ -10,11 +10,10 @@ import type { DiffItem, TaskDiff } from "@/lib/agentRunDiff";
 import { useAgentTasks } from "@/lib/agentTasks";
 import { useAgentsStore } from "@/lib/agentsStore";
 
-const actions = vi.hoisted(() => ({ loadTaskDiff: vi.fn(), revertRun: vi.fn() })); // vi.mock is hoisted above the imports
+const actions = vi.hoisted(() => ({ loadTaskDiff: vi.fn(), revertRun: vi.fn(), fetchTaskMetrics: vi.fn() })); // vi.mock is hoisted above the imports
 vi.mock("@/lib/agentActions", () => ({
   ...actions, briefFromRow: vi.fn(), closeTask: vi.fn(), createTask: vi.fn(), decideApproval: vi.fn(), handOver: vi.fn(), reviewTask: vi.fn(), sendMessage: vi.fn(),
   getTaskAutonomy: vi.fn().mockResolvedValue(null), subscribeWorkspaceAutonomy: () => () => {}, workspaceAutonomyVersion: () => 0,
-  fetchTaskMetrics: vi.fn().mockResolvedValue({ tasks: 0, metrics: [] }),
 }));
 vi.mock("@/lib/store", () => ({ useStore: (sel: (s: { syncWorkspaceId: string }) => unknown) => sel({ syncWorkspaceId: "w1" }) }));
 
@@ -31,6 +30,7 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
   actions.loadTaskDiff.mockReset(); actions.revertRun.mockReset();
+  actions.fetchTaskMetrics.mockReset().mockResolvedValue({ tasks: 0, metrics: [] });
   useAgentTasks.setState({ status: "ready", tasks: { [task.id]: task }, activities: { [task.id]: [] },
     subscribe: () => () => {}, loadTaskDetail: async () => {}, loadActivities: async () => {} });
   useAgentsStore.setState({ agents: [], load: async () => {} });
@@ -75,5 +75,21 @@ describe("row panel diff", () => {
     expect(actions.loadTaskDiff).toHaveBeenCalledTimes(2);
     await act(async () => button("Refresh").click());
     expect(actions.loadTaskDiff).toHaveBeenCalledTimes(3);
+  });
+  it("a revert that works reads the results again; one that fails does not", async () => {
+    const reverted = { key: "reverted_after_accept", status: "measured", value: 1, unit: "tasks", sample: 1, reason: null };
+    actions.loadTaskDiff.mockResolvedValue(diffOf([x, y]));
+    actions.fetchTaskMetrics.mockResolvedValueOnce({ tasks: 1, metrics: [{ ...reverted, value: 0 }] }).mockResolvedValue({ tasks: 1, metrics: [reverted] });
+    actions.revertRun.mockRejectedValueOnce(new Error("Some of these changes were edited after the run.")).mockResolvedValueOnce({ reverted: ["block:p:x"] });
+    await mount();
+    expect(container.querySelector('section[aria-label="Results"]')?.textContent).toContain("0 of 1");
+    act(() => boxes()[0].click());
+    act(() => button("Revert selected").click());
+    await act(async () => button("Confirm").click());
+    expect(actions.fetchTaskMetrics).toHaveBeenCalledTimes(1);
+    // The failed revert keeps the selection and the confirmation open: the person confirms again.
+    await act(async () => button("Confirm").click());
+    expect(actions.fetchTaskMetrics).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('section[aria-label="Results"]')?.textContent).toContain("1 of 1");
   });
 });

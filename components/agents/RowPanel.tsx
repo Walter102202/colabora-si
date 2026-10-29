@@ -104,6 +104,8 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
   const workspaceAutonomy = useSyncExternalStore(subscribeWorkspaceAutonomy, workspaceAutonomyVersion);
   const [diff, setDiff] = useState<TaskDiff | null>(null);
   const [metrics, setMetrics] = useState<Metric[] | null>(null);
+  // A revert changes the results without changing the state or the acceptance: it bumps this to read them again.
+  const [revertedAt, setRevertedAt] = useState(0);
   const { hash } = useLocation();
   // `#approval-<id>` (a deep link from a chat or a notification) lands on that approval.
   const focusApprovalId = useMemo(() => approvalIdFromHash(hash), [hash]);
@@ -125,7 +127,7 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
     let alive = true;
     void fetchTaskMetrics(task.id).then((result) => { if (alive) setMetrics(result.metrics); }, () => { if (alive) setMetrics(null); });
     return () => { alive = false; };
-  }, [task.id, task.state, task.acceptance]);
+  }, [task.id, task.state, task.acceptance, revertedAt]);
 
   useEffect(() => {
     let alive = true;
@@ -181,7 +183,7 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
       agent={agent}
       continuity={continuityFrom(agent, activities && lastCheckpointFor(activities))}
       diff={["ready_for_review", "input_required", "done"].includes(task.state) && diff?.task_id === task.id ? diff : null}
-      onRevert={(runId, keys) => revertRun(task.id, runId, keys).then(() => undefined).finally(reloadDiff)}
+      onRevert={(runId, keys) => revertRun(task.id, runId, keys).then(() => { setRevertedAt((n) => n + 1); }).finally(reloadDiff)}
       onRefreshDiff={loadDiff}
       handOverAgents={agents.filter((a) => a.status === "enabled")}
       onHandOver={(to, note) => handOver(task.id, to, note).then(() => undefined)}
