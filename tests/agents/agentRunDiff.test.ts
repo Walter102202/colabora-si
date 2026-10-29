@@ -31,6 +31,13 @@ ${"x".repeat(80)}`, after_rev: 1, current_rev: 1, summary: "Appended 2 block(s)"
     expect(itemLabel({ ...item, after_text: null })).toBe("Appended 2 block(s)");
     expect(itemLabel({ ...item, kind: "row", key: "row:p:r", block_id: undefined, after_text: null, before_text: null, summary: "Set 2 cell(s)" })).toBe("Set 2 cell(s)");
   });
+  it("itemLabel never cuts a character made of two code units in half", () => {
+    const item: DiffItem = { key: "block:p:b", kind: "block", change: "added", page_id: "p", block_id: "b", status: "revertable",
+      before_text: "", after_text: "a".repeat(58) + "\u{1F680}\u{1F680}\u{1F680}", after_rev: 1, current_rev: 1, summary: "Appended 1 block(s)", first_seq: 1, last_seq: 1 };
+    const label = itemLabel(item);
+    expect(label).toBe(`Added: "${"a".repeat(58)}\u{1F680}…"`);
+    expect(label).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
   it("isRunActive is true while the run is running or waiting", () => {
     expect(["running", "waiting", "completed", "failed", "cancelled"].map((status) => isRunActive({ status }))).toEqual([true, true, false, false, false]);
   });

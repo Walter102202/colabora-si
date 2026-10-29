@@ -20,8 +20,8 @@ export function agentErrorMessage(error: unknown): string {
   if (e.message === "invalid_state") return "The task changed state. Refresh and try again.";
   if (e.message === "page_locked") return "The page is locked. Unlock it to revert.";
   if (e.message === "stop_requested") return "A stop was requested for this run. Wait for the agent to stop.";
-  if (e.message === "revert_conflict") return "Some of these changes were edited after the run. Refresh the diff and revert only what is still unchanged.";
-  if (e.message === "item_not_found") return "That change is no longer in the diff. Refresh it.";
+  if (e.message === "revert_conflict") return "Some of these changes were edited after the run. The list now shows what can still be reverted.";
+  if (e.message === "item_not_found") return "That change is no longer in the list.";
   if (e.message === "run_active") return "The run is still active. Stop it before reverting.";
   if (e.message === "humans_only") return "Only a person can do that.";
   if (e.message === "cross_workspace") return "The page and the agent belong to different workspaces.";

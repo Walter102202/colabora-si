@@ -64,6 +64,8 @@ export function isRunActive(run: Pick<RunDiff, "status">): boolean {
 export function itemLabel(item: DiffItem, max = 60): string {
   const text = (item.after_text || item.before_text || "").replace(/\s+/g, " ").trim();
   if (item.kind !== "block" || !text) return item.summary;
-  const short = text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+  // Cut by code points so an emoji is never split into a lone surrogate.
+  const chars = Array.from(text);
+  const short = chars.length > max ? `${chars.slice(0, max - 1).join("").trimEnd()}…` : text;
   return `${item.change === "added" ? "Added" : "Edited"}: "${short}"`;
 }

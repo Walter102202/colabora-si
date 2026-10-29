@@ -55,6 +55,14 @@ describe("row panel diff", () => {
     expect(container.textContent).toContain("Paragraph X, edited");
     expect(boxes().map((b) => b.closest("label")?.textContent)).toEqual(['Added: "Paragraph Y"']);
   });
+  it("a Refresh that fails keeps the diff on screen and says so", async () => {
+    actions.loadTaskDiff.mockResolvedValueOnce(diffOf([x, y])).mockRejectedValueOnce(new Error("offline"));
+    await mount();
+    await act(async () => button("Refresh").click());
+    expect(actions.loadTaskDiff).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("Paragraph X");
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Could not refresh the changes. Try again.");
+  });
   it("a revert that works and the Refresh button both load the diff again", async () => {
     actions.loadTaskDiff.mockResolvedValue(diffOf([x, y]));
     actions.revertRun.mockResolvedValueOnce({ reverted: ["block:p:x"] });

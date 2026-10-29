@@ -110,6 +110,26 @@ describe("run diff card", () => {
     expect(boxes()[0].checked).toBe(true);
     expect(container.textContent).toContain("Revert 1 change?");
   });
+  it("a failed revert that leaves nothing selected goes back to Revert selected instead of asking about zero changes", async () => {
+    const reloaded = taskDiff(run([{ ...item, status: "changed_since" }, edited, changed, external]));
+    const onRevert = vi.fn(async () => {
+      root.render(createElement(RunDiffCard, { diff: reloaded, onRevert }));
+      throw new Error("Some of these changes were edited after the run.");
+    });
+    act(() => root.render(createElement(RunDiffCard, { diff, onRevert })));
+    act(() => itemRow("Added text").querySelector("input")!.click());
+    act(() => button("Revert selected")!.click());
+    await act(async () => button("Confirm")!.click());
+    expect(container.textContent).not.toContain("Revert 0");
+    expect(button("Confirm")).toBeUndefined();
+    expect(button("Revert selected")?.disabled).toBe(true);
+  });
+  it("a Refresh that fails says so", async () => {
+    const onRefresh = vi.fn(async () => { throw new Error("offline"); });
+    act(() => root.render(createElement(RunDiffCard, { diff, onRevert: async () => {}, onRefresh })));
+    await act(async () => button("Refresh")!.click());
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Could not refresh the changes. Try again.");
+  });
   it("Refresh asks for a fresh diff", async () => {
     const onRefresh = vi.fn(async () => {});
     act(() => root.render(createElement(RunDiffCard, { diff, onRevert: async () => {}, onRefresh })));

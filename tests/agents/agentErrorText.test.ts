@@ -15,6 +15,9 @@ describe("texts for the errors of a person's agent actions", () => {
     expect(agentErrorMessage({ message: "invalid_state" })).toBe("The task changed state. Refresh and try again.");
     expect(agentErrorMessage({ message: "page_locked" })).toBe("The page is locked. Unlock it to revert.");
     expect(agentErrorMessage({ message: "stop_requested" })).toBe("A stop was requested for this run. Wait for the agent to stop.");
+    // The row panel reloads the diff after a failed revert, so these texts do not ask to refresh it.
+    expect(agentErrorMessage({ message: "revert_conflict" })).toBe("Some of these changes were edited after the run. The list now shows what can still be reverted.");
+    expect(agentErrorMessage({ message: "item_not_found" })).toBe("That change is no longer in the list.");
   });
 
   it("a handover the task's state does not allow keeps its own text; closing the task gets the generic one", async () => {

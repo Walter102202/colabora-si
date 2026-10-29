@@ -126,8 +126,9 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
 
   const agent = agents.find((a) => a.id === task.delegate_agent_id) ?? null;
   // A person's edit leaves no activity, so the diff can be stale: it reloads after every revert, failed or not,
-  // and on request. A failed load keeps the diff on screen.
-  const reloadDiff = () => loadTaskDiff(task.id).then(setDiff, () => {});
+  // and on request. A failed load keeps the diff on screen; only the Refresh button reports it.
+  const loadDiff = () => loadTaskDiff(task.id).then(setDiff);
+  const reloadDiff = () => loadDiff().catch(() => {});
   const subtasks = useMemo<SubtaskItem[]>(
     () =>
       Object.values(tasks)
@@ -144,7 +145,7 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
       continuity={continuityFrom(agent, activities && lastCheckpointFor(activities))}
       diff={["ready_for_review", "input_required", "done"].includes(task.state) && diff?.task_id === task.id ? diff : null}
       onRevert={(runId, keys) => revertRun(task.id, runId, keys).then(() => undefined).finally(reloadDiff)}
-      onRefreshDiff={reloadDiff}
+      onRefreshDiff={loadDiff}
       handOverAgents={agents.filter((a) => a.status === "enabled")}
       onHandOver={(to, note) => handOver(task.id, to, note).then(() => undefined)}
       run={run}
