@@ -1,7 +1,21 @@
 import { useEffect, useState } from "react";
+import { create } from "zustand";
 import { getSupabase } from "@/lib/supabase";
 import { useStore } from "@/lib/store";
 import type { Block, Page } from "@/lib/types";
+export interface FileBackend { registerRow(id: string, ws: string): Promise<boolean>; putObject(id: string, ws: string, blob: Blob): Promise<boolean> }
+export async function uploadRowFirst(backend: FileBackend, id: string, ws: string, blob: Blob): Promise<"done" | "row_failed" | "object_failed"> {
+  if (!await backend.registerRow(id, ws)) return "row_failed";
+  if (!await backend.putObject(id, ws, blob)) return "object_failed";
+  return "done";
+}
+export const useUploadState = create<{ uploading: Record<string, true>; start(id: string): void; finish(id: string): void; clear(): void }>((set) => ({
+  uploading: {},
+  start: (id) => set((s) => ({ uploading: { ...s.uploading, [id]: true } })),
+  finish: (id) => set((s) => { const uploading = { ...s.uploading }; delete uploading[id]; return { uploading }; }),
+  clear: () => set({ uploading: {} }),
+}));
+export function useUploading(fileId?: string): boolean { return useUploadState((s) => !!fileId && !!s.uploading[fileId]); }
 const DB_NAME = "colabora-files", BUCKET = "files", THROTTLE_MS = 400, MAX_BACKOFF_MS = 30000;
 let dbPromise: Promise<IDBDatabase> | null = null;
 function database(): Promise<IDBDatabase> {
@@ -22,11 +36,14 @@ let wsId: string | null = null, epoch = 0, running = false, attempts = 0, retryT
 const queue: string[] = [], queuedSet = new Set<string>(), downloads = new Map<string, Promise<Blob | undefined>>();
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 async function uploadOne(id: string, ws: string): Promise<boolean> {
-  const sb = getSupabase(); if (!sb) return true;
-  const blob = await getLocal(id).catch(() => undefined); if (!blob) return true;
-  const { error } = await sb.storage.from(BUCKET).upload(ws + "/" + id, blob, { upsert: true, contentType: blob.type || "application/octet-stream" }); if (error) return false;
-  const mapped = await sb.from("files").upsert({ id, workspace_id: ws }); if (mapped.error) return false;
-  await markUploaded(id, ws); return true;
+  const sb = getSupabase(); if (!sb) { useUploadState.getState().finish(id); return true; }
+  const blob = await getLocal(id).catch(() => undefined); if (!blob) { useUploadState.getState().finish(id); return true; }
+  const outcome = await uploadRowFirst({
+    registerRow: async (id, ws) => !(await sb.from("files").upsert({ id, workspace_id: ws })).error,
+    putObject: async (id, ws, blob) => !(await sb.storage.from(BUCKET).upload(ws + "/" + id, blob, { upsert: true, contentType: blob.type || "application/octet-stream" })).error,
+  }, id, ws, blob);
+  if (outcome !== "done") return false;
+  await markUploaded(id, ws); useUploadState.getState().finish(id); return true;
 }
 async function pump(): Promise<void> {
   if (running || !wsId || retryTimer || !navigator.onLine) return;
@@ -39,7 +56,9 @@ async function pump(): Promise<void> {
     }
   } finally { if (token === epoch) running = false; }
 }
-function enqueueUpload(id: string): void { if (!queuedSet.has(id)) { queuedSet.add(id); queue.push(id); } void pump(); }
+// Exported for tests. Without a backend or before the workspace is known (signed out, bootstrap pending) nothing can be sent:
+// onFileSyncStart re-enqueues every file not yet uploaded for the workspace, so returning here leaves no state behind.
+export function enqueueUpload(id: string): void { if (!getSupabase() || !wsId) return; if (!queuedSet.has(id)) { useUploadState.getState().start(id); queuedSet.add(id); queue.push(id); } void pump(); }
 export async function putFile(id: string, blob: Blob): Promise<void> { await putLocal(id, blob); enqueueUpload(id); }
 async function downloadRemote(id: string): Promise<Blob | undefined> {
   const sb = getSupabase(); if (!sb) return;
@@ -86,4 +105,4 @@ export function onFileSyncStart(id: string): void {
   if (wsId === id) return; onFileSyncStop(); wsId = id; window.addEventListener("online", online); const token = epoch;
   void (async () => { for (const fileId of listReferencedFileIds()) { if (token !== epoch) return; if (await local<string>("uploaded", "readonly", (s) => s.get(fileId)) === id || !(await getLocal(fileId))) continue; if (token !== epoch) return; enqueueUpload(fileId); await delay(THROTTLE_MS); } })().catch(() => {}); void pump();
 }
-export function onFileSyncStop(): void { window.removeEventListener("online", online); epoch++; if (retryTimer) clearTimeout(retryTimer); retryTimer = null; queue.length = 0; queuedSet.clear(); wsId = null; running = false; attempts = 0; }
+export function onFileSyncStop(): void { window.removeEventListener("online", online); epoch++; if (retryTimer) clearTimeout(retryTimer); retryTimer = null; queue.length = 0; queuedSet.clear(); wsId = null; running = false; attempts = 0; useUploadState.getState().clear(); }
