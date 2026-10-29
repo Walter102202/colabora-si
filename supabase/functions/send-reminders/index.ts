@@ -211,9 +211,10 @@ async function sendPush(
 ): Promise<number | "invalid"> {
   let body: Uint8Array<ArrayBuffer>;
   try {
+    new URL(sub.endpoint);
     body = await encryptPayload(payload, sub.p256dh, sub.auth);
   } catch {
-    // The subscription keys are malformed: this endpoint can never receive a push.
+    // The endpoint is not a URL or the subscription keys are malformed: it can never receive a push.
     return "invalid";
   }
   const authorization = await vapidAuthorization(
@@ -365,7 +366,7 @@ Deno.serve(async (req) => {
   }
 
   const expired = new Set<string>();
-  // Endpoints that threw (timeout, network): skipped for the rest of the pass, so each costs one timeout.
+  // Endpoints that threw (timeout, network) or answered 429/5xx: skipped for the rest of the pass.
   const unreachable = new Set<string>();
   // The cron call gives up after 30 s: the pass stops starting sends after 15 s (plus at most one timeout),
   // so it always reaches the marking below; the rest waits for the next minute.
@@ -377,15 +378,14 @@ Deno.serve(async (req) => {
   const statuses: Record<string, number> = {};
   let sent = 0;
 
-  for (const reminder of due) {
-    if (Date.now() > deadline) break;
+  const send = async (reminder: DueReminder) => {
     const subs = byUser.get(reminder.user_id);
     // No push subscription for a reminder: leave `notified` false so the
     // in-app checker still fires the toast next time the app is open.
     if (!subs?.length) {
       // Agent notifications already show in the inbox: mark them so the 200 oldest never block newer ones.
       if (reminder.notificationId) notificationIds.push(reminder.notificationId);
-      continue;
+      return;
     }
 
     const payload = JSON.stringify(reminder.push ?? {
@@ -416,6 +416,8 @@ Deno.serve(async (req) => {
         sent++;
       } else {
         console.error("push rejected", status, sub.endpoint);
+        // A service that is overloaded or failing now is tried again next pass, not for every row of this one.
+        if (status === 429 || (typeof status === "number" && status >= 500)) unreachable.add(sub.endpoint);
       }
     });
     const outcome = pushOutcome(results);
@@ -425,7 +427,12 @@ Deno.serve(async (req) => {
     if (reminder.notificationId) {
       if (outcome !== "retry") notificationIds.push(reminder.notificationId);
     } else if (outcome === "delivered") reminderIds.push(reminder.id);
-  }
+  };
+  // Eight rows go out at a time, so a few slow push services at the head of the queue cannot use up the pass.
+  let next = 0;
+  await Promise.all(Array.from({ length: 8 }, async () => {
+    while (next < due.length && Date.now() <= deadline) await send(due[next++]);
+  }));
 
   if (notificationIds.length) {
     const { error } = await supabase.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", notificationIds);
