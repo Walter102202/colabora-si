@@ -80,14 +80,17 @@ export function shouldPush(n: AgentNotification, approval: PushApproval | null):
   return !n.approval_id || !approval || approval.status === "pending";
 }
 
+// One send: the push service status, "threw" (timeout or network) or "invalid" (malformed subscription keys).
+export type PushResult = number | "threw" | "invalid";
+
 // After one pass over a person's subscriptions: delivered, worth another try, or never deliverable.
 export type PushOutcome = "delivered" | "retry" | "drop";
 
-export function pushOutcome(results: (number | "threw")[]): PushOutcome {
+export function pushOutcome(results: PushResult[]): PushOutcome {
   if (results.some((r) => typeof r === "number" && r >= 200 && r < 300)) return "delivered";
   // A 4xx other than 429 fails the same way every time: an expired endpoint (404, 410), keys the push
-  // service rejects (400, 401, 403) or a payload that is too large (413).
-  const permanent = (r: number | "threw") => typeof r === "number" && r >= 400 && r < 500 && r !== 429;
+  // service rejects (400, 401, 403), a payload that is too large (413) or keys that cannot encrypt.
+  const permanent = (r: PushResult) => r === "invalid" || (typeof r === "number" && r >= 400 && r < 500 && r !== 429);
   return results.length > 0 && results.every(permanent) ? "drop" : "retry";
 }
 

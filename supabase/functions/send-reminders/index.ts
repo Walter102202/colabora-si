@@ -9,7 +9,7 @@
 // implemented directly on WebCrypto — no third-party push library.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { agentPush, pushOutcome, shouldPush, tooOldToPush, type AgentNotification, type PushApproval, type PushPayload } from "./payload.ts";
+import { agentPush, pushOutcome, shouldPush, tooOldToPush, type AgentNotification, type PushApproval, type PushPayload, type PushResult } from "./payload.ts";
 
 const enc = new TextEncoder();
 
@@ -201,12 +201,21 @@ interface Sub {
   auth: string;
 }
 
+// A push service that accepts the connection and never answers would otherwise hold the whole pass.
+const PUSH_TIMEOUT_MS = 10_000;
+
 async function sendPush(
   sub: Sub,
   payload: string,
   cfg: { vapid_public: string; vapid_private: string; vapid_subject: string },
-): Promise<number> {
-  const body = await encryptPayload(payload, sub.p256dh, sub.auth);
+): Promise<number | "invalid"> {
+  let body: Uint8Array<ArrayBuffer>;
+  try {
+    body = await encryptPayload(payload, sub.p256dh, sub.auth);
+  } catch {
+    // The subscription keys are malformed: this endpoint can never receive a push.
+    return "invalid";
+  }
   const authorization = await vapidAuthorization(
     sub.endpoint,
     cfg.vapid_public,
@@ -223,6 +232,7 @@ async function sendPush(
       Urgency: "high",
     },
     body,
+    signal: AbortSignal.timeout(PUSH_TIMEOUT_MS),
   });
   // Drain so the connection can be reused / released.
   await res.arrayBuffer().catch(() => undefined);
@@ -355,6 +365,11 @@ Deno.serve(async (req) => {
   }
 
   const expired = new Set<string>();
+  // Endpoints that threw (timeout, network): skipped for the rest of the pass, so each costs one timeout.
+  const unreachable = new Set<string>();
+  // The cron call gives up after 30 s: the pass stops starting sends after 15 s (plus at most one timeout),
+  // so it always reaches the marking below; the rest waits for the next minute.
+  const deadline = Date.now() + 15_000;
   const deliveredIds: string[] = [];
   const reminderIds: string[] = [];
   // Agent notifications that leave the queue: delivered, nobody to push to, or refused for good.
@@ -363,6 +378,7 @@ Deno.serve(async (req) => {
   let sent = 0;
 
   for (const reminder of due) {
+    if (Date.now() > deadline) break;
     const subs = byUser.get(reminder.user_id);
     // No push subscription for a reminder: leave `notified` false so the
     // in-app checker still fires the toast next time the app is open.
@@ -379,27 +395,29 @@ Deno.serve(async (req) => {
       url: reminder.page_id ? `/p/${reminder.page_id}` : "/",
     });
 
-    const results: (number | "threw")[] = [];
-    for (const sub of subs) {
-      if (expired.has(sub.endpoint)) continue;
-      let status: number;
+    // A person's devices are tried together, so one that never answers costs a single timeout.
+    const targets = subs.filter((sub) => !expired.has(sub.endpoint) && !unreachable.has(sub.endpoint));
+    const results = await Promise.all(targets.map(async (sub): Promise<PushResult> => {
       try {
-        status = await sendPush(sub, payload, cfg);
+        return await sendPush(sub, payload, cfg);
       } catch (e) {
         console.error("push send threw", sub.endpoint, e);
-        results.push("threw");
-        continue;
+        unreachable.add(sub.endpoint);
+        return "threw";
       }
-      results.push(status);
+    }));
+    targets.forEach((sub, i) => {
+      const status = results[i];
+      if (status === "threw") return;
       statuses[String(status)] = (statuses[String(status)] ?? 0) + 1;
       if (status === 404 || status === 410) {
         expired.add(sub.endpoint);
-      } else if (status >= 200 && status < 300) {
+      } else if (typeof status === "number" && status >= 200 && status < 300) {
         sent++;
       } else {
         console.error("push rejected", status, sub.endpoint);
       }
-    }
+    });
     const outcome = pushOutcome(results);
     if (outcome === "delivered") deliveredIds.push(reminder.id);
     // A reminder that was not delivered keeps `notified` false. An agent notification also leaves the queue

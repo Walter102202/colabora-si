@@ -72,6 +72,8 @@ Deno.test("a push leaves the queue when delivered or refused for good, and is tr
   assert.equal(pushOutcome([503]), "retry");
   assert.equal(pushOutcome(["threw"]), "retry");
   assert.equal(pushOutcome([400, "threw"]), "retry");
+  assert.equal(pushOutcome(["invalid"]), "drop", "keys that cannot encrypt never will");
+  assert.equal(pushOutcome(["invalid", "threw"]), "retry");
   assert.equal(pushOutcome([]), "retry", "no subscription was tried in this pass");
 });
 
