@@ -96,6 +96,7 @@ begin
     private.metric('stale_knowledge_answers', null, 'answers', 0, 'not_measured', 'needs_sources'),
     case when not v_has_log then private.metric('out_of_scope_attempts', null, 'attempts', 0, 'not_measured', 'needs_denial_log')
          when not private.is_workspace_owner(p_ws) then private.metric('out_of_scope_attempts', null, 'attempts', 0, 'not_measured', 'owners_only')
+         when cardinality(p_tasks) = 0 then private.metric('out_of_scope_attempts', null, 'attempts', 0)
          else private.metric('out_of_scope_attempts', v_denied, 'attempts', v_denied) end);
 end $$;
 
@@ -144,3 +145,30 @@ grant execute on function public.agent_metrics(uuid, timestamptz) to authenticat
 grant execute on function public.task_metrics(uuid) to authenticated;
 
 -- ============ denied calls (appended by the next commit) ============
+
+-- A denied RPC rolls back and leaves no row. The MCP server reports each denial of an agent call here,
+-- afterwards and best effort, so out_of_scope_attempts has a source. Only agents report, only for themselves.
+create or replace function public.record_access_denial(p_tool text, p_code text, p_task_id uuid default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_agent public.agents%rowtype; v_task uuid;
+begin
+  if private.principal_type() <> 'agent' then raise exception using errcode = 'PT403', message = 'forbidden'; end if;
+  select * into v_agent from public.agents where id = private.current_agent_id();
+  if not found then raise exception using errcode = 'PT403', message = 'forbidden'; end if;
+  perform private.check_rate(v_agent.id);
+  if coalesce(p_code, '') not in ('forbidden','humans_only','lead_only','direct_session_required') or coalesce(p_tool, '') !~ '^[a-z_]{1,64}$' then
+    raise exception using errcode = 'PT400', message = 'invalid_input';
+  end if;
+  if p_task_id is not null and private.can_read_task(p_task_id) then v_task := p_task_id; end if;
+  if exists (select 1 from public.audit_events e
+              where e.workspace_id = v_agent.workspace_id and e.action = 'access.denied' and e.actor_id = (select auth.uid())
+                and e.target->>'tool' = p_tool and e.target->>'code' = p_code and e.created_at > now() - interval '1 minute') then
+    return jsonb_build_object('recorded', false);
+  end if;
+  insert into public.audit_events (workspace_id, actor_id, actor_type, action, target)
+  values (v_agent.workspace_id, (select auth.uid()), 'agent', 'access.denied',
+          jsonb_build_object('tool', p_tool, 'code', p_code, 'task_id', v_task, 'agent_id', v_agent.id));
+  return jsonb_build_object('recorded', true);
+end $$;
+revoke all on function public.record_access_denial(text, text, uuid) from public, anon;
+grant execute on function public.record_access_denial(text, text, uuid) to authenticated;

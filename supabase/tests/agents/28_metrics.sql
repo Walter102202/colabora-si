@@ -1,7 +1,7 @@
 -- Metrics of how agents work for people: known numbers in, the same numbers out.
 -- Nothing divides by zero, and a metric without a source says so instead of showing 0.
 begin;
-select plan(27);
+select plan(38);
 
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_M2', 'page_A');
@@ -19,6 +19,7 @@ select public.create_agent_task('page_M2', '{"objective":"Two"}'::jsonb, (:'f'::
 select public.create_agent_task('page_M3', '{"objective":"Three"}'::jsonb, (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as t3 \gset
 select public.create_agent_task('page_M4', '{"objective":"Sub of one"}'::jsonb, (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as s1 \gset
 select public.create_agent_task('page_M5', '{"objective":"Idle"}'::jsonb, (:'idle'::jsonb->>'agent')::uuid) ->> 'task_id' as t4 \gset
+select public.create_agent_task('page_B', '{"objective":"Not granted to the agent"}'::jsonb) ->> 'task_id' as hidden \gset
 select tests.reset_role();
 
 create function pg_temp.act(p_task uuid, p_run uuid, p_type text, p_body jsonb, p_author text, p_at timestamptz)
@@ -141,8 +142,7 @@ select is((pg_temp.m(:'am', 'repeated_corrections')->>'status') || ':' || (pg_te
           'not_measured:needs_lessons', 'repeated corrections need a lessons log');
 select is((pg_temp.m(:'am', 'stale_knowledge_answers')->>'status') || ':' || (pg_temp.m(:'am', 'stale_knowledge_answers')->>'reason'),
           'not_measured:needs_sources', 'stale answers need versioned sources');
-select is((pg_temp.m(:'am', 'out_of_scope_attempts')->>'status') || ':' || (pg_temp.m(:'am', 'out_of_scope_attempts')->>'reason'),
-          'not_measured:needs_denial_log', 'without a denial log, denied tool calls are not measured');
+select is(pg_temp.m(:'am', 'out_of_scope_attempts')->>'status', 'measured', 'with the denial log, the owner measures denied tool calls');
 
 -- B. A task measures itself and its subtasks.
 select is((:'tm1'::jsonb->>'tasks')::int, 2, 'a task counts its subtasks');
@@ -155,6 +155,8 @@ select is((pg_temp.m(:'tm3', 'resume_time_s')->>'value')::numeric, 345::numeric,
 select is(pg_temp.m(:'im', 'interventions_per_accepted')->>'status', 'no_data', 'an agent with zero accepted deliverables does not divide by zero');
 select is(pg_temp.m(:'im', 'cost_per_accepted_usd')->>'status', 'no_data', 'nor shows a cost per deliverable');
 select is((:'later'::jsonb->>'tasks')::int, 0, 'the window leaves out older tasks');
+select ok((select bool_and(x->>'status' <> 'measured' and x->'value' = 'null'::jsonb) from jsonb_array_elements(:'later'::jsonb->'metrics') x),
+          'an empty cohort has no measured metrics even with the denial log');
 select tests.set_human(:'stranger'::uuid);
 select is(tests.error_of(format('select public.agent_metrics(%L::uuid)', :'f'::jsonb->>'agent')), 'not_found', 'a stranger cannot measure the agent');
 select is(tests.error_of(format('select public.task_metrics(%L::uuid)', :'t1')), 'not_found', 'nor the task');
@@ -165,6 +167,32 @@ select is(tests.error_of(format('select public.task_metrics(%L::uuid)', :'t1')),
 select tests.reset_role();
 select tests.set_anon();
 select is(tests.sqlstate_of(format('select public.agent_metrics(%L::uuid)', :'f'::jsonb->>'agent')), '42501', 'anon cannot call it');
+select tests.reset_role();
+
+-- D. Denied calls: agents report their own; the owner reads the count; nobody else sees it.
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.record_access_denial('close_task', 'humans_only', :'t1'::uuid);
+select public.record_access_denial('close_task', 'humans_only', :'t1'::uuid);
+select public.record_access_denial('create_subtask', 'lead_only', null);
+select is(tests.error_of('select public.record_access_denial(''close_task'', ''block_conflict'', null)'), 'invalid_input', 'only denial codes are recorded');
+select is(tests.error_of('select public.record_access_denial(''Bad-tool'', ''forbidden'', null)'), 'invalid_input', 'tool names are constrained');
+select is(public.record_access_denial('update_brief', 'direct_session_required', :'t1'::uuid)->>'recorded', 'true', 'direct session denials are access denials too');
+select public.record_access_denial('edit_page', 'forbidden', :'hidden'::uuid);
+select tests.reset_role();
+select is((select target->'task_id' from public.audit_events where action = 'access.denied' and target->>'tool' = 'edit_page'), 'null'::jsonb, 'a task the agent cannot read is omitted from the log');
+select is((select count(*)::int from public.audit_events where action = 'access.denied'), 4, 'a repeated denial within a minute is recorded once');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of('select public.record_access_denial(''close_task'', ''forbidden'', null)'), 'forbidden', 'a person cannot write denials');
+select public.agent_metrics((:'f'::jsonb->>'agent')::uuid) as am2 \gset
+select is((pg_temp.m(public.task_metrics(:'t1'::uuid), 'out_of_scope_attempts')->>'value')::int, 2, 'task metrics count only denials associated with the task');
+select tests.reset_role();
+select is((pg_temp.m(:'am2', 'out_of_scope_attempts')->>'value')::int, 4, 'the owner sees four denied tool calls');
+select tests.set_human((:'f'::jsonb->>'viewer')::uuid);
+select public.agent_metrics((:'f'::jsonb->>'agent')::uuid) as vm \gset
+select tests.reset_role();
+select is(pg_temp.m(:'vm', 'out_of_scope_attempts')->>'reason', 'owners_only', 'anyone else is told that only owners see it');
+select tests.set_anon();
+select is(tests.sqlstate_of('select public.record_access_denial(''close_task'', ''forbidden'', null)'), '42501', 'anon cannot record a denial');
 select tests.reset_role();
 
 select * from finish();
