@@ -53,3 +53,17 @@ export function statusLabel(status: DiffStatus): string {
     gone: "Deleted after the run", manual: "Revert by hand", reverted: "Reverted" };
   return labels[status];
 }
+
+// A run that is still running or waiting cannot be reverted (revert_run answers run_active).
+export function isRunActive(run: Pick<RunDiff, "status">): boolean {
+  return run.status === "running" || run.status === "waiting";
+}
+
+// What one item changed, named by the start of its block text: items of one write share a summary,
+// so the text is what tells them apart (and what a screen reader announces for each checkbox).
+export function itemLabel(item: DiffItem, max = 60): string {
+  const text = (item.after_text || item.before_text || "").replace(/\s+/g, " ").trim();
+  if (item.kind !== "block" || !text) return item.summary;
+  const short = text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+  return `${item.change === "added" ? "Added" : "Edited"}: "${short}"`;
+}

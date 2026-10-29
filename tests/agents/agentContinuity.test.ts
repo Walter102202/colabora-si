@@ -20,6 +20,11 @@ describe("task continuity", () => {
     expect(continuityText(continuityFrom({ capabilities: { resume: true } }, null)!)).toBe("Can continue from a checkpoint; none saved yet");
     expect(continuityFrom(null, null)).toBeNull();
   });
+  it("says nothing while the activities load, and names a checkpoint the new agent cannot resume from", () => {
+    expect(continuityFrom({ capabilities: { resume: true } }, undefined)).toBeNull();
+    expect(continuityText(continuityFrom({ capabilities: {} }, act(7, "checkpoint", { v: 1, next_step: "Email the team" }))!))
+      .toBe("Checkpoint #7 saved, but this agent starts from the brief and the activity");
+  });
   it("labels checkpoint and handover activities", () => {
     expect(activityLabel(act(3, "checkpoint", { v: 1, next_step: "Email the team" }))).toBe("checkpoint: Email the team");
     expect(activityLabel(act(4, "handover", { from_harness: "claude_code", to_harness: "codex", summary: "1 approval pending." })))

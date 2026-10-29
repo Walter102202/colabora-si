@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { revertableKeys, statusLabel, wordDiff, type DiffItem, type DiffStatus, type RunDiff } from "@/lib/agentRunDiff";
+import { isRunActive, itemLabel, revertableKeys, statusLabel, wordDiff, type DiffItem, type DiffStatus, type RunDiff } from "@/lib/agentRunDiff";
 
 describe("run diff", () => {
   it("wordDiff marks inserted and deleted words", () => {
@@ -18,6 +18,21 @@ describe("run diff", () => {
     const run: RunDiff = { run_id: "r", agent_id: "a", harness: "codex", status: "completed", started_at: "", ended_at: null,
       hidden_items: 0, items: [item, { ...item, key: "other", status: "changed_since" }] };
     expect(revertableKeys(run)).toEqual([item.key]);
+  });
+  it("itemLabel names a block by the start of its text and falls back to the summary", () => {
+    const item: DiffItem = { key: "block:p:b", kind: "block", change: "added", page_id: "p", block_id: "b", status: "revertable",
+      before_text: "", after_text: `  Quarterly   report
+${"x".repeat(80)}`, after_rev: 1, current_rev: 1, summary: "Appended 2 block(s)", first_seq: 1, last_seq: 1 };
+    const label = itemLabel(item);
+    expect(label.startsWith('Added: "Quarterly report x')).toBe(true);
+    expect(label.endsWith('…"')).toBe(true);
+    expect(label.length).toBe('Added: ""'.length + 60);
+    expect(itemLabel({ ...item, change: "edited", after_text: "", before_text: "Old text" })).toBe('Edited: "Old text"');
+    expect(itemLabel({ ...item, after_text: null })).toBe("Appended 2 block(s)");
+    expect(itemLabel({ ...item, kind: "row", key: "row:p:r", block_id: undefined, after_text: null, before_text: null, summary: "Set 2 cell(s)" })).toBe("Set 2 cell(s)");
+  });
+  it("isRunActive is true while the run is running or waiting", () => {
+    expect(["running", "waiting", "completed", "failed", "cancelled"].map((status) => isRunActive({ status }))).toEqual([true, true, false, false, false]);
   });
   it("statusLabel names every status", () => {
     const expected: Record<DiffStatus, string> = { revertable: "Can be reverted", changed_since: "Changed after the run: revert by hand",

@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { continuityText, type ContinuityInfo } from "@/lib/agentContinuity";
 import type { TaskDiff } from "@/lib/agentRunDiff";
 import { RunDiffCard } from "@/components/agents/panel/RunDiffCard";
@@ -47,10 +47,17 @@ export interface TaskViewProps {
   activities: ActivityRow[];
   subtasks: SubtaskItem[];
   reviewerName: string | null;
+  // Whether the delegate can resume and its last checkpoint; null while unknown or without an agent.
   continuity?: ContinuityInfo | null;
+  // The per-block diff of the task's runs; null when it does not apply or has not loaded.
   diff?: TaskDiff | null;
+  // Reverts unchanged items of a finished run. Without it (the MCP card) the diff is read-only.
   onRevert?: (runId: string, keys: string[]) => Promise<void>;
+  // Loads the diff again (a person may have edited a block since it loaded).
+  onRefreshDiff?: () => Promise<void>;
+  // Enabled agents to hand the task over to; the view leaves out the current delegate.
   handOverAgents?: AgentOption[];
+  // Releases the task to another agent (null: the same agent, in a new session).
   onHandOver?: (toAgentId: string | null, note: string) => Promise<void>;
   // Approval a deep link (#approval-<id>) asked to land on, if any.
   focusApprovalId?: string | null;
@@ -115,7 +122,7 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ task, agent, run, approval, artifact, review, brief, activities, subtasks, reviewerName, continuity = null, diff = null, onRevert, handOverAgents = [], onHandOver, focusApprovalId = null, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ task, agent, run, approval, artifact, review, brief, activities, subtasks, reviewerName, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -125,9 +132,23 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
   const [handingOver, setHandingOver] = useState(false);
   const [handoverAgent, setHandoverAgent] = useState("");
   const [handoverNote, setHandoverNote] = useState("");
+  const [handoverError, setHandoverError] = useState<string | null>(null);
+  const handOverToggle = useRef<HTMLButtonElement>(null);
+  const refocusHandOver = useRef(false);
 
   const agentLike = agent ? { name: agent.name, capabilities: agent.capabilities } : null;
   const terminal = isTerminal(task.state);
+  const handOverOthers = handOverAgents.filter((a) => a.id !== agent?.id);
+  // Without a delegate there is no "same agent": the first other agent is preselected.
+  const handoverTarget = handoverAgent || (agent ? "" : (handOverOthers[0]?.id ?? ""));
+
+  // After a handover the form closes: the focus goes back to the button that opened it, once it is enabled again.
+  useEffect(() => {
+    if (refocusHandOver.current && busy === null) {
+      refocusHandOver.current = false;
+      handOverToggle.current?.focus();
+    }
+  });
 
   const act = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key);
@@ -136,6 +157,23 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
       await fn();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handOver = async () => {
+    if (!onHandOver) return;
+    setBusy("handover");
+    setHandoverError(null);
+    try {
+      await onHandOver(handoverTarget || null, handoverNote);
+      setHandingOver(false);
+      setHandoverAgent("");
+      setHandoverNote("");
+      refocusHandOver.current = true;
+    } catch (e) {
+      setHandoverError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
     }
@@ -151,12 +189,12 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
         <span className="text-xs text-text-secondary">{agent ? agent.name : "No agent assigned"}{agent?.role === "lead" ? " · Lead" : ""}</span>
         {run && <span className="text-xs text-text-tertiary">Run {RUN_STATUS_LABEL[run.status].toLowerCase()} · {formatRelative(Date.parse(run.last_signal_at))}</span>}
         <span className="text-xs text-text-tertiary">Brief v{task.brief_version}{task.brief_stale ? " · pending re-run" : ""}</span>
-        {continuity && <span className="text-xs text-text-tertiary">{continuityText(continuity)}</span>}
+        {continuity && !terminal && <span className="text-xs text-text-tertiary">{continuityText(continuity)}</span>}
         {task.cost_usd > 0 && <span className="text-xs text-text-tertiary">${task.cost_usd.toFixed(4)}</span>}
         {task.state === "done" && <span className="text-xs text-text-tertiary">{acceptanceLabel(task.acceptance)}</span>}
       </header>
 
-      {error && <p className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-700 dark:text-red-400">{error}</p>}
+      {error && <p role="alert" className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-700 dark:text-red-400">{error}</p>}
 
       <section className="space-y-1">
         <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">What was asked and what changed</h4>
@@ -194,7 +232,7 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
 
       {diff && (diff.hidden_items > 0 || diff.runs.some((r) => r.items.length > 0)) && <section className="space-y-1">
         <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Changes</h4>
-        <RunDiffCard diff={diff} onRevert={onRevert} />
+        <RunDiffCard diff={diff} onRevert={onRevert} onRefresh={onRefreshDiff} />
       </section>}
 
       <section className="space-y-1">
@@ -223,7 +261,16 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
 
       <div className="flex flex-wrap gap-2">
         {!terminal && onHandOver && (
-          <button type="button" className="rounded border border-border px-3 py-1 text-xs disabled:opacity-50" disabled={busy !== null || task.state === "ready_for_review"} title="Stops the current run, keeps pending approvals and lets the chosen agent continue from the last checkpoint." onClick={() => setHandingOver((v) => !v)}>
+          <button
+            ref={handOverToggle}
+            type="button"
+            className="rounded border border-border px-3 py-1 text-xs disabled:opacity-50"
+            disabled={busy !== null || task.state === "ready_for_review"}
+            aria-expanded={handingOver}
+            aria-controls={`${id}-handover`}
+            title={task.state === "ready_for_review" ? "A task waiting for review cannot be handed over." : "Stops the current run, keeps pending approvals and lets the chosen agent continue from the last checkpoint."}
+            onClick={() => { setHandingOver((v) => !v); setHandoverError(null); }}
+          >
             Hand over…
           </button>
         )}
@@ -258,15 +305,17 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
       </div>
 
       {handingOver && !terminal && task.state !== "ready_for_review" && onHandOver && (
-        <div className="space-y-2 rounded-md border border-border p-2">
+        <div id={`${id}-handover`} className="space-y-2 rounded-md border border-border p-2">
           <label className="block text-xs" htmlFor={`${id}-handover-agent`}>Hand over to</label>
-          <select id={`${id}-handover-agent`} className="w-full rounded border border-border bg-bg px-2 py-1 text-sm" value={handoverAgent} onChange={(e) => setHandoverAgent(e.target.value)}>
-            <option value="">Same agent, new session</option>
-            {handOverAgents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          <select id={`${id}-handover-agent`} className="w-full rounded border border-border bg-bg px-2 py-1 text-sm" value={handoverTarget} onChange={(e) => setHandoverAgent(e.target.value)}>
+            {agent && <option value="">Same agent, new session</option>}
+            {handOverOthers.map((a) => <option key={a.id} value={a.id}>{a.name}{a.capabilities.resume ? " (resumes)" : ""}</option>)}
           </select>
+          {!agent && handOverOthers.length === 0 && <p className="text-xs text-text-tertiary">No other agent is enabled in this workspace.</p>}
           <label className="block text-xs" htmlFor={`${id}-handover-note`}>Note for the next agent</label>
           <textarea id={`${id}-handover-note`} className="w-full rounded border border-border bg-bg px-2 py-1 text-sm" maxLength={4000} value={handoverNote} onChange={(e) => setHandoverNote(e.target.value)} />
-          <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" disabled={busy !== null} onClick={() => act("handover", () => onHandOver(handoverAgent || null, handoverNote).then(() => setHandingOver(false)))}>Hand over</button>
+          {handoverError && <p role="alert" className="text-xs text-red-700 dark:text-red-400">{handoverError}</p>}
+          <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" disabled={busy !== null || (!agent && !handoverTarget)} onClick={() => void handOver()}>Hand over</button>
         </div>
       )}
 

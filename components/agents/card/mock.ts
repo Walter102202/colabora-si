@@ -105,7 +105,7 @@ const item: DiffItem = { key: "block:p:added", kind: "block", change: "added", p
   before_text: "", after_text: "Added text", after_rev: 1, current_rev: 1, summary: "Added paragraph", first_seq: 1, last_seq: 1 };
 const diff: TaskDiff = { task_id: "t", hidden_items: 0, runs: [{ run_id: "run-1", agent_id: "a", harness: "codex", status: "completed", started_at: "", ended_at: null, hidden_items: 0,
   items: [item, { ...item, key: "block:p:edited", block_id: "edited", change: "edited", before_text: "Hello A", after_text: "Hello from the agent", summary: "Edited paragraph" },
-    { ...item, key: "block:p:changed", block_id: "changed", status: "changed_since", summary: "Person changed this" },
+    { ...item, key: "block:p:changed", block_id: "changed", change: "edited", status: "changed_since", before_text: "Original text", after_text: "Person changed this", summary: "Edited paragraph" },
     { ...item, key: "external:op1", block_id: undefined, before_text: null, after_text: null, kind: "external", change: "manual", status: "manual", summary: "Sent email" }] }] };
 
 export function mockCard(scenario: string): CardData {
