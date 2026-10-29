@@ -248,7 +248,12 @@ async function pullSince(): Promise<void> {
   const token = generation;
   try {
     for (const step of planPull(cursors, new Date())) {
-      await pullFlow(async (since, from, to) => sb.from("pages").select(PAGE_COLS).eq("workspace_id", wsId).gte("updated_at", since).order("updated_at").order("id").range(from, to).then(({ data, error }) => { if (error) throw error; return data as PageRow[]; }), step.since, handlePageRow);
+      // Guarded per batch and per row: a pull that outlives stopSync/initSync must not feed rows of the previous workspace
+      // into the engine and store that the new generation created.
+      await pullFlow(async (since, from, to) => {
+        if (token !== generation) throw SYNC_CANCELLED;
+        return sb.from("pages").select(PAGE_COLS).eq("workspace_id", wsId).gte("updated_at", since).order("updated_at").order("id").range(from, to).then(({ data, error }) => { if (error) throw error; return data as PageRow[]; });
+      }, step.since, (row) => { if (token === generation) handlePageRow(row); });
       if (token !== generation) return;
     }
     const workspace = await sb.from("workspaces").select(WS_COLS).eq("id", wsId).maybeSingle();
