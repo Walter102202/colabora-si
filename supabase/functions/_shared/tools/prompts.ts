@@ -51,8 +51,8 @@ const continueTask: PromptDef = {
 
 const reviewAsLead: PromptDef = {
   name: 'review_as_lead',
-  title: 'Review a subtask as Lead',
-  description: 'Only the "done when" criteria, the deliverables and the evidence rule, to review a subtask with a clean context.',
+  title: 'Review a subtask as Lead or reviewer',
+  description: 'Only the "done when" criteria, the deliverables and the evidence rule, to review a subtask with a clean context, as the Lead or as the reviewer agent.',
   arguments: [{ name: 'task_id', description: 'Subtask id', required: true }],
   async get(args, ctx) {
     const t = await loadTaskBundle(ctx.db, args.task_id, { activitiesLimit: 0 });
@@ -64,6 +64,7 @@ const reviewAsLead: PromptDef = {
       'not by what you remember from delegating. For each criterion record a finding with status verified, not_found, ' +
       'contradicted or unverified, a short note and an evidence_ref (a block anchor #b-<id>, a row or an activity).',
       'Then call review_task with verdict approved, changes_requested or blocked. Never close the task yourself unless a policy allows close_subtask.',
+      'If this review was delegated to you as a review task (its brief policy review_of names the subtask), pass your run_id on that review task to review_task; recording the review closes your review task. Close the subtask with close_subtask only if the parent policy or a verified deterministic check allows it. If the review asks for changes, wait for the next delivery and delegate a new review task: a review task is closed by its review.',
     ].join('\n\n');
     return { description: `Review ${String(t.task.title || t.task.id)}`, messages: [userMessage(text)] };
   },

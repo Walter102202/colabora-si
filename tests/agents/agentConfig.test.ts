@@ -9,6 +9,11 @@ const BASE = {
 };
 
 describe("reference agent config", () => {
+  it("reads AGENT_REVIEWER_AGENT_ID", () => {
+    expect(readConfig({ ...BASE, AGENT_REVIEWER_AGENT_ID: "r-1" }).reviewerAgentId).toBe("r-1");
+    expect(readConfig(BASE).reviewerAgentId).toBe("");
+  });
+
   it("reads WORKSPACE_APP_URL for deep links and strips the trailing slash", () => {
     expect(readConfig({ ...BASE, WORKSPACE_APP_URL: "https://app.test/" }).appUrl).toBe("https://app.test");
   });

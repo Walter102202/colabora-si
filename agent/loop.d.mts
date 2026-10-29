@@ -32,6 +32,7 @@ export function runAgent(opts: {
   maxTurns?: number;
   maxTasks?: number;
   harness?: string;
+  reviewerAgentId?: string;
   prices?: { input: number; output: number };
   appUrl?: string;
   signal?: AbortSignal;

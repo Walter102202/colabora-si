@@ -8,6 +8,9 @@ const schema = (properties, required = []) => ({ type: "object", properties, req
 
 /** Tool definitions as `tools/list` returns them. */
 export const STUB_TOOLS = [
+  { name: "create_subtask", description: "Delegate a subtask", inputSchema: schema({ parent_task_id: str, delegate_agent_id: str, brief: obj }, ["parent_task_id", "brief"]) },
+  { name: "review_task", description: "Review a subtask deliverable", inputSchema: schema({ task_id: str, run_id: str, verdict: str, findings: { type: "array", items: obj } }, ["task_id", "verdict", "findings"]) },
+  { name: "close_subtask", description: "Close a reviewed subtask", inputSchema: schema({ task_id: str }, ["task_id"]) },
   { name: "wait_for_my_tasks", description: "Wait until any of my tasks needs me", inputSchema: schema({ after: str, timeout_s: { type: "integer" } }) },
   { name: "claim_task", description: "Claim a task and start a run", inputSchema: schema({ task_id: str, harness: str }, ["harness"]) },
   { name: "get_task", description: "Get task brief, artifacts and recent activity", inputSchema: schema({ task_id: str }, ["task_id"]) },
@@ -36,12 +39,16 @@ export function createStubMcp({ tasks = [], heartbeats = [], waits = [], handler
   /** @type {{name: string, args: Record<string, any>}[]} */
   const calls = [];
   let seq = 10;
+  let subs = 0;
   let delivered = false;
   const hbQueue = [...heartbeats];
   const waitQueue = [...waits];
 
   /** @type {Record<string, Handler>} */
   const defaults = {
+    create_subtask: (a) => ({ task_id: `sub-${++subs}`, context_id: `ctx-${a.parent_task_id}`, row_page_id: `row-sub-${subs}` }),
+    review_task: (a) => ({ review_id: "rev-1", task_state: a.verdict === "approved" ? "ready_for_review" : "queued", rounds: 0 }),
+    close_subtask: () => ({ task_state: "done" }),
     wait_for_my_tasks: () => {
       const out = { changed: !delivered && tasks.length > 0, tasks: delivered ? [] : tasks, next_cursor: "cursor-1" };
       delivered = true;

@@ -193,10 +193,11 @@ const reviewTask: ToolDef = {
     'Review of a task in ready_for_review: as Lead from your own run on the parent task (run_id), or as a person ' +
     '(no run_id). One finding per "done when" criterion, judged by evidence. changes_requested sends the findings to ' +
     'the worker; past the round limit it escalates to a person. approved does not close the task: a person closes it ' +
-    '(close_task), or the Lead with close_subtask when the policy allows.',
+    '(close_task), or the Lead with close_subtask when the policy allows.' +
+    ' As the reviewer agent, call it from your run on the review task delegated to you (its brief policy review_of names task_id); recording the review closes your review task.',
   inputSchema: object({
     task_id: { type: 'string', minLength: 1 },
-    run_id: { type: 'string', minLength: 1, description: 'Agents: your active run on the parent task. People omit it.' },
+    run_id: { type: 'string', minLength: 1, description: 'Agents: your active run, on the parent task as Lead or on the review task as reviewer. People omit it.' },
     artifact_id: { type: 'string' },
     verdict: { type: 'string', enum: ['approved', 'changes_requested', 'blocked'] },
     findings: {
@@ -235,7 +236,7 @@ const closeSubtask: ToolDef = {
   name: 'close_subtask',
   title: 'Close a reviewed subtask',
   description:
-    'Lead only. Closes a subtask in ready_for_review when the parent brief allows it (policies.subtask_close = lead) or ' +
+    'Lead, or the reviewer with an active run on its review task. Closes a subtask in ready_for_review when the parent brief allows it (policies.subtask_close = lead) or ' +
     'every deterministic criterion is verified with evidence; otherwise policy_denied and a person decides.',
   inputSchema: object({
     task_id: { type: 'string', minLength: 1 },
