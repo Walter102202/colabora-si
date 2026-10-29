@@ -54,6 +54,13 @@ jobs:
           supabase start -x studio,imgproxy,inbucket,logflare,vector
           supabase test db
 
+      - name: Handover end-to-end
+        if: hashFiles('supabase/migrations/*.sql') != ''
+        run: |
+          npx vitest run tests/agents/handoverE2E.test.ts tests/agents/stubWorld.test.ts
+          (cd supabase/functions && deno test --allow-env --allow-net --allow-read _shared/tools/handover.test.ts)
+          supabase test db supabase/tests/agents/24_handover.sql
+
       - run: npm run build
 
   deploy-backend:
