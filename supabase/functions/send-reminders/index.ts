@@ -9,12 +9,13 @@
 // implemented directly on WebCrypto — no third-party push library.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { agentPush, shouldPush, type AgentNotification, type PushApproval, type PushPayload } from "./payload.ts";
 
 const enc = new TextEncoder();
 
 // --- byte helpers -----------------------------------------------------------
 
-function b64urlToBytes(s: string): Uint8Array {
+function b64urlToBytes(s: string): Uint8Array<ArrayBuffer> {
   const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
   const bin = atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, "="));
   const out = new Uint8Array(bin.length);
@@ -28,7 +29,7 @@ function bytesToB64url(b: Uint8Array): string {
   return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function concat(...parts: Uint8Array[]): Uint8Array {
+function concat(...parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let off = 0;
   for (const p of parts) {
@@ -50,7 +51,7 @@ function secretEquals(a: string, b: string): boolean {
 
 // --- HKDF (RFC 5869, single-block output — everything here is <= 32 bytes) ---
 
-async function hmac(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
+async function hmac(key: Uint8Array<ArrayBuffer>, data: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
   const k = await crypto.subtle.importKey(
     "raw",
     key,
@@ -62,11 +63,11 @@ async function hmac(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
 }
 
 async function hkdf(
-  salt: Uint8Array,
-  ikm: Uint8Array,
+  salt: Uint8Array<ArrayBuffer>,
+  ikm: Uint8Array<ArrayBuffer>,
   info: Uint8Array,
   length: number,
-): Promise<Uint8Array> {
+): Promise<Uint8Array<ArrayBuffer>> {
   const prk = await hmac(salt, ikm);
   const okm = await hmac(prk, concat(info, new Uint8Array([1])));
   return okm.slice(0, length);
@@ -128,7 +129,7 @@ async function encryptPayload(
   plaintext: string,
   p256dh: string,
   authSecret: string,
-): Promise<Uint8Array> {
+): Promise<Uint8Array<ArrayBuffer>> {
   const uaPublic = b64urlToBytes(p256dh); // 65 bytes
   const auth = b64urlToBytes(authSecret); // 16 bytes
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -295,9 +296,37 @@ Deno.serve(async (req) => {
   }
 
   const due = (dueRows ?? []) as DueReminder[];
-  const pending = await supabase.from("notifications").select("id,user_id,page_id,kind,payload").is("pushed_at", null).in("kind", ["input_required", "ready_for_review", "task_failed", "approval_requested"]).order("created_at", { ascending: true }).limit(200);
+  const pending = await supabase.from("notifications").select("id,user_id,page_id,task_id,approval_id,block_id,kind,payload").is("pushed_at", null).in("kind", ["input_required", "ready_for_review", "task_failed", "approval_requested"]).order("created_at", { ascending: true }).limit(200);
   if (pending.error && pending.error.code !== "42P01" && pending.error.code !== "PGRST205") return new Response("Query failed", { status: 500 });
-  for (const notification of pending.data ?? []) due.push({ id: "notification:" + notification.id, user_id: notification.user_id, page_id: notification.page_id, body: notification.payload?.body || notification.payload?.message || notification.kind.replace(/_/g, " ") });
+  const agentRows = (pending.data ?? []) as (AgentNotification & { user_id: string })[];
+  const approvalIds = [...new Set(agentRows.map((r) => r.approval_id).filter((id): id is string => !!id))];
+  const taskIds = [...new Set(agentRows.map((r) => r.task_id).filter((id): id is string => !!id))];
+  const approvals = new Map<string, PushApproval>();
+  const titles = new Map<string, string>();
+  if (approvalIds.length) {
+    const { data, error } = await supabase.from("agent_approvals").select("id,action,params,artifact_version,question,kind,blocking,status").in("id", approvalIds);
+    if (error) console.error("approval lookup failed", error); // The push still goes out with a generic text.
+    for (const a of (data ?? []) as (PushApproval & { id: string })[]) approvals.set(a.id, a);
+  }
+  if (taskIds.length) {
+    const { data, error } = await supabase.from("agent_tasks").select("id,title").in("id", taskIds);
+    if (error) console.error("task lookup failed", error);
+    for (const t of (data ?? []) as { id: string; title: string }[]) titles.set(t.id, t.title);
+  }
+  const agentPayloads = new Map<string, PushPayload>();
+  // Rows that need no push: their approval was already decided. Marked now, so they never hold the queue.
+  const settled: string[] = [];
+  for (const row of agentRows) {
+    const approval = row.approval_id ? (approvals.get(row.approval_id) ?? null) : null;
+    if (!shouldPush(row, approval)) {
+      settled.push(row.id);
+      continue;
+    }
+    const p = agentPush(row, row.task_id ? (titles.get(row.task_id) ?? null) : null, approval);
+    agentPayloads.set(p.id, p);
+    due.push({ id: p.id, user_id: row.user_id, page_id: row.page_id, body: p.body });
+  }
+  if (settled.length) await supabase.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", settled);
   if (due.length === 0) {
     return Response.json({ due: 0, sent: 0, notified: 0, removed: 0 });
   }
@@ -321,16 +350,21 @@ Deno.serve(async (req) => {
 
   const expired = new Set<string>();
   const deliveredIds: string[] = [];
+  const noSubscription: string[] = [];
   const statuses: Record<string, number> = {};
   let sent = 0;
 
   for (const reminder of due) {
     const subs = byUser.get(reminder.user_id);
-    // No push subscription for this user: leave `notified` false so the
+    // No push subscription for a reminder: leave `notified` false so the
     // in-app checker still fires the toast next time the app is open.
-    if (!subs?.length) continue;
+    if (!subs?.length) {
+      // Agent notifications already show in the inbox: mark them so the 200 oldest never block newer ones.
+      if (reminder.id.startsWith("notification:")) noSubscription.push(reminder.id.slice(13));
+      continue;
+    }
 
-    const payload = JSON.stringify({
+    const payload = JSON.stringify(agentPayloads.get(reminder.id) ?? {
       id: reminder.id,
       title: "Reminder",
       body: reminder.body || "Reminder",
@@ -360,7 +394,7 @@ Deno.serve(async (req) => {
     if (anyDelivered) deliveredIds.push(reminder.id);
   }
 
-  const notificationIds = deliveredIds.filter((id) => id.startsWith("notification:")).map((id) => id.slice(13));
+  const notificationIds = [...deliveredIds.filter((id) => id.startsWith("notification:")).map((id) => id.slice(13)), ...noSubscription];
   const reminderIds = deliveredIds.filter((id) => !id.startsWith("notification:"));
   if (notificationIds.length) await supabase.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", notificationIds);
   if (reminderIds.length) {
