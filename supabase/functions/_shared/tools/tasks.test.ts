@@ -183,3 +183,43 @@ Deno.test('claim_task without resume sends p_resume false and keeps the descript
   assert.equal(calls[0].p_resume, false);
   assert.match(tool('claim_task').description, /only a person reopens it/);
 });
+
+Deno.test('request_input passes blocking false and tells the agent to keep working', async () => {
+  const calls: { fn: string; params: Record<string, unknown> }[] = [];
+  const ctx = ctxWith(<T>(fn: string, params: Record<string, unknown>): Promise<DbResult<T>> => {
+    calls.push({ fn, params });
+    return Promise.resolve({ data: { approval_id: 'q1', blocking: false, status: 'pending' } as T, error: null });
+  });
+  const out = await tool('request_input').handler({ run_id: 'run-1', question: 'Formal or casual?', blocking: false }, ctx);
+  assert.equal(calls[0].fn, 'request_input');
+  assert.equal(calls[0].params.p_blocking, false);
+  assert.equal(out.structured.blocking, false);
+  assert.equal(out.structured.status, 'pending');
+  assert.match(out.text, /without blocking/);
+});
+
+Deno.test('request_input blocks by default and declares the flag in its schema', async () => {
+  const calls: Record<string, unknown>[] = [];
+  const ctx = ctxWith(<T>(_fn: string, params: Record<string, unknown>): Promise<DbResult<T>> => {
+    calls.push(params);
+    return Promise.resolve({ data: { approval_id: 'q2', blocking: true, status: 'pending' } as T, error: null });
+  });
+  const out = await tool('request_input').handler({ run_id: 'run-1', question: 'Which list?' }, ctx);
+  assert.equal(calls[0].p_blocking, true);
+  assert.equal(out.structured.blocking, true);
+  assert.match(out.text, /input_required/);
+  const schema = tool('request_input').inputSchema as { properties: Record<string, { type: string }> };
+  assert.equal(schema.properties.blocking.type, 'boolean');
+});
+
+Deno.test('await_questions makes the open questions block and says how to wait', async () => {
+  const calls: { fn: string; params: Record<string, unknown> }[] = [];
+  const ctx = ctxWith(<T>(fn: string, params: Record<string, unknown>): Promise<DbResult<T>> => {
+    calls.push({ fn, params });
+    return Promise.resolve({ data: { questions: 2, task_state: 'input_required' } as T, error: null });
+  });
+  const out = await tool('await_questions').handler({ run_id: 'run-1' }, ctx);
+  assert.deepEqual(calls, [{ fn: 'await_questions', params: { p_run_id: 'run-1' } }]);
+  assert.equal(out.structured.task_state, 'input_required');
+  assert.match(out.text, /2 questions now block/);
+});

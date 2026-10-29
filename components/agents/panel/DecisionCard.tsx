@@ -12,10 +12,12 @@ export function DecisionCard({
   approval,
   onDecide,
   focus = false,
+  nonBlocking = false,
 }: {
   approval: ApprovalRow;
   onDecide: (decision: ApprovalDecision, response: Record<string, unknown> | null) => Promise<void>;
   focus?: boolean;
+  nonBlocking?: boolean;
 }) {
   const id = useId();
   const { ref: focusRef, id: focusId, ringClass } = useApprovalFocus(focus, approval.id);
@@ -40,6 +42,7 @@ export function DecisionCard({
   return (
     <div ref={focusRef} id={focusId} tabIndex={-1} className={"space-y-2 rounded-md border border-accent/40 bg-accent/5 p-3 text-sm" + ringClass}>
       <p className="font-medium">{KIND[approval.kind]}: {approval.question || "the agent is waiting for you"}</p>
+      {nonBlocking && <p className="text-xs text-text-secondary">The agent keeps working while you answer.</p>}
       <p className="text-xs text-text-secondary">Expires in {expiresIn(approval.expires_at)}.</p>
       {choices.length > 0 && (
         <div className="flex flex-wrap gap-2">

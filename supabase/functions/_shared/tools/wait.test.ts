@@ -350,3 +350,41 @@ Deno.test('wait_for_my_tasks without after lists a handed-over task that waits o
   const out = await tool('wait_for_my_tasks').handler({ timeout_s: 120 }, h.ctx);
   assert.deepEqual((out.structured.tasks as Row[]).map((t) => [t.task_id, t.reason, t.waiting_on]), [['h1', 'handover', 'human']]);
 });
+
+Deno.test('wait_for_task hands over the approval_id and decision of an answer', async () => {
+  const tables = { agent_tasks: [task()], agent_activities: [activity(1)], agent_events: [] as Row[] };
+  const h = harness(tables, (n) => {
+    if (n === 1) {
+      tables.agent_events.push(event('e2', '2026-10-27T10:00:02+00:00'));
+      tables.agent_activities.push(activity(2, { type: 'prompt', author_type: 'human',
+        body: { text: 'Casual', signal: 'feedback', source: 'row_panel', approval_id: 'q1', decision: 'respond', blocking: false } }));
+    }
+  });
+  const out = await tool('wait_for_task').handler({ task_id: 't1', after_seq: 1, timeout_s: 30 }, h.ctx);
+  const acts = out.structured.activities as Row[];
+  assert.equal(acts.length, 1);
+  assert.equal(acts[0].approval_id, 'q1');
+  assert.equal(acts[0].decision, 'respond');
+});
+
+Deno.test('wait_for_task without after_seq brings the answers given since the last run ended', async () => {
+  const h = harness({
+    agent_tasks: [task()],
+    agent_activities: [activity(1)],
+    agent_runs: [
+      { id: 'run-0', task_id: 't1', status: 'completed', ended_at: '2026-10-27T09:00:00+00:00' },
+      { id: 'run-1', task_id: 't1', status: 'running', ended_at: null },
+    ],
+    agent_approvals: [
+      { id: 'q-late', task_id: 't1', blocking: false, status: 'decided', question: 'Add a P.S.?', decision: 'respond', response: { text: 'Yes, a short one' }, decided_at: '2026-10-27T09:30:00+00:00' },
+      { id: 'q-seen', task_id: 't1', blocking: false, status: 'decided', question: 'Formal or casual?', decision: 'respond', response: { text: 'Casual' }, decided_at: '2026-10-27T08:30:00+00:00' },
+      { id: 'q-open', task_id: 't1', blocking: false, status: 'pending', question: 'Any image?', decision: null, response: null, decided_at: null },
+      { id: 'gate', task_id: 't1', blocking: true, status: 'decided', question: 'Send it?', decision: 'approve', response: null, decided_at: '2026-10-27T09:40:00+00:00' },
+    ],
+  });
+  const out = await tool('wait_for_task').handler({ task_id: 't1', run_id: 'run-1' }, h.ctx);
+  assert.deepEqual(out.structured.answered_questions, [
+    { approval_id: 'q-late', question: 'Add a P.S.?', decision: 'respond', text: 'Yes, a short one', answered_at: '2026-10-27T09:30:00+00:00' },
+  ]);
+  assert.equal(h.selects.filter((t) => t === 'agent_events').length, 0, 'still no event mark on a call that does not wait');
+});

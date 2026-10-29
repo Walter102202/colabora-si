@@ -66,7 +66,7 @@ export async function loadTaskBundle(
     must(db.select<Row>({
       table: 'agent_approvals',
       columns: 'id,task_id,run_id,kind,action,params,artifact_id,artifact_version,question,options,status,decision,response,' +
-        'decided_by,decided_at,expires_at,created_at',
+        'decided_by,decided_at,expires_at,created_at,blocking',
       filters: [{ col: 'task_id', op: 'eq', value: taskId }, { col: 'status', op: 'eq', value: 'pending' }],
       order: [{ column: 'created_at', ascending: true }],
     })),
@@ -107,4 +107,36 @@ export interface DoneWhen {
 
 export function doneWhen(brief: Row | null): DoneWhen[] {
   return Array.isArray(brief?.done_when) ? brief!.done_when as DoneWhen[] : [];
+}
+
+/**
+ * Questions asked with blocking false and answered after the task's last run ended. A new run has not seen them: their
+ * activities are older than its cursor. Empty while no run has ended. Readable by the agent once claim_task rebinds them.
+ */
+export async function answeredQuestions(db: Db, taskId: string): Promise<Row[]> {
+  const ended = await must(db.select<Row>({
+    table: 'agent_runs',
+    columns: 'id,ended_at',
+    filters: [{ col: 'task_id', op: 'eq', value: taskId }, { col: 'ended_at', op: 'gt', value: '1970-01-01T00:00:00Z' }],
+    order: [{ column: 'ended_at', ascending: false }],
+    limit: 1,
+  }));
+  const since = ended?.[0]?.ended_at;
+  if (typeof since !== 'string') return [];
+  const rows = await must(db.select<Row>({
+    table: 'agent_approvals',
+    columns: 'id,question,decision,response,decided_at',
+    filters: [
+      { col: 'task_id', op: 'eq', value: taskId },
+      { col: 'blocking', op: 'eq', value: false },
+      { col: 'status', op: 'eq', value: 'decided' },
+      { col: 'decided_at', op: 'gte', value: since },
+    ],
+    order: [{ column: 'decided_at', ascending: true }],
+    limit: 20,
+  })) ?? [];
+  return rows.map((a) => {
+    const text = (a.response as Row | null)?.text;
+    return { approval_id: a.id, question: a.question ?? '', decision: a.decision ?? null, text: typeof text === 'string' ? text : '', answered_at: a.decided_at };
+  });
 }

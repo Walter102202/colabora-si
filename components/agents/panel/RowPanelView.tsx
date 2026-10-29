@@ -61,6 +61,9 @@ export interface TaskViewProps {
   onHandOver?: (toAgentId: string | null, note: string) => Promise<void>;
   // Approval a deep link (#approval-<id>) asked to land on, if any.
   focusApprovalId?: string | null;
+  // Questions that do not block (request_input blocking false), each answered by its own id.
+  openQuestions?: ApprovalRow[];
+  onDecideQuestion?: (approvalId: string, decision: ApprovalDecision, response: Record<string, unknown> | null) => Promise<void>;
   // Message to the agent: text with "feedback"/"continue", or an empty body with "continue"/"stop".
   onMessage: (body: string, signal: MessageSignal) => Promise<void>;
   onClose: (acceptance: "accepted" | "rejected", note: string | null) => Promise<void>;
@@ -122,7 +125,7 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ task, agent, run, approval, artifact, review, brief, activities, subtasks, reviewerName, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ task, agent, run, approval, artifact, review, brief, activities, subtasks, reviewerName, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -245,6 +248,11 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
       {approval && (approval.kind === "action"
         ? <ApprovalCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />
         : <DecisionCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />)}
+
+      {openQuestions.map((q) => (
+        <DecisionCard key={q.id} approval={q} nonBlocking focus={focusApprovalId === q.id}
+          onDecide={(decision, response) => (onDecideQuestion ? onDecideQuestion(q.id, decision, response) : Promise.resolve())} />
+      ))}
 
       {!terminal && !approval && (
         <section className="space-y-1">

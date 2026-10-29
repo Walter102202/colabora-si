@@ -12,6 +12,7 @@ import {
   latestReviewFor,
   lastCheckpointFor,
   pendingApprovalFor,
+  openQuestionsFor,
   taskForPage,
   useAgentTasks,
   type TaskRow,
@@ -100,6 +101,8 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
   const agents = useAgentsStore((s) => s.agents);
   const run = useAgentTasks((s) => activeRunFor(s, task));
   const approval = useAgentTasks((s) => pendingApprovalFor(s, task.id, focusApprovalId));
+  const approvals = useAgentTasks((s) => s.approvals);
+  const openQuestions = useMemo(() => openQuestionsFor(approvals, task.id), [approvals, task.id]);
   const artifact = useAgentTasks((s) => currentArtifactFor(s, task.id));
   const review = useAgentTasks((s) => latestReviewFor(s, task.id));
   const brief = useAgentTasks((s) => currentBriefFor(s, task));
@@ -150,6 +153,8 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
       onHandOver={(to, note) => handOver(task.id, to, note).then(() => undefined)}
       run={run}
       approval={approval}
+      openQuestions={openQuestions}
+      onDecideQuestion={(id, decision, response) => decideApproval(id, decision, response).then(() => undefined)}
       artifact={artifact}
       review={review}
       brief={brief}

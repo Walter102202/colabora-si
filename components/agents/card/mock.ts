@@ -121,6 +121,9 @@ export function mockCard(scenario: string): CardData {
       return { ...base, task: { ...task, state: "input_required", waiting_on: "human", active_run_id: run.id }, run, approval: actionApproval };
     case "question":
       return { ...base, task: { ...task, state: "input_required", waiting_on: "human", active_run_id: run.id }, run, approval: question };
+    case "side-question":
+      return { ...base, task: { ...task, state: "working", waiting_on: null, active_run_id: run.id }, run, approval: null,
+        questions: [{ ...question, id: "ap-side", params: {}, question: "Should the summary mention the two rows we merged?", blocking: false }] };
     case "done":
       return { ...base, task: { ...task, state: "done", acceptance: "accepted", closed_at: minutesAgo(1), closed_by: "u1" } };
     case "list":

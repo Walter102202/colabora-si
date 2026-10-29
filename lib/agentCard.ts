@@ -29,6 +29,8 @@ export interface TaskCardData {
   task: TaskRow;
   run: RunRow | null;
   approval: ApprovalRow | null;
+  // Questions asked with blocking false, oldest first; the task keeps working.
+  questions?: ApprovalRow[];
   artifact: ArtifactRow | null;
   review: ReviewRow | null;
   brief: BriefRow | null;
@@ -63,6 +65,8 @@ export interface WaitingItem {
   agent_name: string | null;
   last_activity_at: string | null;
   approval: WaitingApproval | null;
+  // Questions asked with blocking false on this task; the reason still comes from the task.
+  questions?: WaitingApproval[];
   url: string;
 }
 

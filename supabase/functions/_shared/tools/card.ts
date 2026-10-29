@@ -9,7 +9,7 @@ import type { ResourceProvider, ToolContext, ToolDef } from '../mcp.ts';
 import { CARD_HTML } from '../cardHtml.ts';
 import type { JsonSchema } from '../jsonSchema.ts';
 import { num, object, output, plural, READ, str, WRITE } from './common.ts';
-import { loadTask, loadTaskBundle, type Row, TASK_COLUMNS, type TaskBundle } from './taskData.ts';
+import { answeredQuestions, loadTask, loadTaskBundle, type Row, TASK_COLUMNS, type TaskBundle } from './taskData.ts';
 
 export const CARD_URI = 'ui://colabora/task-card.html';
 export const CARD_MIME = 'text/html;profile=mcp-app';
@@ -31,6 +31,8 @@ export const CARD_OUTPUT: Record<string, JsonSchema> = {
   diff: { type: ['object', 'null'] },
   run: { type: ['object', 'null'] },
   approval: { type: ['object', 'null'] },
+  questions: { type: 'array', items: { type: 'object' } },
+  answered_questions: { type: 'array', items: { type: 'object' } },
   artifact: { type: ['object', 'null'] },
   review: { type: ['object', 'null'] },
   subtasks: { type: 'array', items: { type: 'object' } },
@@ -45,7 +47,7 @@ const REVIEW_COLUMNS =
   'id,task_id,run_id,reviewer_type,reviewer_id,artifact_id,artifact_version,brief_version,verdict,findings,evidence,' +
   'outdated_by,outdated_at,created_at';
 const AGENT_COLUMNS = 'id,name,role,capabilities';
-const WAITING_APPROVAL_COLUMNS = 'id,task_id,kind,action,question,options,expires_at,created_at';
+const WAITING_APPROVAL_COLUMNS = 'id,task_id,kind,action,question,options,expires_at,created_at,blocking';
 
 export type WaitingReason = 'approval' | 'input' | 'review';
 const REASON_LABEL: Record<WaitingReason, string> = {
@@ -60,6 +62,8 @@ export interface TaskCard extends TaskBundle {
   kind: 'task';
   run: Row | null;
   approval: Row | null;
+  questions: Row[];
+  answered_questions: Row[];
   artifact: Row | null;
   review: Row | null;
   subtasks: { task: Row; run: Row | null; agent_name: string | null }[];
@@ -103,7 +107,7 @@ export async function loadTaskCard(
 ): Promise<TaskCard> {
   const bundle = await loadTaskBundle(db, taskId, opts);
   const task = bundle.task;
-  const [runs, reviews, subtaskRows, checkpoints] = await Promise.all([
+  const [runs, reviews, subtaskRows, checkpoints, answered] = await Promise.all([
     typeof task.active_run_id === 'string' ? selectIn(db, 'agent_runs', RUN_COLUMNS, 'id', [task.active_run_id]) : Promise.resolve([]),
     must(db.select<Row>({
       table: 'agent_reviews',
@@ -124,6 +128,7 @@ export async function loadTaskCard(
       filters: [{ col: 'task_id', op: 'eq', value: taskId }, { col: 'type', op: 'eq', value: 'checkpoint' }],
       order: [{ column: 'seq', ascending: false }], limit: 1,
     })),
+    answeredQuestions(db, taskId),
   ]);
   const subtasks = subtaskRows ?? [];
   const review = reviews?.[0] ?? null;
@@ -156,7 +161,9 @@ export async function loadTaskCard(
     ...bundle,
     continuity,
     run: runs[0] ?? null,
-    approval: bundle.approvals_pending[0] ?? null,
+    approval: bundle.approvals_pending.find((a) => a.blocking !== false) ?? null,
+    questions: bundle.approvals_pending.filter((a) => a.blocking === false),
+    answered_questions: answered,
     artifact: currentArtifact(bundle.artifacts),
     review,
     subtasks: subtasks.map((s) => ({
@@ -266,31 +273,42 @@ const listWaitingOnMe: ToolDef = {
   _meta: CARD_TOOL_META,
   async handler(args, ctx) {
     humanOnly(ctx);
+    // My open tasks first, then their pending requests. A question asked with blocking false leaves its task queued or
+    // working, so the state alone does not say what waits on me; the task still gives the reason.
+    const limit = num(args.limit) ?? 20;
     const tasks = await must(ctx.db.select<Row>({
       table: 'agent_tasks',
       columns: TASK_COLUMNS,
       filters: [
         { col: 'owner_user_id', op: 'eq', value: ctx.principal.userId },
-        { col: 'state', op: 'in', value: ['input_required', 'ready_for_review'] },
+        { col: 'state', op: 'in', value: ['queued', 'working', 'input_required', 'ready_for_review'] },
       ],
       order: [{ column: 'updated_at', ascending: false }],
-      limit: num(args.limit) ?? 20,
+      limit: 200,
     })) ?? [];
     const ids = unique(tasks.map((t) => t.id));
     const [approvals, agents] = await Promise.all([
       selectIn(ctx.db, 'agent_approvals', WAITING_APPROVAL_COLUMNS, 'task_id', ids, [{ col: 'status', op: 'eq', value: 'pending' }]),
       selectIn(ctx.db, 'agents', 'id,name', 'id', unique(tasks.map((t) => t.delegate_agent_id))),
     ]);
+    const view = (a: Row) => ({
+      id: a.id, kind: a.kind, action: a.action ?? null, question: a.question ?? '', options: a.options ?? [], expires_at: a.expires_at,
+    });
     const items: Row[] = [];
     for (const t of tasks) {
-      const approval = approvals
+      if (items.length >= limit) break;
+      const pending = approvals
         .filter((a) => a.task_id === t.id)
-        .sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')))[0] ?? null;
+        .sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')));
+      const approval = pending.find((a) => a.blocking !== false) ?? null;
+      const questions = pending.filter((a) => a.blocking === false).map(view);
       let reason: WaitingReason | null = null;
-      if (approval) reason = approval.kind === 'action' ? 'approval' : 'input';
-      else if (t.state === 'ready_for_review') reason = 'review';
-      else if (t.waiting_on === 'human' || t.waiting_on == null) reason = 'input';
-      if (!reason) continue; // waiting on the Lead or on another agent
+      if (t.state === 'input_required' || t.state === 'ready_for_review') {
+        if (approval) reason = approval.kind === 'action' ? 'approval' : 'input';
+        else if (t.state === 'ready_for_review') reason = 'review';
+        else if (t.waiting_on === 'human' || t.waiting_on == null) reason = 'input';
+      } else if (questions.length) reason = 'input';
+      if (!reason) continue; // waiting on the Lead or on another agent, or simply working
       const agent = agents.find((a) => a.id === t.delegate_agent_id);
       items.push({
         task_id: t.id,
@@ -302,23 +320,15 @@ const listWaitingOnMe: ToolDef = {
         row_page_id: t.row_page_id,
         agent_name: typeof agent?.name === 'string' ? agent.name : null,
         last_activity_at: t.last_activity_at,
-        approval: approval
-          ? {
-            id: approval.id,
-            kind: approval.kind,
-            action: approval.action ?? null,
-            question: approval.question ?? '',
-            options: approval.options ?? [],
-            expires_at: approval.expires_at,
-          }
-          : null,
+        approval: approval ? view(approval) : null,
+        questions,
         url: taskLink(ctx.appUrl, String(t.row_page_id), String(t.id)),
       });
     }
     const count = (r: WaitingReason) => items.filter((i) => i.reason === r).length;
     const lines = items.map((i) => {
-      const approval = i.approval as { question?: string } | null;
-      const question = approval?.question ? ` (${approval.question})` : '';
+      const asked = (i.approval as { question?: string } | null)?.question || (i.reason === 'input' ? (i.questions as { question?: string }[])[0]?.question : '');
+      const question = asked ? ` (${asked})` : '';
       return `- ${String(i.title || i.task_id)}: ${REASON_LABEL[i.reason as WaitingReason]}${question} ${String(i.url)}`;
     });
     const text = items.length

@@ -258,14 +258,15 @@ const addArtifact: ToolDef = {
 const requestInput: ToolDef = {
   name: 'request_input',
   title: 'Ask the human a question',
-  description: 'Asks the task owner a question. The task becomes input_required; wait with wait_for_task, heartbeat or list_my_tasks.',
+  description: 'Asks the task owner a question. By default the task becomes input_required until the answer; wait with wait_for_task, heartbeat or list_my_tasks. With blocking: false the task keeps its state and you keep working on what does not depend on the answer; it arrives later as a message (heartbeat or wait_for_task) carrying this approval_id. When only the answers are left, call await_questions.',
   inputSchema: object({
     run_id: { type: 'string', minLength: 1 },
     question: { type: 'string', minLength: 1, maxLength: 4000 },
     options: { type: 'array', items: { type: 'string', enum: ['respond', 'ignore', 'approve', 'reject', 'edit'] }, minItems: 1 },
     kind: { type: 'string', enum: ['elicitation', 'plan', 'escalation'] },
+    blocking: { type: 'boolean', default: true },
   }, ['run_id', 'question']),
-  outputSchema: output({ approval_id: { type: 'string' } }),
+  outputSchema: output({ approval_id: { type: 'string' }, blocking: { type: 'boolean' }, status: { type: 'string' } }),
   annotations: WRITE,
   async handler(args, ctx) {
     const data = await must(ctx.db.rpc<Row>('request_input', {
@@ -273,9 +274,29 @@ const requestInput: ToolDef = {
       p_question: args.question,
       p_options: args.options,
       p_kind: str(args.kind),
+      p_blocking: args.blocking !== false,
     })) ?? {};
+    const blocking = data.blocking !== false;
     return {
-      text: `Question sent (${String(data.approval_id)}). The task is now input_required; wait with wait_for_task or poll with heartbeat or list_my_tasks.`,
+      text: blocking ? `Question sent (${String(data.approval_id)}). The task is now input_required; wait with wait_for_task or poll with heartbeat or list_my_tasks.`
+        : `Question sent (${String(data.approval_id)}) without blocking. Keep working on what does not depend on it; the answer arrives as a message with this approval_id.`,
+      structured: { status: 'pending', blocking, ...data },
+    };
+  },
+};
+
+const awaitQuestions: ToolDef = {
+  name: 'await_questions',
+  title: 'Wait on my open questions',
+  description: 'Call it when only the answers to your questions asked with blocking: false are left. They start to block, the ' +
+    'task becomes input_required and shows that it waits on a person, and an answer resumes it. Then wait with wait_for_task.',
+  inputSchema: object({ run_id: { type: 'string', minLength: 1 } }, ['run_id']),
+  outputSchema: output({ questions: { type: 'integer' }, task_state: { type: 'string' } }),
+  annotations: WRITE_IDEMPOTENT,
+  async handler(args, ctx) {
+    const data = await must(ctx.db.rpc<Row>('await_questions', { p_run_id: String(args.run_id) })) ?? {};
+    return {
+      text: `${plural(Number(data.questions ?? 0), 'question')} now block; the task is ${String(data.task_state)}. Wait with wait_for_task.`,
       structured: data,
     };
   },
@@ -451,6 +472,6 @@ const sendMessage: ToolDef = {
 };
 
 export const taskTools: ToolDef[] = [
-  listMyTasks, getTask, claimTask, heartbeat, postActivity, addArtifact, requestInput, requestApproval,
+  listMyTasks, getTask, claimTask, heartbeat, postActivity, addArtifact, requestInput, awaitQuestions, requestApproval,
   beginExternalOp, finishExternalOp, submitForReview, endRun, ackStop, sendMessage,
 ];

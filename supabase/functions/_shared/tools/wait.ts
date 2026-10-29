@@ -5,7 +5,7 @@ import { must, ToolError } from '../db.ts';
 import type { ToolContext, ToolDef } from '../mcp.ts';
 import { num, object, output, plural, READ, str } from './common.ts';
 import { markDelivered, myTasksFilter } from './tasks.ts';
-import { excerpt, type Row } from './taskData.ts';
+import { answeredQuestions, excerpt, type Row } from './taskData.ts';
 
 export const POLL_MS = 1500;
 export const MAX_POLL_MS = 10_000;
@@ -118,6 +118,8 @@ function activityView(a: Row) {
     created_at: a.created_at,
   };
   if (typeof body.signal === 'string') out.signal = body.signal;
+  if (typeof body.approval_id === 'string') out.approval_id = body.approval_id;
+  if (typeof body.decision === 'string') out.decision = body.decision;
   return out;
 }
 
@@ -169,6 +171,7 @@ const waitForTask: ToolDef = {
     activities: { type: 'array', items: { type: 'object' } },
     next_seq: { type: 'integer' },
     waited_s: { type: 'integer' },
+    answered_questions: { type: 'array', items: { type: 'object' } },
   }),
   annotations: READ,
   cacheTtlMs: 0,
@@ -204,7 +207,11 @@ const waitForTask: ToolDef = {
       };
     };
 
-    if (afterSeq === undefined) return finish(false);
+    if (afterSeq === undefined) {
+      // The read a harness makes right after claim_task: it also brings answers given while no run was active.
+      const out = finish(false);
+      return { ...out, structured: { ...out.structured, answered_questions: await answeredQuestions(ctx.db, taskId) } };
+    }
     const isChanged = () => snap.activities.length > 0 || snap.stop || fingerprint(snap) !== baseline;
 
     if (runId) await must(ctx.db.rpc('touch_run_wait', { p_run_id: runId, p_task_id: taskId }));

@@ -28,6 +28,93 @@ const names = (calls: { name: string }[]) => calls.map((c) => c.name).filter((n)
 const seed = (subtasks: object[] = []) => ({ changed: false, stop_requested: false, activities: [], next_seq: 1, task: { task_id: "task-1", state: "working", subtasks } });
 
 describe("reference agent loop", () => {
+  it("asks without blocking, keeps working, and hands the answer over when a heartbeat brings it", async () => {
+    const answer = { seq: 12, text: "Casual", signal: "feedback", source: "row_panel", author_type: "human", approval_id: "input-1", decision: "respond" };
+    const mcp = createStubMcp({
+      tasks: queued,
+      heartbeats: [{ stop_requested: false, pending_prompts: [] }, { stop_requested: false, pending_prompts: [answer] }],
+      waits: [seed(), { changed: true, stop_requested: false, next_seq: 12, activities: [{ ...answer, type: "prompt", excerpt: answer.text }] }],
+    });
+    const model = createStubModel([
+      { tool_calls: [toolCall("request_input", { question: "Formal or casual?", blocking: false })] },
+      { tool_calls: [toolCall("append_blocks", { page_id: "row-task-1", markdown: "## Draft\n\nHello." })] },
+      { tool_calls: [toolCall("submit_for_review", { summary: "Draft written", artifact_ids: ["art-1"] })] },
+    ]);
+    const channel = memoryChannel();
+    const { tasks } = await runAgent({ mcp, model, channel, clock: fakeClock(), maxTasks: 1 });
+
+    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "request_input", "append_blocks", "submit_for_review"]);
+    expect(mcp.calls.find((c) => c.name === "request_input")?.args).toMatchObject({ blocking: false, run_id: "run-task-1" });
+    expect(JSON.parse(model.requests[1].messages.at(-1).content).blocking).toBe(false);
+    const third = model.requests[2].messages.map((m: { content?: string }) => m.content ?? "").join("\n");
+    expect(third).toContain('Answer to your question "Formal or casual?": Casual');
+    expect(third).not.toContain("New messages on the task");
+    expect(channel.events.map((e) => e.kind)).toEqual(["claimed", "input_requested", "delivered"]);
+    expect(tasks[0].outcome).toBe("submitted");
+  });
+
+  it("makes the open question block and waits for it when the model has nothing else to do", async () => {
+    const mcp = createStubMcp({
+      tasks: queued,
+      waits: [
+        seed(),
+        { changed: true, stop_requested: false, next_seq: 12, activities: [{ seq: 12, type: "prompt", author_type: "human", signal: "feedback", approval_id: "input-1", excerpt: "Casual" }] },
+      ],
+    });
+    const model = createStubModel([
+      { tool_calls: [toolCall("request_input", { question: "Formal or casual?", blocking: false })] },
+      { content: "Waiting for the tone." },
+      { tool_calls: [toolCall("submit_for_review", { summary: "Draft written", artifact_ids: ["art-1"] })] },
+    ]);
+    const { tasks } = await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1 });
+
+    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "request_input", "await_questions", "wait_for_task", "submit_for_review"]);
+    expect(mcp.calls.find((c) => c.name === "await_questions")?.args).toEqual({ run_id: "run-task-1" });
+    expect(mcp.calls.some((c) => c.name === "end_run")).toBe(false);
+    const third = model.requests[2].messages.map((m: { content?: string }) => m.content ?? "").join("\n");
+    expect(third).toContain('Answer to your question "Formal or casual?": Casual');
+    expect(tasks[0].outcome).toBe("submitted");
+  });
+
+  it("keeps waiting for an approval when the answer to an open question arrives first", async () => {
+    const mcp = createStubMcp({
+      tasks: queued,
+      waits: [
+        seed(),
+        { changed: true, stop_requested: false, next_seq: 12, activities: [
+          { seq: 11, type: "prompt", author_type: "human", signal: "feedback", approval_id: "q-inherited", decision: "respond", excerpt: "Keep it short" },
+          { seq: 12, type: "prompt", author_type: "human", signal: "feedback", approval_id: "input-1", decision: "respond", excerpt: "Casual" },
+        ] },
+        { changed: true, stop_requested: false, next_seq: 13, activities: [{ seq: 13, type: "prompt", author_type: "human", signal: "feedback", approval_id: "appr-1", decision: "approve", excerpt: "" }] },
+      ],
+    });
+    const model = createStubModel([
+      { tool_calls: [toolCall("request_input", { question: "Formal or casual?", blocking: false })] },
+      { tool_calls: [toolCall("request_approval", { action: "send_email", params: { to: "ops@example.com" }, question: "Send the draft?" })] },
+      { tool_calls: [toolCall("submit_for_review", { summary: "Draft sent", artifact_ids: ["art-1"] })] },
+    ]);
+    const { tasks } = await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1 });
+
+    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "request_input", "request_approval", "wait_for_task", "wait_for_task", "submit_for_review"]);
+    const third = model.requests[2].messages;
+    const approvalResult = JSON.parse(third.filter((m: { role: string }) => m.role === "tool").at(-1).content);
+    expect(approvalResult.human_response.map((p: { approval_id: string }) => p.approval_id)).toEqual(["appr-1"]);
+    expect(third.at(-1).content).toContain('Answer to your question "Formal or casual?": Casual');
+    // A question this run did not ask (inherited from the run that handed over) is not lost either.
+    expect(third.at(-1).content).toContain("Answer to an earlier question: Keep it short");
+    expect(tasks[0].outcome).toBe("submitted");
+  });
+
+  it("hands over an answer given between two runs, which the read after the claim brings", async () => {
+    const late = { approval_id: "q-late", question: "Add a P.S.?", decision: "respond", text: "Yes, a short one", answered_at: "2026-10-29T09:30:00Z" };
+    const mcp = createStubMcp({ tasks: queued, waits: [{ ...seed(), answered_questions: [late] }] });
+    const model = createStubModel([{ tool_calls: [toolCall("submit_for_review", { summary: "Done", artifact_ids: ["art-1"] })] }]);
+    await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1 });
+
+    const first = model.requests[0].messages.map((m: { content?: string }) => m.content ?? "").join("\n");
+    expect(first).toContain('Answer to your question "Add a P.S.?": Yes, a short one');
+  });
+
   it("claims a queued task and drives read_page, append_blocks, add_artifact, submit_for_review over the model slot", async () => {
     const server = await startStubModelServer(deliveryScript);
     try {
