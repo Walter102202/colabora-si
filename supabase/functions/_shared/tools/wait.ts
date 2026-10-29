@@ -1,5 +1,6 @@
-// Waiting tools (§IV.9.7): hold the call until something changes or the timeout passes, by polling under RLS
-// every 1.5 s. Cursors are evaluated before sleeping, so nothing is lost between two calls.
+// Waiting tools (§IV.9.7): hold the call until something changes or the timeout passes. An empty iteration costs one
+// select on agent_events (backoff 1.5 s up to 10 s); a full snapshot runs on a fresh event, at least every SLOW_POLL_MS
+// and at the deadline. Cursors are evaluated before sleeping, so nothing is lost between two calls.
 import { must, ToolError } from '../db.ts';
 import type { ToolContext, ToolDef } from '../mcp.ts';
 import { num, object, output, plural, READ, str } from './common.ts';
@@ -9,6 +10,7 @@ import { excerpt, type Row } from './taskData.ts';
 export const POLL_MS = 1500;
 export const MAX_POLL_MS = 10_000;
 export const BACKOFF_FACTOR = 1.5;
+/** Longest gap between two full snapshots while nothing happens: the backoff nap is capped so it never crosses it. */
 export const SLOW_POLL_MS = 10_000;
 export const MAX_WAIT_S = 120;
 export const DEFAULT_WAIT_S = 50;
@@ -128,7 +130,7 @@ async function newEvents(ctx: ToolContext, mark: EventMark): Promise<{ fresh: Ro
     columns: 'event_id,task_id,type,created_at',
     filters: [{ col: 'agent_id', op: 'eq', value: ctx.principal.agentId }, { col: 'created_at', op: 'gte', value: mark.t }],
     order: [{ column: 'created_at', ascending: true }],
-    limit: 100,
+    limit: 100, // a cursor, not a cap: the mark moves to the last fresh row; only 100+ events sharing one created_at could stall
   })) ?? [];
   const seen = new Set(mark.k);
   const fresh = rows.filter((e) => { const ts = normTs(String(e.created_at)); return ts > mark.t || (ts === mark.t && !seen.has(`e:${String(e.event_id)}`)); });
@@ -179,6 +181,8 @@ const waitForTask: ToolDef = {
     const started = ctx.now();
     const deadline = started + timeoutS * 1000;
 
+    // The event mark comes before the baseline: a change committed after it is in the baseline or brings a fresh event.
+    let mark = await latestEventMark(ctx);
     let snap = await snapshotTask(ctx, taskId, afterSeq, runId);
     const baseline = fingerprint(snap);
     const finish = (changed: boolean) => {
@@ -204,13 +208,12 @@ const waitForTask: ToolDef = {
     if (runId) await must(ctx.db.rpc('touch_run_wait', { p_run_id: runId, p_task_id: taskId }));
     if (timeoutS === 0) return finish(isChanged());
 
-    let mark = await latestEventMark(ctx);
     let delay = POLL_MS;
     let lastFull = ctx.now();
     let lastProgress = started;
     try {
       while (!isChanged() && ctx.now() < deadline) {
-        if (!await nap(ctx, Math.min(delay, deadline - ctx.now()))) break;
+        if (!await nap(ctx, Math.min(delay, deadline - ctx.now(), Math.max(0, lastFull + SLOW_POLL_MS - ctx.now())))) break;
         if (ctx.now() - lastProgress >= PROGRESS_EVERY_MS) {
           lastProgress = ctx.now();
           ctx.progress(Math.round((lastProgress - started) / 1000), timeoutS, `waiting on task ${taskId}`);
@@ -225,6 +228,9 @@ const waitForTask: ToolDef = {
           delay = nextDelay(delay);
         }
       }
+      // The last nap may end at the deadline right after a cheap poll: re-read once, so a change without an event is
+      // reported by this call instead of being absorbed by the next call's baseline.
+      if (!isChanged() && ctx.now() >= deadline) snap = await snapshotTask(ctx, taskId, afterSeq, runId);
     } finally {
       // Leaving the wait clears waiting_on_task_id; a failure here must not hide the result.
       if (runId) await ctx.db.rpc('touch_run_wait', { p_run_id: runId, p_task_id: null }).catch(() => {});
@@ -270,11 +276,6 @@ export function decodeTaskCursor(raw: string): Cursor {
     // fall through
   }
   throw new ToolError('invalid_input', 'The cursor is not valid. Call wait_for_my_tasks without `after` to get a new one.');
-}
-
-function mergeCursor(a: Cursor, b: Cursor): Cursor {
-  if (a.t === b.t) return { t: a.t, k: [...new Set([...a.k, ...b.k])] };
-  return a.t > b.t ? a : b;
 }
 
 const TASK_FIELDS = 'id,title,state,review_state,waiting_on,brief_version,brief_stale,active_run_id,updated_at';
@@ -465,6 +466,9 @@ const waitForMyTasks: ToolDef = {
       };
     }
     let cursor = decodeTaskCursor(after);
+    // The event mark stays local: the cursor moves only with what changesSince saw, so an event for another task never
+    // carries it past a task updated a moment earlier in a transaction that committed later.
+    let mark: EventMark = { t: cursor.t, k: cursor.k };
     let delay = POLL_MS;
     let lastFull = -Infinity;
     const timeoutS = timeoutOf(args);
@@ -472,11 +476,12 @@ const waitForMyTasks: ToolDef = {
     const deadline = started + timeoutS * 1000;
     let lastProgress = started;
     for (;;) {
-      const signal = await newEvents(ctx, cursor);
+      const signal = await newEvents(ctx, mark);
+      mark = signal.mark;
       const full = lastFull === -Infinity || signal.fresh.length > 0 || ctx.now() - lastFull >= SLOW_POLL_MS;
       if (full) {
         const delta = await changesSince(ctx, cursor);
-        cursor = mergeCursor(delta.cursor, signal.mark);
+        cursor = delta.cursor;
         lastFull = ctx.now();
         if (delta.tasks.length) {
           await markDelivered(ctx);
@@ -486,10 +491,8 @@ const waitForMyTasks: ToolDef = {
           };
         }
         if (signal.fresh.length) delay = POLL_MS;
-      } else {
-        cursor = mergeCursor(cursor, signal.mark);
       }
-      if (ctx.now() >= deadline || !await nap(ctx, Math.min(delay, Math.max(0, deadline - ctx.now())))) break;
+      if (ctx.now() >= deadline || !await nap(ctx, Math.min(delay, Math.max(0, deadline - ctx.now()), Math.max(0, lastFull + SLOW_POLL_MS - ctx.now())))) break;
       delay = nextDelay(delay);
       if (ctx.now() - lastProgress >= PROGRESS_EVERY_MS) {
         lastProgress = ctx.now();

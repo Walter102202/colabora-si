@@ -1,5 +1,5 @@
 begin;
-select plan(8);
+select plan(10);
 
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_A2', 'page_A');
@@ -41,6 +41,8 @@ select is((select agent_id from public.agent_events where task_id = :'parent'::u
 select is((select payload from public.agent_events where task_id = :'parent'::uuid and type = 'task.updated'),
           jsonb_build_object('subtask_id', :'sub1'::uuid, 'subtask_state', 'done', 'acceptance', 'accepted', 'closed_by', 'human'),
           'the payload names the subtask, its state, the acceptance and who closed it');
+select is((select run_id from public.agent_events where task_id = :'parent'::uuid and type = 'task.updated'), :'lr'::uuid,
+          'the event carries the parent''s active run');
 
 -- The lead closes sub2 by policy: a second task.updated, closed_by lead.
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
@@ -49,6 +51,8 @@ select is((select count(*)::int from public.agent_events where task_id = :'paren
           'close_subtask queues a second task.updated');
 select is((select payload->>'closed_by' from public.agent_events where task_id = :'parent'::uuid and type = 'task.updated'
             and payload->>'subtask_id' = :'sub2'), 'lead', 'the lead closure is marked closed_by lead');
+select is((select (max(seq) - min(seq))::int from public.agent_events where task_id = :'parent'::uuid and type = 'task.updated'), 1,
+          'the two events take consecutive seq on the parent');
 
 -- RLS: the lead reads its events, the worker does not.
 select is((select count(*)::int from public.agent_events where type = 'task.updated'), 2, 'the lead reads both events under RLS');

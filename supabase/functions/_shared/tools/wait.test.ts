@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import type { Db, Filter, SelectSpec } from '../db.ts';
 import type { ToolContext, ToolDef } from '../mcp.ts';
-import { decodeTaskCursor, encodeTaskCursor, normTs, POLL_MS, waitTools } from './wait.ts';
+import { decodeTaskCursor, encodeTaskCursor, normTs, SLOW_POLL_MS, waitTools } from './wait.ts';
 
 type Row = Record<string, unknown>;
 
@@ -24,6 +24,7 @@ function matches(row: Row, f: Filter): boolean {
 function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = () => {}) {
   const rpcs: { fn: string; params: Record<string, unknown> }[] = [];
   const selects: string[] = [];
+  const selectAt: { table: string; at: number }[] = [];
   let clock = 1_000_000;
   let sleeps = 0;
   const db: Db = {
@@ -33,6 +34,7 @@ function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = (
     },
     select: <T>(spec: SelectSpec) => {
       selects.push(spec.table);
+      selectAt.push({ table: spec.table, at: clock - 1_000_000 });
       let rows = (tables[spec.table] ?? []).filter((r) => (spec.filters ?? []).every((f) => matches(r, f)));
       for (const o of [...(spec.order ?? [])].reverse()) {
         rows = [...rows].sort((a, b) => {
@@ -58,7 +60,7 @@ function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = (
     },
     progress: () => {},
   };
-  return { ctx, rpcs, selects, sleeps: () => sleeps, elapsed: () => clock - 1_000_000 };
+  return { ctx, rpcs, selects, selectAt, sleeps: () => sleeps, elapsed: () => clock - 1_000_000 };
 }
 
 function task(overrides: Row = {}): Row {
@@ -243,7 +245,7 @@ Deno.test('wait_for_task without events runs one cheap select per poll and a ful
   assert.ok(h.elapsed() >= 10_000 && h.elapsed() < 40_000, `elapsed ${h.elapsed()}`);
   const taskSelects = h.selects.filter((t) => t === 'agent_tasks').length;
   assert.ok(taskSelects <= 6, `full snapshots: ${taskSelects}`); // baseline (2) + slow polls (2 each), never one per poll
-  assert.ok(h.selects.filter((t) => t === 'agent_events').length >= 4); // 1.5 + 2.25 + 3.4 + 5.1 s: four cheap polls before the slow pass at ~12 s
+  assert.ok(h.selects.filter((t) => t === 'agent_events').length >= 4); // 1.5 + 2.25 + 3.4 s, then the nap is cut at 10 s: four cheap polls before the slow pass
 });
 
 Deno.test('wait_for_my_tasks: an event resets the backoff and triggers one full snapshot', async () => {
@@ -260,8 +262,8 @@ Deno.test('wait_for_my_tasks: an event resets the backoff and triggers one full 
   assert.equal(out.structured.changed, true);
   assert.deepEqual((out.structured.tasks as Row[]).map((t) => [t.task_id, t.reason]), [['p1', 'feedback']]);
   assert.equal(h.sleeps(), 3);
-  assert.equal(h.selects.filter((t) => t === 'agent_tasks').length, 3); // first full pass (2 selects: updated + missing is skipped) + the one after the event
-  assert.ok(decodeTaskCursor(String(out.structured.next_cursor)).k.includes('e:e9'));
+  assert.equal(h.selects.filter((t) => t === 'agent_tasks').length, 3); // first pass (updated) + the pass after the event (updated + the missing task): never one per poll
+  assert.ok(!decodeTaskCursor(String(out.structured.next_cursor)).k.some((k) => k.startsWith('e:')), 'the cursor carries task and prompt keys only');
 });
 
 Deno.test('wait_for_my_tasks for a person (no agent id) never queries agent_events and keeps the slow poll', async () => {
@@ -272,5 +274,50 @@ Deno.test('wait_for_my_tasks for a person (no agent id) never queries agent_even
   const out = await tool('wait_for_my_tasks').handler({ after, timeout_s: 20 }, h.ctx);
   assert.equal(out.structured.changed, false);
   assert.equal(h.selects.filter((t) => t === 'agent_events').length, 0);
-  assert.ok(h.selects.filter((t) => t === 'agent_tasks').length >= 2); // first pass and the 10 s slow poll (at ~12 s)
+  assert.ok(h.selects.filter((t) => t === 'agent_tasks').length >= 2); // first pass and the slow poll at 10 s
+});
+
+/** Timestamps (ms since start) of the full snapshots: one per distinct time an agent_tasks select ran. */
+const snapshotTimes = (h: ReturnType<typeof harness>) => [...new Set(h.selectAt.filter((s) => s.table === 'agent_tasks').map((s) => s.at))];
+
+Deno.test('wait_for_task: full snapshots are never more than SLOW_POLL_MS apart while nothing happens', async () => {
+  const h = harness({ agent_tasks: [task()], agent_activities: [activity(1)], agent_events: [] as Row[] });
+  const out = await tool('wait_for_task').handler({ task_id: 't1', after_seq: 1, timeout_s: 60 }, h.ctx);
+  assert.equal(out.structured.changed, false);
+  const at = snapshotTimes(h);
+  assert.ok(at.length >= 6, `snapshots at ${at.join(', ')}`);
+  for (let i = 1; i < at.length; i++) assert.ok(at[i] - at[i - 1] <= SLOW_POLL_MS, `${at[i] - at[i - 1]} ms between the snapshots at ${at[i - 1]} and ${at[i]}`);
+});
+
+Deno.test('wait_for_task with a short timeout re-reads the task at the deadline, so a change without an event is reported by this call', async () => {
+  const tables = { agent_tasks: [task()], agent_activities: [activity(1)], agent_events: [] as Row[] };
+  const h = harness(tables, (n) => {
+    if (n === 2) tables.agent_tasks[0] = task({ state: 'ready_for_review', review_state: 'pending' }); // no event: only a snapshot can see it
+  });
+  const out = await tool('wait_for_task').handler({ task_id: 't1', after_seq: 1, timeout_s: 6 }, h.ctx);
+  assert.equal(out.structured.changed, true);
+  assert.equal((out.structured.task as Row).state, 'ready_for_review');
+  assert.equal(h.elapsed(), 6000);
+});
+
+Deno.test('wait_for_my_tasks: an event for a task that is not mine triggers a full pass but does not move the cursor', async () => {
+  const tables = { agent_tasks: [task({ id: 'p1', updated_at: '2026-10-27T10:00:00+00:00' })], agent_activities: [] as Row[], agent_events: [] as Row[] };
+  const h = harness(tables, (n) => {
+    if (n === 1) tables.agent_events.push(event('e7', '2026-10-27T10:00:30+00:00', { task_id: 'other-task', type: 'task.start' }));
+  });
+  const after = encodeTaskCursor({ t: normTs('2026-10-27T10:00:01+00:00'), k: [] });
+  const out = await tool('wait_for_my_tasks').handler({ after, timeout_s: 5 }, h.ctx);
+  assert.equal(out.structured.changed, false);
+  assert.deepEqual(decodeTaskCursor(String(out.structured.next_cursor)), decodeTaskCursor(after));
+  assert.equal(h.selects.filter((t) => t === 'agent_tasks').length, 2); // the first pass and the one the event triggered; nothing at the deadline
+});
+
+Deno.test('wait_for_my_tasks: full passes are never more than SLOW_POLL_MS apart while nothing happens', async () => {
+  const h = harness({ agent_tasks: [task({ updated_at: '2026-10-27T10:00:00+00:00' })], agent_activities: [] as Row[], agent_events: [] as Row[] });
+  const after = encodeTaskCursor({ t: normTs('2026-10-27T10:00:01+00:00'), k: [] });
+  const out = await tool('wait_for_my_tasks').handler({ after, timeout_s: 60 }, h.ctx);
+  assert.equal(out.structured.changed, false);
+  const at = snapshotTimes(h);
+  assert.ok(at.length >= 6, `passes at ${at.join(', ')}`);
+  for (let i = 1; i < at.length; i++) assert.ok(at[i] - at[i - 1] <= SLOW_POLL_MS, `${at[i] - at[i - 1]} ms between the passes at ${at[i - 1]} and ${at[i]}`);
 });
