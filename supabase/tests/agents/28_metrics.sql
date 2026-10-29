@@ -2,7 +2,7 @@
 -- Nothing divides by zero, and a metric without a source says so instead of showing 0.
 -- Two agents share T3 (the second one takes it over), so every per-agent filter changes at least one number.
 begin;
-select plan(54);
+select plan(55);
 
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_M2', 'page_A');
@@ -212,6 +212,7 @@ select is(pg_temp.m(:'zm', 'cost_per_accepted_usd')->>'reason', 'cost_partial', 
 -- C. No accepted deliverables, no window, no access.
 select is(pg_temp.m(:'im', 'interventions_per_accepted')->>'status', 'no_data', 'an agent with zero accepted deliverables does not divide by zero');
 select is(pg_temp.m(:'im', 'cost_per_accepted_usd')->>'status', 'no_data', 'nor shows a cost per deliverable');
+select is((:'im'::jsonb->>'tasks')::int, 1, 'a task delegated to the agent counts in its cohort before the agent starts it');
 select is(pg_temp.m(:'hm', 'out_of_scope_attempts')->>'status' || ':' || (pg_temp.m(:'hm', 'out_of_scope_attempts')->>'reason'),
           'not_measured:webhook_agent', 'a webhook agent calls through agent-webhook, which logs no denial: never 0');
 select is((:'later'::jsonb->>'tasks')::int, 0, 'the window leaves out older tasks');
