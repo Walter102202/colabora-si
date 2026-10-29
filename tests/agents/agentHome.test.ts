@@ -76,6 +76,17 @@ describe("decisions home", () => {
     });
     expect(h.review.map((i) => [i.taskId, i.detail])).toEqual([["l", "Deliverable ready"], ["m", "Review outdated"]]);
   });
+  it("hands me a Lead's subtask once the Lead approved it, since closing it is then a person's call", () => {
+    const h = home({
+      tasks: [
+        task("p", { delegate_agent_id: "lead-1" }),
+        task("k", { state: "ready_for_review", parent_task_id: "p", review_state: "approved", updated_at: "2026-10-30T14:30:00Z" }),
+        task("k2", { state: "ready_for_review", parent_task_id: "p", review_state: "outdated" }),
+        task("l", { state: "ready_for_review", review_state: "approved", updated_at: "2026-10-30T13:00:00Z" }),
+      ],
+    });
+    expect(h.review.map((i) => [i.taskId, i.detail])).toEqual([["k", "Approved in review"], ["l", "Approved in review"]]);
+  });
   it("counts as done today what closed since local midnight; failed and stopped tasks have no closed_at", () => {
     expect(startOfLocalDay(NOW)).toBe(Date.parse("2026-10-30T00:00:00Z"));
     const h = home({

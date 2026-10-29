@@ -54,9 +54,11 @@ export function buildDecisionsHome({ tasks, approvals, runs, agents, userId, now
       home.working.push({ ...item(t, "working", stale ? "No signals lately" : run ? RUN_STATUS_LABEL[run.status] : "Working"), stale });
     }
     if (t.state === "ready_for_review") {
+      // A Lead reviews its subtasks first. Once it approved one that it may not close itself, a person closes it.
       const parent = byTask.get(t.parent_task_id ?? "");
-      if (byAgent.get(parent?.delegate_agent_id ?? "")?.role !== "lead") {
-        home.review.push({ ...item(t, "review", t.review_state === "outdated" ? "Review outdated" : "Deliverable ready"), at: t.updated_at });
+      if (byAgent.get(parent?.delegate_agent_id ?? "")?.role !== "lead" || t.review_state === "approved") {
+        const detail = t.review_state === "outdated" ? "Review outdated" : t.review_state === "approved" ? "Approved in review" : "Deliverable ready";
+        home.review.push({ ...item(t, "review", detail), at: t.updated_at });
       }
     }
     if (isTerminal(t.state)) {
