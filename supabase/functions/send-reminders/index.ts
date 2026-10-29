@@ -9,12 +9,13 @@
 // implemented directly on WebCrypto — no third-party push library.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { agentPush, pushOutcome, shouldPush, tooOldToPush, type AgentNotification, type PushApproval, type PushPayload, type PushResult } from "./payload.ts";
 
 const enc = new TextEncoder();
 
 // --- byte helpers -----------------------------------------------------------
 
-function b64urlToBytes(s: string): Uint8Array {
+function b64urlToBytes(s: string): Uint8Array<ArrayBuffer> {
   const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
   const bin = atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, "="));
   const out = new Uint8Array(bin.length);
@@ -28,7 +29,7 @@ function bytesToB64url(b: Uint8Array): string {
   return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function concat(...parts: Uint8Array[]): Uint8Array {
+function concat(...parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let off = 0;
   for (const p of parts) {
@@ -50,7 +51,7 @@ function secretEquals(a: string, b: string): boolean {
 
 // --- HKDF (RFC 5869, single-block output — everything here is <= 32 bytes) ---
 
-async function hmac(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
+async function hmac(key: Uint8Array<ArrayBuffer>, data: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
   const k = await crypto.subtle.importKey(
     "raw",
     key,
@@ -62,11 +63,11 @@ async function hmac(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
 }
 
 async function hkdf(
-  salt: Uint8Array,
-  ikm: Uint8Array,
+  salt: Uint8Array<ArrayBuffer>,
+  ikm: Uint8Array<ArrayBuffer>,
   info: Uint8Array,
   length: number,
-): Promise<Uint8Array> {
+): Promise<Uint8Array<ArrayBuffer>> {
   const prk = await hmac(salt, ikm);
   const okm = await hmac(prk, concat(info, new Uint8Array([1])));
   return okm.slice(0, length);
@@ -128,7 +129,7 @@ async function encryptPayload(
   plaintext: string,
   p256dh: string,
   authSecret: string,
-): Promise<Uint8Array> {
+): Promise<Uint8Array<ArrayBuffer>> {
   const uaPublic = b64urlToBytes(p256dh); // 65 bytes
   const auth = b64urlToBytes(authSecret); // 16 bytes
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -200,12 +201,22 @@ interface Sub {
   auth: string;
 }
 
+// A push service that accepts the connection and never answers would otherwise hold the whole pass.
+const PUSH_TIMEOUT_MS = 10_000;
+
 async function sendPush(
   sub: Sub,
   payload: string,
   cfg: { vapid_public: string; vapid_private: string; vapid_subject: string },
-): Promise<number> {
-  const body = await encryptPayload(payload, sub.p256dh, sub.auth);
+): Promise<number | "invalid"> {
+  let body: Uint8Array<ArrayBuffer>;
+  try {
+    new URL(sub.endpoint);
+    body = await encryptPayload(payload, sub.p256dh, sub.auth);
+  } catch {
+    // The endpoint is not a URL or the subscription keys are malformed: it can never receive a push.
+    return "invalid";
+  }
   const authorization = await vapidAuthorization(
     sub.endpoint,
     cfg.vapid_public,
@@ -222,6 +233,7 @@ async function sendPush(
       Urgency: "high",
     },
     body,
+    signal: AbortSignal.timeout(PUSH_TIMEOUT_MS),
   });
   // Drain so the connection can be reused / released.
   await res.arrayBuffer().catch(() => undefined);
@@ -235,6 +247,9 @@ interface DueReminder {
   user_id: string;
   page_id: string | null;
   body: string;
+  // Set only for an agent notification. A reminder's id is free text its author picks, so the id never tells the two apart.
+  notificationId?: string;
+  push?: PushPayload;
 }
 
 const serviceKey = (() => {
@@ -295,9 +310,40 @@ Deno.serve(async (req) => {
   }
 
   const due = (dueRows ?? []) as DueReminder[];
-  const pending = await supabase.from("notifications").select("id,user_id,page_id,kind,payload").is("pushed_at", null).in("kind", ["input_required", "ready_for_review", "task_failed", "approval_requested"]).order("created_at", { ascending: true }).limit(200);
+  const pending = await supabase.from("notifications").select("id,user_id,page_id,task_id,approval_id,block_id,kind,payload,created_at").is("pushed_at", null).in("kind", ["input_required", "ready_for_review", "task_failed", "approval_requested"]).order("created_at", { ascending: true }).limit(200);
   if (pending.error && pending.error.code !== "42P01" && pending.error.code !== "PGRST205") return new Response("Query failed", { status: 500 });
-  for (const notification of pending.data ?? []) due.push({ id: "notification:" + notification.id, user_id: notification.user_id, page_id: notification.page_id, body: notification.payload?.body || notification.payload?.message || notification.kind.replace(/_/g, " ") });
+  const agentRows = (pending.data ?? []) as (AgentNotification & { user_id: string; created_at: string })[];
+  const approvalIds = [...new Set(agentRows.map((r) => r.approval_id).filter((id): id is string => !!id))];
+  const taskIds = [...new Set(agentRows.map((r) => r.task_id).filter((id): id is string => !!id))];
+  const approvals = new Map<string, PushApproval>();
+  const titles = new Map<string, string>();
+  if (approvalIds.length) {
+    const { data, error } = await supabase.from("agent_approvals").select("id,action,params,artifact_version,question,kind,blocking,status").in("id", approvalIds);
+    if (error) console.error("approval lookup failed", error); // The push still goes out with a generic text.
+    for (const a of (data ?? []) as (PushApproval & { id: string })[]) approvals.set(a.id, a);
+  }
+  if (taskIds.length) {
+    const { data, error } = await supabase.from("agent_tasks").select("id,title").in("id", taskIds);
+    if (error) console.error("task lookup failed", error);
+    for (const t of (data ?? []) as { id: string; title: string }[]) titles.set(t.id, t.title);
+  }
+  // Rows that need no push: their approval was already decided, or they outlived the push TTL. Marked now,
+  // so they never hold the queue.
+  const settled: string[] = [];
+  const now = Date.now();
+  for (const row of agentRows) {
+    const approval = row.approval_id ? (approvals.get(row.approval_id) ?? null) : null;
+    if (!shouldPush(row, approval) || tooOldToPush(row.created_at, now)) {
+      settled.push(row.id);
+      continue;
+    }
+    const p = agentPush(row, row.task_id ? (titles.get(row.task_id) ?? null) : null, approval);
+    due.push({ id: p.id, user_id: row.user_id, page_id: row.page_id, body: p.body, notificationId: row.id, push: p });
+  }
+  if (settled.length) {
+    const { error } = await supabase.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", settled);
+    if (error) console.error("marking settled notifications failed", error);
+  }
   if (due.length === 0) {
     return Response.json({ due: 0, sent: 0, notified: 0, removed: 0 });
   }
@@ -320,49 +366,95 @@ Deno.serve(async (req) => {
   }
 
   const expired = new Set<string>();
+  // Endpoints that threw (timeout, network) or answered 429/5xx: skipped for the rest of the pass.
+  const unreachable = new Set<string>();
+  // The cron call gives up after 30 s: the pass stops starting sends after 15 s (plus at most one timeout),
+  // so it always reaches the marking below; the rest waits for the next minute.
+  const deadline = Date.now() + 15_000;
   const deliveredIds: string[] = [];
+  const reminderIds: string[] = [];
+  // Agent notifications that leave the queue: delivered, nobody to push to, or refused for good.
+  const notificationIds: string[] = [];
   const statuses: Record<string, number> = {};
   let sent = 0;
 
-  for (const reminder of due) {
+  const send = async (reminder: DueReminder) => {
     const subs = byUser.get(reminder.user_id);
-    // No push subscription for this user: leave `notified` false so the
+    // No push subscription for a reminder: leave `notified` false so the
     // in-app checker still fires the toast next time the app is open.
-    if (!subs?.length) continue;
+    if (!subs?.length) {
+      // Agent notifications already show in the inbox: mark them so the 200 oldest never block newer ones.
+      if (reminder.notificationId) notificationIds.push(reminder.notificationId);
+      return;
+    }
 
-    const payload = JSON.stringify({
+    const payload = JSON.stringify(reminder.push ?? {
       id: reminder.id,
       title: "Reminder",
       body: reminder.body || "Reminder",
       url: reminder.page_id ? `/p/${reminder.page_id}` : "/",
     });
 
-    let anyDelivered = false;
-    for (const sub of subs) {
-      if (expired.has(sub.endpoint)) continue;
-      let status: number;
+    // A person's devices are tried together, so one that never answers costs a single timeout.
+    const targets = subs.filter((sub) => !expired.has(sub.endpoint) && !unreachable.has(sub.endpoint));
+    const results = await Promise.all(targets.map(async (sub): Promise<PushResult> => {
       try {
-        status = await sendPush(sub, payload, cfg);
+        return await sendPush(sub, payload, cfg);
       } catch (e) {
         console.error("push send threw", sub.endpoint, e);
-        continue;
+        unreachable.add(sub.endpoint);
+        return "threw";
       }
+    }));
+    targets.forEach((sub, i) => {
+      const status = results[i];
+      if (status === "threw") return;
       statuses[String(status)] = (statuses[String(status)] ?? 0) + 1;
       if (status === 404 || status === 410) {
         expired.add(sub.endpoint);
-      } else if (status >= 200 && status < 300) {
-        anyDelivered = true;
+      } else if (typeof status === "number" && status >= 200 && status < 300) {
         sent++;
       } else {
         console.error("push rejected", status, sub.endpoint);
+        // A service that is overloaded or failing now is tried again next pass, not for every row of this one.
+        if (status === 429 || (typeof status === "number" && status >= 500)) unreachable.add(sub.endpoint);
+      }
+    });
+    const outcome = pushOutcome(results);
+    if (outcome === "delivered") deliveredIds.push(reminder.id);
+    // A reminder that was not delivered keeps `notified` false. An agent notification also leaves the queue
+    // when every subscription refused it for good.
+    if (reminder.notificationId) {
+      if (outcome !== "retry") notificationIds.push(reminder.notificationId);
+    } else if (outcome === "delivered") reminderIds.push(reminder.id);
+  };
+  // Eight people are served at a time, each person's rows in order, and people come in a new random order
+  // each pass: a person whose push service is slow holds one worker for one timeout, and nobody is always last.
+  const byPerson = new Map<string, DueReminder[]>();
+  for (const r of due) {
+    const list = byPerson.get(r.user_id);
+    if (list) list.push(r);
+    else byPerson.set(r.user_id, [r]);
+  }
+  const people = [...byPerson.values()];
+  for (let i = people.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [people[i], people[j]] = [people[j], people[i]];
+  }
+  let next = 0;
+  await Promise.all(Array.from({ length: 8 }, async () => {
+    while (next < people.length && Date.now() <= deadline) {
+      for (const reminder of people[next++]) {
+        if (Date.now() > deadline) break;
+        await send(reminder);
       }
     }
-    if (anyDelivered) deliveredIds.push(reminder.id);
-  }
+  }));
 
-  const notificationIds = deliveredIds.filter((id) => id.startsWith("notification:")).map((id) => id.slice(13));
-  const reminderIds = deliveredIds.filter((id) => !id.startsWith("notification:"));
-  if (notificationIds.length) await supabase.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", notificationIds);
+  if (notificationIds.length) {
+    const { error } = await supabase.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", notificationIds);
+    if (error) console.error("marking pushed failed", error);
+  }
   if (reminderIds.length) {
     const { error } = await supabase
       .from("reminders")
