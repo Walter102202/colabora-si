@@ -429,20 +429,58 @@ begin
   return v_level;
 end $$;
 
+-- The actions a brief's require_approval names: one string, the strings of a list or the keys of an object; none when
+-- it is absent or jsonb null. null for any other shape, which validate_brief refuses: then every action asks.
+create or replace function private.required_actions(p_policies jsonb)
+returns text[] language sql immutable set search_path = '' as $$
+  select case
+    when coalesce(jsonb_typeof(p_policies -> 'require_approval'), 'null') = 'null' then array[]::text[]
+    when jsonb_typeof(p_policies -> 'require_approval') = 'string' then array[p_policies ->> 'require_approval']
+    when jsonb_typeof(p_policies -> 'require_approval') = 'object' then array(select jsonb_object_keys(p_policies -> 'require_approval'))
+    when jsonb_typeof(p_policies -> 'require_approval') = 'array'
+     and not exists (select 1 from jsonb_array_elements(p_policies -> 'require_approval') e where jsonb_typeof(e) <> 'string')
+      then array(select jsonb_array_elements_text(p_policies -> 'require_approval'))
+    else null end;
+$$;
+
+-- 0006 plus require_approval: a shape the server cannot read is refused, so a brief never asks less than it says.
+create or replace function private.validate_brief(p_brief jsonb)
+returns void language plpgsql immutable set search_path = '' as $$
+begin
+  if jsonb_typeof(p_brief) is distinct from 'object' or coalesce(btrim(p_brief->>'objective'), '') = '' then
+    raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'objective is required';
+  end if;
+  if p_brief ? 'done_when' then
+    if jsonb_typeof(p_brief->'done_when') <> 'array' then
+      raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'done_when must be an array';
+    end if;
+    if exists (select 1 from jsonb_array_elements(p_brief->'done_when') c where coalesce(c->>'id', '') = '')
+       or (select count(*) from jsonb_array_elements(p_brief->'done_when')) <>
+          (select count(distinct c->>'id') from jsonb_array_elements(p_brief->'done_when') c) then
+      raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'done_when ids must be unique';
+    end if;
+  end if;
+  if private.required_actions(p_brief->'policies') is null then
+    raise exception using errcode = 'PT400', message = 'invalid_input',
+      detail = 'policies.require_approval must be an action, a list of actions or an object keyed by action';
+  end if;
+end $$;
+
 -- Why an action may run without asking a person: 'preset', 'brief', or null (ask). payment always asks.
 -- require_approval in the brief always asks; a subtask never gets what its parent would ask for; preapproved counts
 -- when a person wrote that list from the app, or for a subtask within its parent's allowance.
 create or replace function private.action_allowed(p_action text, p_task_id uuid, p_depth int default 0)
 returns text language plpgsql stable security definer set search_path = '' as $$
-declare v_t public.agent_tasks%rowtype; v_b public.task_briefs%rowtype;
+declare v_t public.agent_tasks%rowtype; v_b public.task_briefs%rowtype; v_required text[];
 begin
   if p_action = 'payment' then return null; end if;
   if p_depth >= 10 or coalesce(p_action, '') = '' then return null; end if;
   select * into v_t from public.agent_tasks where id = p_task_id;
   if not found then return null; end if;
   select * into v_b from public.task_briefs where task_id = v_t.id and version = v_t.brief_version;
-  -- Fails closed: one string, an element of a list or a key of an object all ask.
-  if (v_b.policies -> 'require_approval') ? p_action then return null; end if;
+  -- Fails closed: an action it names asks, and a shape it cannot read makes every action ask.
+  v_required := private.required_actions(v_b.policies);
+  if v_required is null or p_action = any (v_required) then return null; end if;
   if v_t.parent_task_id is not null and private.action_allowed(p_action, v_t.parent_task_id, p_depth + 1) is null then
     return null;
   end if;
@@ -797,6 +835,7 @@ end $$;
 create or replace function public.task_autonomy(p_task_id uuid)
 returns jsonb language plpgsql stable security definer set search_path = '' as $$
 declare v_t public.agent_tasks%rowtype; v_b public.task_briefs%rowtype; v_req text; v_own text; v_level text; v_auto text[];
+        v_candidates text[];
 begin
   select * into v_t from public.agent_tasks where id = p_task_id;
   if not found or not private.can_read_task(p_task_id) then raise exception using errcode = 'PT404', message = 'not_found'; end if;
@@ -804,23 +843,20 @@ begin
   select autonomy into v_req from public.agent_task_policies where task_id = v_t.id;
   v_own := private.own_autonomy_level(v_t.id);
   v_level := private.task_autonomy_level(v_t.id);
-  select coalesce(array_agg(s.a order by s.a), '{}') into v_auto
+  -- The actions that can ever run without asking: the highest preset and what the brief preapproves.
+  select coalesce(array_agg(s.a order by s.a), '{}') into v_candidates
     from (select distinct x as a
             from unnest(private.autonomy_preset('autonomous')
                         || coalesce(array(select jsonb_array_elements_text(case when jsonb_typeof(v_b.policies->'preapproved') = 'array'
-                                                                                 then v_b.policies->'preapproved' else '[]'::jsonb end)), '{}')) x) s
-   where private.action_allowed(s.a, v_t.id) is not null;
+                                                                                 then v_b.policies->'preapproved' else '[]'::jsonb end)), '{}')) x) s;
+  select coalesce(array_agg(c order by c), '{}') into v_auto from unnest(v_candidates) c where private.action_allowed(c, v_t.id) is not null;
   return jsonb_build_object(
     'level', v_level, 'requested', v_req,
     'source', case when v_level <> v_own then 'parent' when v_req is not null and v_own = v_req then 'task' else 'workspace' end,
     'workspace_level', private.workspace_autonomy(v_t.workspace_id),
     'auto_approved', to_jsonb(v_auto),
-    -- What the ? test of action_allowed matches, always as a list: one string, the strings of a list, the keys of an object.
-    'require_approval', to_jsonb(case jsonb_typeof(v_b.policies->'require_approval')
-      when 'string' then array[v_b.policies->>'require_approval']
-      when 'array' then array(select e #>> '{}' from jsonb_array_elements(v_b.policies->'require_approval') e where jsonb_typeof(e) = 'string')
-      when 'object' then array(select jsonb_object_keys(v_b.policies->'require_approval'))
-      else array[]::text[] end),
+    -- What the brief makes ask, always as a list; for a shape the server cannot read, every action that could run alone.
+    'require_approval', to_jsonb(coalesce(private.required_actions(v_b.policies), v_candidates)),
     -- Whether set_task_autonomy would let the caller change the level: the workspace owner, from the app itself.
     'can_edit', private.is_workspace_owner(v_t.workspace_id) and private.jwt_client_id() is null);
 end $$;
@@ -886,6 +922,7 @@ revoke execute on function private.is_owner_user(uuid, uuid) from public;
 revoke execute on function private.workspace_autonomy(uuid) from public;
 revoke execute on function private.own_autonomy_level(uuid) from public;
 revoke execute on function private.task_autonomy_level(uuid, int) from public;
+revoke execute on function private.required_actions(jsonb) from public;
 revoke execute on function private.action_allowed(text, uuid, int) from public;
 revoke execute on function private.record_auto_approval(public.agent_runs, text, jsonb, uuid, text, boolean) from public;
 revoke all on function public.task_autonomy(uuid) from public, anon;
