@@ -28,6 +28,7 @@ export const CARD_RESOURCE_META: Record<string, unknown> = { ui: { prefersBorder
 export const CARD_OUTPUT: Record<string, JsonSchema> = {
   kind: { type: 'string', enum: ['task'] },
   continuity: { type: ['object', 'null'] },
+  autonomy: { type: ['object', 'null'] },
   diff: { type: ['object', 'null'] },
   run: { type: ['object', 'null'] },
   approval: { type: ['object', 'null'] },
@@ -58,6 +59,7 @@ const REASON_LABEL: Record<WaitingReason, string> = {
 
 export interface TaskCard extends TaskBundle {
   continuity: Row | null;
+  autonomy?: Row | null;
   diff: Row | null;
   kind: 'task';
   run: Row | null;
@@ -103,7 +105,7 @@ export async function loadTaskCard(
   db: Db,
   taskId: string,
   appUrl: string,
-  opts: { activitiesLimit?: number; includeEphemeral?: boolean; afterSeq?: number } = {},
+  opts: { activitiesLimit?: number; includeEphemeral?: boolean; afterSeq?: number; autonomy?: boolean } = {},
 ): Promise<TaskCard> {
   const bundle = await loadTaskBundle(db, taskId, opts);
   const task = bundle.task;
@@ -149,6 +151,7 @@ export async function loadTaskCard(
     try { diff = await must(db.rpc<Row>('task_diff', { p_task_id: taskId })); }
     catch { /* The rest of the card stays usable when the diff is unavailable. */ }
   }
+  const autonomy = opts.autonomy ? (await db.rpc<Row>('task_autonomy', { p_task_id: taskId })).data ?? null : null;
   const delegate = agents.find((a) => a.id === task.delegate_agent_id);
   const cp = checkpoints?.[0];
   const body = (cp?.body ?? {}) as Row;
@@ -160,6 +163,7 @@ export async function loadTaskCard(
     kind: 'task',
     ...bundle,
     continuity,
+    ...(opts.autonomy ? { autonomy } : {}),
     run: runs[0] ?? null,
     approval: bundle.approvals_pending.find((a) => a.blocking !== false) ?? null,
     questions: bundle.approvals_pending.filter((a) => a.blocking === false),

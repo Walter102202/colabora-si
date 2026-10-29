@@ -120,6 +120,7 @@ const getTask: ToolDef = {
   _meta: CARD_TOOL_META,
   async handler(args, ctx) {
     const t = await loadTaskCard(ctx.db, String(args.task_id), ctx.appUrl, {
+      autonomy: true,
       activitiesLimit: num(args.activities_limit) ?? 20,
       includeEphemeral: bool(args.include_ephemeral) ?? false,
       afterSeq: num(args.after_seq),
@@ -306,8 +307,7 @@ const requestApproval: ToolDef = {
   name: 'request_approval',
   title: 'Request approval for an irreversible action',
   description:
-    'For actions you will run outside the workspace (email, pull request…). A person approves, edits or rejects; ' +
-    'never act before the decision. Actions inside the workspace ask for approval on their own.',
+    'For actions you will run outside the workspace (email, pull request…). A person approves, edits or rejects; never act before the decision. When the autonomy level or the brief allows the action, the answer comes back at once with status approved and a receipt, and the approval is recorded. Payments always wait for a person. Actions inside the workspace ask for approval on their own.',
   inputSchema: object({
     run_id: { type: 'string', minLength: 1 },
     action: { type: 'string', minLength: 1, maxLength: 200 },
@@ -315,7 +315,8 @@ const requestApproval: ToolDef = {
     question: { type: 'string', minLength: 1, maxLength: 4000 },
     artifact_id: { type: 'string' },
   }, ['run_id', 'action', 'params', 'question']),
-  outputSchema: output({ approval_id: { type: 'string' }, action_hash: { type: 'string' }, status: { type: 'string' } }),
+  outputSchema: output({ approval_id: { type: 'string' }, action_hash: { type: 'string' }, status: { type: 'string' },
+    receipt: { type: 'string' }, receipt_expires_at: { type: 'string' }, auto_approved: { type: 'object' } }),
   annotations: WRITE_IDEMPOTENT,
   async handler(args, ctx) {
     const data = await must(ctx.db.rpc<Row>('request_approval', {
@@ -326,7 +327,11 @@ const requestApproval: ToolDef = {
       p_question: args.question,
     })) ?? {};
     const structured: Row = { status: 'pending', ...data };
-    return { text: `Approval ${String(structured.approval_id)} is ${String(structured.status)}. Wait for the decision with wait_for_task.`, structured };
+    const auto = structured.auto_approved as Row | undefined;
+    const text = structured.status === 'approved'
+      ? `Approved automatically (${String(auto?.by)}, ${String(auto?.level)}): go ahead. Pass receipt ${String(structured.receipt)} to begin_external_op within 15 minutes.`
+      : `Approval ${String(structured.approval_id)} is ${String(structured.status)}. Wait for the decision with wait_for_task.`;
+    return { text, structured };
   },
 };
 

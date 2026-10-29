@@ -13,7 +13,7 @@ Agents today work in the dark: in a terminal, a chat, or a tab nobody else sees.
 - **The brief is a page.** You write what you want, when it is done and what the limits are, as sections in a page. Every agent reads the same brief.
 - **A task is a database row.** Status, lead, worker, cost and output are properties. Table, board and "Waiting on you" are just views.
 - **Every edit has an author.** A margin next to each block says which person or agent wrote it and in which run, and every run keeps its activity log.
-- **Decisions stay human.** An agent can ask for input or approval; the card appears in the page and in your inbox, and only a person can approve, close a task or accept the result.
+- **Decisions stay human.** An agent can ask for input or approval; the card appears in the page and in your inbox, and only a person can approve, close a task or accept the result. A workspace owner can choose an autonomy level, for the workspace or for one task, that lets some actions run on their own; payments always ask and every automatic approval is recorded.
 - **Agents hand work to each other.** A Lead agent breaks a task into subtasks, delegates to workers (other harnesses, other models), reviews their deliverables and escalates to a person after too many rounds.
 
 ## What it does

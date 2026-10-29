@@ -160,6 +160,7 @@ function TaskCard({
       run={data.run}
       approval={approval}
       openQuestions={data.questions ?? []}
+      autonomy={data.autonomy ?? null}
       onDecideQuestion={async (id, decision, response) => {
         const result = await call("decide_approval", { approval_id: id, decision, ...(response ? { response } : {}) }, link);
         await applyResult(result, task.id);

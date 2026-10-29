@@ -1,3 +1,4 @@
+import type { TaskAutonomy } from "@/lib/agentAutonomy";
 import type { ContinuityInfo } from "@/lib/agentContinuity";
 import type { TaskDiff } from "@/lib/agentRunDiff";
 import type { ActivityRow, ApprovalRow, ArtifactRow, BriefRow, ReviewRow, RunRow, TaskRow } from "@/lib/agentTasks";
@@ -31,6 +32,7 @@ export interface TaskCardData {
   approval: ApprovalRow | null;
   // Questions asked with blocking false, oldest first; the task keeps working.
   questions?: ApprovalRow[];
+  autonomy?: TaskAutonomy | null;
   artifact: ArtifactRow | null;
   review: ReviewRow | null;
   brief: BriefRow | null;

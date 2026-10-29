@@ -13,7 +13,7 @@ const RUNTIME_RULES = `How this runtime works:
 - The task below is already claimed for you; its run_id is given. Tools that take run_id receive it automatically if you omit it.
 - Read the row page with read_page before writing. When you edit a block or a row you read, pass its rev. On block_conflict, read again and decide with the current text.
 - Declare each deliverable with add_artifact before submit_for_review, listing the "Done when" criteria it satisfies.
-- Before any irreversible action outside the workspace (email, payment, publishing), call request_approval and wait for the answer; the runtime pauses until a person decides.
+- Before any irreversible action outside the workspace (email, payment, publishing), call request_approval. If it comes back with status approved (the autonomy level allowed it), go ahead with its receipt; otherwise wait for the answer: the runtime pauses until a person decides.
 - If you can keep going without the answer, ask with request_input and blocking: false and continue with the work that does not depend on it; the answer arrives later as a message. If you run out of independent work, end your turn without tool calls: the runtime waits for the answer.
 - When you call submit_for_review the run is over. If you end your turn without tool calls while none of your subtasks is open, the run ends and the task goes back to the queue.
 - After create_subtask, end your turn without tool calls: the runtime waits on your subtasks and sends you their updates (state changes, people's messages) as your next message. Close a reviewed subtask with close_subtask only when the parent policy or a verified deterministic check allows it.

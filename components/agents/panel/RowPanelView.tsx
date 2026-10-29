@@ -1,3 +1,4 @@
+import { autonomyLine, AUTONOMY_LABEL, AUTONOMY_LEVELS, type AutonomyLevel, type TaskAutonomy } from "@/lib/agentAutonomy";
 import { useEffect, useId, useRef, useState } from "react";
 import { continuityText, type ContinuityInfo } from "@/lib/agentContinuity";
 import type { TaskDiff } from "@/lib/agentRunDiff";
@@ -63,6 +64,9 @@ export interface TaskViewProps {
   focusApprovalId?: string | null;
   // Questions that do not block (request_input blocking false), each answered by its own id.
   openQuestions?: ApprovalRow[];
+  // What the task may do without asking; the select appears only with onSetAutonomy (not in the chat card).
+  autonomy?: TaskAutonomy | null;
+  onSetAutonomy?: (level: AutonomyLevel | null) => Promise<void>;
   onDecideQuestion?: (approvalId: string, decision: ApprovalDecision, response: Record<string, unknown> | null) => Promise<void>;
   // Message to the agent: text with "feedback"/"continue", or an empty body with "continue"/"stop".
   onMessage: (body: string, signal: MessageSignal) => Promise<void>;
@@ -125,7 +129,7 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ task, agent, run, approval, artifact, review, brief, activities, subtasks, reviewerName, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ task, agent, run, approval, artifact, review, brief, activities, subtasks, reviewerName, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -203,6 +207,19 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
         <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">What was asked and what changed</h4>
         <p>{brief?.objective ?? task.title ?? "Loading brief…"}</p>
         {brief?.next_step && <p className="text-xs text-text-secondary">Next step: {brief.next_step}</p>}
+        {autonomy && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
+            <span>{autonomyLine(autonomy)}</span>
+            {onSetAutonomy && !terminal && (
+              <select aria-label="Autonomy for this task" className="rounded border border-border bg-bg px-1 py-0.5 text-xs"
+                value={autonomy.requested ?? ""} disabled={busy !== null}
+                onChange={(e) => { const v = e.target.value; void act("autonomy", () => onSetAutonomy(v ? (v as AutonomyLevel) : null)); }}>
+                <option value="">Workspace default ({AUTONOMY_LABEL[autonomy.workspace_level]})</option>
+                {AUTONOMY_LEVELS.map((l) => <option key={l} value={l}>{AUTONOMY_LABEL[l]}</option>)}
+              </select>
+            )}
+          </div>
+        )}
         {recentActions.length > 0 ? (
           <ul className="text-xs text-text-secondary">
             {recentActions.map((a) => (

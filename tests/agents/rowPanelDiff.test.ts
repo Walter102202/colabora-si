@@ -13,6 +13,7 @@ import { useAgentsStore } from "@/lib/agentsStore";
 const actions = vi.hoisted(() => ({ loadTaskDiff: vi.fn(), revertRun: vi.fn() })); // vi.mock is hoisted above the imports
 vi.mock("@/lib/agentActions", () => ({
   ...actions, briefFromRow: vi.fn(), closeTask: vi.fn(), createTask: vi.fn(), decideApproval: vi.fn(), handOver: vi.fn(), reviewTask: vi.fn(), sendMessage: vi.fn(),
+  getTaskAutonomy: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("@/lib/store", () => ({ useStore: (sel: (s: { syncWorkspaceId: string }) => unknown) => sel({ syncWorkspaceId: "w1" }) }));
 

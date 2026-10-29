@@ -17,8 +17,9 @@ import {
   useAgentTasks,
   type TaskRow,
 } from "@/lib/agentTasks";
-import { briefFromRow, closeTask, createTask, decideApproval, handOver, loadTaskDiff, revertRun, reviewTask, sendMessage } from "@/lib/agentActions";
+import { briefFromRow, closeTask, createTask, decideApproval, getTaskAutonomy, setTaskAutonomy, handOver, loadTaskDiff, revertRun, reviewTask, sendMessage } from "@/lib/agentActions";
 import { continuityFrom } from "@/lib/agentContinuity";
+import type { TaskAutonomy } from "@/lib/agentAutonomy";
 import type { TaskDiff } from "@/lib/agentRunDiff";
 import { approvalIdFromHash } from "@/lib/agentCard";
 import { AssignView, TaskView, type SubtaskItem } from "@/components/agents/panel";
@@ -94,6 +95,7 @@ function AssignConnector({ pageId }: { pageId: string }) {
 }
 
 function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpenTask: (pageId: string, taskId: string) => void; onOpenPage: (pageId: string) => void }) {
+  const [autonomy, setAutonomy] = useState<TaskAutonomy | null>(null);
   const [diff, setDiff] = useState<TaskDiff | null>(null);
   const { hash } = useLocation();
   // `#approval-<id>` (a deep link from a chat or a notification) lands on that approval.
@@ -111,6 +113,15 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
   const runs = useAgentTasks((s) => s.runs);
   const loadTaskDetail = useAgentTasks((s) => s.loadTaskDetail);
   const loadActivities = useAgentTasks((s) => s.loadActivities);
+
+  useEffect(() => {
+    let alive = true;
+    void getTaskAutonomy(task.id).then(
+      (value) => { if (alive) setAutonomy(value); },
+      () => { if (alive) setAutonomy(null); },
+    );
+    return () => { alive = false; };
+  }, [task.id, task.brief_version]);
 
   // The workspace page holds the rows; briefs, artifacts and reviews load when the panel opens.
   useEffect(() => {
@@ -154,6 +165,8 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
       run={run}
       approval={approval}
       openQuestions={openQuestions}
+      autonomy={autonomy}
+      onSetAutonomy={(level) => setTaskAutonomy(task.id, level).then((next) => { setAutonomy(next); })}
       onDecideQuestion={(id, decision, response) => decideApproval(id, decision, response).then(() => undefined)}
       artifact={artifact}
       review={review}

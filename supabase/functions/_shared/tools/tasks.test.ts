@@ -223,3 +223,16 @@ Deno.test('await_questions makes the open questions block and says how to wait',
   assert.equal(out.structured.task_state, 'input_required');
   assert.match(out.text, /2 questions now block/);
 });
+
+Deno.test('request_approval answers approved at once when the autonomy allows the action', async () => {
+  const ctx = ctxWith(<T>(_fn: string, _params: Record<string, unknown>): Promise<DbResult<T>> => Promise.resolve({
+    data: { approval_id: 'ap9', action_hash: 'h', status: 'approved', receipt: 'r-9', receipt_expires_at: '2026-10-30T10:15:00+00:00',
+            auto_approved: { by: 'preset', level: 'balanced' } } as T,
+    error: null,
+  }));
+  const out = await tool('request_approval').handler({ run_id: 'run-1', action: 'publish_page', params: { page_id: 'p1' }, question: 'Publish?' }, ctx);
+  assert.equal(out.structured.status, 'approved');
+  assert.equal(out.structured.receipt, 'r-9');
+  assert.match(out.text, /^Approved automatically \(preset, balanced\)/);
+  assert.match(tool('request_approval').description, /status approved/);
+});

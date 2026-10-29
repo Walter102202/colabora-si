@@ -118,7 +118,8 @@ export function mockCard(scenario: string): CardData {
           body: { from_harness: "claude_code", to_harness: "codex", summary: "1 approval pending." }, ephemeral: false,
           author_type: "agent", author_id: "a-worker", created_at: minutesAgo(4) }] };
     case "approval":
-      return { ...base, task: { ...task, state: "input_required", waiting_on: "human", active_run_id: run.id }, run, approval: actionApproval };
+      return { ...base, task: { ...task, state: "input_required", waiting_on: "human", active_run_id: run.id }, run, approval: actionApproval,
+        autonomy: { level: "balanced", requested: null, source: "workspace", workspace_level: "balanced", auto_approved: ["publish_page"], require_approval: [] } };
     case "question":
       return { ...base, task: { ...task, state: "input_required", waiting_on: "human", active_run_id: run.id }, run, approval: question };
     case "side-question":

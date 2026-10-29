@@ -1,3 +1,4 @@
+import type { AutonomyLevel, AutonomyPolicy, TaskAutonomy } from "@/lib/agentAutonomy";
 import type { ButtonAction } from "@/lib/types";
 import type { TaskDiff } from "@/lib/agentRunDiff";
 import { useStore } from "@/lib/store";
@@ -133,6 +134,22 @@ export async function updateBrief(
   const version = await rpc<number>("update_brief", { p_task_id: taskId, p_patch: patch });
   await refresh(taskId);
   return version;
+}
+
+export function getTaskAutonomy(taskId: string): Promise<TaskAutonomy> {
+  return rpc<TaskAutonomy>("task_autonomy", { p_task_id: taskId });
+}
+
+export function setTaskAutonomy(taskId: string, level: AutonomyLevel | null): Promise<TaskAutonomy> {
+  return rpc<TaskAutonomy>("set_task_autonomy", { p_task_id: taskId, p_level: level });
+}
+
+export function getAutonomyPolicy(workspaceId: string): Promise<AutonomyPolicy> {
+  return rpc<AutonomyPolicy>("get_autonomy_policy", { p_workspace_id: workspaceId });
+}
+
+export function setWorkspaceAutonomy(workspaceId: string, level: AutonomyLevel): Promise<{ level: AutonomyLevel; previous: AutonomyLevel }> {
+  return rpc<{ level: AutonomyLevel; previous: AutonomyLevel }>("set_workspace_autonomy", { p_workspace_id: workspaceId, p_level: level });
 }
 
 export async function loadTaskDiff(taskId: string): Promise<TaskDiff> {

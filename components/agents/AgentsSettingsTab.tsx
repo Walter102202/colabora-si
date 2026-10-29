@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useStore } from "@/lib/store";
 import { useAgentsStore, type NewAgentInput } from "@/lib/agentsStore";
+import { AutonomySettings } from "@/components/agents/settings/AutonomySettings";
 import { AgentList } from "@/components/agents/settings/AgentList";
 import { NewAgentWizard } from "@/components/agents/settings/NewAgentWizard";
 import { AgentDetail } from "@/components/agents/settings/AgentDetail";
@@ -99,6 +100,7 @@ export function AgentsSettingsTab() {
         )}
         <button type="button" className="shrink-0 rounded bg-accent px-3 py-1 text-sm text-white" onClick={() => setView({ kind: "new" })}>New agent</button>
       </div>
+      <AutonomySettings key={syncWorkspaceId} workspaceId={syncWorkspaceId} />
       <AgentList agents={agents} onOpen={(id) => setView({ kind: "detail", id })} />
     </div>
   );
