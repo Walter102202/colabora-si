@@ -1,3 +1,4 @@
+import { reasonFor } from './wait.ts';
 import assert from 'node:assert/strict';
 import type { Db, Filter, SelectSpec } from '../db.ts';
 import type { ToolContext, ToolDef } from '../mcp.ts';
@@ -324,4 +325,8 @@ Deno.test('wait_for_my_tasks: full passes are never more than SLOW_POLL_MS apart
   const at = snapshotTimes(h);
   assert.ok(at.length >= 6, `passes at ${at.join(', ')}`);
   for (let i = 1; i < at.length; i++) assert.ok(at[i] - at[i - 1] <= SLOW_POLL_MS, `${at[i] - at[i - 1]} ms between the passes at ${at[i - 1]} and ${at[i]}`);
+});
+
+Deno.test('reasonFor maps a handover prompt to handover', () => {
+  assert.equal(reasonFor({ state: 'queued' }, { body: { signal: 'continue', handover: true } }), 'handover');
 });

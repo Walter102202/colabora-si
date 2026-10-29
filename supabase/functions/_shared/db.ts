@@ -92,6 +92,9 @@ const SQLSTATE_CODES: Record<string, string> = {
 };
 
 const MESSAGES: Record<string, string> = {
+  checkpoint_version_unsupported: 'This server reads checkpoint version 1 only. Send v: 1.',
+  resume_unsupported: 'This agent does not declare the resume capability. Claim without resume, or ask a person to enable it.',
+  delegate_not_found: 'That agent does not exist in this workspace or is not enabled.',
   not_found: 'Not found, or you have no access to it.',
   forbidden: 'You are not allowed to do this.',
   agent_disabled: 'This agent is paused or disabled, or agents are turned off. Stop working and end the run if you can.',

@@ -54,6 +54,7 @@ await runAgent({
   channel,
   harness: config.harness,
   reviewerAgentId: config.reviewerAgentId,
+  resume: config.resume,
   prices: config.prices,
   appUrl: config.appUrl,
   maxTurns: config.maxTurns,

@@ -33,6 +33,7 @@ export function runAgent(opts: {
   maxTasks?: number;
   harness?: string;
   reviewerAgentId?: string;
+  resume?: boolean;
   prices?: { input: number; output: number };
   appUrl?: string;
   signal?: AbortSignal;

@@ -63,7 +63,7 @@ export function oneLine(text) {
 export function eventToChannel(event) {
   const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
   const reviewOf = typeof payload.review_of === "string" ? payload.review_of : null;
-  const reason = reviewOf ? "ready_for_review" : (REASON_BY_TYPE[event.type] ?? event.type.replace(/\W+/g, "_"));
+  const reason = payload.handover === true ? "handover" : reviewOf ? "ready_for_review" : (REASON_BY_TYPE[event.type] ?? event.type.replace(/\W+/g, "_"));
   const taskId = reviewOf ?? event.task_id;
   const ref = payload.task_ref ?? payload.review_of_ref;
   const label = typeof ref === "string" && META_VALUE.test(ref) ? ref : taskId;

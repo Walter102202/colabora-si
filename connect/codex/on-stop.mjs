@@ -12,7 +12,7 @@ import { createRemote } from "../../bridge/remote.mjs";
 
 export const MAX_REASON_CHARS = 2500;
 export const DEFAULT_WAIT_MIN = 25;
-const CONTINUE_REASONS = new Set(["feedback", "queued", "brief"]);
+const CONTINUE_REASONS = new Set(["feedback", "queued", "brief", "handover"]);
 const FINISHED_STATES = new Set(["done", "cancelled", "failed"]);
 
 /** @param {unknown} value */
@@ -48,7 +48,10 @@ export function buildReason(task, excerpt) {
   const label = title ? `Task ${id} ("${title}")` : `Task ${id}`;
   let head;
   let tail;
-  if (task.reason === "queued") {
+  if (task.reason === "handover") {
+    head = `${label} was handed over to you.`;
+    tail = ` Call claim_task("${id}", resume: true), read the handover section and continue; finish with submit_for_review.`;
+  } else if (task.reason === "queued") {
     head = `${label} is queued for you.`;
     tail = ` Call claim_task("${id}"), do the work described in its brief and finish with submit_for_review.`;
   } else if (task.reason === "brief") {

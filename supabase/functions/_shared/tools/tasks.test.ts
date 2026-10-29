@@ -7,8 +7,8 @@ type Row = Record<string, unknown>;
 
 const tool = (name: string) => taskTools.find((t) => t.name === name) as ToolDef;
 
-function ctxWith(rpc: Db['rpc']): ToolContext {
-  const db: Db = { rpc, select: () => Promise.resolve({ data: [], error: null }) };
+function ctxWith(rpc: (fn: string, args: Row) => Promise<DbResult<unknown>>): ToolContext {
+  const db: Db = { rpc: <T>(fn: string, args: Row) => rpc(fn, args) as Promise<DbResult<T>>, select: () => Promise.resolve({ data: [], error: null }) };
   return {
     db,
     principal: { type: 'agent', userId: 'u-agent', agentId: 'agent-1', workspaceId: 'w1', clientId: null },
@@ -165,4 +165,21 @@ Deno.test('get_task with after_seq past the end returns no activities and echoes
   const out = await tool('get_task').handler({ task_id: 't1', after_seq: 9 }, h.ctx);
   assert.deepEqual(out.structured.activities, []);
   assert.equal(out.structured.next_seq, 9);
+});
+
+Deno.test('claim_task with resume passes p_resume and returns the resume context', async () => {
+  const calls: [string, Row][] = [];
+  const ctx = ctxWith((fn, args) => { calls.push([fn, args]); return Promise.resolve({ data: { task_id: 't1', run_id: 'r1', resume: { checkpoint: null, from: null, summary: 'No checkpoint yet.' } }, error: null }); });
+  const out = await tool('claim_task').handler({ task_id: 't1', harness: 'codex', resume: true }, ctx);
+  assert.equal(calls[0][1].p_resume, true);
+  assert.equal((out.structured.resume as Row).summary, 'No checkpoint yet.');
+  assert.match(out.text, /No checkpoint yet./);
+});
+
+Deno.test('claim_task without resume sends p_resume false and keeps the description promise', async () => {
+  const calls: Row[] = [];
+  const ctx = ctxWith((_fn, args) => { calls.push(args); return Promise.resolve({ data: { task_id: 't1', run_id: 'r1' }, error: null }); });
+  await tool('claim_task').handler({ task_id: 't1', harness: 'codex' }, ctx);
+  assert.equal(calls[0].p_resume, false);
+  assert.match(tool('claim_task').description, /only a person reopens it/);
 });

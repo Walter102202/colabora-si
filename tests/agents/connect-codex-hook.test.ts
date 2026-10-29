@@ -40,6 +40,13 @@ const sleep = async () => {};
 const none: Tasks = { tasks: [], next_cursor: "c-0" };
 
 describe("Codex stop hook", () => {
+  it("continues the session on a handover with a resume instruction", async () => {
+    const { fetchImpl } = fakeRemote([{ tasks: [{ task_id: TASK, state: "queued", reason: "handover" }], next_cursor: "c-1" }]);
+    const result = await runStopHook({ input: {}, env: ENV, fetchImpl, now: clock(1000), sleep });
+    const output = JSON.parse(result.output ?? "{}");
+    expect(output.decision).toBe("block");
+    expect(output.reason).toContain("resume: true");
+  });
   it("blocks with the task id and the findings when feedback is pending", async () => {
     const longNote = "Missing evidence for the deduplication criterion. ".repeat(200);
     const { fetchImpl, calls } = fakeRemote(

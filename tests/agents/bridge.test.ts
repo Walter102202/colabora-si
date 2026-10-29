@@ -152,6 +152,10 @@ describe("bridge proxy", () => {
 });
 
 describe("channel events", () => {
+  it("maps a handover continue to the handover reason", () => {
+    const event = eventToChannel({ type: "task.continue", task_id: "t1", payload: { handover: true } });
+    expect(event.meta.reason).toBe("handover");
+  });
   it("turns an agent event into a one-line channel event with valid meta keys", () => {
     const event = eventToChannel({
       type: "task.continue",
