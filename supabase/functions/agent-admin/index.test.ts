@@ -13,7 +13,10 @@ function makeDeps(opts: { member?: boolean; rpcFails?: boolean; owner?: boolean;
   const log = (op: string, ...args: unknown[]) => calls.push({ op, args });
   const deps: AgentAdminDeps = {
     loginPepper: PEPPER,
-    verifyCaller: (token) => Promise.resolve(token === 'human-jwt' ? { userId: HUMAN, principalType: 'human' } : null),
+    verifyCaller: (token) =>
+      Promise.resolve(
+        token === 'human-jwt' ? { userId: HUMAN, principalType: 'human' } : token === 'agent-jwt' ? { userId: AUTH_USER, principalType: 'agent' } : null,
+      ),
     caller: () => ({
       canManageWorkspace: (ws, uid) => {
         log('canManageWorkspace', ws, uid);
@@ -69,10 +72,10 @@ function create(): Request {
   });
 }
 
-function enable(): Request {
+function enable(token = 'human-jwt'): Request {
   return new Request('http://localhost/functions/v1/agent-admin', {
     method: 'POST',
-    headers: { Authorization: 'Bearer human-jwt', 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'enable_platform_agent', workspace_id: WORKSPACE }),
   });
 }
@@ -124,6 +127,21 @@ Deno.test('enable_platform_agent: a non-owner gets 403 and nothing is created', 
   assert.equal(res.status, 403);
   assert.equal((await res.json()).error, 'forbidden');
   assert.deepEqual(calls.map((c) => c.op), ['isWorkspaceOwner']);
+});
+Deno.test('enable_platform_agent: an agent principal gets 403 humans_only before any check runs', async () => {
+  const { deps, calls } = makeDeps();
+  const res = await handleAgentAdmin(enable('agent-jwt'), deps);
+  assert.equal(res.status, 403);
+  assert.equal((await res.json()).error, 'humans_only');
+  assert.deepEqual(calls, []);
+});
+Deno.test('enable_platform_agent: an RPC failure deletes the auth user and returns 500', async () => {
+  const { deps, calls } = makeDeps({ rpcFails: true });
+  const res = await handleAgentAdmin(enable(), deps);
+  assert.equal(res.status, 500);
+  assert.equal((await res.json()).error, 'server_error');
+  assert.deepEqual(calls.map((c) => c.op), ['isWorkspaceOwner', 'getPlatformAgent', 'createUser', 'updateUserById', 'serviceRpc', 'deleteUser']);
+  assert.equal(calls[calls.length - 1].args[0], AUTH_USER);
 });
 Deno.test('enable_platform_agent returns the existing platform agent without creating a user', async () => {
   const existing = { id: AGENT_ID, workspace_id: WORKSPACE, auth_user_id: AUTH_USER, connection: {} };
