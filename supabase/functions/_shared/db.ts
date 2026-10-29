@@ -100,6 +100,7 @@ const MESSAGES: Record<string, string> = {
   run_active: 'A run is already active on this task. Use heartbeat/post_activity with that run, or wait for it to end.',
   run_not_active: 'The run is not active. Claim the task again with claim_task.',
   task_unavailable: 'The task cannot be claimed in its current state.',
+  use_partial_writes: 'Agents do not call apply_page_ops. Write with append_blocks, edit_page, update_block, add_row, update_row or add_comment.',
   task_closed: 'The task is closed.',
   invalid_state: 'The task is not in a state that allows this.',
   invalid_input: 'Some input is invalid. Check the tool schema and retry.',

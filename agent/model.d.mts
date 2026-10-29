@@ -28,4 +28,11 @@ export function createModel(opts: {
   model: string;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  maxAttempts?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  random?: () => number;
 }): Model;
+export function backoffDelayMs(attempt: number, opts: { baseDelayMs: number; maxDelayMs: number; random: () => number }): number;
+export function parseRetryAfterMs(header: string | null, nowMs: number): number | null;

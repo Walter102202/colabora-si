@@ -17,6 +17,10 @@
       "supabase/migrations/*_0010_*",
       "supabase/migrations/*_0011_*",
       "supabase/migrations/*_0012_*",
+      "supabase/migrations/*_0013_*",
+      "supabase/migrations/*_0014_*",
+      "supabase/migrations/*_0017_*",
+      "supabase/migrations/*_0018_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -28,6 +32,8 @@
       "lib/",
       "supabase/migrations/*_0001_*",
       "supabase/migrations/*_0003_*",
+      "supabase/migrations/*_0015_*",
+      "supabase/migrations/*_0016_*",
       "supabase/functions/send-reminders/",
       "supabase/functions/send-email/",
       "supabase/seeds/01_workspace.sql",
@@ -109,6 +115,21 @@
     ],
     "a/chat-decisions-followups": [
       "OWNERS.json"
+    ],
+    "a/write-boundary": [
+      "supabase/tests/clone/02_rpcs.sql"
+    ],
+    "a/platform-agent": [
+      "supabase/tests/clone/02_rpcs.sql"
+    ],
+    "a/reviewer-agent": [
+      "supabase/tests/clone/02_rpcs.sql"
+    ],
+    "infra/ci-base": [
+      "components/agents/settings/NewAgentWizard.tsx"
+    ],
+    "a/consult-instructions": [
+      "public/llms.txt"
     ]
   }
 }

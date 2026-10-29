@@ -191,7 +191,7 @@ Deno.test('domain errors come back as isError results, not JSON-RPC errors', asy
   assert.match(body.result.content[0].text, /Its text is now: "Leads 2025"/);
 });
 
-Deno.test('every real tool has a title, hints and an output schema; $defs inline for ChatGPT', async () => {
+Deno.test('every real tool has a title, hints and an output schema; $defs are always inlined', async () => {
   const real = buildServer();
   assert.ok(real.instructions.length <= 1500);
   const { body } = await call(post({ jsonrpc: '2.0', id: 1, method: 'tools/list' }), real);
@@ -203,10 +203,10 @@ Deno.test('every real tool has a title, hints and an output schema; $defs inline
     assert.equal(tool.outputSchema.type, 'object', tool.name);
   }
   const append = body.result.tools.find((t: { name: string }) => t.name === 'append_blocks');
-  assert.match(JSON.stringify(append.inputSchema), /\$ref/);
-  const inlined = await call(post({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, { 'User-Agent': 'openai-mcp/1.0' }), real);
-  const appendInline = inlined.body.result.tools.find((t: { name: string }) => t.name === 'append_blocks');
-  assert.doesNotMatch(JSON.stringify(appendInline.inputSchema), /\$ref|\$defs/);
+  assert.doesNotMatch(JSON.stringify(append.inputSchema), /\$ref|\$defs/);
+  assert.match(JSON.stringify(append.inputSchema), /"spans"/);
+  const fromChatGpt = await call(post({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, { 'User-Agent': 'openai-mcp/1.0' }), real);
+  assert.deepEqual(fromChatGpt.body.result.tools, body.result.tools);
   const prompts = await call(post({ jsonrpc: '2.0', id: 3, method: 'prompts/list' }), real);
   assert.deepEqual(prompts.body.result.prompts.map((p: { name: string }) => p.name), ['continue_task', 'review_as_lead']);
 });

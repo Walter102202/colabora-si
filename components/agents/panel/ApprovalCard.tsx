@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import type { ApprovalRow } from "@/lib/agentTasks";
 import type { ApprovalDecision } from "@/lib/agentActions";
 import { expiresIn } from "@/lib/agentTaskText";
+import { describeApproval } from "@/lib/agentApprovalText";
 import { formatRelative } from "@/lib/utils";
 import { useApprovalFocus } from "@/components/agents/panel/useApprovalFocus";
 
@@ -47,13 +48,13 @@ export function ApprovalCard({
   }
 
   const paramsText = JSON.stringify(approval.params);
-  const what = [approval.action, paramsText !== "{}" ? paramsText : null, approval.artifact_version ? `deliverable v${approval.artifact_version}` : null].filter(Boolean).join(" · ");
+  const described = describeApproval(approval.action, approval.params, { artifactVersion: approval.artifact_version });
   const has = (o: ApprovalRow["options"][number]) => approval.options.includes(o);
 
   return (
     <div ref={focusRef} id={focusId} tabIndex={-1} className={"space-y-2 rounded-md border border-accent/40 bg-accent/5 p-3 text-sm" + ringClass}>
       <p className="font-medium">Needs your approval{approval.question ? `: ${approval.question}` : ""}</p>
-      <p className="text-xs text-text-secondary">Runs exactly this once: {what || "the requested action"}. Expires in {expiresIn(approval.expires_at)}.</p>
+      <p className="text-xs text-text-secondary">{described.what}. {described.effect} Expires in {expiresIn(approval.expires_at)}.</p>
       {editing ? (
         <>
           <label htmlFor={`${id}-params`} className="sr-only">Parameters as JSON</label>
