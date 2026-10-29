@@ -1,5 +1,5 @@
 begin;
-select plan(17);
+select plan(20);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_A2','page_A3','page_A4','page_A5','page_A6','page_A7']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+lead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -62,6 +62,14 @@ select tests.reset_role();
 select is((select state || '/' || acceptance from public.agent_tasks where id = :'rtask'::uuid), 'done/accepted', 'recording the review closes the review task');
 select is((select status from public.agent_runs where id = :'rr'::uuid), 'running', 'the reviewer run stays active for close_subtask');
 select ok(exists (select 1 from public.agent_activities where task_id = :'rtask'::uuid and type = 'response' and body->>'review_of' = :'sub'), 'the review task logs the review');
+select ok(exists (select 1 from public.agent_events where task_id = :'parent'::uuid and type = 'task.updated' and payload->>'subtask_id' = :'rtask' and payload->>'subtask_state' = 'done'),
+          'the Lead is told that the review task closed');
+-- The review task is done: its still-active run may not submit it (submit_for_review is guarded by task state since 0018).
+select tests.set_agent((:'rev'::jsonb->>'user')::uuid, (:'rev'::jsonb->>'agent')::uuid);
+select public.add_artifact(:'rr'::uuid, 'page', 'page_A3', 'Stray', '{r1}') ->> 'artifact_id' as stray \gset
+select is(tests.error_of(format('select public.submit_for_review(%L::uuid, %L, array[%L::uuid])', :'rr', 'Stray', :'stray')), 'invalid_state',
+          'the reviewer run cannot submit its closed review task');
+select tests.reset_role();
 
 -- 10-11. The reviewer closes the subtask by the parent policy.
 select tests.set_agent((:'rev'::jsonb->>'user')::uuid, (:'rev'::jsonb->>'agent')::uuid);
@@ -69,6 +77,8 @@ select public.close_subtask(:'sub'::uuid);
 select tests.reset_role();
 select is((select state from public.agent_tasks where id = :'sub'::uuid), 'done', 'the reviewer closes the subtask by policy');
 select ok(exists (select 1 from public.agent_activities where task_id = :'sub'::uuid and body->>'text' = 'Closed by the reviewer.'), 'the closing activity names the reviewer');
+select is((select payload->>'closed_by' from public.agent_events where task_id = :'parent'::uuid and type = 'task.updated' and payload->>'subtask_id' = :'sub' order by seq desc limit 1),
+          'reviewer', 'the close event names the reviewer');
 
 -- 12-14. Once its review run ended, the reviewer is refused like any worker (lead_only comes before invalid_state,
 -- 0009:163-167); only the Lead gets invalid_state.

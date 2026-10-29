@@ -122,6 +122,14 @@ begin
     values (v_t.workspace_id, v_review_task, v_review_run, private.next_seq(v_review_task), 'response',
             jsonb_build_object('text', 'Review recorded: ' || p_verdict, 'review_id', v_id, 'review_of', v_t.id, 'verdict', p_verdict, 'submit', true),
             'agent', v_agent);
+    -- The Lead waiting on the parent learns at once that the review task closed (0014 wakes waits from agent_events).
+    insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
+    select p.workspace_id, p.id, p.active_run_id, p.delegate_agent_id, 'task.updated',
+           jsonb_build_object('subtask_id', v_review_task, 'subtask_state', 'done', 'acceptance', 'accepted', 'closed_by', 'reviewer',
+                              'review_of', v_t.id, 'review_id', v_id, 'verdict', p_verdict),
+           private.next_event_seq(p.id)
+      from public.agent_tasks p
+     where p.id = v_t.parent_task_id and p.delegate_agent_id is not null;
     perform private.release_dependents(v_review_task);
   end if;
 
@@ -162,7 +170,7 @@ begin
           'agent', v_agent);
   insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
   select v_parent.workspace_id, v_parent.id, v_parent.active_run_id, v_parent.delegate_agent_id, 'task.updated',
-         jsonb_build_object('subtask_id', v_t.id, 'subtask_state', 'done', 'acceptance', 'accepted', 'closed_by', 'lead'),
+         jsonb_build_object('subtask_id', v_t.id, 'subtask_state', 'done', 'acceptance', 'accepted', 'closed_by', case when v_review_run is not null then 'reviewer' else 'lead' end),
          private.next_event_seq(v_parent.id)
    where v_parent.delegate_agent_id is not null;
   perform private.release_dependents(v_t.id);
@@ -171,3 +179,56 @@ begin
 end $$;
 revoke all on function public.close_subtask(uuid, text, jsonb) from public, anon;
 grant execute on function public.close_subtask(uuid, text, jsonb) to authenticated;
+
+-- submit_for_review (0006) trusted the run alone: a run that is still active after its task closed (the reviewer's run after
+-- review_task, 0018 above) could reopen a done task as ready_for_review. The task must be working under this very run.
+create or replace function public.submit_for_review(p_run_id uuid, p_summary text, p_artifact_ids uuid[])
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_r public.agent_runs%rowtype; v_t public.agent_tasks%rowtype; v_uncovered text[]; v_lead uuid; v_actor uuid;
+begin
+  v_actor := private.task_actor_agent_id();
+  if v_actor is null then raise exception using errcode='PT403', message='agent_disabled'; end if;
+  perform private.check_rate(v_actor);
+  select * into v_r from public.agent_runs where id = p_run_id and agent_id = v_actor for update;
+  if not found then raise exception using errcode='PT403', message='forbidden'; end if;
+  if v_r.status not in ('running','waiting') then raise exception using errcode='PT422', message='run_not_active'; end if;
+  select * into v_t from public.agent_tasks where id = v_r.task_id for update;
+  if v_t.state <> 'working' or v_t.active_run_id is distinct from v_r.id then
+    raise exception using errcode='PT422', message='invalid_state', detail='submit from the active run of a working task';
+  end if;
+  if coalesce(array_length(p_artifact_ids,1),0) = 0 then raise exception using errcode='PT422', message='artifact_required'; end if;
+  if exists (select 1 from unnest(p_artifact_ids) x where not exists (
+       select 1 from public.agent_artifacts a where a.id = x and a.task_id = v_t.id)) then
+    raise exception using errcode='PT404', message='artifact_not_found';
+  end if;
+
+  select array_agg(c->>'id') into v_uncovered
+    from public.task_briefs b, jsonb_array_elements(b.done_when) c
+   where b.task_id = v_t.id and b.version = v_r.brief_version and c->>'check' <> 'human'
+     and not exists (select 1 from public.agent_artifacts a where a.id = any(p_artifact_ids) and (c->>'id') = any(a.satisfies));
+  if v_uncovered is not null then
+    raise exception using errcode='PT422', message='criteria_uncovered', detail=to_jsonb(v_uncovered)::text;
+  end if;
+
+  insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, author_type, author_id)
+  values (v_t.workspace_id, v_t.id, v_r.id, private.next_seq(v_t.id), 'response',
+          jsonb_build_object('text',p_summary,'artifact_ids',to_jsonb(p_artifact_ids),'submit',true), 'agent', v_r.agent_id);
+  update public.agent_runs  set status='completed', ended_at=now() where id = v_r.id;
+  update public.agent_tasks set state='ready_for_review', review_state='pending', active_run_id=null, waiting_on=null where id = v_t.id;
+
+  select p.delegate_agent_id into v_lead from public.agent_tasks p join public.agents a on a.id=p.delegate_agent_id
+   where p.id = v_t.parent_task_id and a.role='lead';
+  if v_lead is not null then
+    insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
+    values (v_t.workspace_id, v_t.parent_task_id, null, v_lead, 'task.continue',
+            jsonb_build_object('review_of', v_t.id, 'artifact_ids', to_jsonb(p_artifact_ids)), private.next_event_seq(v_t.parent_task_id));
+  else
+    insert into public.notifications (workspace_id, user_id, kind, page_id, task_id, actor_id, payload)
+    values (v_t.workspace_id, v_t.owner_user_id, 'ready_for_review', v_t.row_page_id, v_t.id, v_r.agent_id,
+            jsonb_build_object('summary', left(p_summary, 280)));
+  end if;
+  return jsonb_build_object('task_state','ready_for_review');
+end $$;
+-- Same grants as 0006: nothing for public or anon, execute for authenticated.
+revoke all on function public.submit_for_review(uuid, text, uuid[]) from public, anon;
+grant execute on function public.submit_for_review(uuid, text, uuid[]) to authenticated;

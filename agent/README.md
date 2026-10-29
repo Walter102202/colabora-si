@@ -35,6 +35,7 @@ Ctrl+C stops after the current step; press it twice to quit at once.
 | `WORKSPACE_AGENT_TOKEN_URL` | no | PAT exchange endpoint; default `<MCP origin>/functions/v1/agent-token` |
 | `AGENT_HARNESS_NAME` | no | Name shown on each run; default `reference-agent` |
 | `AGENT_MAX_TURNS` | no | Model turns per run before giving up; default 40 |
+| `AGENT_REVIEWER_AGENT_ID` | no | Agent id of the reviewer instance a Lead delegates review tasks to; empty disables the review protocol |
 | `WORKSPACE_APP_URL` | no | Public URL of the web app, for deep links in notifications |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_CHAT_ID` | no | Send notifications to a Telegram chat instead of the console |
 

@@ -197,7 +197,7 @@ const reviewTask: ToolDef = {
     ' As the reviewer agent, call it from your run on the review task delegated to you (its brief policy review_of names task_id); recording the review closes your review task.',
   inputSchema: object({
     task_id: { type: 'string', minLength: 1 },
-    run_id: { type: 'string', minLength: 1, description: 'Agents: your active run on the parent task. People omit it.' },
+    run_id: { type: 'string', minLength: 1, description: 'Agents: your active run, on the parent task as Lead or on the review task as reviewer. People omit it.' },
     artifact_id: { type: 'string' },
     verdict: { type: 'string', enum: ['approved', 'changes_requested', 'blocked'] },
     findings: {

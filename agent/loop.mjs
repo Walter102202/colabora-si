@@ -20,6 +20,8 @@ const CLAIM_REASONS = new Set(["queued", "feedback", "brief"]);
 /** Activity signals that answer a pending human decision. */
 const HUMAN_SIGNALS = new Set(["feedback", "approval_decided"]);
 export const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
+/** Subtask states after which nothing more is expected from it. */
+const CLOSED_STATES = new Set(["done", "failed", "cancelled"]);
 
 /** @type {Clock} */
 export const realClock = { now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
@@ -130,7 +132,10 @@ export async function runAgent(opts) {
     let seenSeq = maxSeq(claim.recent_activities);
     let lastHeartbeat = clock.now();
     const pending = { input_tokens: 0, output_tokens: 0 };
+    /** @type {Set<string>} subtasks of this task that are not closed yet */
     const openSubtasks = new Set();
+    /** @type {Map<string, string>} last state/review_state reported to the model per subtask */
+    const reported = new Map();
     let reviewed = false;
     const total = { input_tokens: 0, output_tokens: 0, cost_usd: 0 };
     /** @param {TaskOutcome["outcome"]} outcome @returns {TaskOutcome} */
@@ -142,6 +147,25 @@ export async function runAgent(opts) {
       pending.input_tokens = 0;
       pending.output_tokens = 0;
       return usage;
+    };
+    /**
+     * Records the subtasks a wait_for_task answer carries; returns the ones with news for the model
+     * (a state the model has not seen yet, and not merely queued or working).
+     * @param {unknown} list @returns {Record<string, any>[]}
+     */
+    const noteSubtasks = (list) => {
+      const news = [];
+      for (const s of Array.isArray(list) ? list : []) {
+        const id = String(s.task_id);
+        if (CLOSED_STATES.has(s.state)) openSubtasks.delete(id);
+        else openSubtasks.add(id);
+        const key = `${s.state}/${s.review_state ?? ""}`;
+        const prev = reported.get(id);
+        if (prev === key || (prev === "closed" && CLOSED_STATES.has(s.state))) continue;
+        reported.set(id, key);
+        if (s.state !== "queued" && s.state !== "working") news.push(s);
+      }
+      return news;
     };
     /** @returns {Promise<Record<string, any>>} */
     const heartbeat = async () => {
@@ -200,12 +224,20 @@ export async function runAgent(opts) {
       }
     };
 
+    /**
+     * Holds the run while subtasks are open. Returns with news for the model: subtasks that changed state,
+     * people's messages (the agent's own activities are not news), or the fact that every subtask closed.
+     * @returns {Promise<{stop: true} | {aborted: true} | {subtasks: object[], activities: object[], all_subtasks_closed: boolean, prompts?: object[], brief_stale?: boolean}>}
+     */
     const waitForSubtasks = async () => {
       for (;;) {
         if (signal?.aborted) return { aborted: true };
         if (clock.now() - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
           const hb = await heartbeat();
           if (hb.stop_requested) return { stop: true };
+          if (hb.pending_prompts?.length || hb.brief_stale) {
+            return { subtasks: [], activities: [], all_subtasks_closed: openSubtasks.size === 0, prompts: hb.pending_prompts ?? [], brief_stale: !!hb.brief_stale };
+          }
         }
         const res = await call("wait_for_task", { task_id: taskId, run_id: runId, after_seq: seenSeq, timeout_s: waitTimeoutS });
         if (res.isError) {
@@ -217,21 +249,26 @@ export async function runAgent(opts) {
         if (typeof d.next_seq === "number") seenSeq = Math.max(seenSeq, d.next_seq);
         seenSeq = Math.max(seenSeq, maxSeq(d.activities));
         if (d.stop_requested) return { stop: true };
-        if (d.changed) {
-          const ready = (d.task?.subtasks ?? []).filter((s) => !["queued", "working"].includes(s.state));
-          for (const s of ready) {
-            if (["done", "failed", "cancelled"].includes(s.state)) openSubtasks.delete(s.task_id);
-          }
-          if (ready.length || d.activities?.length) return { subtasks: ready, activities: d.activities ?? [] };
-        }
+        const news = noteSubtasks(d.task?.subtasks);
+        const activities = (d.activities ?? []).filter((/** @type {any} */ a) => a.author_type !== "agent");
+        if (news.length || activities.length || !openSubtasks.size) return { subtasks: news, activities, all_subtasks_closed: openSubtasks.size === 0 };
       }
     };
+
+    // A task may arrive with subtasks from an earlier run (another harness, a crash): one wait_for_task without
+    // after_seq answers at once with the current subtasks and the activity cursor.
+    const seeded = await call("wait_for_task", { task_id: taskId, run_id: runId });
+    if (seeded.isError) log(`wait_for_task (seed) failed: ${seeded.text}`);
+    else {
+      if (typeof seeded.data.next_seq === "number") seenSeq = Math.max(seenSeq, seeded.data.next_seq);
+      noteSubtasks(seeded.data.task?.subtasks);
+    }
 
     await notify({ kind: "claimed", task_id: taskId, text: `Claimed "${label}".`, link });
     /** @type {object[]} */
     const messages = [
       { role: "system", content: system },
-      { role: "user", content: buildTaskMessage(claim, task) },
+      { role: "user", content: buildTaskMessage({ ...claim, subtasks: seeded.isError ? [] : seeded.data.task?.subtasks ?? [] }, task) },
     ];
 
     for (let turn = 0; turn < maxTurns; turn++) {
@@ -289,9 +326,17 @@ export async function runAgent(opts) {
           messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "unknown_tool", message: `${name} is not available to you` }) });
           continue;
         }
+        if (name === "submit_for_review" && reviewed) {
+          messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "invalid_state", message: "the review task closed when you recorded the review; end your turn without tool calls" }) });
+          continue;
+        }
         if (toolSchemas.get(name)?.properties?.run_id && !args.run_id) args.run_id = runId;
         const res = await call(name, args);
         if (!res.isError && name === "create_subtask" && res.data?.task_id) openSubtasks.add(String(res.data.task_id));
+        if (!res.isError && name === "close_subtask" && args.task_id) {
+          openSubtasks.delete(String(args.task_id));
+          reported.set(String(args.task_id), "closed");
+        }
         if (!res.isError && name === "review_task" && claim.brief?.policies?.review_of) reviewed = true;
         /** @type {Record<string, any>} */
         let content = res.isError ? { error: res.data.code ?? "tool_error", ...res.data, message: res.text } : res.data;

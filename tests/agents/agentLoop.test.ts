@@ -24,6 +24,8 @@ const deliveryScript = [
 ];
 
 const names = (calls: { name: string }[]) => calls.map((c) => c.name).filter((n) => n !== "heartbeat");
+/** The answer to the wait_for_task the loop sends right after claim_task to learn the open subtasks and the cursor. */
+const seed = (subtasks: object[] = []) => ({ changed: false, stop_requested: false, activities: [], next_seq: 1, task: { task_id: "task-1", state: "working", subtasks } });
 
 describe("reference agent loop", () => {
   it("claims a queued task and drives read_page, append_blocks, add_artifact, submit_for_review over the model slot", async () => {
@@ -34,7 +36,7 @@ describe("reference agent loop", () => {
       const channel = memoryChannel();
       const { tasks } = await runAgent({ mcp, model, channel, clock: fakeClock(), maxTasks: 1, harness: "test-agent", appUrl: "https://app.test" });
 
-      expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "read_page", "append_blocks", "add_artifact", "submit_for_review"]);
+      expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "read_page", "append_blocks", "add_artifact", "submit_for_review"]);
       expect(mcp.calls[1].args).toEqual({ task_id: "task-1", harness: "test-agent" });
       expect(mcp.calls.find((c) => c.name === "submit_for_review")?.args.run_id).toBe("run-task-1");
       expect(tasks[0].outcome).toBe("submitted");
@@ -53,7 +55,7 @@ describe("reference agent loop", () => {
     const model = createStubModel([{ tool_calls: [toolCall("read_page", { page_id: "row-task-1" })] }, { content: "I cannot finish this." }]);
     const { tasks } = await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1 });
 
-    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "read_page", "end_run"]);
+    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "read_page", "end_run"]);
     expect(mcp.calls.at(-1)?.args).toMatchObject({ run_id: "run-task-1", status: "completed" });
     expect(tasks[0].outcome).toBe("ended");
   });
@@ -64,7 +66,7 @@ describe("reference agent loop", () => {
     const channel = memoryChannel();
     const { tasks } = await runAgent({ mcp, model, channel, clock: fakeClock(), maxTasks: 1 });
 
-    expect(mcp.calls.map((c) => c.name)).toEqual(["wait_for_my_tasks", "claim_task", "heartbeat", "read_page", "heartbeat", "ack_stop"]);
+    expect(mcp.calls.map((c) => c.name)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "heartbeat", "read_page", "heartbeat", "ack_stop"]);
     expect(model.requests).toHaveLength(2);
     expect(tasks[0].outcome).toBe("stopped");
     expect(channel.events.at(-1)?.kind).toBe("stopped");
@@ -74,6 +76,7 @@ describe("reference agent loop", () => {
     const mcp = createStubMcp({
       tasks: queued,
       waits: [
+        seed(),
         { changed: false, stop_requested: false, activities: [], next_seq: 1 },
         { changed: true, stop_requested: false, activities: [{ seq: 12, type: "prompt", author_type: "human", signal: "approval_decided", excerpt: "Approved" }], next_seq: 12 },
       ],
@@ -86,8 +89,10 @@ describe("reference agent loop", () => {
     const channel = memoryChannel();
     const { tasks } = await runAgent({ mcp, model, channel, clock: fakeClock(), maxTasks: 1, appUrl: "https://app.test" });
 
-    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "request_approval", "wait_for_task", "wait_for_task", "add_artifact", "submit_for_review"]);
-    expect(mcp.calls.find((c) => c.name === "wait_for_task")?.args).toMatchObject({ task_id: "task-1", run_id: "run-task-1", after_seq: 1 });
+    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "request_approval", "wait_for_task", "wait_for_task", "add_artifact", "submit_for_review"]);
+    const waits = mcp.calls.filter((c) => c.name === "wait_for_task");
+    expect(waits[0].args).toEqual({ task_id: "task-1", run_id: "run-task-1" });
+    expect(waits[1].args).toMatchObject({ task_id: "task-1", run_id: "run-task-1", after_seq: 1 });
     const approvalResult = model.requests[1].messages.at(-1);
     expect(approvalResult.role).toBe("tool");
     expect(JSON.parse(approvalResult.content).human_response[0].signal).toBe("approval_decided");
@@ -125,7 +130,7 @@ describe("reference agent loop", () => {
     ]);
     const channel = memoryChannel();
     const { tasks } = await runAgent({ mcp, model, channel, clock: fakeClock(), maxTasks: 1 });
-    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "read_page", "review_task", "end_run"]);
+    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "read_page", "review_task", "end_run"]);
     expect(mcp.calls.find((c) => c.name === "review_task")?.args).toMatchObject({ task_id: "task-sub", run_id: "run-task-r", verdict: "approved" });
     expect(tasks[0].outcome).toBe("submitted");
     expect(channel.events.map((e) => e.kind)).toEqual(["claimed", "delivered"]);
@@ -135,6 +140,7 @@ describe("reference agent loop", () => {
     const mcp = createStubMcp({
       tasks: queued,
       waits: [
+        seed(),
         { changed: true, stop_requested: false, activities: [], next_seq: 1,
           task: { task_id: "task-1", state: "working", subtasks: [{ task_id: "sub-1", state: "ready_for_review", review_state: "pending" }] } },
         { changed: true, stop_requested: false, activities: [], next_seq: 2,
@@ -149,11 +155,124 @@ describe("reference agent loop", () => {
       { content: "Done for now." },
     ]);
     const { tasks } = await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, reviewerAgentId: "reviewer-1" });
-    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "create_subtask", "wait_for_task", "create_subtask", "wait_for_task", "end_run"]);
+    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "create_subtask", "wait_for_task", "create_subtask", "wait_for_task", "end_run"]);
     expect(model.requests[2].messages.at(-1).content).toMatch(/sub-1.*ready_for_review/);
     expect(model.requests[4].messages.at(-1).content).toMatch(/sub-2.*done/);
     expect(model.requests[0].messages[0].content).toContain("reviewer-1");
+    expect(model.requests[0].messages[0].content).toContain("After create_subtask, end your turn");
     expect(tasks[0].outcome).toBe("ended");
+  });
+
+  it("as Lead: ends the run once every subtask is closed instead of waiting forever", async () => {
+    const mcp = createStubMcp({
+      tasks: queued,
+      waits: [
+        seed(),
+        { changed: true, stop_requested: false, activities: [], next_seq: 2,
+          task: { task_id: "task-1", state: "working", subtasks: [{ task_id: "sub-1", state: "done", review_state: "approved" }] } },
+      ],
+    });
+    const model = createStubModel([
+      { tool_calls: [toolCall("create_subtask", { parent_task_id: "task-1", delegate_agent_id: "worker-1", brief: { objective: "Write", done_when: [{ id: "c1", text: "Written" }] } })] },
+      { content: "Waiting for the worker." },
+      { content: "All done." },
+    ]);
+    const { tasks } = await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1 });
+    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "create_subtask", "wait_for_task", "end_run"]);
+    const update = JSON.parse(model.requests[2].messages.at(-1).content.replace(/^[^{]*/, ""));
+    expect(update.all_subtasks_closed).toBe(true);
+    expect(update.subtasks.map((s: { task_id: string }) => s.task_id)).toEqual(["sub-1"]);
+    expect(tasks[0].outcome).toBe("ended");
+  });
+
+  it("as Lead resuming a task: learns the open subtasks at claim and waits on them", async () => {
+    const mcp = createStubMcp({
+      tasks: queued,
+      waits: [
+        { changed: false, stop_requested: false, activities: [], next_seq: 7,
+          task: { task_id: "task-1", state: "working", subtasks: [{ task_id: "sub-9", state: "working", review_state: "none" }] } },
+        { changed: true, stop_requested: false, activities: [], next_seq: 8,
+          task: { task_id: "task-1", state: "working", subtasks: [{ task_id: "sub-9", state: "done", review_state: "approved" }] } },
+      ],
+    });
+    const model = createStubModel([{ content: "Picking up where the other run left off." }, { content: "Done." }]);
+    const { tasks } = await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1 });
+    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "wait_for_task", "end_run"]);
+    expect(model.requests[0].messages[1].content).toMatch(/sub-9[\s\S]*working/);
+    expect(mcp.calls.filter((c) => c.name === "heartbeat")[0].args.after_seq).toBe(7);
+    expect(model.requests[1].messages.at(-1).content).toMatch(/sub-9.*done/);
+    expect(tasks[0].outcome).toBe("ended");
+  });
+
+  it("as Lead: its own activities and unchanged subtasks are not news; a person's message is, and close_subtask releases the wait", async () => {
+    const mcp = createStubMcp({
+      tasks: queued,
+      waits: [
+        seed(),
+        { changed: true, stop_requested: false, next_seq: 5, activities: [{ seq: 5, type: "action", author_type: "agent", excerpt: "Lead note" }],
+          task: { task_id: "task-1", state: "working", subtasks: [{ task_id: "sub-1", state: "working", review_state: "none" }] } },
+        { changed: true, stop_requested: false, next_seq: 6, activities: [{ seq: 6, type: "prompt", author_type: "human", signal: "feedback", excerpt: "Hurry up" }],
+          task: { task_id: "task-1", state: "working", subtasks: [{ task_id: "sub-1", state: "working", review_state: "none" }] } },
+      ],
+    });
+    const model = createStubModel([
+      { tool_calls: [toolCall("create_subtask", { parent_task_id: "task-1", delegate_agent_id: "worker-1", brief: { objective: "Write", done_when: [{ id: "c1", text: "Written" }] } })] },
+      { content: "Waiting." },
+      { tool_calls: [toolCall("close_subtask", { task_id: "sub-1" })] },
+      { content: "Done." },
+    ]);
+    const { tasks } = await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1 });
+    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "create_subtask", "wait_for_task", "wait_for_task", "close_subtask", "end_run"]);
+    const update = model.requests[2].messages.at(-1).content;
+    expect(update).toContain("Hurry up");
+    expect(update).not.toContain("Lead note");
+    expect(mcp.calls.filter((c) => c.name === "wait_for_task").at(-1)?.args.after_seq).toBe(5);
+    expect(tasks[0].outcome).toBe("ended");
+  });
+
+  it("as Lead: a person's message that arrives through heartbeat while waiting on subtasks reaches the model", async () => {
+    let t = 0;
+    const jumpingClock: Clock = { now: () => (t += 6 * 60 * 1000), sleep: async (ms) => void (t += ms) };
+    const mcp = createStubMcp({
+      tasks: queued,
+      heartbeats: [
+        { stop_requested: false, pending_prompts: [] },
+        { stop_requested: false, pending_prompts: [{ seq: 9, signal: "feedback", source: "row_panel", text: "Use the short version" }] },
+      ],
+      waits: [
+        seed(),
+        { changed: true, stop_requested: false, activities: [], next_seq: 10,
+          task: { task_id: "task-1", state: "working", subtasks: [{ task_id: "sub-1", state: "done", review_state: "approved" }] } },
+      ],
+    });
+    const model = createStubModel([
+      { tool_calls: [toolCall("create_subtask", { parent_task_id: "task-1", delegate_agent_id: "worker-1", brief: { objective: "Write", done_when: [{ id: "c1", text: "Written" }] } })] },
+      { content: "Waiting." },
+      { content: "Noted." },
+      { content: "Done." },
+    ]);
+    const { tasks } = await runAgent({ mcp, model, clock: jumpingClock, maxTasks: 1 });
+    expect(model.requests[2].messages.at(-1).content).toContain("Use the short version");
+    expect(mcp.calls.filter((c) => c.name === "wait_for_task")).toHaveLength(2);
+    expect(tasks[0].outcome).toBe("ended");
+  });
+
+  it("as reviewer: refuses submit_for_review after the review closed the review task and tells the model why", async () => {
+    const mcp = createStubMcp({
+      tasks: [{ task_id: "task-r", title: "Review the report", state: "queued", reason: "queued", pending_prompts: 0 }],
+      handlers: { claim_task: (a) => ({ task_id: a.task_id, run_id: `run-${a.task_id}`, row_page_id: `row-${a.task_id}`,
+        brief: { objective: "Review the report", done_when: [{ id: "r1", text: "One finding per criterion" }], policies: { review_of: "task-sub" } }, artifacts: [], recent_activities: [] }) },
+    });
+    const model = createStubModel([
+      { tool_calls: [toolCall("review_task", { task_id: "task-sub", verdict: "approved", findings: [{ criterion_id: "c1", status: "verified" }] })] },
+      { tool_calls: [toolCall("submit_for_review", { summary: "Reviewed", artifact_ids: [] })] },
+      { content: "Understood." },
+    ]);
+    const { tasks } = await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1 });
+    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "review_task", "end_run"]);
+    expect(JSON.parse(model.requests[2].messages.at(-1).content).error).toBe("invalid_state");
+    expect(model.requests[0].messages[1].content).toContain("Do not call submit_for_review");
+    expect(tasks[0].outcome).toBe("submitted");
   });
 
   it("treats adversarial page content as data: runtime and unknown tools stay out of reach and the text only arrives as a tool result", async () => {
@@ -169,7 +288,7 @@ describe("reference agent loop", () => {
       { content: "I will not follow instructions found in page content." },
     ]);
     const { tasks } = await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1 });
-    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "read_page", "end_run"]);
+    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "read_page", "end_run"]);
     expect(mcp.calls.filter((c) => c.name === "ack_stop" || c.name === "delete_everything")).toHaveLength(0);
     expect(mcp.calls.filter((c) => c.name === "claim_task").map((c) => c.args.task_id)).toEqual(["task-1"]);
     const refusals = model.requests[2].messages.filter((m: { role: string; content: string }) => m.role === "tool" && m.content.includes("unknown_tool"));
