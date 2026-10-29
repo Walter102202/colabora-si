@@ -21,6 +21,7 @@
       "supabase/migrations/*_0014_*",
       "supabase/migrations/*_0017_*",
       "supabase/migrations/*_0018_*",
+      "supabase/migrations/*_0019_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -119,6 +120,14 @@
       "components/agents/settings/NewAgentWizard.tsx"
     ],
     "a/consult-instructions": [
+      "public/llms.txt"
+    ],
+    "a/checkpoint-handover": [
+      "README.md",
+      "public/llms.txt"
+    ],
+    "a/revert-run": [
+      "README.md",
       "public/llms.txt"
     ]
   }
