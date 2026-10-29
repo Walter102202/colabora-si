@@ -6,7 +6,6 @@ import * as pm from "@/lib/pageMutations";
 import * as dm from "@/lib/dbMutations";
 import { createPageFromTemplate as materializeTemplate, sanitizeBlocks, seedWorkspace } from "@/lib/seed";
 import { foreignPageIds } from "@/lib/foreignPages";
-import { stripHtml } from "@/lib/utils";
 import { useAuthStore } from "@/lib/auth";
 
 import { collectSubtreeFileIds, collectTrashFileIds, scheduleBlobGc } from "@/lib/fileStore";
@@ -319,9 +318,4 @@ export function getFavorites(pages: Record<string, Page>): Page[] {
 }
 export function getTrash(pages: Record<string, Page>): Page[] {
   return Object.values(pages).filter((p) => p.isDeleted).sort((a, b) => b.updatedAt - a.updatedAt);
-}
-export function searchPages(pages: Record<string, Page>, query: string): Page[] {
-  const needle = query.trim().toLowerCase();
-  const text = (blocks: Block[]): string => blocks.map((b) => stripHtml(b.html) + (b.columns ? b.columns.map((c) => text(c.blocks)).join(" ") : "")).join(" ");
-  return Object.values(pages).filter((p) => !p.isDeleted && (p.title.toLowerCase().includes(needle) || text(p.blocks).toLowerCase().includes(needle))).sort((a, b) => b.updatedAt - a.updatedAt);
 }
