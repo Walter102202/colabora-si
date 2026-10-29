@@ -134,7 +134,7 @@ const claimTask: ToolDef = {
   title: 'Claim a task and start a run',
   description:
     'Starts a run on a task (without task_id: the oldest queued task assigned to you). Returns the current brief, ' +
-    'deliverables and recent activity. Claiming a done task reopens it with a new run.',
+    'deliverables and recent activity. A done task cannot be claimed: only a person reopens it from the workspace.',
   inputSchema: object({
     task_id: { type: 'string' },
     harness: { type: 'string', minLength: 1, maxLength: 60, description: 'claude_code, codex, chatgpt, claude_ai, custom…' },
