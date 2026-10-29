@@ -245,6 +245,9 @@ select is((select root_order from public.workspaces where id='20000000-0000-4000
 reset role;
 
 -- Give only this fixture agent access inside the rolled-back test transaction.
+-- The partial-write RPCs resolve the agent row from the JWT, so the fixture agent gets one.
+insert into public.agents (id, workspace_id, auth_user_id, name, kind, sponsor_user_id, created_by)
+values ('20000000-0000-4000-8000-000000000020','20000000-0000-4000-8000-000000000010','20000000-0000-4000-8000-000000000003','Fixture agent','acp_local','20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001');
 create or replace function private.agent_can_write(p_page_id text) returns boolean language sql stable security definer set search_path='' as $$
   select auth.uid()='20000000-0000-4000-8000-000000000003'::uuid and p_page_id='stale-update';
 $$;
@@ -253,9 +256,10 @@ returns boolean language sql stable security definer set search_path='' as $$
   select private.agent_can_write(p_page_id);
 $$;
 insert into rpc_results select 'before-agent',data from public.pages where id='stale-update';
-select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000003","role":"authenticated","app_metadata":{"principal_type":"agent"}}',true);
+select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000003","role":"authenticated","app_metadata":{"principal_type":"agent","agent_id":"20000000-0000-4000-8000-000000000020"}}',true);
 set local role authenticated;
-select throws_ok($$select public.apply_page_ops('stale-update','[{"op":"set_page","patch":{"title":"Must roll back"}},{"op":"update_block","id":"a","rev":1,"patch":{"html":"Agent edit"}}]')$$,'PT409','block_conflict','stale agent update rejects the whole batch');
+select throws_ok($$select public.apply_page_ops('stale-update','[{"op":"set_page","patch":{"title":"Must roll back"}},{"op":"update_block","id":"a","rev":1,"patch":{"html":"Agent edit"}}]')$$,'PT403','use_partial_writes','agents cannot call apply_page_ops');
+select throws_ok($$select public.edit_block_text('stale-update','a','A','Agent edit',1)$$,'PT409','block_conflict','stale agent edit through edit_block_text is rejected');
 reset role;
 select is((select data from public.pages where id='stale-update'),(select payload from rpc_results where name='before-agent'),'agent rejection leaves page intact');
 select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated"}',true);

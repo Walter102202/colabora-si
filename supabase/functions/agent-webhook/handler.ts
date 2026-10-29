@@ -32,6 +32,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   run_active: 409,
   run_not_active: 409,
   task_unavailable: 409,
+  use_partial_writes: 403,
   task_closed: 409,
   block_conflict: 409,
   conflict: 409,
