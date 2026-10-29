@@ -1,4 +1,5 @@
 import { useId, useState } from "react";
+import { continuityText, type ContinuityInfo } from "@/lib/agentContinuity";
 import type { ActivityRow, ApprovalRow, ArtifactRow, BriefRow, ReviewRow, RunRow, TaskRow } from "@/lib/agentTasks";
 import type { ApprovalDecision, MessageSignal } from "@/lib/agentActions";
 import type { AgentRole } from "@/lib/agentsStore";
@@ -44,6 +45,9 @@ export interface TaskViewProps {
   activities: ActivityRow[];
   subtasks: SubtaskItem[];
   reviewerName: string | null;
+  continuity?: ContinuityInfo | null;
+  handOverAgents?: AgentOption[];
+  onHandOver?: (toAgentId: string | null, note: string) => Promise<void>;
   // Approval a deep link (#approval-<id>) asked to land on, if any.
   focusApprovalId?: string | null;
   // Message to the agent: text with "feedback"/"continue", or an empty body with "continue"/"stop".
@@ -107,13 +111,16 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ task, agent, run, approval, artifact, review, brief, activities, subtasks, reviewerName, focusApprovalId = null, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ task, agent, run, approval, artifact, review, brief, activities, subtasks, reviewerName, continuity = null, handOverAgents = [], onHandOver, focusApprovalId = null, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [closing, setClosing] = useState<"accepted" | "rejected" | null>(null);
   const [closeNote, setCloseNote] = useState("");
+  const [handingOver, setHandingOver] = useState(false);
+  const [handoverAgent, setHandoverAgent] = useState("");
+  const [handoverNote, setHandoverNote] = useState("");
 
   const agentLike = agent ? { name: agent.name, capabilities: agent.capabilities } : null;
   const terminal = isTerminal(task.state);
@@ -140,6 +147,7 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
         <span className="text-xs text-text-secondary">{agent ? agent.name : "No agent assigned"}{agent?.role === "lead" ? " · Lead" : ""}</span>
         {run && <span className="text-xs text-text-tertiary">Run {RUN_STATUS_LABEL[run.status].toLowerCase()} · {formatRelative(Date.parse(run.last_signal_at))}</span>}
         <span className="text-xs text-text-tertiary">Brief v{task.brief_version}{task.brief_stale ? " · pending re-run" : ""}</span>
+        {continuity && <span className="text-xs text-text-tertiary">{continuityText(continuity)}</span>}
         {task.cost_usd > 0 && <span className="text-xs text-text-tertiary">${task.cost_usd.toFixed(4)}</span>}
         {task.state === "done" && <span className="text-xs text-text-tertiary">{acceptanceLabel(task.acceptance)}</span>}
       </header>
@@ -205,6 +213,11 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
       />
 
       <div className="flex flex-wrap gap-2">
+        {!terminal && onHandOver && (
+          <button type="button" className="rounded border border-border px-3 py-1 text-xs disabled:opacity-50" disabled={busy !== null || task.state === "ready_for_review"} title="Stops the current run, keeps pending approvals and lets the chosen agent continue from the last checkpoint." onClick={() => setHandingOver((v) => !v)}>
+            Hand over…
+          </button>
+        )}
         {!terminal && (
           <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" title={nextText} disabled={busy !== null} onClick={() => act("continue", () => onMessage("", "continue"))}>
             Continue
@@ -234,6 +247,19 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
           {showTimeline ? "Hide timeline" : "Show timeline"}
         </button>
       </div>
+
+      {handingOver && !terminal && task.state !== "ready_for_review" && onHandOver && (
+        <div className="space-y-2 rounded-md border border-border p-2">
+          <label className="block text-xs" htmlFor={`${id}-handover-agent`}>Hand over to</label>
+          <select id={`${id}-handover-agent`} className="w-full rounded border border-border bg-bg px-2 py-1 text-sm" value={handoverAgent} onChange={(e) => setHandoverAgent(e.target.value)}>
+            <option value="">Same agent, new session</option>
+            {handOverAgents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+          <label className="block text-xs" htmlFor={`${id}-handover-note`}>Note for the next agent</label>
+          <textarea id={`${id}-handover-note`} className="w-full rounded border border-border bg-bg px-2 py-1 text-sm" maxLength={4000} value={handoverNote} onChange={(e) => setHandoverNote(e.target.value)} />
+          <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" disabled={busy !== null} onClick={() => act("handover", () => onHandOver(handoverAgent || null, handoverNote).then(() => setHandingOver(false)))}>Hand over</button>
+        </div>
+      )}
 
       {closing && (
         <div className="space-y-1 rounded-md border border-border p-2">

@@ -153,6 +153,7 @@ function TaskCard({
 
   return (
     <TaskView
+      continuity={data.continuity ?? null}
       task={task}
       agent={agent}
       run={data.run}

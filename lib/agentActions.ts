@@ -18,11 +18,12 @@ export interface BriefInput {
   policies?: Record<string, unknown>;
 }
 
-async function rpc<T>(name: string, args: Record<string, unknown>): Promise<T> {
+// `messages` gives an error code a text specific to this action instead of the generic one.
+async function rpc<T>(name: string, args: Record<string, unknown>, messages: Record<string, string> = {}): Promise<T> {
   const client = getAgentClient();
   if (!client) throw new Error("No connection. Agents need you to sign in.");
   const { data, error } = await client.rpc(name, args);
-  if (error) throw new Error(agentErrorMessage(error));
+  if (error) throw new Error(Object.hasOwn(messages, error.message) ? messages[error.message] : agentErrorMessage(error));
   return data as T;
 }
 
@@ -114,6 +115,14 @@ export async function reviewTask(
   });
   await refresh(taskId);
   return res;
+}
+
+export async function handOver(taskId: string, toAgentId: string | null, note: string): Promise<{ task_state: string; delegate_agent_id: string | null }> {
+  const result = await rpc<{ task_state: string; delegate_agent_id: string | null }>("release_for_handover", {
+    p_task_id: taskId, p_to_agent_id: toAgentId, p_note: note || null,
+  }, { invalid_state: "The task cannot be handed over in its current state." });
+  await refresh(taskId);
+  return result;
 }
 
 export async function updateBrief(

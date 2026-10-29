@@ -45,12 +45,21 @@ describe("NewAgentWizard", () => {
     click("Create agent");
     expect(created).toEqual([{
       name: "Codex worker", kind: "acp_local", role: "worker",
-      capabilities: { start: false, continue: false, cancel: false, events: false, approval: true, cost: false, files: false },
+      capabilities: { start: false, continue: false, cancel: false, events: false, approval: true, cost: false, files: false, resume: true },
       monthly_budget_usd: null, rate_limit_per_min: 120, grants: [], harness: "codex",
     }]);
   });
   it("does not advance without a name", () => {
     act(() => root.render(createElement(NewAgentWizard, { onCancel: () => {}, onCreate: () => {}, busy: false })));
     expect((container.querySelector("button[disabled]") as HTMLButtonElement | null)?.textContent).toBe("Next");
+  });
+  it("creates chat harnesses without resume", () => {
+    const created: NewAgentInput[] = [];
+    act(() => root.render(createElement(NewAgentWizard, { onCancel: () => {}, onCreate: (input: NewAgentInput) => void created.push(input), busy: false })));
+    type(container.querySelector("input")!, "Chat agent");
+    (container.querySelector("select") as HTMLSelectElement).value = "claude-ai";
+    act(() => container.querySelector("select")!.dispatchEvent(new Event("change", { bubbles: true })));
+    click("Next"); click("Next"); click("Create agent");
+    expect(created[0].capabilities.resume).toBe(false);
   });
 });

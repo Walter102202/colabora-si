@@ -20,3 +20,5 @@ The JWT lasts one hour. For longer sessions use the commented stdio block in `co
 - It never continues because of the clock. In a continuation it started (`stop_hook_active`), only changes after that point count.
 
 The hook runs with Codex's environment, so `WORKSPACE_MCP_URL` and `WORKSPACE_AGENT_PAT` must be set there. The hook never answers approvals: irreversible actions go through `request_approval` and the card in the app.
+
+A task handed over to this agent wakes the session with reason `handover`, also while it waits on a person's decision; claim it with `resume: true`.

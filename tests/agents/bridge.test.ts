@@ -152,6 +152,14 @@ describe("bridge proxy", () => {
 });
 
 describe("channel events", () => {
+  it("maps a handover continue to the handover reason", () => {
+    const event = eventToChannel({ type: "task.continue", task_id: "t1", payload: { handover: true } });
+    expect(event.meta.reason).toBe("handover");
+  });
+  it("maps a decision without a run to the handover reason: no run waits for it", () => {
+    expect(eventToChannel({ type: "approval.decided", task_id: "t1", run_id: null, payload: { decision: "approve" } }).meta.reason).toBe("handover");
+    expect(eventToChannel({ type: "approval.decided", task_id: "t1", run_id: "r1", payload: { decision: "approve" } }).meta.reason).toBe("approval_decided");
+  });
   it("turns an agent event into a one-line channel event with valid meta keys", () => {
     const event = eventToChannel({
       type: "task.continue",

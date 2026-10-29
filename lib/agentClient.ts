@@ -16,6 +16,10 @@ export function agentErrorMessage(error: unknown): string {
   if (typeof error === "string") return error;
   const e = error as { message?: string; details?: string; code?: string };
   if (e.message === "forbidden") return "You are not allowed to do that.";
+  if (e.message === "delegate_not_found") return "That agent is not available in this workspace.";
+  if (e.message === "invalid_state") return "The task changed state. Refresh and try again.";
+  if (e.message === "page_locked") return "The page is locked. Unlock it to revert.";
+  if (e.message === "stop_requested") return "A stop was requested for this run. Wait for the agent to stop.";
   if (e.message === "humans_only") return "Only a person can do that.";
   if (e.message === "cross_workspace") return "The page and the agent belong to different workspaces.";
   if (e.message === "misconfigured") return "The server is not configured for agent tokens yet.";

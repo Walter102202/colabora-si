@@ -1,3 +1,4 @@
+import { handoverLabel } from "@/lib/agentContinuity";
 import type { ActivityRow, RunRow, TaskRow } from "@/lib/agentTasks";
 import { formatRelative } from "@/lib/utils";
 
@@ -60,6 +61,8 @@ export function activityLabel(a: ActivityRow): string {
   const b = a.body;
   const pick = (k: string) => (typeof b[k] === "string" && b[k] ? (b[k] as string) : null);
   switch (a.type) {
+    case "checkpoint": return `checkpoint: ${pick("next_step") ?? ""}`;
+    case "handover": return handoverLabel(a);
     case "prompt": {
       const close = pick("close");
       if (close) return `closed as ${close}${pick("text") ? `: ${pick("text")}` : ""}`;

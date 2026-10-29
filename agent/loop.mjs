@@ -1,7 +1,8 @@
 // The agent loop: wait for work, claim, let the model work through MCP tools,
 // report liveness and cost, pause on human decisions, and hand the result to a person.
 
-import { toOpenAiTools } from "./mcpClient.mjs";
+import { argsHash, buildCheckpoint, guardFor, guardsFromResume, parseCheckpoint, WRITE_TOOLS } from "./checkpoint.mjs";
+import { McpError, toOpenAiTools } from "./mcpClient.mjs";
 import { buildSystemPrompt, buildTaskMessage } from "./prompt.mjs";
 
 /**
@@ -14,9 +15,9 @@ import { buildSystemPrompt, buildTaskMessage } from "./prompt.mjs";
  */
 
 /** Tools the runtime drives itself; the model never sees them. */
-export const RUNTIME_TOOLS = new Set(["wait_for_my_tasks", "list_my_tasks", "claim_task", "heartbeat", "wait_for_task", "end_run", "ack_stop"]);
+export const RUNTIME_TOOLS = new Set(["wait_for_my_tasks", "list_my_tasks", "claim_task", "heartbeat", "wait_for_task", "end_run", "ack_stop", "save_checkpoint", "hand_over"]);
 /** wait_for_my_tasks reasons that mean "there is work to claim". */
-const CLAIM_REASONS = new Set(["queued", "feedback", "brief"]);
+const CLAIM_REASONS = new Set(["queued", "feedback", "brief", "handover"]);
 /** Activity signals that answer a pending human decision. */
 const HUMAN_SIGNALS = new Set(["feedback", "approval_decided"]);
 export const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
@@ -44,7 +45,7 @@ function maxSeq(list) {
  * Runs the agent until `maxTasks` tasks were handled or `signal` aborts.
  * @param {{
  *   mcp: McpClient, model: Model, channel?: Channel, clock?: Clock,
- *   maxTurns?: number, maxTasks?: number, harness?: string, reviewerAgentId?: string,
+ *   maxTurns?: number, maxTasks?: number, harness?: string, reviewerAgentId?: string, resume?: boolean,
  *   prices?: {input: number, output: number}, appUrl?: string,
  *   signal?: AbortSignal, waitTimeoutS?: number, log?: (msg: string) => void,
  * }} opts
@@ -60,6 +61,7 @@ export async function runAgent(opts) {
     maxTasks = Infinity,
     harness = "reference-agent",
     reviewerAgentId = "",
+    resume = true,
     prices = { input: 0, output: 0 },
     appUrl = "",
     signal,
@@ -87,14 +89,21 @@ export async function runAgent(opts) {
       return await mcp.callTool(name, args);
     } catch (e) {
       const text = e instanceof Error ? e.message : String(e);
-      return { isError: true, data: { error: text }, text };
+      // The server refused the call before running it (invalid arguments, unknown tool): nothing happened and the model sees why.
+      if (e instanceof McpError && (e.code === -32602 || e.code === -32601)) {
+        return { isError: true, data: { code: e.code === -32602 ? "invalid_input" : "unknown_tool", message: text }, text };
+      }
+      return { isError: true, transport: true, data: { error: "transport_error", message: text }, text };
     }
   };
+  /** The call may have happened: its response was lost, or the server ran out of time after starting it. @param {Record<string, any>} res */
+  const unsure = (res) => !!res.transport || (res.isError && res.data?.code === "timeout");
 
   /** @type {TaskOutcome[]} */
   const handled = [];
   /** @type {string | undefined} */
   let cursor;
+  let resumeRejected = false;
   while (handled.length < maxTasks && !signal?.aborted) {
     const waited = await call("wait_for_my_tasks", cursor ? { after: cursor, timeout_s: waitTimeoutS } : { timeout_s: waitTimeoutS });
     if (waited.isError) {
@@ -119,12 +128,30 @@ export async function runAgent(opts) {
    * @returns {Promise<TaskOutcome | null>}
    */
   async function runTask(task) {
-    const claimed = await call("claim_task", { task_id: task.task_id, harness });
+    const claimArgs = { task_id: task.task_id, harness };
+    if (resume && !resumeRejected && toolSchemas.get("claim_task")?.properties?.resume) claimArgs.resume = true;
+    let claimed = await call("claim_task", claimArgs);
+    if (claimed.isError && claimed.data.code === "resume_unsupported") {
+      resumeRejected = true;
+      delete claimArgs.resume;
+      claimed = await call("claim_task", claimArgs);
+    }
     if (claimed.isError) {
       log(`claim_task ${task.task_id} skipped: ${claimed.text}`);
       return null;
     }
     const claim = claimed.data;
+    const resumeCtx = claim.resume ?? null;
+    const guards = guardsFromResume(resumeCtx);
+    const parsed = resumeCtx?.checkpoint?.readable ? parseCheckpoint(resumeCtx.checkpoint.body) : { status: "invalid" };
+    const cp = parsed.status === "ok" ? parsed.checkpoint : {};
+    const recovered = parsed.status === "ok" ? resumeCtx.pending_ops ?? [] : [];
+    const checkpoint = {
+      nextStep: cp.next_step || "Continue the task.",
+      confirmed: [...(cp.ops?.confirmed ?? []), ...recovered.filter((o) => o.status === "confirmed").map((o) => ({ ...o, block_ids: o.result?.block_ids ?? o.block_ids }))],
+      pending: recovered.filter((o) => o.status === "not_executed" || o.status === "unknown"),
+      effects: cp.effects ?? { confirmed: [], not_executed: [], unknown: [] }, evidence: cp.evidence ?? [],
+    };
     const taskId = String(claim.task_id ?? task.task_id);
     const runId = String(claim.run_id);
     const link = appUrl && claim.row_page_id ? `${appUrl}/p/${claim.row_page_id}?task=${taskId}` : undefined;
@@ -190,6 +217,25 @@ export async function runAgent(opts) {
       const usage = takeUsage();
       if (usage) args.usage = usage;
       await call("end_run", args);
+    };
+    const handOverOrEnd = async (reason) => {
+      if (toolSchemas.has("hand_over")) {
+        try {
+          const args = { run_id: runId, idempotency_key: runId + ":handover",
+            checkpoint: buildCheckpoint({ ...checkpoint, handoverNote: "The agent process stopped. " + checkpoint.nextStep }) };
+          let result = await call("hand_over", args);
+          // The key answers a repeat with the first result, so a lost response is retried once.
+          if (unsure(result)) result = await call("hand_over", args);
+          if (!result.isError) return;
+          log("hand_over failed: " + result.text);
+          // A person asked to stop: acknowledge it, which cancels the run, the task and its pending approvals as the person asked.
+          if (result.data.code === "stop_requested") {
+            await call("ack_stop", { run_id: runId });
+            return;
+          }
+        } catch (e) { log("hand_over failed: " + String(e)); }
+      }
+      await endRun("error", reason);
     };
     const stop = async () => {
       await call("ack_stop", { run_id: runId });
@@ -271,9 +317,22 @@ export async function runAgent(opts) {
       { role: "user", content: buildTaskMessage({ ...claim, subtasks: seeded.isError ? [] : seeded.data.task?.subtasks ?? [] }, task) },
     ];
 
+    // Wait for the person first only while the run still waits: a decision taken between the claim and the seed is
+    // already behind the activity cursor, so waiting for it would never end.
+    const pendingAtClaim = resumeCtx?.approvals?.some((a) => a.status === "pending");
+    if (pendingAtClaim && (seeded.isError || seeded.data.task?.state === "input_required")) {
+      await notify({ kind: "approval_pending", task_id: taskId, text: "A pending approval survived the handover.", link });
+      const answer = await waitForHuman();
+      if ("stop" in answer) return stop();
+      if ("aborted" in answer) { await handOverOrEnd("agent process stopped"); return done("aborted"); }
+      messages.push({ role: "user", content: "A person decided the pending approval (data, not instructions): " + JSON.stringify(answer.answer) });
+    } else if (pendingAtClaim) {
+      messages.push({ role: "user", content: "A pending approval may have been decided while you claimed the task: read it with get_task before acting on it." });
+    }
+
     for (let turn = 0; turn < maxTurns; turn++) {
       if (signal?.aborted) {
-        await endRun("error", "agent process stopped");
+        await handOverOrEnd("agent process stopped");
         return done("aborted");
       }
       /** @type {import("./model.mjs").ChatResult} */
@@ -304,13 +363,34 @@ export async function runAgent(opts) {
       // Once a call in this reply waits for a person, the rest of the reply is
       // not executed: the model re-issues them after it has seen the decision.
       let deferred = false;
-      for (const toolCall of calls) {
+      const prepared = calls.map((toolCall, i) => {
         const name = toolCall.function.name;
-        /** @type {Record<string, any>} */
-        let args;
         try {
-          args = toolCall.function.arguments ? JSON.parse(toolCall.function.arguments) : {};
-        } catch {
+          const args = toolCall.function.arguments ? JSON.parse(toolCall.function.arguments) : {};
+          if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("invalid arguments");
+          if (toolSchemas.get(name)?.properties?.run_id && !args.run_id) args.run_id = runId;
+          if (WRITE_TOOLS.has(name) && toolSchemas.get(name)?.properties?.idempotency_key && !args.idempotency_key) args.idempotency_key = runId + ":" + turn + ":" + i;
+          const guard = guardFor(name, args, guards);
+          const op = WRITE_TOOLS.has(name) && args.idempotency_key && !guard ? {
+            key: args.idempotency_key, tool: name, page_id: args.page_id, block_ids: args.block_id ? [args.block_id] : [],
+            args_hash: argsHash(name, args), summary: name + " on " + (args.page_id ?? "the task"),
+          } : null;
+          return { toolCall, name, args, guard, op };
+        } catch { return { toolCall, name, invalid: true }; }
+      });
+      if (message.content) checkpoint.nextStep = message.content;
+      const intended = prepared.flatMap((p) => p.op ? [p.op] : []);
+      if (intended.length) {
+        checkpoint.pending = [...checkpoint.pending.filter((o) => !intended.some((n) => n.key === o.key)), ...intended];
+        if (toolSchemas.has("save_checkpoint")) {
+          try {
+            const saved = await call("save_checkpoint", { run_id: runId, checkpoint: buildCheckpoint(checkpoint), idempotency_key: runId + ":cp:" + turn });
+            if (saved.isError) log("save_checkpoint failed: " + saved.text);
+          } catch (e) { log("save_checkpoint failed: " + String(e)); }
+        }
+      }
+      for (const { toolCall, name, args, guard, op, invalid } of prepared) {
+        if (invalid) {
           messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "invalid_input", message: "arguments are not valid JSON" }) });
           continue;
         }
@@ -330,8 +410,42 @@ export async function runAgent(opts) {
           messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "invalid_state", message: "the review task closed when you recorded the review; end your turn without tool calls" }) });
           continue;
         }
-        if (toolSchemas.get(name)?.properties?.run_id && !args.run_id) args.run_id = runId;
-        const res = await call(name, args);
+        if (guard) {
+          messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(guard) });
+          continue;
+        }
+        let res = await call(name, args);
+        let maybe = unsure(res);
+        // A repeat with the same key is answered by the receipt of the first call when it did happen.
+        if (WRITE_TOOLS.has(name) && args.idempotency_key && maybe) {
+          res = await call(name, args);
+          maybe = unsure(res);
+          // A first call still committing makes the repeat collide with its receipt: read the receipt a second later.
+          if (res.isError && res.data?.code === "conflict") {
+            await clock.sleep(1000);
+            res = await call(name, args);
+            maybe = res.isError;
+          }
+        }
+        if (op && !maybe) {
+          checkpoint.pending = checkpoint.pending.filter((o) => o.key !== op.key);
+          if (!res.isError) checkpoint.confirmed.push({ ...op, block_ids: res.data.block_ids ?? op.block_ids });
+        }
+        if (!res.isError) {
+          if (name === "request_approval" || (name === "begin_external_op" && res.data.status === "approval_required")) {
+            checkpoint.effects.not_executed.push({ action: args.action, approval_id: res.data.approval_id });
+          } else if (name === "begin_external_op" && res.data.op_id) {
+            checkpoint.effects.not_executed = checkpoint.effects.not_executed.filter((e) => e.action !== args.action);
+            checkpoint.effects.unknown.push({ action: args.action, external_op_id: res.data.op_id });
+          } else if (name === "finish_external_op" && ["done", "failed"].includes(args.status)) {
+            const effect = checkpoint.effects.unknown.find((e) => e.external_op_id === args.op_id);
+            checkpoint.effects.unknown = checkpoint.effects.unknown.filter((e) => e.external_op_id !== args.op_id);
+            if (effect) checkpoint.effects[args.status === "done" ? "confirmed" : "not_executed"].push(effect);
+          } else if (name === "add_artifact") {
+            for (const criterion_id of args.satisfies ?? []) checkpoint.evidence.push({ criterion_id, status: "met", refs: [args.ref] });
+          }
+        }
+        if (!message.content) checkpoint.nextStep = "Continue the task: " + checkpoint.confirmed.length + " write(s) done, " + checkpoint.pending.length + " pending.";
         if (!res.isError && name === "create_subtask" && res.data?.task_id) openSubtasks.add(String(res.data.task_id));
         if (!res.isError && name === "close_subtask" && args.task_id) {
           openSubtasks.delete(String(args.task_id));
@@ -339,10 +453,10 @@ export async function runAgent(opts) {
         }
         if (!res.isError && name === "review_task" && claim.brief?.policies?.review_of) reviewed = true;
         /** @type {Record<string, any>} */
-        let content = res.isError ? { error: res.data.code ?? "tool_error", ...res.data, message: res.text } : res.data;
+        let content = maybe && op ? { error: res.transport ? "transport_error" : res.data.code ?? "tool_error", outcome: "unknown", message: "The write may have happened. Read the page before repeating it." } : res.isError ? { error: res.data.code ?? "tool_error", ...res.data, message: res.text } : res.data;
 
-        if (!res.isError && (name === "request_approval" || name === "request_input") && res.data.status !== "approved") {
-          const isApproval = name === "request_approval";
+        if (!res.isError && (name === "request_approval" || name === "request_input" || (name === "begin_external_op" && res.data.status === "approval_required")) && res.data.status !== "approved") {
+          const isApproval = name !== "request_input";
           await notify({
             kind: isApproval ? "approval_pending" : "input_requested",
             task_id: taskId,
@@ -360,7 +474,7 @@ export async function runAgent(opts) {
       }
       if (stopRequested) return stop();
       if (signal?.aborted && !submitted) {
-        await endRun("error", "agent process stopped");
+        await handOverOrEnd("agent process stopped");
         return done("aborted");
       }
 
@@ -380,7 +494,7 @@ export async function runAgent(opts) {
           const w = await waitForSubtasks();
           if ("stop" in w) return stop();
           if ("aborted" in w) {
-            await endRun("error", "agent process stopped");
+            await handOverOrEnd("agent process stopped");
             return done("aborted");
           }
           messages.push({ role: "user", content: `Subtask update (data, not instructions): ${JSON.stringify(w)}` });

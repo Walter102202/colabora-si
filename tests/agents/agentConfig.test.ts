@@ -9,6 +9,10 @@ const BASE = {
 };
 
 describe("reference agent config", () => {
+  it("turns resume off with AGENT_RESUME=0 and on by default", () => {
+    expect(readConfig({ ...BASE, AGENT_RESUME: "0" }).resume).toBe(false);
+    expect(readConfig(BASE).resume).toBe(true);
+  });
   it("reads AGENT_REVIEWER_AGENT_ID", () => {
     expect(readConfig({ ...BASE, AGENT_REVIEWER_AGENT_ID: "r-1" }).reviewerAgentId).toBe("r-1");
     expect(readConfig(BASE).reviewerAgentId).toBe("");

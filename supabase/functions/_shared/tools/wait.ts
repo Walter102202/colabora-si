@@ -248,7 +248,7 @@ const waitForTask: ToolDef = {
 // wait_for_my_tasks
 // ---------------------------------------------------------------------------
 
-export type Reason = 'queued' | 'feedback' | 'brief' | 'approval_decided' | 'stop' | 'closed';
+export type Reason = 'handover' | 'queued' | 'feedback' | 'brief' | 'approval_decided' | 'stop' | 'closed';
 
 interface Cursor {
   /** High-water timestamp (normalized, microseconds, UTC). */
@@ -291,10 +291,14 @@ export function reasonFor(task: Row, prompt: Row | undefined): Reason | null {
   if (prompt) {
     const body = (prompt.body ?? {}) as Row;
     if (body.signal === 'stop') return 'stop';
-    if (body.approval_id !== undefined || body.decision !== undefined) return 'approval_decided';
+    if (body.handover === true) return 'handover';
+    // A decision with no run waiting for it was taken after a handover: the next session picks the task up.
+    if (body.approval_id !== undefined || body.decision !== undefined) return task.active_run_id ? 'approval_decided' : 'handover';
     if (body.signal === 'feedback' || body.signal === 'continue') return 'feedback';
     if (body.signal === 'start' && task.state === 'queued') return 'queued';
   }
+  // Only a handover leaves a task waiting on a person without a run; the next session claims it and waits there.
+  if (task.state === 'input_required' && !task.active_run_id) return 'handover';
   if (task.brief_stale === true) return 'brief';
   if (task.state === 'queued') return 'queued';
   return null;
@@ -451,7 +455,7 @@ const waitForMyTasks: ToolDef = {
           waiting_on: { type: ['string', 'null'] },
           brief_version: { type: 'integer' },
           pending_prompts: { type: 'integer' },
-          reason: { type: 'string', enum: ['queued', 'feedback', 'brief', 'approval_decided', 'stop', 'closed'] },
+          reason: { type: 'string', enum: ['handover', 'queued', 'feedback', 'brief', 'approval_decided', 'stop', 'closed'] },
         },
       },
     },

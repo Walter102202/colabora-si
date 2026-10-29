@@ -10,12 +10,14 @@ import {
   currentArtifactFor,
   currentBriefFor,
   latestReviewFor,
+  lastCheckpointFor,
   pendingApprovalFor,
   taskForPage,
   useAgentTasks,
   type TaskRow,
 } from "@/lib/agentTasks";
-import { briefFromRow, closeTask, createTask, decideApproval, reviewTask, sendMessage } from "@/lib/agentActions";
+import { briefFromRow, closeTask, createTask, decideApproval, handOver, reviewTask, sendMessage } from "@/lib/agentActions";
+import { continuityFrom } from "@/lib/agentContinuity";
 import { approvalIdFromHash } from "@/lib/agentCard";
 import { AssignView, TaskView, type SubtaskItem } from "@/components/agents/panel";
 
@@ -127,6 +129,9 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
     <TaskView
       task={task}
       agent={agent}
+      continuity={continuityFrom(agent, lastCheckpointFor(activities))}
+      handOverAgents={agents.filter((a) => a.status === "enabled")}
+      onHandOver={(to, note) => handOver(task.id, to, note).then(() => undefined)}
       run={run}
       approval={approval}
       artifact={artifact}

@@ -16,3 +16,4 @@ export { FeedbackComposer } from "@/components/agents/panel/FeedbackComposer";
 export { taskSubtitle, expiresIn, activityLabel } from "@/lib/agentTaskText";
 export type { ActivityRow, ApprovalRow, ArtifactRow, BriefRow, ReviewRow, RunRow, TaskRow } from "@/lib/agentTasks";
 export type { ApprovalDecision, MessageSignal } from "@/lib/agentActions";
+export type { ContinuityInfo } from "@/lib/agentContinuity";

@@ -25,3 +25,5 @@ MCP_PROTOCOL_NEGOTIATION=legacy claude --dangerously-load-development-channels s
 ```bash
 node connect/claude-code/wait.mjs --task <task_id>
 ```
+
+A task handed over to this agent wakes the session with reason `handover`; claim it with `resume: true`.

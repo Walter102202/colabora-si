@@ -1,3 +1,4 @@
+import { handoverTools } from '../_shared/tools/handover.ts';
 import assert from 'node:assert/strict';
 import { fromDbError, type Db, type DbResult } from '../_shared/db.ts';
 import { AuthError, type VerifiedBearer } from '../_shared/jwt.ts';
@@ -108,4 +109,13 @@ Deno.test('use_partial_writes is a 403 with its own message', () => {
     fromDbError({ code: 'PT403', message: 'use_partial_writes' }).message,
     'Agents do not call apply_page_ops. Write with append_blocks, edit_page, update_block, add_row, update_row or add_comment.',
   );
+});
+
+Deno.test('hand_over runs through the webhook with the Idempotency-Key header', async () => {
+  const { deps, calls } = setup(() => ({ data: { activity_id: 'a9', seq: 9, task_state: 'queued', replayed: false }, error: null }));
+  const res = await handleAgentWebhook(post({ op: 'hand_over', args: { run_id: 'run-1', checkpoint: { v: 1, next_step: 'x', handover_note: 'Stopping' } } }, { 'Idempotency-Key': 'evt-7' }), { ...deps, tools: [...taskTools, ...handoverTools] });
+  await res.body?.cancel();
+  assert.equal(res.status, 200);
+  assert.equal(calls[0].fn, 'hand_over');
+  assert.equal(calls[0].params.p_idempotency_key, 'evt-7');
 });
