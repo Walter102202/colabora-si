@@ -329,7 +329,10 @@ begin
       'run_id', v_cp.run_id, 'harness', v_cp.body->>'harness', 'readable', v_read->'readable', 'version', v_read->'version', 'stale', v_stale,
       'body', case when v_read->'readable' = 'true'::jsonb then v_body || jsonb_build_object('harness', v_cp.body->'harness', 'handover', v_cp.body->'handover') else null end) end,
     'from', case when v_from.id is not null then jsonb_build_object('run_id', v_from.id, 'agent_id', v_from.agent_id,
-      'harness', v_from.harness, 'status', v_from.status, 'ended_at', v_from.ended_at) end,
+      'harness', v_from.harness, 'status', v_from.status, 'ended_at', v_from.ended_at,
+      -- end_run('completed') also leaves a run completed: only a submit (0018) is a delivery.
+      'delivered', exists (select 1 from public.agent_activities where task_id = p_task_id and run_id = v_from.id
+                            and type = 'response' and body->'submit' = 'true'::jsonb)) end,
     'pending_ops', v_pending, 'blocks', v_blocks, 'approvals', v_approvals, 'external_ops_open', v_external, 'counts', v_counts, 'summary', v_summary);
 end $$;
 

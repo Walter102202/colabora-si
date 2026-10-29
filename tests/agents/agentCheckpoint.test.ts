@@ -54,7 +54,7 @@ describe("runtime checkpoints", () => {
     expect(guardFor("append_blocks", { page_id: "p1", markdown: "k3" }, guards)).toBeNull();   // verify_first only once
     expect(guardFor("append_blocks", { page_id: "p1", markdown: "k4" }, guards)).toBeNull();
   });
-  it("guards skip writes whose blocks are all gone, and a run that delivered guards no confirmed write unless it handed over", () => {
+  it("guards skip writes whose blocks are all gone, and a run that delivered for review guards no confirmed write unless it handed over", () => {
     const body = { v: 1, next_step: "a", handover: false, ops: { confirmed: [{ ...op("k1"), block_ids: ["b1"] }, { ...op("k2"), block_ids: ["b2", "b3"] }], pending: [] } };
     const blocks = [{ page_id: "p1", block_id: "b1", exists: false }, { page_id: "p1", block_id: "b2", exists: false }, { page_id: "p1", block_id: "b3", exists: true }];
     const pending_ops = [{ ...op("k3"), status: "confirmed", result: { block_ids: ["b4"] } }];
@@ -62,10 +62,12 @@ describe("runtime checkpoints", () => {
     expect(guardFor("append_blocks", { page_id: "p1", markdown: "k1" }, cancelled)).toBeNull();
     expect(guardFor("append_blocks", { page_id: "p1", markdown: "k2" }, cancelled)?.error).toBe("already_done");
     expect(guardFor("append_blocks", { page_id: "p1", markdown: "k3" }, cancelled)).toBeNull();
-    expect(guardsFromResume({ checkpoint: { readable: true, body }, from: { status: "completed" }, blocks }).size).toBe(0);
-    const maybe = guardsFromResume({ checkpoint: { readable: true, body }, from: { status: "completed" }, blocks, pending_ops: [{ ...op("k5"), status: "unknown" }] });
+    const delivered = { status: "completed", delivered: true };
+    expect(guardsFromResume({ checkpoint: { readable: true, body }, from: delivered, blocks }).size).toBe(0);
+    expect(guardsFromResume({ checkpoint: { readable: true, body }, from: { status: "completed", delivered: false }, blocks }).size).toBe(1);
+    const maybe = guardsFromResume({ checkpoint: { readable: true, body }, from: delivered, blocks, pending_ops: [{ ...op("k5"), status: "unknown" }] });
     expect(guardFor("append_blocks", { page_id: "p1", markdown: "k5" }, maybe)?.error).toBe("verify_first");
-    expect(guardsFromResume({ checkpoint: { readable: true, body: { ...body, handover: true } }, from: { status: "completed" }, blocks }).size).toBe(1);
+    expect(guardsFromResume({ checkpoint: { readable: true, body: { ...body, handover: true } }, from: delivered, blocks }).size).toBe(1);
   });
   it("handoverText lists what happened, what did not, what someone else changed and what is pending", () => {
     const text = handoverText({

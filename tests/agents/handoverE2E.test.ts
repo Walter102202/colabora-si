@@ -208,7 +208,7 @@ describe("handover between harnesses", () => {
     ]);
     const b = await runAgent({ mcp: world.client(CODEX), model: modelB, clock: fakeClock(), maxTasks: 1, harness: "codex", signal: giveUp.signal });
     expect(b.tasks[0].outcome).toBe("submitted");
-    expect(String(modelB.requests[0].messages.at(-1)?.content)).toContain("decided right after you claimed");
+    expect(String(modelB.requests[0].messages.at(-1)?.content)).toContain("may have been decided while you claimed the task");
     expect(world.approvals(taskId)).toEqual([expect.objectContaining({ status: "consumed" })]);
   });
 
@@ -230,6 +230,24 @@ describe("handover between harnesses", () => {
     expect(world.calls(CODEX).filter((c) => c.name === "append_blocks")).toHaveLength(2);
     expect(toolMessages(model).join("\n")).not.toContain("already_done");
     expect(world.activities(task).filter((a) => a.type === "handover")).toHaveLength(0);
+  });
+
+  it("a run that ended without delivering still guards its writes: codex, after a handover, gets already_done", async () => {
+    const world = createStubWorld();
+    const task = world.human.createTask({ title: "Sources", delegate: CLAUDE_CODE });
+    const page = String(world.task(task).row_page_id);
+    const first = await runAgent({ mcp: world.client(CLAUDE_CODE), model: createStubModel([
+      { tool_calls: [toolCall("append_blocks", { page_id: page, markdown: "## Sources" })] },
+      { content: "That is all for now." },
+    ]), clock: fakeClock(), maxTasks: 1, harness: "claude_code" });
+    expect(first.tasks[0].outcome).toBe("ended");
+    world.human.releaseForHandover(task, CODEX);
+    const model = createStubModel([{ tool_calls: [toolCall("append_blocks", { page_id: page, markdown: "## Sources" })] }, { content: "Done." }]);
+    await runAgent({ mcp: world.client(CODEX), model, clock: fakeClock(), maxTasks: 1, harness: "codex" });
+    expect(world.calls(CODEX).find((c) => c.name === "claim_task")?.result?.resume.from).toMatchObject({ status: "completed", delivered: false });
+    expect(toolMessages(model).filter((m) => m.includes("already_done"))).toHaveLength(1);
+    expect(world.blocks(page).filter((b) => b.text === "## Sources")).toHaveLength(1);
+    expect(world.activities(task).filter((a) => a.type === "handover")).toHaveLength(1);
   });
 
   it("a lost write response is retried once with the same idempotency key and lands once", async () => {

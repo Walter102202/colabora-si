@@ -1,5 +1,5 @@
 begin;
-select plan(61);
+select plan(63);
 
 select tests.fixture() as f \gset
 -- "claude_code" is the fixture agent; "codex" and "gemini" are agents with the same grant; "plain" has no resume capability.
@@ -186,6 +186,7 @@ select is((select (x->>'changed_by_other')::boolean from jsonb_array_elements(:'
           'a block a person edited after the checkpoint is changed_by_other');
 select results_eq(format($q$ select body->>'from_harness', body->>'to_harness' from public.agent_activities where task_id = %L::uuid and type = 'handover' $q$, :'task'),
                   $q$ values ('claude_code'::text, 'codex'::text) $q$, 'one handover activity records from and to harness');
+select is(:'c2'::jsonb->'resume'->'from'->>'delivered', 'false', 'a run that handed over is not a delivery');
 select tests.set_agent((:'cx'::jsonb->>'user')::uuid, (:'cx'::jsonb->>'agent')::uuid);
 select is(tests.error_of(format('select public.claim_task(%L::uuid, %L, null, null, true)', :'task', 'codex')), 'run_active',
           'claiming again while the resumed run is active is run_active');
@@ -336,6 +337,7 @@ select tests.reset_role();
 select ok(:'c9'::jsonb->'resume'->'from'->>'run_id' = :'run9'
           and not exists (select 1 from public.agent_activities where task_id = :'task9'::uuid and type = 'handover'),
           'a claim by the same agent after feedback adds no handover activity');
+select is(:'c9'::jsonb->'resume'->'from'->>'delivered', 'true', 'a run that submitted for review is a delivery');
 
 -- O. Automatic consumption takes only a decided approval for the same params with a live receipt.
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);

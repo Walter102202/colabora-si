@@ -4,16 +4,17 @@ import { McpError, type McpClient, type ToolResult } from "../../agent/mcpClient
 import { createStubModel, toolCall } from "../../agent/test/stub-model.mjs";
 import { CLAUDE_CODE, createStubWorld } from "../../agent/test/stub-world.mjs";
 
-function fakeClock(): Clock {
+function fakeClock(slept: number[] = []): Clock {
   let t = 0;
   return { now: () => t, sleep: async (ms) => {
+    slept.push(ms);
     t += ms;
     if (t > 60_000) throw new Error("The runtime kept polling without handling the available task");
   } };
 }
 
 /** The world's client, with the first `times` calls of `tool` answered by `fault` (which may still forward the call). */
-function faulty(client: McpClient, tool: string, times: number, fault: (forward: () => Promise<ToolResult>) => Promise<ToolResult>) {
+function faulty(client: McpClient, tool: string, times: number, fault: (forward: () => Promise<ToolResult>, nth: number) => Promise<ToolResult>) {
   let left = times;
   const seen: Record<string, unknown>[] = [];
   const wrapped: McpClient = {
@@ -22,13 +23,14 @@ function faulty(client: McpClient, tool: string, times: number, fault: (forward:
     callTool: (name, args) => {
       if (name !== tool) return client.callTool(name, args);
       seen.push(structuredClone(args));
-      return left-- > 0 ? fault(() => client.callTool(name, args)) : client.callTool(name, args);
+      return left-- > 0 ? fault(() => client.callTool(name, args), times - left - 1) : client.callTool(name, args);
     },
   };
   return { client: wrapped, seen };
 }
 
 const timeout: ToolResult = { isError: true, data: { code: "timeout", message: "The operation took too long. Retry, or narrow the request." }, text: "Error timeout" };
+const conflict: ToolResult = { isError: true, data: { code: "conflict", message: "The record already exists." }, text: "Error conflict" };
 const toolMessages = (request: { messages: { role: string; content?: unknown }[] } | undefined) =>
   (request?.messages ?? []).filter((m) => m.role === "tool").map((m) => String(m.content));
 
@@ -37,8 +39,9 @@ function started(title: string) {
   const task = world.human.createTask({ title, delegate: CLAUDE_CODE });
   return { world, task, page: String(world.task(task).row_page_id) };
 }
-const pendingKeys = (world: ReturnType<typeof createStubWorld>) =>
-  (world.calls(CLAUDE_CODE).filter((c) => c.name === "save_checkpoint").at(-1)?.args.checkpoint.ops.pending as { key: string }[]).map((o) => o.key);
+const lastCheckpoint = (world: ReturnType<typeof createStubWorld>) =>
+  world.calls(CLAUDE_CODE).filter((c) => c.name === "save_checkpoint").at(-1)?.args.checkpoint as { ops: Record<"confirmed" | "pending", { key: string }[]> };
+const pendingKeys = (world: ReturnType<typeof createStubWorld>) => lastCheckpoint(world).ops.pending.map((o) => o.key);
 
 describe("agent loop: calls that fail on the way", () => {
   it("a write the server refuses before running it shows the model the validation message and is not retried", async () => {
@@ -78,6 +81,25 @@ describe("agent loop: calls that fail on the way", () => {
     await runAgent({ mcp: mcp.client, model, clock: fakeClock(), maxTasks: 1, harness: "claude_code" });
     expect(JSON.parse(toolMessages(model.requests[1])[0])).toMatchObject({ error: "timeout", outcome: "unknown" });
     expect(pendingKeys(world)).toEqual([mcp.seen[0].idempotency_key, mcp.seen[2].idempotency_key]);
+    expect(world.blocks(page).map((b) => b.text)).toEqual(["One", "Two"]);
+  });
+
+  it("a retry that collides with the receipt of a first call still committing reads the receipt a second later", async () => {
+    const { world, page } = started("Still committing");
+    // The first call times out before its transaction commits; the retry waits for it and hits its receipt (conflict).
+    const answers = [async () => timeout, async (forward: () => Promise<ToolResult>) => { await forward(); return conflict; }];
+    const mcp = faulty(world.client(CLAUDE_CODE), "append_blocks", 2, (forward, nth) => answers[nth](forward));
+    const slept: number[] = [];
+    const model = createStubModel([
+      { tool_calls: [toolCall("append_blocks", { page_id: page, markdown: "One" })] },
+      { tool_calls: [toolCall("append_blocks", { page_id: page, markdown: "Two" })] },
+    ]);
+    await runAgent({ mcp: mcp.client, model, clock: fakeClock(slept), maxTasks: 1, harness: "claude_code" });
+    const first = mcp.seen[0].idempotency_key;
+    expect(mcp.seen.slice(0, 3).map((a) => a.idempotency_key)).toEqual([first, first, first]);
+    expect(slept).toEqual([1000]);
+    expect(toolMessages(model.requests[1]).join("\n")).not.toContain("error");
+    expect(lastCheckpoint(world).ops.confirmed.map((o) => o.key)).toEqual([first]);
     expect(world.blocks(page).map((b) => b.text)).toEqual(["One", "Two"]);
   });
 

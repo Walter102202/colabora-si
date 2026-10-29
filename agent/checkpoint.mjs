@@ -75,9 +75,9 @@ export function guardsFromResume(resume) {
   if (resume?.checkpoint?.readable !== true) return guards;
   const parsed = parseCheckpoint(resume.checkpoint.body);
   if (parsed.status !== "ok") return guards;
-  // A confirmed write guards only a run that did not finish: after a delivery (feedback, a revert) the next run writes
+  // A confirmed write guards only a run that did not deliver: after a submit (feedback, a revert) the next run writes
   // freely. A write that may have happened still asks to verify first, once.
-  const delivered = parsed.checkpoint.handover !== true && resume.from?.status === "completed";
+  const delivered = parsed.checkpoint.handover !== true && resume.from?.delivered === true;
   const gone = new Set(list(resume.blocks).filter((b) => b?.exists === false).map((b) => `${b.page_id}:${b.block_id}`));
   // A write whose blocks are all gone (reverted or deleted) may be done again.
   const allGone = (op) => {

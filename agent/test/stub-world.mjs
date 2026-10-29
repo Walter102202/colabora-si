@@ -78,7 +78,8 @@ export function createStubWorld() {
       }
     }
     return { checkpoint: cp ? { seq: cp.seq, readable, version: cp.body.v, body: clone(cp.body), run_id: cp.run_id, harness: cp.body.harness, stale } : null,
-      from: from ? { run_id: from.id, agent_id: from.agent_id, harness: from.harness, status: from.status } : null,
+      from: from ? { run_id: from.id, agent_id: from.agent_id, harness: from.harness, status: from.status,
+        delivered: rows(activities, task.id).some((a) => a.run_id === from.id && a.type === "response" && a.body.submit === true) } : null,
       pending_ops: pending, blocks: [...blocks.values()], approvals: clone(rows(approvals, task.id).filter((a) => ["pending", "decided"].includes(a.status))),
       external_ops_open: clone(rows(external, task.id).filter((op) => ["pending", "unknown"].includes(op.status))),
       summary: cp ? `Continuing from checkpoint #${cp.seq} by ${from?.harness}.` : "No checkpoint yet." };
@@ -213,7 +214,10 @@ export function createStubWorld() {
       const a = { id: `art-${artifacts.length + 1}`, task_id: task.id, run_id: run.id, ...clone(args) }; artifacts.push(a);
       return { artifact_id: a.id, version: 1 };
     }
-    if (name === "submit_for_review") { run.status = "completed"; task.active_run_id = null; task.state = "ready_for_review"; return { task_state: task.state }; }
+    if (name === "submit_for_review") {
+      activity(task, run, "response", { text: args.summary, artifact_ids: clone(args.artifact_ids ?? []), submit: true });
+      run.status = "completed"; task.active_run_id = null; task.state = "ready_for_review"; return { task_state: task.state };
+    }
     if (name === "end_run" || name === "ack_stop") {
       run.status = name === "ack_stop" ? "cancelled" : args.status;
       for (const a of approvals) if (a.run_id === run.id && a.status === "pending") a.status = "cancelled";
