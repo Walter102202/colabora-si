@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useNavigate } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RowPanel } from "@/components/agents/RowPanel";
 import { mockCard } from "@/components/agents/card/mock";
@@ -84,5 +84,40 @@ describe("autonomy in the row panel", () => {
     expect(container.textContent).not.toContain("Autonomy:");
     await answer(1, balanced);
     expect(container.textContent).toContain("Autonomy: Balanced (workspace default)");
+  });
+
+  it("another task opened with ?task= starts without the last one's autonomy error or pending choice", async () => {
+    const other = { ...task, id: "t-other", title: "Another task on this row" };
+    useAgentTasks.setState({ tasks: { [task.id]: task, [other.id]: other }, activities: { [task.id]: [], [other.id]: [] } });
+    let go: (to: string) => void = () => {};
+    function Navigator() {
+      const navigate = useNavigate();
+      go = (to) => { void navigate(to); };
+      return null;
+    }
+    const at = (id: string) => `/p/${task.row_page_id}?task=${id}`;
+    await act(async () => root.render(createElement(MemoryRouter, { initialEntries: [at(task.id)] },
+      createElement(Navigator), createElement(RowPanel, { pageId: task.row_page_id }))));
+    await answer(0, balanced);
+    const base = rpc.getMockImplementation()!;
+    const select = () => container.querySelector('select[aria-label="Autonomy for this task"]') as HTMLSelectElement;
+
+    rpc.mockImplementation((name: string, args: Record<string, unknown>) => (name === "set_task_autonomy"
+      ? Promise.resolve({ data: null, error: { code: "PT403", message: "forbidden", details: null, hint: null } }) : base(name, args)));
+    await choose("autonomous");
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    await act(async () => go(at(other.id)));
+    await answer(1, balanced);
+    expect(reads.map((r) => r.taskId)).toEqual([task.id, other.id]);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+
+    // A change that never returns stays on its own task.
+    rpc.mockImplementation((name: string, args: Record<string, unknown>) => (name === "set_task_autonomy" ? new Promise(() => {}) : base(name, args)));
+    await choose("autonomous");
+    expect(select().value).toBe("autonomous");
+    await act(async () => go(at(task.id)));
+    await answer(2, balanced);
+    expect(select().value).toBe("");
+    expect(select().getAttribute("aria-busy")).toBe("false");
   });
 });

@@ -77,7 +77,8 @@ export function RowPanel({ pageId }: RowPanelProps) {
           . Below is this row&apos;s own task.
         </p>
       )}
-      {task ? <TaskConnector task={task} onOpenTask={onOpenTask} onOpenPage={onOpenPage} /> : <AssignConnector pageId={pageId} />}
+      {/* One connector per task: an error or a pending choice on one task never shows on the next. */}
+      {task ? <TaskConnector key={task.id} task={task} onOpenTask={onOpenTask} onOpenPage={onOpenPage} /> : <AssignConnector pageId={pageId} />}
     </section>
   );
 }
