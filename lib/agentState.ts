@@ -1,3 +1,4 @@
+import { describeApproval } from "@/lib/agentApprovalText";
 // Pure task state machine and the copy shown next to agent actions.
 // No I/O: the server derives state; this module predicts and explains it.
 
@@ -107,7 +108,7 @@ export type UiAction =
 
 export interface ActionDetail {
   action?: string;
-  params?: string;
+  params?: Record<string, unknown>;
   artifactVersion?: number | null;
   expiresIn?: string;
   runLabel?: string;
@@ -134,10 +135,9 @@ export function whatWillHappen(task: TaskLike, agent: AgentLike | null, action: 
     case "stop":
       return "Sends stop and waits for the run to acknowledge. Nothing is reverted.";
     case "approve": {
-      const parts = [detail.action, detail.params, detail.artifactVersion ? `deliverable v${detail.artifactVersion}` : null].filter(Boolean);
-      const what = parts.length ? ` ${parts.join(" · ")}` : "";
+      const d = describeApproval(detail.action ?? null, detail.params ?? {}, { artifactVersion: detail.artifactVersion ?? null });
       const expires = detail.expiresIn ? ` Expires in ${detail.expiresIn}.` : "";
-      return `Runs exactly this once:${what}.${expires}`.replace(":.", ".");
+      return `${d.what}. ${d.effect}${expires}`;
     }
     case "undo":
       return `Reverts the blocks and cells that ${detail.runLabel ?? "this run"} touched and nobody edited after. Everything else stays visible as a conflict.`;
