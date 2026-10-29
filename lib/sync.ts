@@ -156,7 +156,7 @@ async function fetchAllPages(sb: SupabaseClient): Promise<PageRow[]> {
     const result = await sb.from("pages").select(PAGE_COLS).eq("workspace_id", wsId).order("id").range(from, from + 499);
     if (result.error) throw result.error;
     rows.push(...result.data as PageRow[]);
-    if (result.data.length < 500) { measureSince("colabora:pages:fetch", "colabora:pages:fetch:start"); fetchedPages = rows.length; fetchBytes = JSON.stringify(rows).length; return rows; }
+    if (result.data.length < 500) { measureSince("colabora:pages:fetch", "colabora:pages:fetch:start"); fetchedPages = rows.length; if (import.meta.env.DEV) fetchBytes = new TextEncoder().encode(JSON.stringify(rows)).byteLength; return rows; }
   }
 }
 async function readPage(sb: SupabaseClient, id: string): Promise<PageRow | null> {

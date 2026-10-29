@@ -1,5 +1,5 @@
-import { expect, it } from "vitest";
-import { pageDataSizes } from "@/lib/metrics";
+import { expect, it, vi } from "vitest";
+import { mark, measureSince, pageDataSizes } from "@/lib/metrics";
 import { b, page } from "./fixtures";
 
 it("MT-1 pageDataSizes counts bytes and the 95th percentile", () => {
@@ -15,4 +15,18 @@ it("MT-1 pageDataSizes counts bytes and the 95th percentile", () => {
 });
 it("MT-2 empty workspace", () => {
   expect(pageDataSizes({})).toEqual({ count: 0, totalBytes: 0, p95Bytes: 0, largest: [] });
+});
+it("MT-3 measureSince returns null when the start mark is missing", () => {
+  expect(measureSince("colabora:test:none", "colabora:never-marked")).toBeNull();
+});
+it("MT-4 outside DEV the primitives are no-ops, so production pays nothing for them", () => {
+  vi.stubEnv("DEV", false);
+  try {
+    mark("colabora:test:prod");
+    expect(performance.getEntriesByName("colabora:test:prod")).toHaveLength(0);
+    expect(measureSince("colabora:test:prod-measure", "colabora:test:prod")).toBeNull();
+  } finally { vi.unstubAllEnvs(); }
+  mark("colabora:test:dev");
+  expect(performance.getEntriesByName("colabora:test:dev")).toHaveLength(1);
+  expect(measureSince("colabora:test:dev-measure", "colabora:test:dev")).not.toBeNull();
 });

@@ -297,7 +297,7 @@ export const useStore = create<Store>()(persist((set, get) => {
   };
 }, {
   name: "colabora-workspace", version: 1,
-  onRehydrateStorage: () => (state) => { mark("colabora:hydrate:end"); if (state) recordHydration(pageDataSizes(state.pages)); },
+  onRehydrateStorage: () => (state) => { mark("colabora:hydrate:end"); if (import.meta.env.DEV && state) recordHydration(pageDataSizes(state.pages)); },
   partialize: (state): WorkspaceState & SyncState => ({
     pages: Object.fromEntries(Object.entries(state.pages).filter(([id]) => !foreignPageIds.has(id))),
     rootOrder: state.rootOrder, expanded: state.expanded, syncedBlocks: state.syncedBlocks,

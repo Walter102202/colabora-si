@@ -5,9 +5,10 @@ export function pageDataSizes(pages: Record<string, Page>): { count: number; tot
   const sizes = Object.values(pages).map((page) => ({ id: page.id, title: page.title, bytes: encoder.encode(JSON.stringify(page)).byteLength })).sort((a, b) => a.bytes - b.bytes);
   return { count: sizes.length, totalBytes: sizes.reduce((sum, page) => sum + page.bytes, 0), p95Bytes: sizes[Math.ceil(sizes.length * 0.95) - 1]?.bytes ?? 0, largest: sizes.slice(-5).reverse() };
 }
-export function mark(name: string): void { if (typeof performance !== "undefined") performance.mark(name); }
+// Development aid: outside DEV every primitive is a no-op, so a measurement never adds to the startup it measures.
+export function mark(name: string): void { if (import.meta.env.DEV && typeof performance !== "undefined") performance.mark(name); }
 export function measureSince(name: string, startMark: string): number | null {
-  if (typeof performance === "undefined") return null;
+  if (!import.meta.env.DEV || typeof performance === "undefined") return null;
   try { return performance.measure(name, startMark).duration; } catch { return null; }
 }
 let hydration: ReturnType<typeof pageDataSizes> | undefined;
