@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { HARNESS_SNIPPETS } from "@/lib/agentSnippets";
 import type { AgentKind, AgentRole, NewAgentInput } from "@/lib/agentsStore";
@@ -30,6 +30,10 @@ export function NewAgentWizard({ onCancel, onCreate, busy }: { onCancel: () => v
   const [capabilities, setCapabilities] = useState<Record<string, boolean>>({ start: false, continue: false, cancel: false, events: false, approval: true, cost: false, files: false });
   const [budget, setBudget] = useState<string>("");
   const [rate, setRate] = useState<number>(120);
+  const nameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (step === 0) nameRef.current?.focus();
+  }, [step]);
 
   const roots = Object.values(pages).filter((p) => !p.isDeleted).sort((a, b) => a.updatedAt - b.updatedAt);
   const canNext = step !== 0 || name.trim().length > 0;
@@ -76,7 +80,7 @@ export function NewAgentWizard({ onCancel, onCreate, busy }: { onCancel: () => v
               onChange={(e) => setName(e.target.value)}
               placeholder="Codex worker"
               maxLength={80}
-              autoFocus
+              ref={nameRef}
             />
           </label>
           <fieldset className="flex gap-4">
