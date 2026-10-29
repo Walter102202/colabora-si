@@ -1,5 +1,5 @@
 begin;
-select plan(59);
+select plan(61);
 
 select tests.fixture() as f \gset
 -- "claude_code" is the fixture agent; "codex" and "gemini" are agents with the same grant; "plain" has no resume capability.
@@ -88,6 +88,8 @@ select is(tests.error_of(format('select public.hand_over(%L::uuid, %L::jsonb, %L
           'hand_over without a handover_note is invalid_input');
 select is(tests.error_of(format('select public.hand_over(%L::uuid, %L::jsonb, %L)', :'run1', '{"v":1,"next_step":"x","handover_note":"n"}', 'pa-1')), 'idempotency_conflict',
           'hand_over with a key another activity used is idempotency_conflict');
+select is(tests.error_of(format('select public.hand_over(%L::uuid, %L::jsonb, %L)', :'run1', '{"v":1,"next_step":"x","handover_note":"n"}', 'cp-1')), 'idempotency_conflict',
+          'hand_over with the key of an intent checkpoint is idempotency_conflict, not a replayed handover');
 select public.hand_over(:'run1'::uuid, :'cpbody'::jsonb || '{"handover_note":"Closing the laptop; section 2 may already be written"}'::jsonb, 'ho-1') as ho \gset
 select tests.reset_role();
 select results_eq(format($q$ select status, run_id from public.agent_approvals where id = %L::uuid $q$, :'ap'),
@@ -306,6 +308,15 @@ select is((select x->>'status' from jsonb_array_elements(:'c8'::jsonb->'resume'-
           'a pending write of a stale checkpoint without a receipt is unknown, not not_executed');
 select results_eq(format($q$ select body->>'from_harness', body->>'to_harness' from public.agent_activities where task_id = %L::uuid and type = 'handover' $q$, :'task8'),
                   $q$ values ('plain'::text, 'gemini'::text) $q$, 'the handover activity names the last run as its origin');
+select tests.set_agent((:'gm'::jsonb->>'user')::uuid, (:'gm'::jsonb->>'agent')::uuid);
+select public.hand_over((:'c8'::jsonb->>'run_id')::uuid, '{"v":1,"next_step":"Review section 2","handover_note":"over to codex"}'::jsonb, 'ho-8c');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.release_for_handover(:'task8'::uuid, (:'cx'::jsonb->>'agent')::uuid, null);
+select tests.reset_role();
+select is((select body->>'from_run_id' from public.agent_activities where task_id = :'task8'::uuid and type = 'prompt' and body->>'source' = 'handover'
+            order by seq desc limit 1), :'c8'::jsonb->>'run_id',
+          'releasing an idle task names its last run as the origin, even when the runs started in one transaction');
 
 -- N. The same agent claiming again after feedback is not a handover.
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);

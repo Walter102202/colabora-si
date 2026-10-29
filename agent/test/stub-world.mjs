@@ -187,7 +187,7 @@ export function createStubWorld() {
     if (["save_checkpoint", "hand_over"].includes(name)) {
       if (!args.idempotency_key) fail("invalid_input");
       const old = rows(activities, task.id).find((a) => a.idempotency_key === args.idempotency_key);
-      if (old && old.type !== "checkpoint") fail("idempotency_conflict");
+      if (old && (old.type !== "checkpoint" || (name === "hand_over" && old.body.handover !== true))) fail("idempotency_conflict");
       if (old) return { activity_id: old.id, seq: old.seq, task_state: task.state, replayed: true };
       if (!active(run) || task.active_run_id !== run.id) fail("run_not_active");
       if (name === "hand_over" && run.stop_requested_at) fail("stop_requested");

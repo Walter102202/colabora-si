@@ -175,7 +175,10 @@ begin
   end if;
   select * into v_t from public.agent_tasks where id = v_r.task_id for update;
   select * into v_a from public.agent_activities where task_id = v_r.task_id and idempotency_key = p_idempotency_key;
-  if found and v_a.type <> 'checkpoint' then raise exception using errcode = 'PT409', message = 'idempotency_conflict'; end if;
+  -- Only an earlier hand_over replays: the key of an intent checkpoint would report a handover that never happened.
+  if found and (v_a.type <> 'checkpoint' or v_a.body->'handover' is distinct from 'true'::jsonb) then
+    raise exception using errcode = 'PT409', message = 'idempotency_conflict';
+  end if;
   if found then return jsonb_build_object('activity_id', v_a.id, 'seq', v_a.seq, 'task_state', v_t.state, 'replayed', true); end if;
   if v_r.status not in ('running','waiting') or v_t.active_run_id is distinct from v_r.id then
     raise exception using errcode = 'PT422', message = 'run_not_active';
@@ -228,7 +231,10 @@ begin
     insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
     values (v_t.workspace_id, v_t.id, v_r.id, v_r.agent_id, 'task.stop', jsonb_build_object('reason', 'handover'), private.next_event_seq(v_t.id));
   else
-    select * into v_r from public.agent_runs where task_id = v_t.id and status in ('completed','cancelled','error') order by started_at desc limit 1;
+    -- The last run that ended, ordered by its claim activity as resume_context does (timestamps tie inside one transaction).
+    select r.* into v_r from public.agent_runs r where r.task_id = v_t.id and r.status in ('completed','cancelled','error')
+     order by (select min(a.seq) from public.agent_activities a where a.task_id = v_t.id and a.run_id = r.id) desc nulls last,
+              r.started_at desc, r.id limit 1;
   end if;
   if p_to_agent_id is not null then
     perform private.ensure_delegate_grants(p_to_agent_id, v_t.workspace_id, v_t.row_page_id,
