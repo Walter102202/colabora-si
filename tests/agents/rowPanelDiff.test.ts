@@ -14,6 +14,7 @@ const actions = vi.hoisted(() => ({ loadTaskDiff: vi.fn(), revertRun: vi.fn() })
 vi.mock("@/lib/agentActions", () => ({
   ...actions, briefFromRow: vi.fn(), closeTask: vi.fn(), createTask: vi.fn(), decideApproval: vi.fn(), handOver: vi.fn(), reviewTask: vi.fn(), sendMessage: vi.fn(),
   getTaskAutonomy: vi.fn().mockResolvedValue(null), subscribeWorkspaceAutonomy: () => () => {}, workspaceAutonomyVersion: () => 0,
+  fetchTaskMetrics: vi.fn().mockResolvedValue({ tasks: 0, metrics: [] }),
 }));
 vi.mock("@/lib/store", () => ({ useStore: (sel: (s: { syncWorkspaceId: string }) => unknown) => sel({ syncWorkspaceId: "w1" }) }));
 

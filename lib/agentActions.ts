@@ -1,6 +1,7 @@
 import type { AutonomyLevel, AutonomyPolicy, TaskAutonomy } from "@/lib/agentAutonomy";
 import type { ButtonAction } from "@/lib/types";
 import type { TaskDiff } from "@/lib/agentRunDiff";
+import type { MetricsResult } from "@/lib/agentMetrics";
 import { useStore } from "@/lib/store";
 import { stripHtml } from "@/lib/utils";
 import { agentErrorMessage, getAgentClient } from "@/lib/agentClient";
@@ -253,4 +254,12 @@ export async function runAgentAction(action: ButtonAction, ctx: { pageId: string
       return;
     }
   }
+}
+
+export async function fetchTaskMetrics(taskId: string): Promise<MetricsResult> {
+  return rpc<MetricsResult>("task_metrics", { p_task_id: taskId });
+}
+
+export async function fetchAgentMetrics(agentId: string, since: string | null = null): Promise<MetricsResult> {
+  return rpc<MetricsResult>("agent_metrics", { p_agent_id: agentId, p_since: since });
 }

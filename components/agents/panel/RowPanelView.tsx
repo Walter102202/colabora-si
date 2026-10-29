@@ -18,6 +18,8 @@ import { SubtaskList, type SubtaskItem } from "@/components/agents/panel/Subtask
 import { ActivityTimeline } from "@/components/agents/panel/ActivityTimeline";
 import { activityLabel } from "@/lib/agentTaskText";
 import { FeedbackComposer } from "@/components/agents/panel/FeedbackComposer";
+import { MetricsList } from "@/components/agents/panel/MetricsList";
+import type { Metric } from "@/lib/agentMetrics";
 
 // The row panel as pure views: everything a person sees and does about one
 // task, driven by data and callbacks. No router, no stores, no network, so
@@ -49,6 +51,8 @@ export interface TaskViewProps {
   activities: ActivityRow[];
   subtasks: SubtaskItem[];
   reviewerName: string | null;
+  // Results of the task and its subtasks (task_metrics); the chat card leaves them out.
+  metrics?: Metric[] | null;
   // Whether the delegate can resume and its last checkpoint; null while unknown or without an agent.
   continuity?: ContinuityInfo | null;
   // The per-block diff of the task's runs; null when it does not apply or has not loaded.
@@ -130,7 +134,7 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ task, agent, run, approval, artifact, review, brief, activities, subtasks, reviewerName, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ task, agent, run, approval, artifact, review, brief, activities, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -366,6 +370,8 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
           </div>
         </div>
       )}
+
+      {metrics && metrics.length > 0 && <MetricsList title="Results" metrics={metrics} />}
 
       {showTimeline && (
         <section className="space-y-1">
