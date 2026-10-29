@@ -1,3 +1,4 @@
+import { VERSION_CAP } from "@/lib/pageOps";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Block, BlockType, DbProperty, DbRow, DbView, Page, Reminder, TemplatePlan, WorkspaceSettings, WorkspaceState } from "@/lib/types";
@@ -220,7 +221,7 @@ export const useStore = create<Store>()(persist((set, get) => {
       if (last && last.title === page.title && JSON.stringify(last.blocks) === JSON.stringify(page.blocks) && JSON.stringify(last.database) === JSON.stringify(page.database)) return page;
       const user = useAuthStore.getState().user;
       const version = { id: newId(), createdAt: Date.now(), title: page.title, blocks: page.blocks, database: page.database, auto, author: { id: user?.id ?? "local", type: "human" as const, name: user?.user_metadata.full_name || user?.email || "You (this device)" } };
-      return pm.touch({ ...page, versions: [version, ...(page.versions ?? [])].slice(0, 50) });
+      return pm.touch({ ...page, versions: [version, ...(page.versions ?? [])].slice(0, VERSION_CAP) });
     }),
     restoreVersion: (pageId, versionId) => mutate(pageId, (page) => {
       const version = page.versions?.find((v) => v.id === versionId);
@@ -228,7 +229,7 @@ export const useStore = create<Store>()(persist((set, get) => {
       const current = { id: newId(), createdAt: Date.now(), title: page.title, blocks: page.blocks, database: page.database, auto: true };
       const last = page.versions?.[0];
       const needsCurrent = !last || last.title !== page.title || JSON.stringify(last.blocks) !== JSON.stringify(page.blocks) || JSON.stringify(last.database) !== JSON.stringify(page.database);
-      return pm.touch({ ...page, title: version.title, blocks: sanitizeBlocks(version.blocks), database: version.database, versions: [{ ...version, createdAt: Date.now() }, ...(needsCurrent ? [current] : []), ...(page.versions ?? []).filter((v) => v.id !== versionId)].slice(0, 50) });
+      return pm.touch({ ...page, title: version.title, blocks: sanitizeBlocks(version.blocks), database: version.database, versions: [{ ...version, createdAt: Date.now() }, ...(needsCurrent ? [current] : []), ...(page.versions ?? []).filter((v) => v.id !== versionId)].slice(0, VERSION_CAP) });
     }),
     deleteVersion: (pageId, id) => mutate(pageId, (page) => pm.touch({ ...page, versions: (page.versions ?? []).filter((v) => v.id !== id) })),
     setBlocks: (pageId, blocks) => mutate(pageId, (page) => pm.touch({ ...page, blocks: blocks.map((block) => page.blocks.includes(block) ? block : sanitizeBlocks([block])[0]) })),

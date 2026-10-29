@@ -39,7 +39,10 @@ interface PageSyncAdapter {
   send: (id: string, ops: PageOp[], client: string, key: string) => Promise<OpsReply>;
   read: (id: string) => Promise<PageRow | null>;
   conflict: (pageId: string, conflict: BlockConflict) => void;
-  beforeRebase?: (id: string) => void;
+  pageConflict: (id: string) => void;
+}
+function isPageConflict(error: unknown): boolean {
+  return !!error && typeof error === "object" && "code" in error && error.code === "PT409" && "message" in error && error.message === "page_conflict";
 }
 export class PageSyncEngine {
   constructor(readonly queue: MemoryQueue, readonly client: string, private actor: BlockAttr, private adapter: PageSyncAdapter) {}
@@ -50,7 +53,6 @@ export class PageSyncEngine {
     if (this.queue.isDeleted(row.id)) return false;
     const remote = pageFromRow(row);
     if (!remote) { if (row.deleted_at) { this.queue.clearPage(row.id); this.adapter.apply(row.id, null); } return !!row.deleted_at; }
-    if (this.queue.peek(row.id).length) this.adapter.beforeRebase?.(row.id);
     const pending = this.queue.peek(row.id);
     this.adapter.apply(row.id, pending.length ? { ...applyOps(remote, pending, this.actor).page, revision: row.revision } : remote, row.data?._client !== this.client);
     return true;
@@ -59,7 +61,13 @@ export class PageSyncEngine {
     while (this.queue.peek(id).length) {
       const ops = this.queue.peek(id).slice(0, 200), key = this.queue.batchKey(id, ops.length);
       await this.queue.settled();
-      const response = await this.adapter.send(id, ops, this.client, key);
+      const stamped = ops.map((op) => op.op === "replace_page" ? { ...op, revision: Math.max(op.revision, this.queue.getRevision(id)) } : op);
+      let response: OpsReply;
+      try { response = await this.adapter.send(id, stamped, this.client, key); }
+      catch (error) {
+        if (!isPageConflict(error)) throw error;
+        this.queue.ack(id, ops.length); this.adapter.pageConflict(id); break;
+      }
       const revisions = new Map<string, number>(), seen = new Set<string>();
       for (const result of response.results) {
         const op = ops[result.i]; if (!op) continue;
@@ -90,6 +98,7 @@ let unsubStore: (() => void) | null = null, last: Store | null = null, applyingR
 let debounceTimer: ReturnType<typeof setTimeout> | null = null, retryTimer: ReturnType<typeof setTimeout> | null = null, deferTimer: ReturnType<typeof setTimeout> | null = null;
 let lastWorkspaceSeen = 0, lastWorkspaceRevision = 0, pendingRetryUser: User | null = null;
 const known = new Set<string>(), lastSeen = new Map<string, number>(), lastEditAt = new Map<string, number>(), recentlyDeleted = new Map<string, number>(), deferred = new Map<string, PageRow>();
+export function isApplyingRemote(): boolean { return applyingRemote; }
 function applyRemote(patch: RemotePatch, rebase = true): void {
   applyingRemote = true; pauseHistory();
   try { useStore.getState().applyRemotePages(patch); }
@@ -256,7 +265,7 @@ function makeEngine(sb: SupabaseClient, user: User): PageSyncEngine {
     },
     read: (id) => readPage(sb, id),
     conflict: (id, conflict) => { if (token === generation) useBlockConflicts.getState().add(id, conflict); },
-    beforeRebase: (id) => { useStore.getState().saveVersion(id, true); },
+    pageConflict: (id) => { if (token === generation) useBlockConflicts.getState().notePageReload(id); },
   });
 }
 async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise<void> {
@@ -304,7 +313,8 @@ async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise
     applyRemote({ pages, rootOrder: workspace.root_order ?? [], syncedBlocks: workspace.synced_blocks ?? {}, settings: workspace.settings ?? DEFAULT_SETTINGS, reminders: [] });
   } else if (choice === "local") {
     queue!.clearAll();
-    for (const page of Object.values(current.pages)) if (!foreignPageIds.has(page.id) && known.has(page.id)) queue!.enqueue(page.id, [{ op: "replace_page", page, revision: page.revision ?? 0 }]);
+    const serverRevision = new Map(rows.map((r) => [r.id, r.revision]));
+    for (const page of Object.values(current.pages)) if (!foreignPageIds.has(page.id) && known.has(page.id)) queue!.enqueue(page.id, [{ op: "replace_page", page, revision: serverRevision.get(page.id) ?? page.revision ?? 0 }]);
     for (const row of rows) if (!current.pages[row.id]) queue!.markDeleted(row.id);
     queue!.enqueueWorkspace([{ op: "set_root_order", rootOrder: current.rootOrder }, { op: "set_settings", patch: current.settings ?? DEFAULT_SETTINGS }, ...Object.entries(current.syncedBlocks ?? {}).map(([key, blocks]): WorkspaceOp => ({ op: "synced_set", key, blocks }))]);
   } else {
@@ -371,9 +381,11 @@ export async function forceFullPush(): Promise<void> {
   if (!started || !ready || !wsId || !queue || pushing) throw new Error("Sync is not ready");
   if (!window.confirm("Replace the cloud workspace with this device's copy? Pages that only exist in the cloud will be deleted.")) return;
   const sb = getSupabase(); if (!sb) throw new Error("Not connected");
-  for (const row of await fetchAllPages(sb)) known.add(row.id);
+  const serverRows = await fetchAllPages(sb);
+  for (const row of serverRows) known.add(row.id);
+  const serverRevision = new Map(serverRows.map((r) => [r.id, r.revision]));
   const s = useStore.getState(); queue.clearAll();
-  for (const page of Object.values(s.pages)) if (!foreignPageIds.has(page.id) && known.has(page.id)) queue.enqueue(page.id, [{ op: "replace_page", page, revision: page.revision ?? 0 }]);
+  for (const page of Object.values(s.pages)) if (!foreignPageIds.has(page.id) && known.has(page.id)) queue.enqueue(page.id, [{ op: "replace_page", page, revision: serverRevision.get(page.id) ?? page.revision ?? 0 }]);
   for (const id of known) if (!s.pages[id]) queue.markDeleted(id);
   queue.enqueueWorkspace([{ op: "set_root_order", rootOrder: s.rootOrder }, { op: "set_settings", patch: s.settings ?? DEFAULT_SETTINGS }, ...Object.entries(s.syncedBlocks ?? {}).map(([key, blocks]): WorkspaceOp => ({ op: "synced_set", key, blocks }))]);
   await flush(); if (useSyncStatus.getState().status === "error") throw new Error("Sync failed");

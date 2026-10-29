@@ -22,8 +22,8 @@ export default function SharedPageView({ pageId }: { pageId: string }) {
     let alive = true, applying = false, editable = false, pushing = false, timer: ReturnType<typeof setTimeout> | undefined;
     const queue = new MemoryQueue();
     const inject = (id: string, page: Page | null, rebase = true) => { if (!alive) return; applying = true; foreignPageIds.add(id); useStore.setState((s) => { const pages = { ...s.pages }; if (page) pages[id] = page; else delete pages[id]; return { pages }; }); if (rebase) rebaseHistory({ pages: { [id]: page } }); applying = false; };
-    const engine = new PageSyncEngine(queue, CLIENT_TAG + "-shared", { by: "human", id: user.id, at: Date.now() }, { getPage: (id) => useStore.getState().pages[id], apply: inject, send: pushSharedPage, read: fetchSharedPage, conflict: (id, conflict) => useBlockConflicts.getState().add(id, conflict) });
-    const flush = async () => { if (pushing || !editable) return; pushing = true; try { await engine.flushPage(pageId); if (alive) setError(""); } catch (error) { if (alive) setError(error instanceof Error ? error.message : "Could not save changes."); } finally { pushing = false; } };
+    const engine = new PageSyncEngine(queue, CLIENT_TAG + "-shared", { by: "human", id: user.id, at: Date.now() }, { getPage: (id) => useStore.getState().pages[id], apply: inject, send: pushSharedPage, read: fetchSharedPage, conflict: (id, conflict) => useBlockConflicts.getState().add(id, conflict), pageConflict: () => { if (alive) setError("This page changed in the cloud before your copy was saved, so the cloud version was reloaded."); } });
+    const flush = async () => { if (pushing || !editable) return; pushing = true; try { if (alive) setError(""); await engine.flushPage(pageId); } catch (error) { if (alive) setError(error instanceof Error ? error.message : "Could not save changes."); } finally { pushing = false; } };
     const load = async () => {
       const access = await fetchMyShareLevel(pageId); if (!alive) return;
       if (!access) { editable = false; setState("denied"); return; } setLevel(access);

@@ -7,11 +7,17 @@ import { newId } from "@/lib/factories";
 export type BlockConflict = { id: string; theirs: Block | CellValue; by?: BlockAttr; at: number; propertyId?: string; after?: string | null };
 interface Conflicts {
   byPage: Record<string, BlockConflict[]>;
+  pageReloads: Record<string, number>;
+  notePageReload: (pageId: string) => void;
+  dismissPageReload: (pageId: string) => void;
   add: (pageId: string, conflict: BlockConflict) => void;
   resolve: (pageId: string, id: string, choice: "mine" | "theirs" | "both") => void;
 }
 export const useBlockConflicts = create<Conflicts>((set, get) => ({
   byPage: {},
+  pageReloads: {},
+  notePageReload: (pageId) => set((s) => ({ pageReloads: { ...s.pageReloads, [pageId]: Date.now() } })),
+  dismissPageReload: (pageId) => set((s) => { const next = { ...s.pageReloads }; delete next[pageId]; return { pageReloads: next }; }),
   add: (pageId, conflict) => set((s) => ({ byPage: { ...s.byPage, [pageId]: [...(s.byPage[pageId] ?? []).filter((c) => c.id !== conflict.id), conflict] } })),
   resolve: (pageId, id, choice) => {
     const conflict = get().byPage[pageId]?.find((c) => c.id === id), store = useStore.getState(), page = store.pages[pageId];

@@ -19,9 +19,13 @@ export type PageOp =
   | { op: "db_view_set"; view: DbView }
   | { op: "db_view_delete"; viewId: string }
   | { op: "comment_add"; comment: PageComment }
+  | { op: "comment_delete"; id: string }
+  | { op: "version_delete"; id: string }
   | { op: "comment_set"; id: string; patch: Partial<PageComment> }             // resolved; body solo el autor
-  | { op: "version_add"; version: PageVersion }                                 // cap 50 en el servidor (§II.3)
+  | { op: "version_add"; version: PageVersion }                                 // cap VERSION_CAP, same in the server
   | { op: "replace_page"; page: Page; revision: number };                       // solo personas: «Esta copia manda» y restaurar desde la papelera o una versión
+
+export const VERSION_CAP = 10;
 
 const equal = (a: unknown, b: unknown): boolean => a === b || JSON.stringify(a) === JSON.stringify(b);
 const scalarKeys = ["title", "icon", "cover", "coverPosition", "fullWidth", "smallText", "locked", "font", "isFavorite"] as const;
@@ -163,8 +167,10 @@ export function applyOps(input: Page, ops: PageOp[], actor: BlockAttr): { page: 
         page = databaseChange(page, (database) => ({ ...database, views: database.views.some((v) => v.id === op.view.id) ? database.views.map((v) => v.id === op.view.id ? op.view : v) : [...database.views, op.view] })); break;
       case "db_view_delete": page = databaseChange(page, (database) => ({ ...database, views: database.views.filter((v) => v.id !== op.viewId) })); break;
       case "comment_add": page = { ...page, comments: [...(page.comments ?? []).filter((c) => c.id !== op.comment.id), op.comment] }; break;
+      case "comment_delete": page = { ...page, comments: (page.comments ?? []).filter((c) => c.id !== op.id) }; break;
+      case "version_delete": page = { ...page, versions: (page.versions ?? []).filter((v) => v.id !== op.id) }; break;
       case "comment_set": page = { ...page, comments: (page.comments ?? []).map((c) => c.id === op.id ? { ...c, ...op.patch, id: c.id } : c) }; break;
-      case "version_add": page = { ...page, versions: [op.version, ...(page.versions ?? []).filter((v) => v.id !== op.version.id)].slice(0, 50) }; break;
+      case "version_add": page = { ...page, versions: [op.version, ...(page.versions ?? []).filter((v) => v.id !== op.version.id)].slice(0, VERSION_CAP) }; break;
       case "replace_page": page = { ...op.page, id: input.id }; break;
     }
     if (page !== before) inverse.unshift(...diffPageToOps(page, before));
@@ -179,8 +185,6 @@ export function diffPageToOps(prev: Page, next: Page): PageOp[] {
   if (next.versions?.[0] !== prev.versions?.[0] && prev.versions?.some((version) => version.id === next.versions?.[0]?.id)) return replacement();
   if (prev.parentId !== next.parentId || prev.isDeleted !== next.isDeleted || !!prev.database !== !!next.database) return replacement();
   if (prev.database && next.database && (prev.database.id !== next.database.id || prev.database.locked !== next.database.locked || !equal(prev.database.rowTemplates, next.database.rowTemplates))) return replacement();
-  if ((prev.comments ?? []).some((c) => !(next.comments ?? []).some((n) => n.id === c.id))) return replacement();
-  if ((prev.versions ?? []).some((v) => !(next.versions ?? []).some((n) => n.id === v.id)) && (next.versions?.length ?? 0) < 50) return replacement();
   const ops: PageOp[] = [];
   const patch: Partial<PageScalars> = {};
   for (const key of scalarKeys) if (!equal(prev[key], next[key])) Object.assign(patch, { [key]: next[key] });
@@ -208,11 +212,13 @@ export function diffPageToOps(prev: Page, next: Page): PageOp[] {
       for (const [propertyId, value] of Object.entries(row.cells)) if (!equal(old.cells[propertyId], value)) ops.push({ op: "db_cell_set", rowId: row.id, propertyId, rev: old.rev, value: value as CellValue });
     }
   }
+  for (const c of prev.comments ?? []) if (!(next.comments ?? []).some((n) => n.id === c.id)) ops.push({ op: "comment_delete", id: c.id });
   for (const comment of next.comments ?? []) {
     const old = prev.comments?.find((c) => c.id === comment.id);
     if (!old) ops.push({ op: "comment_add", comment });
     else if (!equal(old, comment)) ops.push({ op: "comment_set", id: comment.id, patch: comment });
   }
+  if ((next.versions?.length ?? 0) < VERSION_CAP) for (const v of prev.versions ?? []) if (!(next.versions ?? []).some((n) => n.id === v.id)) ops.push({ op: "version_delete", id: v.id });
   for (const version of [...(next.versions ?? [])].reverse()) if (!prev.versions?.some((v) => equal(v, version))) ops.push({ op: "version_add", version });
   return ops;
 }

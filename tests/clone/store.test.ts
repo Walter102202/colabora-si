@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeAll, beforeEach, afterAll, expect, it, vi } from "vitest";
 import { useStore } from "@/lib/store";
+import { VERSION_CAP } from "@/lib/pageOps";
 import { canUndo, canRedo, initHistory, pauseHistory, resumeHistory, rebaseHistory, undo, redo } from "@/lib/history";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { seedWorkspace } from "@/lib/seed";
@@ -123,6 +124,26 @@ it("CM-3 deleting a comment touches updatedAt", () => {
   useStore.getState().deleteComment(id, before.comments![0].id);
   expect(useStore.getState().pages[id].comments).toEqual([]);
   expect(useStore.getState().pages[id].updatedAt).toBeGreaterThan(before.updatedAt);
+});
+
+it("VS-1 saveVersion keeps at most VERSION_CAP versions", () => {
+  const id = useStore.getState().createPage();
+  for (let i = 0; i < VERSION_CAP + 2; i++) { useStore.getState().updatePage(id, { title: "t" + i }); useStore.getState().saveVersion(id, false); }
+  const versions = useStore.getState().pages[id].versions!;
+  expect(versions).toHaveLength(VERSION_CAP);
+  expect(versions[0].title).toBe("t" + (VERSION_CAP + 1));
+});
+it("VS-2 saveVersion skips identical content", () => {
+  const id = useStore.getState().createPage();
+  useStore.getState().saveVersion(id); useStore.getState().saveVersion(id);
+  expect(useStore.getState().pages[id].versions).toHaveLength(1);
+});
+it("VS-3 restoreVersion keeps the cap and puts the restored version first", () => {
+  const versions = Array.from({ length: VERSION_CAP }, (_, i) => ({ id: `v${i}`, createdAt: i, title: `V${i}`, blocks: [] }));
+  const p = page({ versions }); change({ [p.id]: p });
+  useStore.getState().restoreVersion(p.id, versions[3].id);
+  expect(useStore.getState().pages[p.id].versions!.length).toBeLessThanOrEqual(VERSION_CAP);
+  expect(useStore.getState().pages[p.id].versions![0].id).toBe(versions[3].id);
 });
 
 const para = (html = "") => b("paragraph", { html });
