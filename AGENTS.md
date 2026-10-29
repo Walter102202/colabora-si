@@ -76,7 +76,7 @@ A task is done when its suites pass, lint, types and build are clean, and the ow
 | MCP tools (read, write, tasks, lead, wait), prompts and resources | `supabase/functions/_shared/tools/*.ts` |
 | MCP server (JSON-RPC, auth, sessions) | `supabase/functions/_shared/mcp.ts`, served by `supabase/functions/mcp/` |
 | SQL RPCs and policies | `supabase/migrations/`, one numbered migration per concern |
-| Track B mounts from track A | `AttributionMargin`, `AgentPropertyCell`, `RowPanel`, `PresenceBadge`, `InboxBell`, `AgentsSettingsTab`, `McpPatPage`, `AGENT_TASKS_TEMPLATE`, `runAgentAction` |
+| Track B mounts from track A | `AttributionMargin`, `AgentPropertyCell`, `RowPanel`, `PresenceBadge`, `InboxBell`, `DecisionsHome`, `AgentsSettingsTab`, `McpPatPage`, `AGENT_TASKS_TEMPLATE`, `runAgentAction` |
 | Track A imports from track B | `lib/types.ts`, store selectors, `lib/blockOps.ts`, `lib/dbOps.ts`, `lib/pageOps.ts`, `lib/routes.ts`, the `apply_page_ops` RPC |
 
 Props, tool schemas and RPC signatures are contracts: agree a change with the other track before making it.

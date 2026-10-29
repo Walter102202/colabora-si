@@ -3,6 +3,8 @@
 // or in an isolated React root such as an MCP App card.
 export { RowPanelView, AssignView, TaskView } from "@/components/agents/panel/RowPanelView";
 export type { RowPanelViewProps, AssignViewProps, TaskViewProps, AgentOption } from "@/components/agents/panel/RowPanelView";
+export { DecisionsHomeView } from "@/components/agents/panel/DecisionsHomeView";
+export type { DecisionsHomeViewProps } from "@/components/agents/panel/DecisionsHomeView";
 export { ApprovalCard } from "@/components/agents/panel/ApprovalCard";
 export { DecisionCard } from "@/components/agents/panel/DecisionCard";
 export { LeadReviewCard } from "@/components/agents/panel/LeadReviewCard";
