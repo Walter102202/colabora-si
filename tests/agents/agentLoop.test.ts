@@ -273,6 +273,35 @@ describe("reference agent loop", () => {
     expect(tasks[0].outcome).toBe("submitted");
   });
 
+  it("does not say that a question asked after the wait holds the delivery", async () => {
+    let asked = 0;
+    let beats = 0;
+    const answerQ3 = { seq: 20, text: "Blue", signal: "feedback", source: "row_panel", author_type: "human", approval_id: "q3", decision: "respond" };
+    const mcp = createStubMcp({
+      tasks: queued,
+      waits: [seed(), { changed: true, stop_requested: false, next_seq: 12, activities: [{ seq: 12, type: "prompt", author_type: "human", signal: "feedback", approval_id: "q1", decision: "respond", text: "Casual", excerpt: "Casual" }] }],
+      handlers: {
+        request_input: (a) => ({ approval_id: `q${++asked}`, status: "pending", blocking: a.blocking !== false }),
+        // Only q1 is open when the loop waits; q2 and q3 come later, without blocking, and are never waited on.
+        await_questions: () => ({ questions: 1, task_state: "input_required" }),
+        heartbeat: () => ({ stop_requested: false, brief_stale: false, pending_prompts: ++beats === 4 ? [answerQ3] : [] }),
+      },
+    });
+    const model = createStubModel([
+      { tool_calls: [toolCall("request_input", { question: "Formal or casual?", blocking: false })] },
+      { content: "Waiting for the tone." },
+      { tool_calls: [toolCall("request_input", { question: "Add a P.S.?", blocking: false }), toolCall("request_input", { question: "Which colour?", blocking: false })] },
+      { tool_calls: [toolCall("append_blocks", { page_id: "row-task-1", markdown: "Draft" })] },
+      { tool_calls: [toolCall("submit_for_review", { summary: "Done", artifact_ids: ["art-1"] })] },
+    ]);
+    const { tasks } = await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1 });
+
+    const afterQ3 = model.requests[4].messages.at(-1).content;
+    expect(afterQ3).toContain('Answer to your question "Which colour?": Blue');
+    expect(afterQ3).not.toContain("waiting_on_human");
+    expect(tasks[0].outcome).toBe("submitted");
+  });
+
   it("hands a late answer to the model once, though its message also comes after the cursor", async () => {
     const late = { approval_id: "q-late", question: "Add a P.S.?", decision: "respond", text: "Yes, a short one", answered_at: "2026-10-29T09:30:00Z" };
     const prompt = { seq: 12, text: "Yes, a short one", signal: "feedback", source: "row_panel", author_type: "human", approval_id: "q-late", decision: "respond" };

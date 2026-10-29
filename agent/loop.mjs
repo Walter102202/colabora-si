@@ -181,8 +181,8 @@ export async function runAgent(opts) {
     const sideAnswers = [];
     /** @type {Set<string>} requests whose answer the model already has: another copy of that answer is dropped */
     const delivered = new Set();
-    /** Set once await_questions made the open questions block: a delivery then waits for their answers. */
-    let questionsBlock = false;
+    /** @type {Set<string>} open questions that await_questions made block: a delivery waits for their answers */
+    const blockingQuestions = new Set();
     /** Splits people's messages into answers to open questions and the rest. @param {any[]} items */
     const splitAnswers = (items) => {
       /** @type {string[]} */ const answers = [];
@@ -197,9 +197,9 @@ export async function runAgent(opts) {
       }
       return { answers, rest };
     };
-    /** Answers as one message; while the questions block, it also names those still open. @param {string[]} lines */
+    /** Answers as one message; it also names the open questions that block. @param {string[]} lines */
     const answersMessage = (lines) => {
-      const open = questionsBlock ? [...openQuestions.values()].map((q) => `"${q}"`) : [];
+      const open = [...openQuestions].filter(([id]) => blockingQuestions.has(id)).map(([, q]) => `"${q}"`);
       const still = open.length
         ? `\nStill waiting for an answer to ${open.join(", ")}: a delivery waits for ${open.length === 1 ? "it" : "them"} ` +
           "(submit_for_review fails with waiting_on_human), so end your turn to keep waiting."
@@ -603,7 +603,9 @@ export async function runAgent(opts) {
         // task no longer waits (they were answered or expired meanwhile), there is nothing to wait for: the run ends below.
         const awaited = openQuestions.size ? await call("await_questions", { run_id: runId }) : null;
         if (awaited?.isError) log(`await_questions failed: ${awaited.text}`);
-        if (awaited && !awaited.isError && awaited.data.task_state === "input_required") questionsBlock = true;
+        if (awaited && !awaited.isError && awaited.data.task_state === "input_required") {
+          for (const id of openQuestions.keys()) blockingQuestions.add(id);
+        }
         else if (awaited && !awaited.isError) {
           // An answer (or a stop) may have come after this turn's heartbeat, or one that failed: read once more before
           // the run ends, and hand over what came.
