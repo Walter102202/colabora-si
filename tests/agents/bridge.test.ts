@@ -167,6 +167,12 @@ describe("channel events", () => {
     for (const key of Object.keys(event.meta)) expect(key).toMatch(/^[A-Za-z0-9_]+$/);
   });
 
+  it("maps task.updated to the updated reason", () => {
+    const event = eventToChannel({ type: "task.updated", task_id: "parent-1", agent_id: AGENT, run_id: null, event_id: "e-2", payload: { subtask_id: "sub-9", acceptance: "accepted" } });
+    expect(event.meta.reason).toBe("updated");
+    expect(event.meta.task_id).toBe("parent-1");
+  });
+
   it("drops meta keys with other characters and non-string values", () => {
     expect(sanitizeMeta({ ok_1: "a", "bad-key": "b", "has space": "c", n: 2, obj: { a: 1 }, empty: "" })).toEqual({ ok_1: "a", n: "2" });
   });
