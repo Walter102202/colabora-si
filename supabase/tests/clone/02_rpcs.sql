@@ -359,5 +359,30 @@ set local role authenticated;
 select is((select count(*) from public.workspace_directory_v),0::bigint,'outsider cannot read people or agents from the directory');
 reset role;
 
+-- Whole-page review: revision check, comment and version deletes, version cap.
+select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000001","role":"authenticated"}',true);
+insert into public.pages(id,workspace_id,data) values ('ops-review','20000000-0000-4000-8000-000000000010','{"id":"ops-review","title":"Review","blocks":[],"comments":[{"id":"c1","body":"keep","authorId":"20000000-0000-4000-8000-000000000001","authorType":"human","createdAt":1}],"versions":[{"id":"v0","createdAt":1,"title":"Review","blocks":[]}]}');
+set local role authenticated;
+select throws_ok($$select public.apply_page_ops('ops-review','[{"op":"replace_page","page":{"id":"ops-review","title":"Stale","blocks":[]},"revision":0}]')$$,'PT409','page_conflict','replace_page with a stale revision is rejected');
+select throws_ok($$select public.apply_page_ops('ops-review','[{"op":"replace_page","page":{"id":"ops-review","title":"x","blocks":[]}}]')$$,'PT400','invalid_revision','replace_page without a revision is rejected');
+select lives_ok($$select public.apply_page_ops('ops-review',jsonb_build_array(jsonb_build_object('op','replace_page','page',(select data from public.pages where id='ops-review') || '{"title":"Current"}'::jsonb,'revision',(select revision from public.pages where id='ops-review'))))$$,'replace_page with the current revision applies');
+select is((select data->>'title' from public.pages where id='ops-review'),'Current','replace_page with the current revision changed the page');
+select throws_ok($$select public.apply_page_ops('ops-review','[{"op":"teleport"}]')$$,'PT400','unknown_operation','unknown operations are still rejected');
+reset role;
+insert into rpc_results values('comment-delete',private.apply_page_ops_core('ops-review','[{"op":"comment_delete","id":"c1"}]',null));
+select is((select jsonb_array_length(data->'comments') from public.pages where id='ops-review'),0,'comment_delete removes the comment');
+select is((select payload->'inverse'->0->>'op' from rpc_results where name='comment-delete'),'comment_add','comment_delete inverse is comment_add');
+select is((select payload->'inverse'->0->'comment'->>'body' from rpc_results where name='comment-delete'),'keep','comment_delete inverse carries the full comment');
+insert into rpc_results values('version-delete',private.apply_page_ops_core('ops-review','[{"op":"version_delete","id":"v0"}]',null));
+select is((select payload->'inverse'->0->>'op' from rpc_results where name='version-delete'),'version_add','version_delete inverse is version_add');
+select private.apply_page_ops_core('ops-review',(select jsonb_agg(jsonb_build_object('op','version_add','version',jsonb_build_object('id','v'||i,'createdAt',i,'title','V','blocks','[]'::jsonb))) from generate_series(1,12) i),null);
+select is((select jsonb_array_length(data->'versions') from public.pages where id='ops-review'),10,'the core keeps at most 10 versions');
+select is((select data#>>'{versions,0,id}' from public.pages where id='ops-review'),'v12','newest version first');
+insert into rpc_results values('comment-add-inverse',private.apply_page_ops_core('ops-review','[{"op":"comment_add","comment":{"id":"c2","body":"new"}}]',null));
+select is((select payload->'inverse' from rpc_results where name='comment-add-inverse'),'[{"op":"comment_delete","id":"c2"}]'::jsonb,'a new comment inverts to comment_delete');
+select set_config('request.jwt.claims','{"sub":"20000000-0000-4000-8000-000000000003","role":"authenticated","app_metadata":{"principal_type":"agent"}}',true);
+select throws_ok($$select private.apply_page_ops_core('ops-review','[{"op":"comment_delete","id":"c2"}]',null)$$,'PT403','comment_author_only','an agent cannot delete a comment of another author');
+select throws_ok($$select private.apply_page_ops_core('ops-review','[{"op":"version_delete","id":"v12"}]',null)$$,'PT403','humans_only','agents cannot delete versions');
+
 select * from finish();
 rollback;

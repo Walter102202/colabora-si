@@ -1,3 +1,5 @@
+import { useIdleSnapshot } from "@/lib/versionSnapshots";
+import { useBlockConflicts } from "@/lib/syncConflicts";
 import { lazy, Suspense } from "react";
 import { pageUrl } from "@/lib/routes";
 import { useEffect, useRef, useState } from "react";
@@ -23,7 +25,8 @@ export default function PageView({ pageId }: { pageId: string }) {
   const [iconPicker, setIconPicker] = useState(false);
   const drag = useRef<{ pointer: number; y: number; pos: number; height: number } | null>(null);
   useEffect(() => { if (title.current && document.activeElement !== title.current && title.current.textContent !== page?.title) title.current.textContent = page?.title ?? ""; }, [pageId, page?.title]);
-  useEffect(() => { const timer = setInterval(() => useStore.getState().saveVersion(pageId, true), 120000); return () => { clearInterval(timer); useStore.getState().saveVersion(pageId, true); }; }, [pageId]);
+  useIdleSnapshot(pageId);
+  const reloaded = useBlockConflicts((s) => s.pageReloads[pageId]);
   if (!page) return <div className="empty-state">Page not found.</div>;
   const stats = pageStats(page, pages);
   const parent = Object.values(pages).find((p) => !p.isDeleted && p.database?.rows.some((row) => row.pageId === pageId));
@@ -39,6 +42,7 @@ export default function PageView({ pageId }: { pageId: string }) {
     <div className="page-heading">{page.icon && <div className="relative mb-5"><button className="page-icon-button" disabled={page.locked} aria-label="Change page icon" onClick={() => setIconPicker(!iconPicker)}><Emoji emoji={page.icon} size={68} /></button>{iconPicker && <Suspense fallback={null}><EmojiPicker onSelect={(icon) => update(pageId, { icon })} onRemove={() => update(pageId, { icon: null })} onClose={() => setIconPicker(false)} /></Suspense>}</div>}
       <div className="page-hover-controls">{!page.icon && !page.locked && <button onClick={() => update(pageId, { icon: "📄" })}>Add icon</button>}{!page.cover && !page.locked && <button onClick={() => update(pageId, { cover: COVER_GRADIENTS[0] })}>Add cover</button>}</div>
       {page.locked && <div className="mb-2 rounded bg-bg-secondary px-2.5 py-1 text-xs text-text-secondary">Page locked — editing is disabled. <button className="text-accent" onClick={() => useStore.getState().updatePage(pageId, { locked: false })}>Unlock</button></div>}
+      {reloaded && <p role="status" className="mb-2 rounded bg-bg-secondary px-2.5 py-1 text-xs text-text-secondary">This page changed in the cloud before your copy was saved, so the cloud version was reloaded. <button className="text-accent" onClick={() => useBlockConflicts.getState().dismissPageReload(pageId)}>Dismiss</button></p>}
       <div ref={title} className="title-edit" contentEditable={!page.locked} suppressContentEditableWarning role="textbox" tabIndex={0} aria-label="Page title" data-placeholder="Untitled" spellCheck={spellCheck} onInput={(event) => useStore.getState().updatePage(pageId, { title: event.currentTarget.textContent?.replace(/\n/g, "") ?? "" })} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "ArrowDown") { event.preventDefault(); document.querySelector<HTMLElement>('[data-block-id] [contenteditable="true"]')?.focus(); } }} />
     </div>
     {parent && row && <RowProperties ops={buildDbOps(parent.id)} row={row} pages={pages} />}

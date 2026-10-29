@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { applyOps, applyWorkspaceOps, diffPageToOps, invertOps, type PageOp } from "@/lib/pageOps";
+import { applyOps, applyWorkspaceOps, diffPageToOps, invertOps, VERSION_CAP, type PageOp } from "@/lib/pageOps";
 import { b, column, db, page, prop, row, T, view } from "./fixtures";
 import type { BlockAttr, Page, PageComment, PageVersion } from "@/lib/types";
 import stale from "./fixtures/pageOps/stale-update.json";
@@ -45,11 +45,39 @@ it("PO-5 300 insertions are chained in order after 600 blocks", () => {
   expect(ops).toHaveLength(300);
   ops.forEach((op, i) => expect(op).toEqual({ op: "insert_block", after: i ? `new${i - 1}` : "old599", block: added[i] }));
 });
-it("PO-6 versions are capped at 50", () => {
+it("PO-6 versions are capped at VERSION_CAP", () => {
   const before = page();
   const versions: PageVersion[] = Array.from({ length: 51 }, (_, i) => ({ id: `v${i}`, createdAt: T + i, title: `Version ${i}`, blocks: [] }));
   const result = applyOps(before, versions.map((version) => ({ op: "version_add", version })), actor);
-  expect(result.page.versions).toEqual(versions.slice(1).reverse());
+  expect(result.page.versions).toEqual(versions.slice(-VERSION_CAP).reverse());
+});
+
+it("PO-8 deleting a comment emits comment_delete and inverts to comment_add", () => {
+  const c: PageComment = { id: "c", body: "Keep", authorId: "person", authorType: "human", createdAt: T };
+  const before = page({ comments: [c] }), after = { ...before, comments: [] };
+  const ops = diffPageToOps(before, after);
+  expect(ops).toEqual([{ op: "comment_delete", id: c.id }]);
+  const applied = applyOps(before, ops, actor);
+  expect(applied.page.comments).toEqual([]);
+  expect(applied.inverse).toEqual([{ op: "comment_add", comment: c }]);
+});
+it("PO-9 deleting a version below the cap emits version_delete", () => {
+  const versions: PageVersion[] = [0, 1].map((i) => ({ id: `v${i}`, createdAt: T + i, title: "V", blocks: [] }));
+  const before = page({ versions }), after = { ...before, versions: versions.slice(0, 1) };
+  const ops = diffPageToOps(before, after);
+  expect(ops).toEqual([{ op: "version_delete", id: versions[1].id }]);
+  expect(applyOps(before, ops, actor).inverse).toEqual([{ op: "version_add", version: versions[1] }]);
+});
+it("PO-10 trimming by the cap does not emit version_delete", () => {
+  const versions: PageVersion[] = Array.from({ length: VERSION_CAP }, (_, i) => ({ id: `v${i}`, createdAt: T + i, title: "V", blocks: [] }));
+  const v: PageVersion = { id: "new", createdAt: T + VERSION_CAP, title: "New", blocks: [] };
+  const before = page({ versions }), after = { ...before, versions: [v, ...versions.slice(0, VERSION_CAP - 1)] };
+  expect(diffPageToOps(before, after)).toEqual([{ op: "version_add", version: v }]);
+});
+it("PO-11 restoring a version still replaces the page with its revision", () => {
+  const a: PageVersion = { id: "a", createdAt: T, title: "A", blocks: [] }, b: PageVersion = { ...a, id: "b", title: "B" };
+  const before = page({ revision: 7, versions: [a, b] }), after = { ...before, versions: [{ ...b, createdAt: T + 1 }, a] };
+  expect(diffPageToOps(before, after)).toEqual([{ op: "replace_page", page: after, revision: 7 }]);
 });
 it("PO-7 workspace synced blocks are replaced and removed immutably", () => {
   const workspace = { pages: {}, rootOrder: [], expanded: {}, syncedBlocks: { a: [b()] } };
