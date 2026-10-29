@@ -145,18 +145,13 @@ export function negotiateVersion(requested: unknown): string {
     : DEFAULT_VERSION;
 }
 
-/** Hosts that do not resolve `$ref` get the shared definitions inlined (§IV.9.6). */
-export function wantsInlineDefs(userAgent: string | null): boolean {
-  return /openai|chatgpt/i.test(userAgent ?? '');
-}
-
-export function describeTool(tool: ToolDef, inline: boolean) {
+export function describeTool(tool: ToolDef) {
   return {
     name: tool.name,
     title: tool.title,
     description: tool.description,
-    inputSchema: inline ? inlineRefs(tool.inputSchema) : tool.inputSchema,
-    outputSchema: inline ? inlineRefs(tool.outputSchema) : tool.outputSchema,
+    inputSchema: inlineRefs(tool.inputSchema),
+    outputSchema: inlineRefs(tool.outputSchema),
     annotations: { title: tool.title, openWorldHint: false, ...tool.annotations },
     ...(tool._meta ? { _meta: tool._meta } : {}),
   };
@@ -236,7 +231,6 @@ interface RequestState {
   deps: McpDeps;
   bearer: VerifiedBearer;
   era: Era;
-  inline: boolean;
   signal: AbortSignal;
   appUrl: string;
   /** Filled for the log line. */
@@ -312,14 +306,14 @@ async function dispatch(state: RequestState, method: string, params: Record<stri
         capabilities: capabilities(),
         serverInfo: { name: server.name, title: server.title, version: server.version },
         instructions: server.instructions,
-        tools: server.tools.map((t) => describeTool(t, state.inline)),
+        tools: server.tools.map((t) => describeTool(t)),
       };
     case 'ping':
       return {};
     case 'logging/setLevel':
       return {};
     case 'tools/list':
-      return { tools: server.tools.map((t) => describeTool(t, state.inline)) };
+      return { tools: server.tools.map((t) => describeTool(t)) };
     case 'tools/call':
       return await callTool(state, params);
     case 'prompts/list':
@@ -540,7 +534,6 @@ export async function handleMcp(req: Request, server: McpServer, deps: McpDeps):
     deps,
     bearer,
     era,
-    inline: wantsInlineDefs(req.headers.get('User-Agent')),
     signal: req.signal,
     appUrl: (env.APP_URL ?? '').replace(/\/+$/, ''),
   };
