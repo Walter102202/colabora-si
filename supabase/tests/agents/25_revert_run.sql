@@ -1,5 +1,5 @@
 begin;
-select plan(26);
+select plan(27);
 
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_A2', 'page_A', jsonb_build_object('id', 'page_A2', 'title', 'page_A2', 'parentId', 'page_A',
@@ -39,9 +39,16 @@ select public.set_row_cells('page_DB2', 'r1', '{"title":{"text":"New"},"stage":{
 select public.begin_external_op(:'run'::uuid, 'stub', 'test_effect', '{}'::jsonb)->>'op_id' as external_op \gset
 select public.finish_external_op(:'external_op'::uuid, 'done', 'local-test');
 -- What an agent posts about its own run cannot hide a write or rewrite an external effect.
-select public.post_activity(:'run'::uuid, 'action', jsonb_build_object('op', 'revert_run', 'run_id', :'run', 'keys', jsonb_build_array('block:page_A1:' || :'b1')));
+select is(tests.error_of(format('select public.post_activity(%L::uuid, %L, %L::jsonb)', :'run', 'action',
+            jsonb_build_object('op', 'revert_run', 'run_id', :'run', 'keys', jsonb_build_array('block:page_A1:' || :'b1'))::text)), 'invalid_input',
+          'an agent cannot post a revert_run of its own run');
 select public.post_activity(:'run'::uuid, 'action', jsonb_build_object('op', 'external', 'external_op_id', :'external_op', 'summary', 'Nothing was sent'));
 select tests.reset_role();
+-- Even if such an activity existed (written past post_activity), the diff trusts only a person's revert.
+insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, author_type, author_id)
+select t.workspace_id, t.id, :'run'::uuid, private.next_seq(t.id), 'action',
+       jsonb_build_object('op', 'revert_run', 'run_id', :'run', 'keys', jsonb_build_array('block:page_A1:' || :'b1')), 'agent', (:'f'::jsonb->>'agent')::uuid
+  from public.agent_tasks t where t.id = :'task'::uuid;
 select is((select (body->'after_revs'->>'blk_a1')::int from public.agent_activities where task_id = :'task'::uuid and body->>'op' = 'edit_block' order by seq limit 1), 2,
           'a write records after_revs for the block it touched');
 
@@ -70,7 +77,7 @@ select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.task_diff(:'task'::uuid) as d \gset
 select tests.reset_role();
 select is((select x->>'status' || '/' || (x->>'change') from jsonb_array_elements(:'d'::jsonb->'runs'->0->'items') x where x->>'key' = 'block:page_A1:' || :'b1'),
-          'revertable/added', 'task_diff lists an appended block as added and revertable, even after the agent posts a revert_run of it');
+          'revertable/added', 'task_diff lists an appended block as added and revertable, even with an agent-written revert_run of it');
 select is((select (x->>'before_text') || ' -> ' || (x->>'after_text') from jsonb_array_elements(:'d'::jsonb->'runs'->0->'items') x where x->>'key' = 'block:page_A:blk_a1'),
           'Hello A -> Hello from the agent', 'task_diff lists an edited block with its text before and after');
 select is((select x->'before_text' from jsonb_array_elements(:'d'::jsonb->'runs'->0->'items') x where x->>'key' = 'block:page_A2:blk_todo'),
