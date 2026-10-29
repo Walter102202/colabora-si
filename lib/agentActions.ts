@@ -1,4 +1,5 @@
 import type { ButtonAction } from "@/lib/types";
+import type { TaskDiff } from "@/lib/agentRunDiff";
 import { useStore } from "@/lib/store";
 import { stripHtml } from "@/lib/utils";
 import { agentErrorMessage, getAgentClient } from "@/lib/agentClient";
@@ -132,6 +133,16 @@ export async function updateBrief(
   const version = await rpc<number>("update_brief", { p_task_id: taskId, p_patch: patch });
   await refresh(taskId);
   return version;
+}
+
+export async function loadTaskDiff(taskId: string): Promise<TaskDiff> {
+  return rpc<TaskDiff>("task_diff", { p_task_id: taskId });
+}
+
+export async function revertRun(taskId: string, runId: string, keys: string[]): Promise<{ reverted: string[] }> {
+  const result = await rpc<{ reverted: string[] }>("revert_run", { p_run_id: runId, p_item_keys: keys });
+  await refresh(taskId);
+  return result;
 }
 
 // Builds a first brief from what the person already wrote in the row page.

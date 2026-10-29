@@ -1,4 +1,5 @@
 import type { ContinuityInfo } from "@/lib/agentContinuity";
+import type { TaskDiff } from "@/lib/agentRunDiff";
 import type { ActivityRow, ApprovalRow, ArtifactRow, BriefRow, ReviewRow, RunRow, TaskRow } from "@/lib/agentTasks";
 import type { AgentRole } from "@/lib/agentsStore";
 import { pageUrl, taskUrl } from "@/lib/routes";
@@ -23,6 +24,7 @@ export interface CardSubtask {
 
 export interface TaskCardData {
   continuity?: ContinuityInfo | null;
+  diff?: TaskDiff | null;
   kind: "task";
   task: TaskRow;
   run: RunRow | null;

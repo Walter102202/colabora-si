@@ -1,5 +1,7 @@
 import { useId, useState } from "react";
 import { continuityText, type ContinuityInfo } from "@/lib/agentContinuity";
+import type { TaskDiff } from "@/lib/agentRunDiff";
+import { RunDiffCard } from "@/components/agents/panel/RunDiffCard";
 import type { ActivityRow, ApprovalRow, ArtifactRow, BriefRow, ReviewRow, RunRow, TaskRow } from "@/lib/agentTasks";
 import type { ApprovalDecision, MessageSignal } from "@/lib/agentActions";
 import type { AgentRole } from "@/lib/agentsStore";
@@ -46,6 +48,8 @@ export interface TaskViewProps {
   subtasks: SubtaskItem[];
   reviewerName: string | null;
   continuity?: ContinuityInfo | null;
+  diff?: TaskDiff | null;
+  onRevert?: (runId: string, keys: string[]) => Promise<void>;
   handOverAgents?: AgentOption[];
   onHandOver?: (toAgentId: string | null, note: string) => Promise<void>;
   // Approval a deep link (#approval-<id>) asked to land on, if any.
@@ -111,7 +115,7 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ task, agent, run, approval, artifact, review, brief, activities, subtasks, reviewerName, continuity = null, handOverAgents = [], onHandOver, focusApprovalId = null, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ task, agent, run, approval, artifact, review, brief, activities, subtasks, reviewerName, continuity = null, diff = null, onRevert, handOverAgents = [], onHandOver, focusApprovalId = null, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -187,6 +191,11 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
           <p className="text-xs text-text-tertiary">No deliverable yet.</p>
         )}
       </section>
+
+      {diff && (diff.hidden_items > 0 || diff.runs.some((r) => r.items.length > 0)) && <section className="space-y-1">
+        <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Changes</h4>
+        <RunDiffCard diff={diff} onRevert={onRevert} />
+      </section>}
 
       <section className="space-y-1">
         <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Verification</h4>

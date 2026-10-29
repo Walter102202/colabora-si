@@ -141,7 +141,7 @@ Deno.test('get_task returns the card: run, pending approval, current artifact, l
   assert.deepEqual(subtasks.map((x) => [x.task.id, x.run?.id ?? null, x.agent_name]), [['sub1', 'run-2', 'Lead']]);
   assert.deepEqual((s.agents as Row[]).map((a) => a.name).sort(), ['Codex worker', 'Lead']);
   assert.equal(s.app_url, 'https://app.example');
-  assert.deepEqual(h.rpcs, []);
+  assert.deepEqual(h.rpcs, [{ fn: 'task_diff', params: { p_task_id: 't1' } }]);
 });
 
 Deno.test('currentArtifact picks the highest version, then the latest', () => {
@@ -229,7 +229,7 @@ Deno.test('close_task calls the RPC and returns the closed task as a card', asyn
     },
   });
   const out = await tool('close_task').handler({ task_id: 't1', acceptance: 'accepted' }, h.ctx);
-  assert.deepEqual(h.rpcs, [{ fn: 'close_task', params: { p_task_id: 't1', p_acceptance: 'accepted', p_note: undefined } }]);
+  assert.deepEqual(h.rpcs, [{ fn: 'close_task', params: { p_task_id: 't1', p_acceptance: 'accepted', p_note: undefined } }, { fn: 'task_diff', params: { p_task_id: 't1' } }]);
   assert.equal(out.structured.task_state, 'done');
   assert.equal(out.structured.kind, 'task');
   assert.equal(out.structured.run, null);
@@ -335,6 +335,7 @@ Deno.test('tools that return card data carry _meta.ui.resourceUri; the others do
 Deno.test('get_task card carries continuity: the agent declares resume and the last checkpoint is listed', async () => {
   for (const ephemeral of [false, true]) {
     const tables = world();
+    tables.agent_tasks[0].state = 'working';
     tables.agents[0].capabilities = { resume: true };
     tables.agent_activities.push({ task_id: 't1', seq: 9, type: 'checkpoint', ephemeral,
       body: { v: 1, next_step: 'Email the team', harness: 'claude_code', handover: !ephemeral }, created_at: '2026-10-30T10:00:00+00:00' });
@@ -344,4 +345,23 @@ Deno.test('get_task card carries continuity: the agent declares resume and the l
       harness: 'claude_code', next_step: 'Email the team', handover: !ephemeral } });
     assert.deepEqual(h.rpcs, []);
   }
+});
+
+Deno.test('get_task card carries the diff when the task is ready for review', async () => {
+  const diff = { task_id: 't1', hidden_items: 0, runs: [{ run_id: 'run-1', items: [{ key: 'block:p:b', status: 'revertable' }], hidden_items: 0 }] };
+  for (const state of ['ready_for_review', 'done', 'input_required']) {
+    const tables = world(); tables.agent_tasks[0].state = state;
+    const h = harness(tables, { onRpc: ({ fn }) => fn === 'task_diff' ? { data: diff } : undefined });
+    const out = await tool('get_task').handler({ task_id: 't1' }, h.ctx);
+    assert.deepEqual(out.structured.diff, state === 'input_required' ? null : diff);
+    assert.deepEqual(h.rpcs, state === 'input_required' ? [] : [{ fn: 'task_diff', params: { p_task_id: 't1' } }]);
+  }
+});
+
+Deno.test('the card diff is null when task_diff fails', async () => {
+  const h = harness(world(), { onRpc: () => ({ error: { code: 'PT404', message: 'not_found' } }) });
+  const out = await tool('get_task').handler({ task_id: 't1' }, h.ctx);
+  assert.equal(out.structured.diff, null);
+  assert.equal((out.structured.task as Row).id, 't1');
+  assert.equal(out.structured.kind, 'task');
 });

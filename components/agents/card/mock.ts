@@ -1,3 +1,4 @@
+import type { DiffItem, TaskDiff } from "@/lib/agentRunDiff";
 import type { CardData, TaskCardData, WaitingListData } from "@/lib/agentCard";
 import type { ToolResult } from "@/lib/agentCardHost";
 import type { ActivityRow, ApprovalRow, ArtifactRow, BriefRow, ReviewRow, RunRow, TaskRow } from "@/lib/agentTasks";
@@ -100,8 +101,17 @@ const list: WaitingListData = {
   ],
 };
 
+const item: DiffItem = { key: "block:p:added", kind: "block", change: "added", page_id: "p", block_id: "added", status: "revertable",
+  before_text: "", after_text: "Added text", after_rev: 1, current_rev: 1, summary: "Added paragraph", first_seq: 1, last_seq: 1 };
+const diff: TaskDiff = { task_id: "t", hidden_items: 0, runs: [{ run_id: "run-1", agent_id: "a", harness: "codex", status: "completed", started_at: "", ended_at: null, hidden_items: 0,
+  items: [item, { ...item, key: "block:p:edited", block_id: "edited", change: "edited", before_text: "Hello A", after_text: "Hello from the agent", summary: "Edited paragraph" },
+    { ...item, key: "block:p:changed", block_id: "changed", status: "changed_since", summary: "Person changed this" },
+    { ...item, key: "external:op1", block_id: undefined, before_text: null, after_text: null, kind: "external", change: "manual", status: "manual", summary: "Sent email" }] }] };
+
 export function mockCard(scenario: string): CardData {
   switch (scenario) {
+    case "diff":
+      return { ...base, diff: { ...diff, task_id: task.id } };
     case "handover":
       return { ...base, continuity: { resume: true, checkpoint: { seq: 12, created_at: minutesAgo(5), harness: "claude_code", next_step: "Email the team", handover: true } },
         activities: [...activities, { id: "ac-handover", task_id: task.id, run_id: "run-2", seq: 13, type: "handover",

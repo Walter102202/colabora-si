@@ -1,0 +1,27 @@
+import { describe, expect, it } from "vitest";
+import { revertableKeys, statusLabel, wordDiff, type DiffItem, type DiffStatus, type RunDiff } from "@/lib/agentRunDiff";
+
+describe("run diff", () => {
+  it("wordDiff marks inserted and deleted words", () => {
+    expect(wordDiff("Hello A", "Hello from the agent")).toEqual([
+      { op: "same", text: "Hello" }, { op: "del", text: "A" }, { op: "add", text: "from the agent" },
+    ]);
+    expect(wordDiff("same", "same")).toEqual([{ op: "same", text: "same" }]);
+  });
+  it("wordDiff falls back to a whole replace past the size cap", () => {
+    const before = "old ".repeat(500), after = "new ".repeat(500);
+    expect(wordDiff(before, after)).toEqual([{ op: "del", text: before }, { op: "add", text: after }]);
+  });
+  it("revertableKeys keeps only the revertable items of one run", () => {
+    const item: DiffItem = { key: "block:p:b", kind: "block", change: "edited", page_id: "p", block_id: "b", status: "revertable",
+      before_text: "Before", after_text: "After", after_rev: 2, current_rev: 2, summary: "Edited", first_seq: 1, last_seq: 2 };
+    const run: RunDiff = { run_id: "r", agent_id: "a", harness: "codex", status: "completed", started_at: "", ended_at: null,
+      hidden_items: 0, items: [item, { ...item, key: "other", status: "changed_since" }] };
+    expect(revertableKeys(run)).toEqual([item.key]);
+  });
+  it("statusLabel names every status", () => {
+    const expected: Record<DiffStatus, string> = { revertable: "Can be reverted", changed_since: "Changed after the run: revert by hand",
+      gone: "Deleted after the run", manual: "Revert by hand", reverted: "Reverted" };
+    for (const [status, label] of Object.entries(expected)) expect(statusLabel(status as DiffStatus)).toBe(label);
+  });
+});
