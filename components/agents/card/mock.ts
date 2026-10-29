@@ -102,6 +102,11 @@ const list: WaitingListData = {
 
 export function mockCard(scenario: string): CardData {
   switch (scenario) {
+    case "handover":
+      return { ...base, continuity: { resume: true, checkpoint: { seq: 12, created_at: minutesAgo(5), harness: "claude_code", next_step: "Email the team", handover: true } },
+        activities: [...activities, { id: "ac-handover", task_id: task.id, run_id: "run-2", seq: 13, type: "handover",
+          body: { from_harness: "claude_code", to_harness: "codex", summary: "1 approval pending." }, ephemeral: false,
+          author_type: "agent", author_id: "a-worker", created_at: minutesAgo(4) }] };
     case "approval":
       return { ...base, task: { ...task, state: "input_required", waiting_on: "human", active_run_id: run.id }, run, approval: actionApproval };
     case "question":

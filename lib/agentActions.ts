@@ -116,6 +116,14 @@ export async function reviewTask(
   return res;
 }
 
+export async function handOver(taskId: string, toAgentId: string | null, note: string): Promise<{ task_state: string; delegate_agent_id: string | null }> {
+  const result = await rpc<{ task_state: string; delegate_agent_id: string | null }>("release_for_handover", {
+    p_task_id: taskId, p_to_agent_id: toAgentId, p_note: note || null,
+  });
+  await refresh(taskId);
+  return result;
+}
+
 export async function updateBrief(
   taskId: string,
   patch: Partial<BriefInput> & { delegate_agent_id?: string | null; depends_on_task_ids?: string[] },

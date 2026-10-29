@@ -7,6 +7,7 @@ import { ConnectionSnippet } from "@/components/agents/settings/ConnectionSnippe
 
 const STEPS = ["Harness", "Paste", "Done"] as const;
 const DEFAULT_CAPABILITIES: Record<string, boolean> = { start: false, continue: false, cancel: false, events: false, approval: true, cost: false, files: false };
+const RESUME_HARNESSES = new Set(["claude-code", "codex", "cursor", "gemini-cli", "agent"]);
 
 const HARNESS_KIND: Record<string, AgentKind> = {
   "claude-code": "acp_local",
@@ -35,7 +36,7 @@ export function NewAgentWizard({ onCancel, onCreate, busy }: { onCancel: () => v
       name: name.trim(),
       kind: HARNESS_KIND[harness] ?? "acp_local",
       role: "worker",
-      capabilities: DEFAULT_CAPABILITIES,
+      capabilities: { ...DEFAULT_CAPABILITIES, resume: RESUME_HARNESSES.has(harness) },
       monthly_budget_usd: null,
       rate_limit_per_min: 120,
       grants: [],

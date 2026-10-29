@@ -27,6 +27,7 @@ export const CARD_RESOURCE_META: Record<string, unknown> = { ui: { prefersBorder
 /** Output schema of the card data (TaskCardData in lib/agentCard.ts). */
 export const CARD_OUTPUT: Record<string, JsonSchema> = {
   kind: { type: 'string', enum: ['task'] },
+  continuity: { type: ['object', 'null'] },
   run: { type: ['object', 'null'] },
   approval: { type: ['object', 'null'] },
   artifact: { type: ['object', 'null'] },
@@ -53,6 +54,7 @@ const REASON_LABEL: Record<WaitingReason, string> = {
 };
 
 export interface TaskCard extends TaskBundle {
+  continuity: Row | null;
   kind: 'task';
   run: Row | null;
   approval: Row | null;
@@ -99,7 +101,7 @@ export async function loadTaskCard(
 ): Promise<TaskCard> {
   const bundle = await loadTaskBundle(db, taskId, opts);
   const task = bundle.task;
-  const [runs, reviews, subtaskRows] = await Promise.all([
+  const [runs, reviews, subtaskRows, checkpoints] = await Promise.all([
     typeof task.active_run_id === 'string' ? selectIn(db, 'agent_runs', RUN_COLUMNS, 'id', [task.active_run_id]) : Promise.resolve([]),
     must(db.select<Row>({
       table: 'agent_reviews',
@@ -115,6 +117,11 @@ export async function loadTaskCard(
       order: [{ column: 'created_at', ascending: true }],
       limit: 100,
     })),
+    must(db.select<Row>({
+      table: 'agent_activities', columns: 'seq,created_at,body',
+      filters: [{ col: 'task_id', op: 'eq', value: taskId }, { col: 'type', op: 'eq', value: 'checkpoint' }],
+      order: [{ column: 'seq', ascending: false }], limit: 1,
+    })),
   ]);
   const subtasks = subtaskRows ?? [];
   const review = reviews?.[0] ?? null;
@@ -129,9 +136,17 @@ export async function loadTaskCard(
     const name = agents.find((a) => a.id === id)?.name;
     return typeof name === 'string' ? name : null;
   };
+  const delegate = agents.find((a) => a.id === task.delegate_agent_id);
+  const cp = checkpoints?.[0];
+  const body = (cp?.body ?? {}) as Row;
+  const continuity = delegate ? { resume: (delegate.capabilities as Row)?.resume === true, checkpoint: cp ? {
+    seq: cp.seq, created_at: cp.created_at, harness: typeof body.harness === 'string' ? body.harness : null,
+    next_step: typeof body.next_step === 'string' ? body.next_step : '', handover: body.handover === true,
+  } : null } : null;
   return {
     kind: 'task',
     ...bundle,
+    continuity,
     run: runs[0] ?? null,
     approval: bundle.approvals_pending[0] ?? null,
     artifact: currentArtifact(bundle.artifacts),

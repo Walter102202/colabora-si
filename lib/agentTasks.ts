@@ -129,7 +129,7 @@ export interface ActivityRow {
   task_id: string;
   run_id: string | null;
   seq: number;
-  type: "thought" | "action" | "elicitation" | "response" | "error" | "prompt";
+  type: "thought" | "action" | "elicitation" | "response" | "error" | "prompt" | "checkpoint" | "handover";
   body: Record<string, unknown>;
   ephemeral: boolean;
   author_type: "human" | "agent" | "system";
@@ -475,4 +475,8 @@ export function latestReviewFor(state: AgentTasksState, taskId: string): ReviewR
 
 export function currentBriefFor(state: AgentTasksState, task: TaskRow): BriefRow | null {
   return state.briefs[`${task.id}:${task.brief_version}`] ?? null;
+}
+
+export function lastCheckpointFor(activities: ActivityRow[] | undefined): ActivityRow | null {
+  return (activities ?? []).reduce<ActivityRow | null>((last, a) => a.type === "checkpoint" && (!last || a.seq > last.seq) ? a : last, null);
 }

@@ -331,3 +331,17 @@ Deno.test('tools that return card data carry _meta.ui.resourceUri; the others do
   const review = tools.find((t: Row) => t.name === 'review_task');
   assert.deepEqual(review.inputSchema.required, ['task_id', 'verdict', 'findings']);
 });
+
+Deno.test('get_task card carries continuity: the agent declares resume and the last checkpoint is listed', async () => {
+  for (const ephemeral of [false, true]) {
+    const tables = world();
+    tables.agents[0].capabilities = { resume: true };
+    tables.agent_activities.push({ task_id: 't1', seq: 9, type: 'checkpoint', ephemeral,
+      body: { v: 1, next_step: 'Email the team', harness: 'claude_code', handover: !ephemeral }, created_at: '2026-10-30T10:00:00+00:00' });
+    const h = harness(tables);
+    const out = await tool('get_task').handler({ task_id: 't1' }, h.ctx);
+    assert.deepEqual(out.structured.continuity, { resume: true, checkpoint: { seq: 9, created_at: '2026-10-30T10:00:00+00:00',
+      harness: 'claude_code', next_step: 'Email the team', handover: !ephemeral } });
+    assert.deepEqual(h.rpcs, []);
+  }
+});
