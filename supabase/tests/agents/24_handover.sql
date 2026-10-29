@@ -1,5 +1,5 @@
 begin;
-select plan(63);
+select plan(66);
 
 select tests.fixture() as f \gset
 -- "claude_code" is the fixture agent; "codex" and "gemini" are agents with the same grant; "plain" has no resume capability.
@@ -44,6 +44,10 @@ select is(public.save_checkpoint(:'run1'::uuid, '{"v":1,"next_step":"other"}'::j
 select is(tests.error_of(format('select public.save_checkpoint(%L::uuid, %L::jsonb, %L)', :'run1', '{"v":1,"next_step":"x","handover_note":null}', 'cp-null')), '',
           'a null handover_note reads as absent');
 select public.post_activity(:'run1'::uuid, 'thought', '{"text":"Planning the summary"}'::jsonb, false, 'pa-1');
+select is(tests.error_of(format('select public.post_activity(%L::uuid, %L, %L::jsonb)', :'run1', 'response', '{"text":"Done","submit":true}')), 'invalid_input',
+          'an agent cannot post a response that claims a submit');
+select is(tests.error_of(format('select public.post_activity(%L::uuid, %L, %L::jsonb)', :'run1', 'action', '{"op":"revert_run","keys":[]}')), 'invalid_input',
+          'an agent cannot post an action that claims a revert');
 select is(tests.error_of(format('select public.save_checkpoint(%L::uuid, %L::jsonb, %L)', :'run1', '{"v":1,"next_step":"x"}', 'pa-1')), 'idempotency_conflict',
           'save_checkpoint with a key another activity used is idempotency_conflict');
 select is(tests.error_of(format('select public.save_checkpoint(%L::uuid, %L::jsonb, null)', :'run1', '{"v":1,"next_step":"x"}')), 'invalid_input',
@@ -294,6 +298,8 @@ select public.release_for_handover(:'task8'::uuid, (:'pl'::jsonb->>'agent')::uui
 select tests.reset_role();
 select tests.set_agent((:'pl'::jsonb->>'user')::uuid, (:'pl'::jsonb->>'agent')::uuid);
 select public.claim_task(:'task8'::uuid, 'plain') ->> 'run_id' as run8b \gset
+select is(tests.error_of(format('select public.hand_over(%L::uuid, %L::jsonb, %L)', :'run8b', '{"v":1,"next_step":"x","handover_note":"n"}', 'ho-8')), 'idempotency_conflict',
+          'the key of another run''s handover does not replay it');
 select public.append_page_blocks('page_A8', '[{"type":"paragraph","spans":["Section 2"]}]'::jsonb, null, 'kb-1');
 select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);

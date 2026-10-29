@@ -150,7 +150,9 @@ begin
     raise exception using errcode = 'PT400', message = 'invalid_input', detail = '{"path":"idempotency_key"}';
   end if;
   select * into v_a from public.agent_activities where task_id = v_r.task_id and idempotency_key = p_idempotency_key;
-  if found and v_a.type <> 'checkpoint' then raise exception using errcode = 'PT409', message = 'idempotency_conflict'; end if;
+  if found and (v_a.type <> 'checkpoint' or v_a.run_id is distinct from v_r.id) then
+    raise exception using errcode = 'PT409', message = 'idempotency_conflict';
+  end if;
   if found then return jsonb_build_object('activity_id', v_a.id, 'seq', v_a.seq, 'replayed', true); end if;
   if v_r.status not in ('running','waiting') or not exists (
     select 1 from public.agent_tasks where id = v_r.task_id and active_run_id = v_r.id) then
@@ -176,7 +178,7 @@ begin
   select * into v_t from public.agent_tasks where id = v_r.task_id for update;
   select * into v_a from public.agent_activities where task_id = v_r.task_id and idempotency_key = p_idempotency_key;
   -- Only an earlier hand_over replays: the key of an intent checkpoint would report a handover that never happened.
-  if found and (v_a.type <> 'checkpoint' or v_a.body->'handover' is distinct from 'true'::jsonb) then
+  if found and (v_a.type <> 'checkpoint' or v_a.body->'handover' is distinct from 'true'::jsonb or v_a.run_id is distinct from v_r.id) then
     raise exception using errcode = 'PT409', message = 'idempotency_conflict';
   end if;
   if found then return jsonb_build_object('activity_id', v_a.id, 'seq', v_a.seq, 'task_state', v_t.state, 'replayed', true); end if;
@@ -508,5 +510,44 @@ grant execute on function public.hand_over(uuid, jsonb, text) to authenticated;
 grant execute on function public.release_for_handover(uuid, uuid, text) to authenticated;
 grant execute on function public.claim_task(uuid, text, text, int, boolean) to authenticated;
 grant execute on function public.begin_external_op(uuid, text, text, jsonb, uuid) to authenticated;
+
+-- ============ reserved activity bodies ============
+-- Full copy of post_activity (0006). A delivery (a response with submit) and a revert (an action with op revert_run)
+-- are written only by submit_for_review, review_task and revert_run: an agent posting either body could drop the
+-- guards of the run that follows it or hide its own changes from the diff.
+create or replace function public.post_activity(p_run_id uuid, p_type text, p_body jsonb, p_ephemeral boolean default false,
+  p_idempotency_key text default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_r public.agent_runs%rowtype; v_id uuid; v_seq bigint; v_state text;
+begin
+  v_r := private.own_run(p_run_id);
+  if p_idempotency_key is not null then
+    select a.id, a.seq into v_id, v_seq from public.agent_activities a where a.task_id = v_r.task_id and a.idempotency_key = p_idempotency_key;
+    if found then
+      select state into v_state from public.agent_tasks where id = v_r.task_id;
+      return jsonb_build_object('activity_id', v_id, 'seq', v_seq, 'task_state', v_state);
+    end if;
+  end if;
+  if v_r.status not in ('running','waiting') then raise exception using errcode = 'PT422', message = 'run_not_active'; end if;
+  if p_type is null or p_type not in ('thought','action','response','error') then
+    raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'type';
+  end if;
+  if jsonb_typeof(p_body) is distinct from 'object' then raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'body'; end if;
+  if (p_type = 'response' and p_body ? 'submit') or (p_type = 'action' and p_body->>'op' = 'revert_run') then
+    raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'body';
+  end if;
+  if p_type = 'action' and p_body->>'op' = 'external' and not exists (
+       select 1 from public.external_ops o where o.op_id = (p_body->>'external_op_id')::uuid and o.task_id = v_r.task_id) then
+    raise exception using errcode = 'PT422', message = 'unknown_external_op';
+  end if;
+
+  perform set_config('app.run_id', v_r.id::text, true);
+  insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, ephemeral, author_type, author_id, idempotency_key)
+  values (v_r.workspace_id, v_r.task_id, v_r.id, private.next_seq(v_r.task_id), p_type, p_body, coalesce(p_ephemeral, false),
+          'agent', v_r.agent_id, p_idempotency_key)
+  returning id, seq into v_id, v_seq;
+  select state into v_state from public.agent_tasks where id = v_r.task_id;
+  return jsonb_build_object('activity_id', v_id, 'seq', v_seq, 'task_state', v_state);
+end $$;
 
 -- ============ review and revert (appended by a/revert-run) ============
