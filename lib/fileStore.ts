@@ -56,7 +56,9 @@ async function pump(): Promise<void> {
     }
   } finally { if (token === epoch) running = false; }
 }
-function enqueueUpload(id: string): void { if (!getSupabase()) return; if (!queuedSet.has(id)) { useUploadState.getState().start(id); queuedSet.add(id); queue.push(id); } void pump(); }
+// Exported for tests. Without a backend or before the workspace is known (signed out, bootstrap pending) nothing can be sent:
+// onFileSyncStart re-enqueues every file not yet uploaded for the workspace, so returning here leaves no state behind.
+export function enqueueUpload(id: string): void { if (!getSupabase() || !wsId) return; if (!queuedSet.has(id)) { useUploadState.getState().start(id); queuedSet.add(id); queue.push(id); } void pump(); }
 export async function putFile(id: string, blob: Blob): Promise<void> { await putLocal(id, blob); enqueueUpload(id); }
 async function downloadRemote(id: string): Promise<Blob | undefined> {
   const sb = getSupabase(); if (!sb) return;
