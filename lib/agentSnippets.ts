@@ -46,10 +46,8 @@ export const HARNESS_SNIPPETS: HarnessSnippet[] = [
     }
   }
 }
-# the two WORKSPACE_SUPABASE_* values are the workspace's public Supabase URL and publishable key (the channel listens on Realtime)
-# start the session with the channel registered
 MCP_PROTOCOL_NEGOTIATION=legacy claude --dangerously-load-development-channels server:colabora`,
-    notes: [tokenNote, "Without the channel flag the session still works: it waits with wait_for_task."],
+    notes: [tokenNote, "The two WORKSPACE_SUPABASE_* values are the workspace's public Supabase URL and publishable key (the channel listens on Realtime).", "Start the session with the channel registered.", "Without the channel flag the session still works: it waits with wait_for_task."],
   },
   {
     id: "codex",
@@ -60,11 +58,8 @@ MCP_PROTOCOL_NEGOTIATION=legacy claude --dangerously-load-development-channels s
 [mcp_servers.colabora]
 url = "${mcpUrl}"
 bearer_token_env_var = "WORKSPACE_AGENT_JWT"
-tool_timeout_sec = 180
-
-# copy connect/codex/hooks.json to <repo>/.codex/hooks.json
-# export WORKSPACE_AGENT_PAT=agt_... before starting Codex`,
-    notes: [tokenNote, "The Stop hook (connect/codex/on-stop.mjs) waits up to 25 minutes for feedback and resumes the turn."],
+tool_timeout_sec = 180`,
+    notes: [tokenNote, "Get a JWT with: curl -s -X POST https://<project>.supabase.co/functions/v1/agent-token -H \"Content-Type: application/json\" -d '{\"token\":\"agt_...\"}'. Set WORKSPACE_AGENT_JWT to the returned access_token.", "Copy connect/codex/hooks.json to <repo>/.codex/hooks.json and set the path to on-stop.mjs. Export WORKSPACE_MCP_URL and WORKSPACE_AGENT_PAT before starting Codex.", "The Stop hook (connect/codex/on-stop.mjs) waits up to 25 minutes for feedback and resumes the turn."],
   },
   {
     id: "claude-ai",
@@ -91,12 +86,16 @@ Authentication: OAuth`,
     name: "Cursor",
     auth: "pat",
     wake: "Queued: waits with wait_for_task inside the session.",
-    snippet: ({ mcpUrl }) => `# .cursor/mcp.json
+    snippet: ({ mcpUrl }) => `# .cursor/mcp.json (or ~/.cursor/mcp.json)
 {
   "mcpServers": {
     "colabora": {
-      "url": "${mcpUrl}",
-      "headers": { "Authorization": "Bearer <jwt from the token URL>" }
+      "command": "node",
+      "args": ["<path-to-colabora>/bridge/index.mjs", "--no-channel"],
+      "env": {
+        "WORKSPACE_MCP_URL": "${mcpUrl}",
+        "WORKSPACE_AGENT_PAT": "agt_..."
+      }
     }
   }
 }`,
@@ -107,12 +106,16 @@ Authentication: OAuth`,
     name: "Gemini CLI / Antigravity",
     auth: "pat",
     wake: "Queued: waits with wait_for_task inside the session.",
-    snippet: ({ mcpUrl }) => `# ~/.gemini/settings.json
+    snippet: ({ mcpUrl }) => `# ~/.gemini/settings.json (or .gemini/settings.json in the project)
 {
   "mcpServers": {
     "colabora": {
-      "httpUrl": "${mcpUrl}",
-      "headers": { "Authorization": "Bearer <jwt from the token URL>" }
+      "command": "node",
+      "args": ["<path-to-colabora>/bridge/index.mjs", "--no-channel"],
+      "env": {
+        "WORKSPACE_MCP_URL": "${mcpUrl}",
+        "WORKSPACE_AGENT_PAT": "agt_..."
+      }
     }
   }
 }`,
@@ -123,15 +126,14 @@ Authentication: OAuth`,
     name: "Reference agent (agent/)",
     auth: "pat",
     wake: "Pull: the agent waits with wait_for_my_tasks and picks up work in seconds.",
-    snippet: ({ mcpUrl, tokenUrl }) => `# agent/.env
+    snippet: ({ mcpUrl }) => `# agent/.env
 WORKSPACE_MCP_URL=${mcpUrl}
-WORKSPACE_AGENT_TOKEN_URL=${tokenUrl}
 WORKSPACE_AGENT_PAT=agt_...
 MODEL_BASE_URL=https://<openai-compatible endpoint>/v1
 MODEL_API_KEY=...
 MODEL_NAME=...
-# node agent/index.mjs --env agent/.env`,
-    notes: ["Any OpenAI-compatible chat endpoint works; change the three MODEL_* values to switch models."],
+node agent/index.mjs --env agent/.env`,
+    notes: ["Any OpenAI-compatible chat endpoint works; change the three MODEL_* values to switch models.", "WORKSPACE_AGENT_TOKEN_URL is optional; it defaults to <MCP origin>/functions/v1/agent-token."],
   },
 ];
 
