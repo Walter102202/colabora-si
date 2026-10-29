@@ -138,8 +138,9 @@ export async function loadTaskCard(
     const name = agents.find((a) => a.id === id)?.name;
     return typeof name === 'string' ? name : null;
   };
+  // A paged read (after_seq) follows the activity and does not resend the diff.
   let diff: Row | null = null;
-  if (task.state === 'ready_for_review' || task.state === 'done') {
+  if ((task.state === 'ready_for_review' || task.state === 'done') && opts.afterSeq === undefined) {
     try { diff = await must(db.rpc<Row>('task_diff', { p_task_id: taskId })); }
     catch { /* The rest of the card stays usable when the diff is unavailable. */ }
   }
@@ -154,7 +155,6 @@ export async function loadTaskCard(
     kind: 'task',
     ...bundle,
     continuity,
-    diff,
     run: runs[0] ?? null,
     approval: bundle.approvals_pending[0] ?? null,
     artifact: currentArtifact(bundle.artifacts),
@@ -166,6 +166,8 @@ export async function loadTaskCard(
     })),
     agents,
     app_url: appUrl,
+    // Last, so a text cut at the size limit drops the diff before the rest of the card.
+    diff,
   };
 }
 

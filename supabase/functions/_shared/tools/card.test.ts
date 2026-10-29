@@ -358,6 +358,17 @@ Deno.test('get_task card carries the diff when the task is ready for review', as
   }
 });
 
+Deno.test('get_task with after_seq skips the diff, and the diff is the last key of the card', async () => {
+  const diff = { task_id: 't1', hidden_items: 0, runs: [] };
+  const h = harness(world(), { onRpc: ({ fn }) => fn === 'task_diff' ? { data: diff } : undefined });
+  const paged = await tool('get_task').handler({ task_id: 't1', after_seq: 1 }, h.ctx);
+  assert.deepEqual(h.rpcs, []);
+  assert.equal(paged.structured.diff, null);
+  const full = await tool('get_task').handler({ task_id: 't1' }, h.ctx);
+  assert.deepEqual(full.structured.diff, diff);
+  assert.equal(Object.keys(full.structured).at(-1), 'diff');
+});
+
 Deno.test('the card diff is null when task_diff fails', async () => {
   const h = harness(world(), { onRpc: () => ({ error: { code: 'PT404', message: 'not_found' } }) });
   const out = await tool('get_task').handler({ task_id: 't1' }, h.ctx);
