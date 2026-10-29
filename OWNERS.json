@@ -24,6 +24,7 @@
       "supabase/migrations/*_0019_*",
       "supabase/migrations/*_0020_*",
       "supabase/migrations/*_0021_*",
+      "supabase/migrations/*_0022_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
