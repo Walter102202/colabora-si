@@ -47,7 +47,11 @@ function RunChanges({ run, onRevert }: { run: RunDiff; onRevert?: Revert }) {
           <li key={item.key} className="space-y-1 rounded border border-border p-2">
             {canRevert && item.status === "revertable" ? (
               <label className="flex items-center gap-2">
-                <input type="checkbox" checked={keys.includes(item.key)} disabled={busy} onChange={(e) => setSelected((prev) => e.target.checked ? [...prev, item.key] : prev.filter((key) => key !== item.key))} />
+                <input type="checkbox" checked={keys.includes(item.key)} disabled={busy} onChange={(e) => {
+                  // A confirmation left behind by a reload that emptied the selection does not come back by itself.
+                  if (!asking) setConfirming(false);
+                  setSelected((prev) => e.target.checked ? [...prev, item.key] : prev.filter((key) => key !== item.key));
+                }} />
                 {itemLabel(item)}
               </label>
             ) : <p>{itemLabel(item)}</p>}
@@ -71,18 +75,19 @@ function RunChanges({ run, onRevert }: { run: RunDiff; onRevert?: Revert }) {
 
 export function RunDiffCard({ diff, onRevert, onRefresh }: { diff: TaskDiff; onRevert?: Revert; onRefresh?: () => Promise<void> }) {
   const [refreshing, setRefreshing] = useState(false);
-  const [refreshError, setRefreshError] = useState(false);
+  // The warning belongs to the diff it could not replace: any later load hides it.
+  const [failedOn, setFailedOn] = useState<TaskDiff | null>(null);
   const refresh = async () => {
     if (!onRefresh) return;
-    setRefreshing(true); setRefreshError(false);
+    setRefreshing(true); setFailedOn(null);
     // The diff on screen stays until a load succeeds.
-    try { await onRefresh(); } catch { setRefreshError(true); } finally { setRefreshing(false); }
+    try { await onRefresh(); } catch { setFailedOn(diff); } finally { setRefreshing(false); }
   };
   return <div className="space-y-3">
     {onRefresh && <div className="flex justify-end">
       <button type="button" className="rounded px-2 py-1 text-xs text-text-secondary hover:bg-bg-secondary disabled:opacity-50" disabled={refreshing} onClick={() => void refresh()}>Refresh</button>
     </div>}
-    {refreshError && <p role="alert" className="text-xs text-red-700 dark:text-red-400">Could not refresh the changes. Try again.</p>}
+    {failedOn === diff && <p role="alert" className="text-xs text-red-700 dark:text-red-400">Could not refresh the changes. Try again.</p>}
     {diff.runs.filter((run) => run.items.length).map((run) => <RunChanges key={run.run_id} run={run} onRevert={onRevert} />)}
     {diff.hidden_items > 0 && <p className="text-xs text-text-tertiary">{diff.hidden_items} change(s) on pages you cannot read</p>}
   </div>;

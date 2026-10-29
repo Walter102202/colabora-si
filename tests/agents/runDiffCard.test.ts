@@ -123,12 +123,19 @@ describe("run diff card", () => {
     expect(container.textContent).not.toContain("Revert 0");
     expect(button("Confirm")).toBeUndefined();
     expect(button("Revert selected")?.disabled).toBe(true);
+    // Choosing again starts over from Revert selected: the earlier confirmation does not come back by itself.
+    act(() => itemRow("Hello from the agent").querySelector("input")!.click());
+    expect(button("Confirm")).toBeUndefined();
+    expect(button("Revert selected")?.disabled).toBe(false);
   });
   it("a Refresh that fails says so", async () => {
     const onRefresh = vi.fn(async () => { throw new Error("offline"); });
     act(() => root.render(createElement(RunDiffCard, { diff, onRevert: async () => {}, onRefresh })));
     await act(async () => button("Refresh")!.click());
     expect(container.querySelector('[role="alert"]')?.textContent).toBe("Could not refresh the changes. Try again.");
+    // A later load (after a revert, or a Refresh that works) replaces the diff and the warning goes away.
+    act(() => root.render(createElement(RunDiffCard, { diff: taskDiff(run([item, edited])), onRevert: async () => {}, onRefresh })));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
   });
   it("Refresh asks for a fresh diff", async () => {
     const onRefresh = vi.fn(async () => {});
