@@ -1,16 +1,21 @@
 begin;
-select plan(42);
+select plan(59);
 
 select tests.fixture() as f \gset
--- "claude_code" is the fixture agent; "codex" is a second agent with the same grant; "plain" has no resume capability.
+-- "claude_code" is the fixture agent; "codex" and "gemini" are agents with the same grant; "plain" has no resume capability.
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+codex@agents.invalid', 'worker', 'page_A') as cx \gset
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+plain@agents.invalid', 'worker', 'page_A') as pl \gset
+select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+gemini@agents.invalid', 'worker', 'page_A') as gm \gset
 update public.agents set capabilities = '{"resume": true, "continue": true}'::jsonb
- where id in ((:'f'::jsonb->>'agent')::uuid, (:'cx'::jsonb->>'agent')::uuid);
+ where id in ((:'f'::jsonb->>'agent')::uuid, (:'cx'::jsonb->>'agent')::uuid, (:'gm'::jsonb->>'agent')::uuid);
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_A2', 'page_A');
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_A3', 'page_A');
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_A5', 'page_A');
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_A6', 'page_A');
+select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_A7', 'page_A');
+select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_A8', 'page_A');
+select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_A9', 'page_A');
+select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_A10', 'page_A');
 
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.create_agent_task('page_A1', '{"objective":"Draft and email the summary"}'::jsonb, (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as task \gset
@@ -32,10 +37,15 @@ select jsonb_build_object('v', 1, 'next_step', 'Write section 2, then email the 
 select ok((select pg_get_constraintdef(oid) from pg_constraint where conname = 'agent_activities_type_check') like '%checkpoint%handover%',
           'agent_activities_type_check lists checkpoint and handover');
 select public.save_checkpoint(:'run1'::uuid, :'cpbody'::jsonb, 'cp-1') as cp1 \gset
-select results_eq(format($q$ select type, ephemeral from public.agent_activities where id = %L::uuid $q$, :'cp1'::jsonb->>'activity_id'),
-                  $q$ values ('checkpoint'::text, true) $q$, 'save_checkpoint stores an ephemeral v1 checkpoint activity');
+select results_eq(format($q$ select type, ephemeral, body->>'v' from public.agent_activities where id = %L::uuid $q$, :'cp1'::jsonb->>'activity_id'),
+                  $q$ values ('checkpoint'::text, true, '1'::text) $q$, 'save_checkpoint stores an ephemeral v1 checkpoint activity');
 select is(public.save_checkpoint(:'run1'::uuid, '{"v":1,"next_step":"other"}'::jsonb, 'cp-1') ->> 'activity_id', :'cp1'::jsonb->>'activity_id',
           'the same idempotency key returns the first checkpoint');
+select is(tests.error_of(format('select public.save_checkpoint(%L::uuid, %L::jsonb, %L)', :'run1', '{"v":1,"next_step":"x","handover_note":null}', 'cp-null')), '',
+          'a null handover_note reads as absent');
+select public.post_activity(:'run1'::uuid, 'thought', '{"text":"Planning the summary"}'::jsonb, false, 'pa-1');
+select is(tests.error_of(format('select public.save_checkpoint(%L::uuid, %L::jsonb, %L)', :'run1', '{"v":1,"next_step":"x"}', 'pa-1')), 'idempotency_conflict',
+          'save_checkpoint with a key another activity used is idempotency_conflict');
 select is(tests.error_of(format('select public.save_checkpoint(%L::uuid, %L::jsonb, null)', :'run1', '{"v":1,"next_step":"x"}')), 'invalid_input',
           'save_checkpoint without an idempotency key is invalid_input');
 select is(tests.detail_of(format('select public.save_checkpoint(%L::uuid, %L::jsonb, %L)', :'run1',
@@ -65,9 +75,19 @@ select is(tests.error_of(format('select public.save_checkpoint(%L::uuid, %L::jso
 
 -- B. claude_code hands over voluntarily.
 select tests.reset_role();
+select tests.set_agent((:'cx'::jsonb->>'user')::uuid, (:'cx'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.hand_over(%L::uuid, %L::jsonb, %L)', :'run1', '{"v":1,"next_step":"x","handover_note":"n"}', 'ho-x')), 'forbidden',
+          'another agent cannot hand over this run');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('select public.hand_over(%L::uuid, %L::jsonb, %L)', :'run1', '{"v":1,"next_step":"x","handover_note":"n"}', 'ho-h')), 'agent_disabled',
+          'a person calling hand_over gets agent_disabled');
+select tests.reset_role();
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
 select is(tests.error_of(format('select public.hand_over(%L::uuid, %L::jsonb, %L)', :'run1', '{"v":1,"next_step":"x"}', 'ho-0')), 'invalid_input',
           'hand_over without a handover_note is invalid_input');
+select is(tests.error_of(format('select public.hand_over(%L::uuid, %L::jsonb, %L)', :'run1', '{"v":1,"next_step":"x","handover_note":"n"}', 'pa-1')), 'idempotency_conflict',
+          'hand_over with a key another activity used is idempotency_conflict');
 select public.hand_over(:'run1'::uuid, :'cpbody'::jsonb || '{"handover_note":"Closing the laptop; section 2 may already be written"}'::jsonb, 'ho-1') as ho \gset
 select tests.reset_role();
 select results_eq(format($q$ select status, run_id from public.agent_approvals where id = %L::uuid $q$, :'ap'),
@@ -83,6 +103,10 @@ select is((select count(*)::int from public.agent_activities where task_id = :'t
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
 select is(tests.error_of(format('select public.release_for_handover(%L::uuid, %L::uuid)', :'task', :'cx'::jsonb->>'agent')), 'humans_only',
           'an agent cannot call release_for_handover');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'viewer')::uuid);
+select is(tests.error_of(format('select public.release_for_handover(%L::uuid, null)', :'task')), 'forbidden',
+          'a viewer cannot release a task for handover');
 select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select is(tests.error_of(format('select public.release_for_handover(%L::uuid, %L::uuid)', :'task', '00000000-0000-4000-8000-00000000dead')),
@@ -234,6 +258,100 @@ select public.claim_task(:'task6'::uuid, 'codex') as c6 \gset
 select tests.reset_role();
 select ok(not (:'c6'::jsonb ? 'resume') and (select run_id from public.agent_approvals where id = :'ap6'::uuid) = (:'c6'::jsonb->>'run_id')::uuid,
           'claim_task without resume has no resume key and still rebinds the pending approval');
+
+-- L. A stop request wins over a handover: the run stays for ack_stop and the task is not queued again.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.create_agent_task('page_A7', '{"objective":"Seventh task"}'::jsonb, (:'cx'::jsonb->>'agent')::uuid) ->> 'task_id' as task7 \gset
+select tests.reset_role();
+select tests.set_agent((:'cx'::jsonb->>'user')::uuid, (:'cx'::jsonb->>'agent')::uuid);
+select public.claim_task(:'task7'::uuid, 'codex') ->> 'run_id' as run7 \gset
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.send_agent_message(:'task7'::uuid, 'Stop, please', 'stop');
+select tests.reset_role();
+select tests.set_agent((:'cx'::jsonb->>'user')::uuid, (:'cx'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.hand_over(%L::uuid, %L::jsonb, %L)', :'run7', '{"v":1,"next_step":"x","handover_note":"bye"}', 'ho-7')),
+          'stop_requested', 'hand_over after a stop request is stop_requested');
+select tests.reset_role();
+select results_eq(format($q$ select r.status, t.state, t.active_run_id from public.agent_runs r, public.agent_tasks t
+                            where r.id = %L::uuid and t.id = %L::uuid $q$, :'run7', :'task7'),
+                  format($q$ values ('running'::text, 'working'::text, %L::uuid) $q$, :'run7'),
+                  'the refused hand_over leaves the run active until the agent acknowledges the stop');
+
+-- M. A run that saved no checkpoint makes the last checkpoint stale: gemini resumes after plain, which followed claude_code.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.create_agent_task('page_A8', '{"objective":"Eighth task"}'::jsonb, (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as task8 \gset
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'task8'::uuid, 'claude_code', null, null, true) ->> 'run_id' as run8 \gset
+select public.hand_over(:'run8'::uuid, '{"v":1,"next_step":"Append section 2","handover_note":"bye","ops":{"pending":[{"key":"k-s2","tool":"append_blocks","page_id":"page_A8"}]}}'::jsonb, 'ho-8');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.release_for_handover(:'task8'::uuid, (:'pl'::jsonb->>'agent')::uuid, null);
+select tests.reset_role();
+select tests.set_agent((:'pl'::jsonb->>'user')::uuid, (:'pl'::jsonb->>'agent')::uuid);
+select public.claim_task(:'task8'::uuid, 'plain') ->> 'run_id' as run8b \gset
+select public.append_page_blocks('page_A8', '[{"type":"paragraph","spans":["Section 2"]}]'::jsonb, null, 'kb-1');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.release_for_handover(:'task8'::uuid, (:'gm'::jsonb->>'agent')::uuid, null);
+select tests.reset_role();
+select tests.set_agent((:'gm'::jsonb->>'user')::uuid, (:'gm'::jsonb->>'agent')::uuid);
+select public.claim_task(:'task8'::uuid, 'gemini', null, null, true) as c8 \gset
+select tests.reset_role();
+select is(:'c8'::jsonb->'resume'->'from'->>'run_id', :'run8b', 'with a checkpoint older than the last run, from is the last run');
+select ok(coalesce((:'c8'::jsonb->'resume'->'checkpoint'->>'stale')::boolean, false) and :'c8'::jsonb->'resume'->>'summary' like '%saved no checkpoint%',
+          'a checkpoint older than the last run is flagged stale and the summary says why');
+select is((select x->>'status' from jsonb_array_elements(:'c8'::jsonb->'resume'->'pending_ops') x where x->>'key' = 'k-s2'), 'unknown',
+          'a pending write of a stale checkpoint without a receipt is unknown, not not_executed');
+select results_eq(format($q$ select body->>'from_harness', body->>'to_harness' from public.agent_activities where task_id = %L::uuid and type = 'handover' $q$, :'task8'),
+                  $q$ values ('plain'::text, 'gemini'::text) $q$, 'the handover activity names the last run as its origin');
+
+-- N. The same agent claiming again after feedback is not a handover.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.create_agent_task('page_A9', '{"objective":"Ninth task"}'::jsonb, (:'cx'::jsonb->>'agent')::uuid) ->> 'task_id' as task9 \gset
+select tests.reset_role();
+select tests.set_agent((:'cx'::jsonb->>'user')::uuid, (:'cx'::jsonb->>'agent')::uuid);
+select public.claim_task(:'task9'::uuid, 'codex', null, null, true) ->> 'run_id' as run9 \gset
+select public.add_artifact(:'run9'::uuid, 'page', 'page_A9', 'Result', '{}') ->> 'artifact_id' as art9 \gset
+select public.submit_for_review(:'run9'::uuid, 'Done', array[:'art9'::uuid]);
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.send_agent_message(:'task9'::uuid, 'Add the sources', 'feedback');
+select tests.reset_role();
+select tests.set_agent((:'cx'::jsonb->>'user')::uuid, (:'cx'::jsonb->>'agent')::uuid);
+select public.claim_task(:'task9'::uuid, 'codex', null, null, true) as c9 \gset
+select tests.reset_role();
+select ok(:'c9'::jsonb->'resume'->'from'->>'run_id' = :'run9'
+          and not exists (select 1 from public.agent_activities where task_id = :'task9'::uuid and type = 'handover'),
+          'a claim by the same agent after feedback adds no handover activity');
+
+-- O. Automatic consumption takes only a decided approval for the same params with a live receipt.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.create_agent_task('page_A10', '{"objective":"Tenth task"}'::jsonb, (:'cx'::jsonb->>'agent')::uuid) ->> 'task_id' as task10 \gset
+select tests.reset_role();
+select tests.set_agent((:'cx'::jsonb->>'user')::uuid, (:'cx'::jsonb->>'agent')::uuid);
+select public.claim_task(:'task10'::uuid, 'codex') ->> 'run_id' as run10 \gset
+select public.request_approval(:'run10'::uuid, 'send_email', '{"to":"p@example.com"}'::jsonb, null, 'Send?') ->> 'approval_id' as ap_p \gset
+select public.request_approval(:'run10'::uuid, 'send_email', '{"to":"r@example.com"}'::jsonb, null, 'Send?') ->> 'approval_id' as ap_r \gset
+select public.request_approval(:'run10'::uuid, 'send_email', '{"to":"e@example.com"}'::jsonb, null, 'Send?') ->> 'approval_id' as ap_e \gset
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.decide_approval(:'ap_p'::uuid, 'approve');
+select public.decide_approval(:'ap_r'::uuid, 'reject');
+select public.decide_approval(:'ap_e'::uuid, 'approve');
+select tests.reset_role();
+update public.agent_approvals set receipt_expires_at = now() - interval '1 minute' where id = :'ap_e'::uuid;
+select tests.set_agent((:'cx'::jsonb->>'user')::uuid, (:'cx'::jsonb->>'agent')::uuid);
+select is(public.begin_external_op(:'run10'::uuid, 'smtp', 'send_email', '{"to":"other@example.com"}'::jsonb) ->> 'status', 'approval_required',
+          'a decided approval for other params is not consumed');
+select is(public.begin_external_op(:'run10'::uuid, 'smtp', 'send_email', '{"to":"r@example.com"}'::jsonb) ->> 'status', 'approval_required',
+          'a rejected approval is not consumed');
+select is(public.begin_external_op(:'run10'::uuid, 'smtp', 'send_email', '{"to":"e@example.com"}'::jsonb) ->> 'status', 'approval_required',
+          'a decided approval whose receipt expired is not consumed');
+select tests.reset_role();
+select is((select count(*)::int from public.agent_approvals where id in (:'ap_p'::uuid, :'ap_r'::uuid, :'ap_e'::uuid) and status = 'decided'), 3,
+          'the three decided approvals stay decided');
 
 select * from finish();
 rollback;

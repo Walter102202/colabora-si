@@ -1,5 +1,5 @@
 -- 0019_handover: checkpoints and handover between harnesses. Run review and revert are appended
--- below the marker at the end of this file. Bodies replaced here are full copies; never edit 0002, 0006 or 0013.
+-- below the marker at the end of this file. Bodies replaced here are full copies; never edit 0002, 0005, 0006 or 0013.
 
 alter table public.agent_activities drop constraint agent_activities_type_check;
 alter table public.agent_activities add constraint agent_activities_type_check
@@ -33,7 +33,9 @@ begin
   if jsonb_typeof(p_checkpoint->'next_step') is distinct from 'string'
      or char_length(p_checkpoint->>'next_step') not between 1 and 2000 then raise invalid_parameter_value; end if;
   v_path := '$.handover_note';
-  if p_checkpoint ? 'handover_note' and (jsonb_typeof(p_checkpoint->'handover_note') <> 'string'
+  -- A JSON null reads as absent: it is what checkpoint_read returns for a checkpoint without a note.
+  if p_checkpoint ? 'handover_note' and jsonb_typeof(p_checkpoint->'handover_note') <> 'null'
+     and (jsonb_typeof(p_checkpoint->'handover_note') <> 'string'
      or char_length(p_checkpoint->>'handover_note') > 4000) then raise invalid_parameter_value; end if;
 
   foreach v_group in array array['ops','effects','evidence'] loop
@@ -148,6 +150,7 @@ begin
     raise exception using errcode = 'PT400', message = 'invalid_input', detail = '{"path":"idempotency_key"}';
   end if;
   select * into v_a from public.agent_activities where task_id = v_r.task_id and idempotency_key = p_idempotency_key;
+  if found and v_a.type <> 'checkpoint' then raise exception using errcode = 'PT409', message = 'idempotency_conflict'; end if;
   if found then return jsonb_build_object('activity_id', v_a.id, 'seq', v_a.seq, 'replayed', true); end if;
   if v_r.status not in ('running','waiting') or not exists (
     select 1 from public.agent_tasks where id = v_r.task_id and active_run_id = v_r.id) then
@@ -172,10 +175,13 @@ begin
   end if;
   select * into v_t from public.agent_tasks where id = v_r.task_id for update;
   select * into v_a from public.agent_activities where task_id = v_r.task_id and idempotency_key = p_idempotency_key;
+  if found and v_a.type <> 'checkpoint' then raise exception using errcode = 'PT409', message = 'idempotency_conflict'; end if;
   if found then return jsonb_build_object('activity_id', v_a.id, 'seq', v_a.seq, 'task_state', v_t.state, 'replayed', true); end if;
   if v_r.status not in ('running','waiting') or v_t.active_run_id is distinct from v_r.id then
     raise exception using errcode = 'PT422', message = 'run_not_active';
   end if;
+  -- A person's stop wins: the agent acknowledges it with ack_stop instead of queueing the task again.
+  if v_r.stop_requested_at is not null then raise exception using errcode = 'PT409', message = 'stop_requested'; end if;
   v_cp := private.checkpoint_v1(p_checkpoint);
   if coalesce(v_cp->>'handover_note', '') = '' then
     raise exception using errcode = 'PT400', message = 'invalid_input', detail = '{"path":"$.handover_note"}';
@@ -248,26 +254,30 @@ end $$;
 
 create or replace function private.resume_context(p_task_id uuid, p_new_run_id uuid)
 returns jsonb language plpgsql stable security definer set search_path = '' as $$
-declare v_cp public.agent_activities%rowtype; v_from public.agent_runs%rowtype; v_read jsonb; v_body jsonb;
+declare v_cp public.agent_activities%rowtype; v_from public.agent_runs%rowtype; v_cp_run public.agent_runs%rowtype; v_read jsonb; v_body jsonb;
         v_actor uuid; v_ws uuid; v_op jsonb; v_receipt jsonb; v_status text; v_pending jsonb := '[]';
         v_blocks jsonb := '[]'; v_approvals jsonb; v_external jsonb; v_counts jsonb; v_summary text;
-        v_pair record; v_data jsonb; v_block jsonb; v_path text[];
+        v_pair record; v_data jsonb; v_block jsonb; v_path text[]; v_stale boolean;
 begin
   select workspace_id into v_ws from public.agent_tasks where id = p_task_id;
   select * into v_cp from public.agent_activities where task_id = p_task_id and type = 'checkpoint' order by seq desc limit 1;
-  select * into v_from from public.agent_runs where id = v_cp.run_id;
-  if not found then
-    select * into v_from from public.agent_runs where task_id = p_task_id and id <> p_new_run_id
-      and status in ('completed','cancelled','error') order by started_at desc, id limit 1;
-  end if;
+  select * into v_cp_run from public.agent_runs where id = v_cp.run_id;
+  -- "from" is the last run that ended, ordered by its claim activity (timestamps tie inside one transaction).
+  select r.* into v_from from public.agent_runs r where r.task_id = p_task_id and r.id <> p_new_run_id
+     and r.status in ('completed','cancelled','error')
+   order by (select min(a.seq) from public.agent_activities a where a.task_id = p_task_id and a.run_id = r.id) desc nulls last,
+            r.started_at desc, r.id limit 1;
+  if v_from.id is null then v_from := v_cp_run; end if;
+  -- A later run that saved no checkpoint may have done the pending writes itself: they are unknown, not not_executed.
+  v_stale := v_cp.id is not null and v_from.id is distinct from v_cp.run_id;
   v_read := private.checkpoint_read(v_cp.body);
   v_body := v_read->'checkpoint';
-  select a.auth_user_id into v_actor from public.agents a join public.agent_runs r on r.agent_id = a.id where r.id = v_cp.run_id;
+  select a.auth_user_id into v_actor from public.agents a where a.id = v_cp_run.agent_id;
   for v_op in select value from jsonb_array_elements(coalesce(v_body->'ops'->'pending', '[]')) where jsonb_typeof(value) = 'object' loop
     select result into v_receipt from private.write_receipts
       where scope = private.receipt_scope(v_op->>'tool') and key = v_op->>'key' and actor_id = v_actor;
     v_status := case when found then 'confirmed'
-      when private.receipt_scope(v_op->>'tool') is not null and v_cp.created_at > now() - interval '47 hours' then 'not_executed' else 'unknown' end;
+      when not v_stale and private.receipt_scope(v_op->>'tool') is not null and v_cp.created_at > now() - interval '47 hours' then 'not_executed' else 'unknown' end;
     v_pending := v_pending || jsonb_build_array(v_op || jsonb_build_object('status', v_status)
       || case when v_status = 'confirmed' then jsonb_build_object('result', v_receipt) else '{}'::jsonb end);
   end loop;
@@ -302,13 +312,15 @@ begin
     'blocks_changed', (select count(*) from jsonb_array_elements(v_blocks) x where x->'changed_by_other' = 'true'::jsonb),
     'approvals_pending', (select count(*) from jsonb_array_elements(v_approvals) x where x->>'status' = 'pending'),
     'external_open', jsonb_array_length(v_external));
-  v_summary := left(case when v_cp.id is null then 'No checkpoint yet.' else format(
+  v_summary := left(case when v_cp.id is null then 'No checkpoint yet.' else
+    case when v_stale then format('The last run (%s) saved no checkpoint, so pending writes without a receipt are unknown. ', coalesce(v_from.harness, 'unknown')) else '' end
+    || format(
     'Continuing from checkpoint #%s by %s: %s pending write(s) already happened, %s did not, %s unknown; %s block(s) changed by someone else; %s approval(s) pending.',
-    v_cp.seq, coalesce(v_cp.body->>'harness', v_from.harness, 'unknown'), v_counts->>'confirmed', v_counts->>'not_executed',
+    v_cp.seq, coalesce(v_cp.body->>'harness', v_cp_run.harness, 'unknown'), v_counts->>'confirmed', v_counts->>'not_executed',
     v_counts->>'unknown', v_counts->>'blocks_changed', v_counts->>'approvals_pending') end, 500);
   return jsonb_build_object(
     'checkpoint', case when v_cp.id is not null then jsonb_build_object('seq', v_cp.seq, 'created_at', v_cp.created_at,
-      'run_id', v_cp.run_id, 'harness', v_cp.body->>'harness', 'readable', v_read->'readable', 'version', v_read->'version',
+      'run_id', v_cp.run_id, 'harness', v_cp.body->>'harness', 'readable', v_read->'readable', 'version', v_read->'version', 'stale', v_stale,
       'body', case when v_read->'readable' = 'true'::jsonb then v_body || jsonb_build_object('harness', v_cp.body->'harness', 'handover', v_cp.body->'handover') else null end) end,
     'from', case when v_from.id is not null then jsonb_build_object('run_id', v_from.id, 'agent_id', v_from.agent_id,
       'harness', v_from.harness, 'status', v_from.status, 'ended_at', v_from.ended_at) end,
@@ -370,7 +382,15 @@ begin
 
   if p_resume then
     v_resume := private.resume_context(v_task.id, v_run);
-    if v_resume->'from' <> 'null'::jsonb then
+    -- A handover is recorded only when the previous run ended with hand_over or a person released it after it started;
+    -- the same agent claiming again after feedback is not one.
+    if v_resume->'from' <> 'null'::jsonb and (
+         exists (select 1 from public.agent_activities where task_id = v_task.id and type = 'checkpoint'
+                  and run_id = (v_resume->'from'->>'run_id')::uuid and body->'handover' = 'true'::jsonb)
+         or exists (select 1 from public.agent_activities p where p.task_id = v_task.id and p.type = 'prompt'
+                  and p.body->'handover' = 'true'::jsonb
+                  and p.seq > (select min(a.seq) from public.agent_activities a
+                                where a.task_id = v_task.id and a.run_id = (v_resume->'from'->>'run_id')::uuid))) then
       insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, author_type, author_id)
       values (v_task.workspace_id, v_task.id, v_run, private.next_seq(v_task.id), 'handover',
         jsonb_build_object('from_run_id', v_resume->'from'->'run_id', 'from_agent_id', v_resume->'from'->'agent_id',
