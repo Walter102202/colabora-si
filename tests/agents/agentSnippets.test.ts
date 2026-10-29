@@ -30,4 +30,19 @@ describe("connection snippets", () => {
   it("snippetFor falls back to the first harness for unknown ids", () => {
     expect(snippetFor("nope").id).toBe(HARNESS_SNIPPETS[0].id);
   });
+
+  it("stdio harnesses point at the bridge, like their connect/ recipes", () => {
+    for (const id of ["cursor", "gemini-cli"]) {
+      const text = snippetFor(id).snippet({ mcpUrl: MCP_URL, tokenUrl: TOKEN_URL });
+      expect(text, id).toContain("bridge/index.mjs");
+      expect(text, id).toContain("--no-channel");
+      expect(text, id).not.toMatch(/Bearer <jwt/);
+    }
+  });
+  it("every snippet starts with a line that says where to paste it", () => {
+    for (const harness of HARNESS_SNIPPETS) {
+      const first = harness.snippet({ mcpUrl: MCP_URL, tokenUrl: TOKEN_URL }).split("\n")[0];
+      expect(first, harness.id).toMatch(/^(# |Settings)/);
+    }
+  });
 });
