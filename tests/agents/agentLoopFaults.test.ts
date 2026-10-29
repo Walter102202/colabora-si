@@ -103,6 +103,22 @@ describe("agent loop: calls that fail on the way", () => {
     expect(world.blocks(page).map((b) => b.text)).toEqual(["One", "Two"]);
   });
 
+  it("a retry after a timeout that fails for another reason still reports the write as maybe done", async () => {
+    const { world, page } = started("Timeout then refused");
+    const rateLimited: ToolResult = { isError: true, data: { code: "rate_limited", message: "Too many calls." }, text: "Error rate_limited" };
+    // The first call may still land after its timeout; the retry is refused before it runs, so it proves nothing.
+    const answers = [async (forward: () => Promise<ToolResult>) => { await forward(); return timeout; }, async () => rateLimited];
+    const mcp = faulty(world.client(CLAUDE_CODE), "append_blocks", 2, (forward, nth) => answers[nth](forward));
+    const model = createStubModel([
+      { tool_calls: [toolCall("append_blocks", { page_id: page, markdown: "One" })] },
+      { tool_calls: [toolCall("append_blocks", { page_id: page, markdown: "Two" })] },
+    ]);
+    await runAgent({ mcp: mcp.client, model, clock: fakeClock(), maxTasks: 1, harness: "claude_code" });
+    expect(JSON.parse(toolMessages(model.requests[1])[0])).toMatchObject({ error: "rate_limited", outcome: "unknown" });
+    expect(pendingKeys(world)).toContain(mcp.seen[0].idempotency_key);
+    expect(world.blocks(page).map((b) => b.text)).toEqual(["One", "Two"]);
+  });
+
   it("hand_over whose response is lost is retried once with the same key instead of ending the run", async () => {
     const { world, task, page } = started("Close");
     const close = new AbortController();

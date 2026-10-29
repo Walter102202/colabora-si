@@ -419,7 +419,8 @@ export async function runAgent(opts) {
         // A repeat with the same key is answered by the receipt of the first call when it did happen.
         if (WRITE_TOOLS.has(name) && args.idempotency_key && maybe) {
           res = await call(name, args);
-          maybe = unsure(res);
+          // Only a repeat that succeeds settles it: any other error leaves the first call possibly done.
+          maybe = !!res.isError;
           // A first call still committing makes the repeat collide with its receipt: read the receipt a second later.
           if (res.isError && res.data?.code === "conflict") {
             await clock.sleep(1000);
