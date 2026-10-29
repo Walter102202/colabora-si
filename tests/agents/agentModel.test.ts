@@ -82,10 +82,10 @@ describe("createModel retries", () => {
 
 describe("stub model server failures", () => {
   it("serves scripted failures before the script and the real adapter recovers", async () => {
-    const server = await startStubModelServer([{ content: "hello" }], { failures: [{ status: 429, retryAfter: 0 }, { status: 503 }, { timeout: true, holdMs: 200 }] });
+    const server = await startStubModelServer([{ content: "hello" }], { failures: [{ status: 429, retryAfter: 0 }, { status: 503 }, { timeout: true, holdMs: 1500 }] });
     try {
       const r = recorder();
-      const m = createModel({ baseUrl: server.url, apiKey: "k", model: "stub", timeoutMs: 50, sleep: r.sleep, random: () => 0.5 });
+      const m = createModel({ baseUrl: server.url, apiKey: "k", model: "stub", timeoutMs: 500, sleep: r.sleep, random: () => 0.5 });
       const res = await m.chat({ messages: [{ role: "user", content: "hi" }] });
       expect(res.message.content).toBe("hello");
       expect(server.requests).toHaveLength(4);
