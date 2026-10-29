@@ -92,7 +92,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   }, [pathname]);
   return <div className={`app-shell flex h-screen overflow-hidden ${resizing ? "select-none" : ""}`}>
     {narrow && drawerAt === pathname && <button className="drawer-backdrop" aria-label="Close sidebar" onClick={() => setDrawerAt(null)} />}
-    <div className={`app-sidebar ${narrow ? "drawer" : ""} ${narrow && drawerAt !== pathname ? "drawer-closed" : ""}`} style={{ width: narrow ? 256 : collapsed ? 0 : width, transitionDuration: resizing ? "0ms" : undefined }}>
+    <div inert={narrow ? drawerAt !== pathname : collapsed} className={`app-sidebar ${narrow ? "drawer" : ""} ${narrow && drawerAt !== pathname ? "drawer-closed" : ""}`} style={{ width: narrow ? 256 : collapsed ? 0 : width, transitionDuration: resizing ? "0ms" : undefined }}>
       <Sidebar collapse={() => { setCollapsed(true); setDrawerAt(null); }} />
       {!narrow && !collapsed && <button aria-label="Resize sidebar" className="sidebar-resizer" onDoubleClick={() => { setWidth(260); localStorage.setItem("colabora-sidebar-width", "260"); }} onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { const next = Math.min(480, Math.max(200, width + (event.key === "ArrowRight" ? 10 : -10))); setWidth(next); localStorage.setItem("colabora-sidebar-width", String(next)); } }} onPointerDown={(event) => {
         event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); setResizing(true);
