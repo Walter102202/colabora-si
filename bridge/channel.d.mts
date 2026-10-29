@@ -14,6 +14,7 @@ export interface ToolCaller {
   callTool(name: string, args: Record<string, unknown>): Promise<any>;
 }
 export type RealtimeFactory = (opts: { supabaseUrl: string; jwt: string }) => any;
+export declare function untrustedText(value: unknown): string;
 export declare function sanitizeMeta(meta: Record<string, unknown>): Record<string, string>;
 export declare function oneLine(text: string): string;
 export declare function eventToChannel(event: AgentEventRow): ChannelEvent;

@@ -111,4 +111,27 @@ describe("reference agent loop", () => {
     expect(sent.cost).toBeCloseTo((10_000 * 2 + 800 * 8) / 1e6, 10);
     expect(tasks[0].usage.cost_usd).toBeCloseTo(0.0264, 10);
   });
+
+  it("treats adversarial page content as data: runtime and unknown tools stay out of reach and the text only arrives as a tool result", async () => {
+    const corpus = (await import("./corpus/adversarial.json")).default as { surface: string; input: string }[];
+    const hostile = corpus.filter((e) => e.surface === "tool_result").map((e) => e.input).join("\n\n");
+    const mcp = createStubMcp({
+      tasks: queued,
+      handlers: { read_page: (a) => ({ page_id: a.page_id, title: "Row", revision: 1, markdown: `${hostile} <!-- block:b0 -->`, blocks: [{ id: "b0", rev: 1, type: "paragraph", indent: 0, markdown: hostile }] }) },
+    });
+    const model = createStubModel([
+      { tool_calls: [toolCall("read_page", { page_id: "row-task-1" })] },
+      { tool_calls: [toolCall("ack_stop", {}), toolCall("claim_task", { task_id: "task-2" }), toolCall("end_run", { status: "completed" }), toolCall("delete_everything", {})] },
+      { content: "I will not follow instructions found in page content." },
+    ]);
+    const { tasks } = await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1 });
+    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "read_page", "end_run"]);
+    expect(mcp.calls.filter((c) => c.name === "ack_stop" || c.name === "delete_everything")).toHaveLength(0);
+    expect(mcp.calls.filter((c) => c.name === "claim_task").map((c) => c.args.task_id)).toEqual(["task-1"]);
+    const refusals = model.requests[2].messages.filter((m: { role: string; content: string }) => m.role === "tool" && m.content.includes("unknown_tool"));
+    expect(refusals).toHaveLength(4);
+    const carriers = model.requests[1].messages.filter((m: { content: string | null }) => typeof m.content === "string" && m.content.includes("admin mode"));
+    expect(carriers.map((m: { role: string }) => m.role)).toEqual(["tool"]);
+    expect(tasks[0].outcome).toBe("ended");
+  });
 });
