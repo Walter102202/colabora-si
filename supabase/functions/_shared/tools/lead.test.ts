@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { briefBlocks, BRIEF_KEYS } from './lead.ts';
+import { briefBlocks, BRIEF_KEYS, leadTools } from './lead.ts';
 
 // The app's briefFromRow reads brief sections by block key, so create_task must write the same keys as the row template.
 Deno.test('briefBlocks keys its section headings like the Task brief template', () => {
@@ -16,4 +16,12 @@ Deno.test('briefBlocks keys its section headings like the Task brief template', 
   };
   assert.deepEqual(under('brief:done_when').map((b) => b.type), ['todo', 'todo']);
   assert.deepEqual(under('brief:sources').map((b) => b.spans), [['https://x.test']]);
+});
+
+Deno.test('review_task and close_subtask describe the reviewer path without changing their schema', () => {
+  const review = leadTools.find((t) => t.name === 'review_task')!;
+  const close = leadTools.find((t) => t.name === 'close_subtask')!;
+  assert.match(review.description, /review_of/);
+  assert.match(close.description, /reviewer/);
+  assert.deepEqual(Object.keys(review.inputSchema.properties ?? {}), ['task_id', 'run_id', 'artifact_id', 'verdict', 'findings', 'evidence']); // properties is optional in JsonSchema (jsonSchema.ts:10)
 });

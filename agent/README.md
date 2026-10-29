@@ -73,6 +73,28 @@ curl -s "$MODEL_BASE_URL/chat/completions" -H "Authorization: Bearer $MODEL_API_
 
 If the response lacks `choices[0].message.tool_calls` or `usage.prompt_tokens`, the API does not match `agent/model.mjs`. Put an OpenAI-compatible endpoint in front of it before using this instance.
 
+## Reviewer instance on Baseten
+
+Register "Colabora Reviewer" in Settings > Agents with New agent, harness "Reference agent" and role Worker, or use the local seed's reviewer. Each instance uses its own agent token.
+
+Copy the reviewer's agent id from Studio (`select id from public.agents where name = 'Colabora Reviewer';`) or the `{agent_id}` response from `agent-admin` when creating it. Settings > Agents does not put the id in the URL. Set `AGENT_REVIEWER_AGENT_ID=<uuid>` in the Lead's `agent/.env.colabora` so it can delegate review tasks.
+
+Create `agent/.env.reviewer` with:
+
+```text
+MODEL_BASE_URL=<Baseten OpenAI-compatible base URL ending in /v1>   # from the Baseten model page; run the same curl check with the model id below
+MODEL_API_KEY=<Baseten API key>
+MODEL_NAME=meta-models/muse-spark-open-1026
+MODEL_PRICE_IN=0.60
+MODEL_PRICE_OUT=2.40
+WORKSPACE_MCP_URL=https://<project-ref>.supabase.co/functions/v1/mcp
+WORKSPACE_AGENT_PAT=agt_...                                          # the reviewer's token
+AGENT_HARNESS_NAME=colabora-reviewer
+AGENT_MAX_TURNS=20
+```
+
+Run it with `node agent/index.mjs --env agent/.env.reviewer`. Files named `.env*` are ignored by git.
+
 ## Notifications
 
 Without `TELEGRAM_BOT_TOKEN` events are printed to the console. With it, the bot messages the owner chat when a task is claimed, when a decision is waiting (with a link to the task in the app) and when work is delivered. Decisions are always taken in the app. `/status` in the owner chat answers with what the agent is doing.

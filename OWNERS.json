@@ -69,6 +69,10 @@
       "supabase/tests/clone/02_rpcs.sql",
       "OWNERS.json"
     ],
+    "a/reviewer-agent": [
+      "supabase/tests/clone/02_rpcs.sql",
+      "OWNERS.json"
+    ],
     "b/cleanup": [
       "vite.config.ts",
       "tsconfig.json",

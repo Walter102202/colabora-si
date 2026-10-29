@@ -13,6 +13,7 @@ import { readFile } from "node:fs/promises";
  * @property {string} agentPat          personal access token of this agent (agt_...)
  * @property {string} tokenUrl          PAT -> JWT exchange endpoint
  * @property {string} harness           harness name reported on claim_task
+ * @property {string} reviewerAgentId   reviewer instance delegated by the Lead ("" disables the review protocol)
  * @property {string} appUrl            public app URL for deep links ("" disables links)
  * @property {string} telegramBotToken  "" selects the console channel
  * @property {string} telegramOwnerChatId
@@ -80,6 +81,7 @@ export function readConfig(env) {
     agentPat: /** @type {string} */ (env.WORKSPACE_AGENT_PAT),
     tokenUrl: env.WORKSPACE_AGENT_TOKEN_URL || `${new URL(mcpUrl).origin}/functions/v1/agent-token`,
     harness: env.AGENT_HARNESS_NAME || "reference-agent",
+    reviewerAgentId: env.AGENT_REVIEWER_AGENT_ID ?? "",
     appUrl: (env.WORKSPACE_APP_URL ?? "").replace(/\/+$/, ""),
     telegramBotToken: env.TELEGRAM_BOT_TOKEN ?? "",
     telegramOwnerChatId: env.TELEGRAM_OWNER_CHAT_ID ?? "",
