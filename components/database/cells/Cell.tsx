@@ -1,5 +1,5 @@
 import { Input } from "@/components/FormControls";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Bell } from "lucide-react";
 import { createPortal } from "react-dom";
 import { AgentPropertyCell } from "@/components/agents/AgentPropertyCell";
@@ -18,8 +18,11 @@ import { safeHref } from "@/lib/utils";
 import { requestNotifyPermission } from "@/lib/push";
 import { useStore } from "@/lib/store";
 function CellInput({ value, onSave, placeholder = "", type = "text", readOnly = false, label }: { value: string; onSave: (value: string) => void; placeholder?: string; type?: string; readOnly?: boolean; label: string }) {
-  const element = useRef<HTMLInputElement>(null);
+  const element = useRef<HTMLInputElement>(null), latest = useRef({ value, onSave, readOnly });
+  useEffect(() => { latest.current = { value, onSave, readOnly }; });
   useEffect(() => { if (element.current && document.activeElement !== element.current) element.current.value = value; }, [value]);
+  // A windowed table unmounts the rows that scroll away, and a removed input fires no blur: a pending edit is committed on unmount.
+  useLayoutEffect(() => () => { const input = element.current, { value, onSave, readOnly } = latest.current; if (input && !readOnly && input.value !== value) onSave(input.value); }, []);
   return <Input label={label} ref={element} className="cell-input" type={type} defaultValue={value} aria-label={label} readOnly={readOnly} placeholder={placeholder} onBlur={(event) => { if (!readOnly && event.target.value !== value) onSave(event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { event.currentTarget.value = value; event.currentTarget.blur(); } }} />;
 }
 export default function Cell({ ops, database, row, property, pages }: { ops: DbOps; database: Database; row: DbRow; property: DbProperty; pages: Record<string, Page> }) {

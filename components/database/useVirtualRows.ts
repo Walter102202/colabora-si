@@ -1,9 +1,14 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useLayoutEffect, useState, type RefObject } from "react";
 import { ROW_HEIGHT_FALLBACK, VIRTUAL_OVERSCAN, windowRange } from "@/lib/virtualWindow";
 
+// Until the scroller is measured, a viewport of this many pixels with fallback row heights decides how many rows the first
+// render mounts; the layout effect below measures before the first paint, so a large table never paints every row.
+const INITIAL_VIEWPORT_PX = 800;
+// One row height for every item: group headers and cells that wrap taller than the measured row drift the spacer math by
+// their difference until the next scroll event recomputes the window.
 export function useVirtualRows(tableRef: RefObject<HTMLTableElement | null>, total: number, enabled: boolean): { start: number; end: number; padTop: number; padBottom: number } {
-  const [range, setRange] = useState({ start: 0, end: total, padTop: 0, padBottom: 0 });
-  useEffect(() => {
+  const [range, setRange] = useState(() => windowRange(0, INITIAL_VIEWPORT_PX, ROW_HEIGHT_FALLBACK, total, VIRTUAL_OVERSCAN));
+  useLayoutEffect(() => {
     if (!enabled || !tableRef.current) return;
     const table = tableRef.current;
     let container = table.parentElement;
@@ -22,9 +27,11 @@ export function useVirtualRows(tableRef: RefObject<HTMLTableElement | null>, tot
     const target = root ? window : scroller;
     target.addEventListener("scroll", update, { passive: true });
     window.addEventListener("resize", update);
-    const observer = new ResizeObserver(update); observer.observe(scroller);
-    const frame = requestAnimationFrame(update);
-    return () => { cancelAnimationFrame(frame); target.removeEventListener("scroll", update); window.removeEventListener("resize", update); observer.disconnect(); };
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update); observer?.observe(scroller);
+    update();
+    return () => { target.removeEventListener("scroll", update); window.removeEventListener("resize", update); observer?.disconnect(); };
   }, [tableRef, total, enabled]);
-  return enabled ? range : { start: 0, end: total, padTop: 0, padBottom: 0 };
+  if (!enabled) return { start: 0, end: total, padTop: 0, padBottom: 0 };
+  const end = Math.min(range.end, total); // the rows may have shrunk since the last measurement
+  return { start: Math.min(range.start, end), end, padTop: range.padTop, padBottom: range.padBottom };
 }
