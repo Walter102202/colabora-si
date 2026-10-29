@@ -17,6 +17,21 @@ const DEBOUNCE_MS = 1500, MAX_RETRIES = 5, ACTIVE_EDIT_MS = 2000, DELETE_ECHO_TT
 const PAGE_COLS = "id,parent_id,data,deleted_at,updated_at,revision,last_edited_by,last_edited_by_type,last_edit_run_id";
 const WS_COLS = "id,name,root_order,synced_blocks,settings,updated_at,revision";
 const REMINDER_COLS = "id,page_id,block_id,body,remind_at,notified,deleted_at";
+export const PULL_OVERLAP_MS = 15_000, PULL_BATCH = 500, PULL_MAX_BATCHES = 40;
+export type PullFlow = "pages";
+export function planPull(cursors: Partial<Record<PullFlow, string>>, now: Date, overlapMs = PULL_OVERLAP_MS): { flow: PullFlow; since: string }[] {
+  return (["pages"] as const).map((flow) => ({ flow, since: cursors[flow] ? new Date(Math.max(0, Math.min(Date.parse(cursors[flow]), now.getTime()) - overlapMs)).toISOString() : new Date(0).toISOString() }));
+}
+export async function pullFlow<Row>(fetchBatch: (since: string, from: number, to: number) => Promise<Row[]>, since: string, onRow: (row: Row) => void, batch = PULL_BATCH, maxBatches = PULL_MAX_BATCHES): Promise<number> {
+  let from = 0, count = 0;
+  for (let i = 0; i < maxBatches; i++) {
+    const rows = await fetchBatch(since, from, from + batch - 1);
+    rows.forEach(onRow); count += rows.length;
+    if (rows.length < batch) break;
+    from += batch;
+  }
+  return count;
+}
 export type SyncStatus = "idle" | "syncing" | "synced" | "offline" | "error";
 export const useSyncStatus = create<{ status: SyncStatus; lastSyncedAt: number | null; error: string | null }>(() => ({ status: "idle", lastSyncedAt: null, error: null }));
 const setStatus = (status: SyncStatus, error: string | null = null) => useSyncStatus.setState(status === "synced" ? { status, lastSyncedAt: Date.now(), error } : { status, error });
@@ -96,8 +111,10 @@ let started = false, ready = false, currentUserId: string | null = null, wsId: s
 let queue: IndexedDbQueue | null = null, engine: PageSyncEngine | null = null, channel: RealtimeChannel | null = null;
 let unsubStore: (() => void) | null = null, last: Store | null = null, applyingRemote = false, pushing = false, dirty = false, attempts = 0;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null, retryTimer: ReturnType<typeof setTimeout> | null = null, deferTimer: ReturnType<typeof setTimeout> | null = null;
-let lastWorkspaceSeen = 0, lastWorkspaceRevision = 0, pendingRetryUser: User | null = null;
-const known = new Set<string>(), lastSeen = new Map<string, number>(), lastEditAt = new Map<string, number>(), recentlyDeleted = new Map<string, number>(), deferred = new Map<string, PageRow>();
+let lastWorkspaceRevision = 0, pendingRetryUser: User | null = null;
+const known = new Set<string>(), lastEditAt = new Map<string, number>(), recentlyDeleted = new Map<string, number>(), deferred = new Map<string, PageRow>();
+const cursors: Partial<Record<PullFlow, string>> = {};
+function advance(flow: PullFlow, iso: string): void { if (!cursors[flow] || Date.parse(iso) > Date.parse(cursors[flow]!)) cursors[flow] = iso; }
 export function isApplyingRemote(): boolean { return applyingRemote; }
 function applyRemote(patch: RemotePatch, rebase = true): void {
   applyingRemote = true; pauseHistory();
@@ -152,14 +169,14 @@ async function insertPage(sb: SupabaseClient, page: Page): Promise<void> {
     const row = await readPage(sb, page.id); if (!row) throw error;
     known.add(page.id); engine!.receive(row, true); return;
   }
-  known.add(page.id); queue!.ack(page.id, count); queue!.setRevision(page.id, data.revision); lastSeen.set(page.id, Date.parse(data.updated_at));
+  known.add(page.id); queue!.ack(page.id, count); queue!.setRevision(page.id, data.revision); advance("pages", data.updated_at);
   engine!.receive(data as PageRow, true);
 }
 async function tombstonePage(sb: SupabaseClient, id: string): Promise<void> {
   recentlyDeleted.set(id, Date.now());
   const { data, error } = await sb.from("pages").update({ data: null, parent_id: null, deleted_at: new Date().toISOString() }).eq("workspace_id", wsId).eq("id", id).select("revision,updated_at").maybeSingle();
   if (error) { recentlyDeleted.delete(id); throw error; }
-  queue!.clearPage(id); if (data) { queue!.setRevision(id, data.revision); lastSeen.set(id, Date.parse(data.updated_at)); }
+  queue!.clearPage(id); if (data) { queue!.setRevision(id, data.revision); advance("pages", data.updated_at); }
 }
 async function pushReminders(sb: SupabaseClient, reminders: Reminder[]): Promise<void> {
   const { data: remote, error: readError } = await sb.from("reminders").select("id").eq("workspace_id", wsId).eq("user_id", currentUserId).is("deleted_at", null);
@@ -203,7 +220,7 @@ export async function flush(): Promise<void> {
 }
 function handlePageRow(row: PageRow): void {
   if (!engine || !queue) return;
-  const ms = Date.parse(row.updated_at); lastSeen.set(row.id, Math.max(lastSeen.get(row.id) ?? 0, ms)); known.add(row.id);
+  advance("pages", row.updated_at); known.add(row.id);
   if (row.data?._client === CLIENT_TAG) { engine.receive(row); return; }
   if (row.revision <= queue.getRevision(row.id)) return;
   if (!row.data && row.deleted_at) {
@@ -220,7 +237,7 @@ function handlePageRow(row: PageRow): void {
 }
 function handleWorkspaceRow(row: WorkspaceRow, force = false): void {
   if (!queue || (!force && row.revision <= lastWorkspaceRevision)) return;
-  lastWorkspaceRevision = row.revision; lastWorkspaceSeen = Date.parse(row.updated_at);
+  lastWorkspaceRevision = row.revision;
   const s = useStore.getState(), localOnly = s.rootOrder.filter((id) => !known.has(id) && s.pages[id] && !s.pages[id].isDeleted && !row.root_order?.includes(id));
   const base = { ...s, rootOrder: [...(row.root_order ?? []), ...localOnly], syncedBlocks: row.synced_blocks ?? {}, settings: row.settings ?? DEFAULT_SETTINGS };
   const next = applyWorkspaceOps(base, queue.peekWorkspace());
@@ -230,10 +247,10 @@ async function pullSince(): Promise<void> {
   const sb = getSupabase(); if (!sb || !wsId) return;
   const token = generation;
   try {
-    const since = new Date(Math.max(0, lastWorkspaceSeen, ...lastSeen.values())).toISOString();
-    const { data, error } = await sb.from("pages").select(PAGE_COLS).eq("workspace_id", wsId).gt("updated_at", since).order("updated_at");
-    if (error) throw error; if (token !== generation) return;
-    (data as PageRow[]).forEach(handlePageRow);
+    for (const step of planPull(cursors, new Date())) {
+      await pullFlow(async (since, from, to) => sb.from("pages").select(PAGE_COLS).eq("workspace_id", wsId).gte("updated_at", since).order("updated_at").order("id").range(from, to).then(({ data, error }) => { if (error) throw error; return data as PageRow[]; }), step.since, handlePageRow);
+      if (token !== generation) return;
+    }
     const workspace = await sb.from("workspaces").select(WS_COLS).eq("id", wsId).maybeSingle();
     if (workspace.error) throw workspace.error;
     if (workspace.data && token === generation) handleWorkspaceRow(workspace.data as WorkspaceRow);
@@ -301,7 +318,7 @@ async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise
   await openQueue(sb, user);
   if (token !== generation) throw SYNC_CANCELLED;
   const rows = await fetchAllPages(sb); if (token !== generation) throw SYNC_CANCELLED;
-  rows.forEach((r) => { known.add(r.id); lastSeen.set(r.id, Date.parse(r.updated_at)); });
+  rows.forEach((r) => { known.add(r.id); advance("pages", r.updated_at); });
   let choice: ConflictChoice = !linked && !meaningful && rows.some((r) => r.data && !r.deleted_at) ? "server" : "merge";
   if (!linked && meaningful && (switched || rows.some((r) => r.data && !r.deleted_at))) choice = await askConflictChoice(rows.filter((r) => r.data && !r.deleted_at).length, Object.values(useStore.getState().pages).filter((p) => !p.isDeleted && !foreignPageIds.has(p.id)).length);
   if (token !== generation) throw SYNC_CANCELLED;
@@ -327,7 +344,7 @@ async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise
     handleWorkspaceRow(workspace, true);
     const s = useStore.getState(); if (JSON.stringify(s.rootOrder) !== JSON.stringify(workspace.root_order)) queue!.enqueueWorkspace([{ op: "set_root_order", rootOrder: s.rootOrder }]);
   }
-  lastWorkspaceRevision = workspace.revision; lastWorkspaceSeen = Date.parse(workspace.updated_at);
+  lastWorkspaceRevision = workspace.revision;
   const reminders = await sb.from("reminders").select(REMINDER_COLS).eq("workspace_id", wsId).eq("user_id", user.id);
   if (reminders.error) throw reminders.error;
   const rem = mergeReminders(choice === "server" ? [] : useStore.getState().reminders ?? [], reminders.data as ReminderRow[], useStore.getState().reminders?.length ?? 0);
@@ -374,8 +391,8 @@ export function stopSync(): void {
   debounceTimer = retryTimer = deferTimer = null; unsubStore?.(); unsubStore = null;
   if (channel) void getSupabase()?.removeChannel(channel); channel = null;
   if (queue) void queue.close().catch(() => {}); queue = null; engine = null;
-  last = null; pushing = dirty = applyingRemote = false; attempts = lastWorkspaceSeen = lastWorkspaceRevision = 0;
-  known.clear(); lastSeen.clear(); lastEditAt.clear(); recentlyDeleted.clear(); deferred.clear(); setStatus("idle");
+  last = null; pushing = dirty = applyingRemote = false; attempts = lastWorkspaceRevision = 0;
+  known.clear(); for (const key of Object.keys(cursors)) delete cursors[key as PullFlow]; lastEditAt.clear(); recentlyDeleted.clear(); deferred.clear(); setStatus("idle");
 }
 export async function forceFullPush(): Promise<void> {
   if (!started || !ready || !wsId || !queue || pushing) throw new Error("Sync is not ready");

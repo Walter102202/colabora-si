@@ -2,13 +2,13 @@ import { expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import * as supabase from "@/lib/supabase";
 import { pushSharedPage } from "@/lib/shares";
-import { PageSyncEngine } from "@/lib/sync";
+import { PageSyncEngine, planPull, pullFlow } from "@/lib/sync";
 import { MemoryQueue } from "@/lib/opsQueue";
 import { applyOps, type PageOp } from "@/lib/pageOps";
 import type { Page } from "@/lib/types";
 import type { BlockConflict } from "@/lib/syncConflicts";
 import type { PageRow } from "@/lib/syncMerge";
-import { b, page, T } from "./fixtures";
+import { b, iso, page, T } from "./fixtures";
 
 function setup() {
   let server = page({ id: "p", blocks: [b("paragraph", { id: "a", html: "A", rev: 1 }), b("paragraph", { id: "b", html: "B", rev: 1 })], revision: 1 });
@@ -99,4 +99,31 @@ it("SE-9 shared-page transport preserves page conflicts and masks other failures
     await expect(pushSharedPage("p", [], "client", "key")).rejects.toBe(conflict);
     await expect(pushSharedPage("p", [], "client", "key2")).rejects.toThrow("You no longer have edit access.");
   } finally { spy.mockRestore(); }
+});
+it("PL-1 planPull subtracts the overlap", () => {
+  expect(planPull({ pages: iso(T) }, new Date(T + 60_000))).toEqual([{ flow: "pages", since: iso(T - 15_000) }]);
+});
+it("PL-2 planPull without a cursor starts from the epoch", () => {
+  expect(planPull({}, new Date(T))).toEqual([{ flow: "pages", since: new Date(0).toISOString() }]);
+});
+it("PL-3 planPull never starts after now", () => {
+  expect(planPull({ pages: iso(T + 60_000) }, new Date(T))).toEqual([{ flow: "pages", since: iso(T - 15_000) }]);
+});
+it("PL-4 pullFlow drains 500-row batches in order", async () => {
+  const rows = Array.from({ length: 1120 }, (_, i) => i), onRow = vi.fn();
+  const fetch = vi.fn(async (_since: string, from: number, to: number) => rows.slice(from, to + 1));
+  await expect(pullFlow(fetch, iso(T), onRow)).resolves.toBe(1120);
+  expect(onRow).toHaveBeenCalledTimes(1120);
+  expect(onRow.mock.calls.map(([row]) => row)).toEqual(rows);
+  expect(fetch.mock.calls).toEqual([[iso(T), 0, 499], [iso(T), 500, 999], [iso(T), 1000, 1499]]);
+});
+it("PL-5 pullFlow stops at maxBatches", async () => {
+  const fetch = vi.fn(async () => Array.from({ length: 500 }, (_, i) => i));
+  await pullFlow(fetch, iso(T), () => {}, 500, 3);
+  expect(fetch).toHaveBeenCalledTimes(3);
+});
+it("PL-6 receive applies the same revision once", () => {
+  const s = setup(), local = s.client("one"), row = { ...s.row(), revision: 2 };
+  local.engine.receive(row); local.engine.receive(row);
+  expect(local.applies()).toBe(1);
 });
