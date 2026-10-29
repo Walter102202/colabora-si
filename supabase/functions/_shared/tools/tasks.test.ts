@@ -34,6 +34,17 @@ Deno.test('claim_task surfaces task_unavailable as a ToolError the model can act
   );
 });
 
+Deno.test('submit_for_review says that a delivery waits for the last blocking answer, and which requests block', async () => {
+  const ctx = ctxWith(() => Promise.resolve({ data: null, error: { code: 'PT409', message: 'waiting_on_human', details: '{"approval_ids":["q2"]}' } }));
+  await assert.rejects(
+    () => tool('submit_for_review').handler({ run_id: 'run-1', summary: 'Done', artifact_ids: ['art-1'] }, ctx),
+    (err: unknown) => err instanceof ToolError && err.code === 'waiting_on_human' && /still has to answer/.test(err.message)
+      && JSON.stringify(err.detail) === '{"approval_ids":["q2"]}',
+  );
+  assert.match(tool('submit_for_review').description, /waiting_on_human/);
+  assert.match(tool('await_questions').description, /delivery waits/);
+});
+
 // ---------------------------------------------------------------------------
 // get_task over in-memory tables (the same fake card.test.ts uses).
 // ---------------------------------------------------------------------------

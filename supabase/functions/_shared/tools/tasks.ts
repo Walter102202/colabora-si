@@ -291,7 +291,8 @@ const awaitQuestions: ToolDef = {
   title: 'Wait on my open questions',
   description: 'Call it when only the answers to your questions asked with blocking: false are left. They start to block: the ' +
     'task becomes input_required, shows that it waits on a person, and resumes once the last one is answered. Then wait with ' +
-    'wait_for_task. From then on they block for good: end_run cancels them, while hand_over keeps them for the next session.',
+    'wait_for_task; a delivery waits for the last answer too. From then on they block for good: end_run cancels them, while ' +
+    'hand_over keeps them for the next session.',
   inputSchema: object({ run_id: { type: 'string', minLength: 1 } }, ['run_id']),
   outputSchema: output({ questions: { type: 'integer' }, task_state: { type: 'string' } }),
   annotations: WRITE_IDEMPOTENT,
@@ -399,7 +400,9 @@ const submitForReview: ToolDef = {
   title: 'Submit the task for review',
   description:
     'Delivers the run: needs at least one artifact and an artifact for every "done when" criterion that is not checked by a person. ' +
-    'Ends the run. A person (or the Lead) reviews; you never mark the task done.',
+    'Ends the run and cancels your questions still open. While a request still blocks (after await_questions, every open question ' +
+    'does) it fails with waiting_on_human and the ids of those requests: wait for their answers first. ' +
+    'A person (or the Lead) reviews; you never mark the task done.',
   inputSchema: object({
     run_id: { type: 'string', minLength: 1 },
     summary: { type: 'string', minLength: 1, maxLength: 10_000 },

@@ -2,7 +2,7 @@
 -- and an event linked to the question, the question outlives a run that sends the task back to the queue, and it
 -- dies with a task that stops, fails, is delivered or loses its agent.
 begin;
-select plan(53);
+select plan(58);
 
 select tests.fixture() as f \gset
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
@@ -266,6 +266,54 @@ select tests.reset_role();
 select is((select status from public.agent_approvals where id = :'q_eq'::uuid), 'cancelled', 'revoking the agent cancels that question');
 select is((select status from public.agent_approvals where id = :'q_dead'::uuid), 'cancelled',
           'and one left on a run that ended without cleaning up');
+
+-- O. A delivery waits for the last blocking answer, and says which requests still block.
+select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_A11','page_A12']) p;
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.create_agent_task('page_A11', '{"objective":"Deliver after two questions","done_when":[{"id":"c1","text":"Drafted","check":"lead"}]}'::jsonb,
+                                (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as t_wait \gset
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'t_wait'::uuid, 'custom') ->> 'run_id' as r_wait \gset
+select public.request_input(:'r_wait'::uuid, 'Formal or casual?', array['respond','ignore'], 'elicitation', false) ->> 'approval_id' as q_wait1 \gset
+select public.request_input(:'r_wait'::uuid, 'Add a P.S.?', array['respond','ignore'], 'elicitation', false) ->> 'approval_id' as q_wait2 \gset
+select public.add_artifact(:'r_wait'::uuid, 'page', 'page_A11', 'Draft', array['c1']) ->> 'artifact_id' as art_wait \gset
+select public.await_questions(:'r_wait'::uuid);
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.decide_approval(:'q_wait1'::uuid, 'respond', '{"text":"Casual"}'::jsonb);
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.submit_for_review(%L::uuid, %L, array[%L::uuid])', :'r_wait', 'Done', :'art_wait')),
+          'waiting_on_human', 'a delivery waits while another request still blocks');
+select is(tests.detail_of(format('select public.submit_for_review(%L::uuid, %L, array[%L::uuid])', :'r_wait', 'Done', :'art_wait'))::jsonb,
+          jsonb_build_object('approval_ids', jsonb_build_array(:'q_wait2'::text)), 'and names the requests that still block');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.decide_approval(:'q_wait2'::uuid, 'ignore');
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select is(public.submit_for_review(:'r_wait'::uuid, 'Done', array[:'art_wait'::uuid]) ->> 'task_state', 'ready_for_review',
+          'after the last answer the delivery goes through');
+select tests.reset_role();
+
+-- P. An error activity never queues a task that still waits on a person: here for a request outside the run, which
+--    no RPC leaves today.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.create_agent_task('page_A12', '{"objective":"Errs while a request outside the run blocks"}'::jsonb,
+                                (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as t_out \gset
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'t_out'::uuid, 'custom') ->> 'run_id' as r_out \gset
+select public.request_input(:'r_out'::uuid, 'Which list?') ->> 'approval_id' as q_out \gset
+select tests.reset_role();
+update public.agent_approvals set run_id = null where id = :'q_out'::uuid;
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.post_activity(:'r_out'::uuid, 'error', '{"code":"boom","message":"boom","recoverable":false}'::jsonb);
+select tests.reset_role();
+select is((select state || '/' || coalesce(waiting_on, '-') || '/' || coalesce(active_run_id::text, 'no run') from public.agent_tasks
+            where id = :'t_out'::uuid), 'input_required/human/no run', 'the task keeps waiting on the person, without the dead run');
+select is((select status from public.agent_approvals where id = :'q_out'::uuid), 'pending', 'and the request stays open');
 
 select * from finish();
 rollback;

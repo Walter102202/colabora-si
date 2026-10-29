@@ -37,7 +37,11 @@ begin
         else
           update public.agent_approvals set status = 'cancelled' where run_id = new.run_id and status = 'pending' and blocking;
           update public.agent_approvals set run_id = null where run_id = new.run_id and status = 'pending' and not blocking;
-          update public.agent_tasks set state = 'queued', active_run_id = null, waiting_on = null
+          -- A request outside the run that still blocks keeps the task waiting on a person (task_waits_on_human decides).
+          update public.agent_tasks
+             set active_run_id = null,
+                 state = case when private.task_waits_on_human(new.task_id) then 'input_required' else 'queued' end,
+                 waiting_on = case when private.task_waits_on_human(new.task_id) then 'human' end
            where id = new.task_id and state in ('working','input_required');
         end if;
       end if;
@@ -217,7 +221,8 @@ begin
 end $$;
 
 -- A delivery ends the run, so a question still open dies with it: an answer given during the review would otherwise
--- wake the agent as if the task had been handed over, and take the task out of review.
+-- wake the agent as if the task had been handed over, and take the task out of review. While a request still blocks
+-- (await_questions makes every open question block), the delivery waits for its answer and says which ones block.
 create or replace function public.submit_for_review(p_run_id uuid, p_summary text, p_artifact_ids uuid[])
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare v_r public.agent_runs%rowtype; v_t public.agent_tasks%rowtype; v_uncovered text[]; v_lead uuid; v_actor uuid;
@@ -229,6 +234,12 @@ begin
   if not found then raise exception using errcode='PT403', message='forbidden'; end if;
   if v_r.status not in ('running','waiting') then raise exception using errcode='PT422', message='run_not_active'; end if;
   select * into v_t from public.agent_tasks where id = v_r.task_id for update;
+  if v_t.state = 'input_required' and v_t.active_run_id = v_r.id and private.task_waits_on_human(v_t.id) then
+    raise exception using errcode = 'PT409', message = 'waiting_on_human',
+      detail = jsonb_build_object('approval_ids', (select coalesce(jsonb_agg(a.id order by a.created_at), '[]'::jsonb)
+                                                     from public.agent_approvals a
+                                                    where a.task_id = v_t.id and a.status = 'pending' and a.blocking))::text;
+  end if;
   if v_t.state <> 'working' or v_t.active_run_id is distinct from v_r.id then
     raise exception using errcode='PT422', message='invalid_state', detail='submit from the active run of a working task';
   end if;

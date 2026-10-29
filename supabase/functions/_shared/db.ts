@@ -105,6 +105,7 @@ const MESSAGES: Record<string, string> = {
   stop_requested: 'A person asked to stop this run. Acknowledge it with ack_stop instead of handing the task over.',
   idempotency_conflict: 'That idempotency key was already used for a different call on this task. Use a new key.',
   task_unavailable: 'The task cannot be claimed in its current state.',
+  waiting_on_human: 'A person still has to answer a request that blocks this task (ids in the detail). Wait for the answer with wait_for_task, then deliver.',
   use_partial_writes: 'Agents do not call apply_page_ops. Write with append_blocks, edit_page, update_block, add_row, update_row or add_comment.',
   task_closed: 'The task is closed.',
   invalid_state: 'The task is not in a state that allows this.',
