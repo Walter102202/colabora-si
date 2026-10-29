@@ -66,8 +66,8 @@ describe("whatWillHappen", () => {
   });
   it("explains Stop and Approve", () => {
     expect(whatWillHappen(task("working", "r"), null, "stop")).toBe("Sends stop and waits for the run to acknowledge. Nothing is reverted.");
-    expect(whatWillHappen(task("input_required"), null, "approve", { action: "send_email", params: "to: ana@example.com", artifactVersion: 2, expiresIn: "14 min" })).toBe(
-      "Runs exactly this once: send_email · to: ana@example.com · deliverable v2. Expires in 14 min.",
+    expect(whatWillHappen(task("input_required"), null, "approve", { action: "send_email", params: { to: "ana@example.com" }, artifactVersion: 2, expiresIn: "14 min" })).toBe(
+      "Send an email to ana@example.com for deliverable v2. The email leaves the workspace and cannot be recalled. Expires in 14 min.",
     );
   });
 });
