@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DecisionsHomeView } from "@/components/agents/panel";
 import type { DecisionsHomeData, HomeItem } from "@/lib/agentHome";
 
@@ -50,5 +50,19 @@ describe("DecisionsHomeView", () => {
     act(() => root.render(createElement(DecisionsHomeView, { home: empty, loading: true })));
     expect(container.querySelector('section[aria-label="Decisions"]')?.getAttribute("aria-busy")).toBe("true");
     expect(container.querySelectorAll("h2")).toHaveLength(0);
+  });
+  it("says the decisions could not load, with a retry, instead of empty sections", () => {
+    const onRetry = vi.fn();
+    act(() => root.render(createElement(DecisionsHomeView, { home: empty, error: "Failed to fetch", onRetry })));
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Could not load decisions: Failed to fetch");
+    expect(container.querySelectorAll("h2")).toHaveLength(0);
+    expect(container.textContent).not.toContain("Nothing waits for your decision.");
+    act(() => (container.querySelector("button") as HTMLButtonElement).click());
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+  it("offers no retry button without a retry callback", () => {
+    act(() => root.render(createElement(DecisionsHomeView, { home: empty, error: "Failed to fetch" })));
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    expect(container.querySelector("button")).toBeNull();
   });
 });

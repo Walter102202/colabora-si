@@ -5,6 +5,7 @@ import { useNavigate } from "react-router";
 import { taskUrl } from "@/lib/routes";
 import { Inbox } from "lucide-react";
 import { useStore } from "@/lib/store";
+import { useAuthStore } from "@/lib/auth";
 import { notificationHref, notificationText, useAgentNotifications } from "@/lib/agentNotifications";
 import { useAgentTasks, waitingOnYou } from "@/lib/agentTasks";
 import { formatRelative } from "@/lib/utils";
@@ -14,7 +15,10 @@ import { formatRelative } from "@/lib/utils";
 // notifications. Hidden without a session.
 export function InboxBell() {
   const navigate = useNavigate();
-  const userId = useStore((s) => s.syncUserId);
+  const syncUserId = useStore((s) => s.syncUserId);
+  const sessionUserId = useAuthStore((s) => s.user?.id ?? null);
+  // The persisted sync id outlives a sign-out: it counts only while it is the signed-in person's.
+  const userId = syncUserId && syncUserId === sessionUserId ? syncUserId : null;
   const subscribe = useAgentNotifications((s) => s.subscribe);
   const markRead = useAgentNotifications((s) => s.markRead);
   const notifications = useAgentNotifications((s) => s.notifications);
