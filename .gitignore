@@ -60,3 +60,6 @@ yarn-error.log*
 
 # worktrees that Claude Code nests under the checkout
 /.claude/worktrees/
+
+# Vercel CLI link (vercel link)
+/.vercel/
