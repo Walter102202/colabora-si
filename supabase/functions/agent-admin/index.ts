@@ -25,6 +25,19 @@ function callerApi(client: SupabaseClient): CallerApi {
       );
       return owned !== null;
     },
+    // Mirrors ensure_platform_agent (0017): only workspaces.owner_id counts, not a member with the owner role.
+    async isWorkspaceOwner(workspaceId, userId) {
+      const owned = unwrap(
+        await client.from('workspaces').select('id').eq('id', workspaceId).eq('owner_id', userId).maybeSingle(),
+      );
+      return owned !== null;
+    },
+    async getPlatformAgent(workspaceId) {
+      return unwrap(
+        await client.from('agents').select('id, workspace_id, auth_user_id, connection')
+          .eq('workspace_id', workspaceId).eq('is_platform', true).is('revoked_at', null).maybeSingle(),
+      ) as AgentRecord | null;
+    },
     async getAgent(agentId) {
       return unwrap(
         await client.from('agents').select('id, workspace_id, auth_user_id, connection').eq('id', agentId)

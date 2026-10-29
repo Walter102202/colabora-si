@@ -26,6 +26,7 @@ export interface AgentRow {
   created_at: string;
   updated_at: string;
   revoked_at: string | null;
+  is_platform: boolean;
 }
 
 export interface GrantRow {
@@ -71,6 +72,7 @@ export interface AgentsState {
   tokens: TokenRow[];
   load: (workspaceId?: string | null) => Promise<void>;
   createAgent: (input: NewAgentInput) => Promise<{ agentId: string; token: string }>;
+  enablePlatformAgent: () => Promise<{ agentId: string; token: string }>;
   issueToken: (agentId: string, name: string) => Promise<string>;
   revokeToken: (tokenId: string) => Promise<void>;
   grantPage: (agentId: string, pageId: string, scopes: string[], inherit: boolean) => Promise<void>;
@@ -164,6 +166,21 @@ export const useAgentsStore = create<AgentsState>()((set, get) => ({
     for (const g of input.grants) {
       await rpc("grant_agent_page", { p_agent_id: agentId, p_page_id: g.pageId, p_scopes: g.scopes, p_inherit: g.inherit });
     }
+    const token = await get().issueToken(agentId, "default");
+    await get().load();
+    return { agentId, token };
+  },
+
+  async enablePlatformAgent() {
+    const client = getAgentClient();
+    const ws = get().workspaceId;
+    if (!client || !ws) throw new Error("Sign in to manage agents.");
+    const { data, error } = await client.functions.invoke("agent-admin", {
+      body: { action: "enable_platform_agent", workspace_id: ws },
+    });
+    if (error) throw new Error(agentErrorMessage(error));
+    const agentId = (data as { agent_id?: string })?.agent_id;
+    if (!agentId) throw new Error("The Colabora agent was not enabled.");
     const token = await get().issueToken(agentId, "default");
     await get().load();
     return { agentId, token };

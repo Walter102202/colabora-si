@@ -25,6 +25,8 @@ export interface DbError {
 /** Calls made with the caller's JWT, so RLS and the RPC checks apply. */
 export interface CallerApi {
   canManageWorkspace(workspaceId: string, userId: string): Promise<boolean>;
+  isWorkspaceOwner(workspaceId: string, userId: string): Promise<boolean>;
+  getPlatformAgent(workspaceId: string): Promise<AgentRecord | null>;
   getAgent(agentId: string): Promise<AgentRecord | null>;
   rpc(fn: string, args: Record<string, unknown>): Promise<unknown>;
 }
@@ -117,12 +119,14 @@ export async function handleAgentAdmin(req: Request, deps: AgentAdminDeps): Prom
   switch (body.action) {
     case 'create_agent':
       return createAgent(body, caller, api, deps);
+    case 'enable_platform_agent':
+      return enablePlatformAgent(body, caller, api, deps);
     case 'revoke_agent':
       return revokeAgent(body, api, deps);
     case 'rotate_login':
       return rotateLogin(body, api, deps);
     default:
-      return error(400, 'invalid_request', 'action must be create_agent, revoke_agent or rotate_login.');
+      return error(400, 'invalid_request', 'action must be create_agent, enable_platform_agent, revoke_agent or rotate_login.');
   }
 }
 
@@ -213,6 +217,75 @@ async function createAgent(
   } catch (err) {
     await deps.admin.deleteUser(userId).catch(() => undefined);
     return dbFailure(err, 'The agent could not be created.');
+  }
+}
+
+async function enablePlatformAgent(
+  body: Record<string, unknown>,
+  caller: Caller,
+  api: CallerApi,
+  deps: AgentAdminDeps,
+): Promise<Response> {
+  const { workspace_id } = body;
+  if (!isUuid(workspace_id)) return error(400, 'invalid_request', 'workspace_id must be a uuid.');
+
+  let allowed = false;
+  try {
+    allowed = await api.isWorkspaceOwner(workspace_id, caller.userId);
+  } catch {
+    allowed = false;
+  }
+  if (!allowed) return error(403, 'forbidden', 'Only the workspace owner can enable the Colabora agent.');
+
+  try {
+    const existing = await api.getPlatformAgent(workspace_id);
+    if (existing) return ok({ agent_id: existing.id, auth_user_id: existing.auth_user_id, created: false });
+  } catch (err) {
+    return dbFailure(err, 'The platform agent could not be read.');
+  }
+
+  const agentId = deps.newId();
+  const appMetadata = {
+    principal_type: 'agent',
+    agent_id: agentId,
+    workspace_id,
+    provider: 'agent_token',
+    providers: ['agent_token'],
+  };
+
+  let userId: string;
+  try {
+    const user = await deps.admin.createUser({
+      email: agentEmail(agentId),
+      password: deps.randomSecret(),
+      email_confirm: true,
+      app_metadata: appMetadata,
+      user_metadata: {},
+    });
+    userId = user.id;
+  } catch {
+    return error(500, 'server_error', 'The agent user could not be created.');
+  }
+
+  try {
+    await deps.admin.updateUserById(userId, {
+      password: await agentLoginPassword(deps.loginPepper, userId),
+      app_metadata: appMetadata,
+    });
+    const result = await deps.serviceRpc('ensure_platform_agent', {
+      p_workspace_id: workspace_id,
+      p_created_by: caller.userId,
+      p_auth_user_id: userId,
+      p_id: agentId,
+    }) as { agent_id?: string; auth_user_id?: string; created?: boolean } | null;
+    if (result?.created !== true) {
+      await deps.admin.deleteUser(userId).catch(() => undefined);
+      return ok({ agent_id: result?.agent_id, auth_user_id: result?.auth_user_id, created: false });
+    }
+    return ok({ agent_id: result.agent_id, auth_user_id: userId, created: true });
+  } catch (err) {
+    await deps.admin.deleteUser(userId).catch(() => undefined);
+    return dbFailure(err, 'The platform agent could not be enabled.');
   }
 }
 

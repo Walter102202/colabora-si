@@ -342,10 +342,16 @@ select is((select data#>>'{comments,0,authorType}' from public.pages where id='s
 select isnt((select payload from rpc_results where name='agent-comment-id'),(select payload from rpc_results where name='human-comment-id'),'separate comments have distinct identifiers');
 
 
--- Integrated directory and comment delivery use the two seeded agents.
+-- Integrated directory and comment delivery use the original two seeded agents; other agents may also be present.
 select set_config('request.jwt.claims','{"sub":"00000000-0000-4000-8000-000000000001","role":"authenticated"}',true);
 set local role authenticated;
-select is((select count(*) from public.workspace_directory_v where workspace_id='00000000-0000-4000-8000-000000000010' and is_agent),2::bigint,'workspace directory includes agents without membership rows');
+select results_eq(
+  $$select user_id from public.workspace_directory_v
+    where workspace_id='00000000-0000-4000-8000-000000000010' and is_agent
+      and user_id in ('00000000-0000-4000-8000-000000000031','00000000-0000-4000-8000-000000000032')
+    order by user_id$$,
+  $$values ('00000000-0000-4000-8000-000000000031'::uuid),('00000000-0000-4000-8000-000000000032'::uuid)$$,
+  'workspace directory includes agents without membership rows');
 insert into rpc_results values('mentioned-agent',to_jsonb(public.add_page_comment('research-task-1','<span class="mention person-mention" data-user="00000000-0000-4000-8000-000000000032">@Codex</span> Check the sources')));
 select is((select count(*) from public.agent_activities where body->>'comment_id'=(select payload#>>'{}' from rpc_results where name='mentioned-agent') and type='prompt' and body->>'source'='comment'),1::bigint,'an explicit agent mention creates one comment prompt');
 select is((select count(*) from public.agent_events where payload->>'comment_id'=(select payload#>>'{}' from rpc_results where name='mentioned-agent') and type='task.feedback' and status='queued' and lease_until is null),1::bigint,'comment prompt queues an immediately available feedback event');
