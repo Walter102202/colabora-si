@@ -22,6 +22,8 @@
       "supabase/migrations/*_0017_*",
       "supabase/migrations/*_0018_*",
       "supabase/migrations/*_0019_*",
+      "supabase/migrations/*_0020_*",
+      "supabase/migrations/*_0021_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -129,6 +131,13 @@
     "a/revert-run": [
       "README.md",
       "public/llms.txt"
+    ],
+    "a/decisions-policy": [
+      "README.md",
+      "public/llms.txt"
+    ],
+    "a/decisions-home": [
+      "AGENTS.md"
     ]
   }
 }
