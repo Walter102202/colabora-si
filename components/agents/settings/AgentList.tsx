@@ -1,21 +1,9 @@
 "use client";
 
 import type { AgentRow } from "@/lib/agentsStore";
-import { formatRelative } from "@/lib/utils";
+import { agentSubtitle } from "./agentLabel";
 
 const STATUS_LABEL: Record<AgentRow["status"], string> = { enabled: "Active", paused: "Paused", disabled: "Disabled" };
-const KIND_LABEL: Record<AgentRow["kind"], string> = {
-  mcp_client: "Chat app",
-  webhook: "Webhook",
-  a2a: "A2A",
-  managed: "Managed",
-  acp_local: "Local harness",
-};
-
-export function agentSubtitle(a: AgentRow): string {
-  return `${a.is_platform ? "Platform · " : ""}${a.role === "lead" ? "Lead" : "Worker"} · ${KIND_LABEL[a.kind]} · updated ${formatRelative(Date.parse(a.updated_at))}`;
-}
-
 export function AgentList({ agents, onOpen }: { agents: AgentRow[]; onOpen: (id: string) => void }) {
   if (agents.length === 0) {
     return <p className="text-sm text-text-secondary">Register your first agent.</p>;

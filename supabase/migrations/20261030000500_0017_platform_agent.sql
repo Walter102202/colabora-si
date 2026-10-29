@@ -1,5 +1,5 @@
--- 0017_platform_agent: one managed Lead agent per workspace, "Colabora", enabled by the workspace owner from
--- Settings > Agents. It gets no page grants here: grants arrive when tasks are delegated (ensure_delegate_grants).
+-- 0017_platform_agent: one managed Lead agent per workspace, "Colabora", enabled by the workspace owner (workspaces.owner_id)
+-- from Settings > Agents. It gets no page grants here: grants arrive when tasks are delegated (ensure_delegate_grants).
 
 alter table public.agents add column is_platform boolean not null default false;
 -- One live platform agent per workspace; a revoked one may be replaced.
@@ -12,10 +12,8 @@ declare v_owner uuid; v_a public.agents%rowtype; v_id uuid;
 begin
   select owner_id into v_owner from public.workspaces where id = p_workspace_id;
   if v_owner is null then raise exception using errcode = 'PT404', message = 'not_found'; end if;
-  if p_created_by <> v_owner and not exists (
-      select 1 from public.workspace_members m where m.workspace_id = p_workspace_id and m.user_id = p_created_by and m.role = 'owner') then
-    raise exception using errcode = 'PT403', message = 'forbidden';
-  end if;
+  -- Only the workspace owner (workspaces.owner_id) enables it: the row is sponsored by v_owner, so nobody else may create it.
+  if p_created_by <> v_owner then raise exception using errcode = 'PT403', message = 'forbidden'; end if;
   select * into v_a from public.agents where workspace_id = p_workspace_id and is_platform and revoked_at is null;
   if found then
     return jsonb_build_object('agent_id', v_a.id, 'auth_user_id', v_a.auth_user_id, 'created', false);
@@ -29,7 +27,7 @@ begin
             '{"harness":"agent","model":"muse-spark-1.3","platform":true}'::jsonb, p_created_by, true)
     returning id into v_id;
   exception when unique_violation then
-    -- Two owners pressed the button at once: the other insert won. Any other unique violation (auth_user_id, 0002:10) is re-raised.
+    -- The owner pressed the button twice at once: the other insert won. Any other unique violation (auth_user_id, 0002:10) is re-raised.
     select * into v_a from public.agents where workspace_id = p_workspace_id and is_platform and revoked_at is null;
     if v_a.id is null then raise; end if;
     return jsonb_build_object('agent_id', v_a.id, 'auth_user_id', v_a.auth_user_id, 'created', false);

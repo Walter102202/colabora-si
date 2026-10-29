@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import type { Db, DbResult } from '../_shared/db.ts';
+import { fromDbError, type Db, type DbResult } from '../_shared/db.ts';
 import { AuthError, type VerifiedBearer } from '../_shared/jwt.ts';
 import { taskTools } from '../_shared/tools/tasks.ts';
-import { handleAgentWebhook, type WebhookDeps } from './handler.ts';
+import { handleAgentWebhook, statusFor, type WebhookDeps } from './handler.ts';
 
 const AGENT: VerifiedBearer = {
   token: 'agent-jwt',
@@ -100,4 +100,12 @@ Deno.test('GET is 405', async () => {
   const res = await handleAgentWebhook(new Request('http://localhost/functions/v1/agent-webhook'), deps);
   assert.equal(res.status, 405);
   await res.body?.cancel();
+});
+
+Deno.test('use_partial_writes is a 403 with its own message', () => {
+  assert.equal(statusFor('use_partial_writes'), 403);
+  assert.equal(
+    fromDbError({ code: 'PT403', message: 'use_partial_writes' }).message,
+    'Agents do not call apply_page_ops. Write with append_blocks, edit_page, update_block, add_row, update_row or add_comment.',
+  );
 });

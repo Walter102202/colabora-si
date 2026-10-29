@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 
 /**
  * @typedef {{content?: string, tool_calls?: {name: string, arguments?: Record<string, unknown>}[], usage?: {prompt_tokens: number, completion_tokens: number}}} ScriptStep
+ * @typedef {{status: number, retryAfter?: number} | {timeout: true, holdMs?: number}} StubFailure
  */
 
 /**
@@ -71,10 +72,11 @@ export function createStubModel(script, { name = "stub-model" } = {}) {
 /**
  * Local HTTP server answering `POST /chat/completions` from the script.
  * @param {ScriptStep[]} script
- * @param {{port?: number}} [opts]
+ * @param {{port?: number, failures?: StubFailure[]}} [opts]
  * @returns {Promise<{url: string, requests: any[], close: () => Promise<void>}>}
  */
-export async function startStubModelServer(script, { port = 0 } = {}) {
+export async function startStubModelServer(script, { port = 0, failures = [] } = {}) {
+  const queue = [...failures];
   /** @type {any[]} */
   const requests = [];
   const server = createServer((req, res) => {
@@ -85,8 +87,18 @@ export async function startStubModelServer(script, { port = 0 } = {}) {
         res.writeHead(404, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { message: "not found" } }));
         return;
       }
+      const f = queue.shift();
+      if (f) {
+        requests.push(JSON.parse(raw || "{}"));
+        if ("timeout" in f) {
+          setTimeout(() => res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(completionFor(undefined, 0))), f.holdMs ?? 1000);
+          return;
+        }
+        res.writeHead(f.status, { "Content-Type": "application/json", ...(f.retryAfter !== undefined ? { "Retry-After": String(f.retryAfter) } : {}) }).end(JSON.stringify({ error: { message: "scripted failure" } }));
+        return;
+      }
       requests.push(JSON.parse(raw || "{}"));
-      const body = completionFor(script[requests.length - 1], requests.length - 1);
+      const body = completionFor(script[requests.length - 1 - failures.length], requests.length - 1 - failures.length);
       res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(body));
     });
   });

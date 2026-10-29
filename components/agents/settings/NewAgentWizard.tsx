@@ -1,14 +1,12 @@
 "use client";
 
-import { useState } from "react";
-import { useStore } from "@/lib/store";
-import { HARNESS_SNIPPETS } from "@/lib/agentSnippets";
-import type { AgentKind, AgentRole, NewAgentInput } from "@/lib/agentsStore";
+import { useEffect, useRef, useState } from "react";
+import { HARNESS_SNIPPETS, snippetFor } from "@/lib/agentSnippets";
+import type { AgentKind, NewAgentInput } from "@/lib/agentsStore";
 import { ConnectionSnippet } from "@/components/agents/settings/ConnectionSnippet";
 
-const STEPS = ["Identity", "Access", "Connection", "Limits"] as const;
-const CAPABILITIES = ["start", "continue", "cancel", "events", "approval", "cost", "files"] as const;
-const SCOPES = ["read", "write", "comment"] as const;
+const STEPS = ["Harness", "Paste", "Done"] as const;
+const DEFAULT_CAPABILITIES: Record<string, boolean> = { start: false, continue: false, cancel: false, events: false, approval: true, cost: false, files: false };
 
 const HARNESS_KIND: Record<string, AgentKind> = {
   "claude-code": "acp_local",
@@ -21,39 +19,26 @@ const HARNESS_KIND: Record<string, AgentKind> = {
 };
 
 export function NewAgentWizard({ onCancel, onCreate, busy }: { onCancel: () => void; onCreate: (input: NewAgentInput) => void; busy: boolean }) {
-  const pages = useStore((s) => s.pages);
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
-  const [role, setRole] = useState<AgentRole>("worker");
   const [harness, setHarness] = useState<string>(HARNESS_SNIPPETS[0].id);
-  const [grants, setGrants] = useState<Record<string, { scopes: string[]; inherit: boolean }>>({});
-  const [capabilities, setCapabilities] = useState<Record<string, boolean>>({ start: false, continue: false, cancel: false, events: false, approval: true, cost: false, files: false });
-  const [budget, setBudget] = useState<string>("");
-  const [rate, setRate] = useState<number>(120);
+  const nameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (step === 0) nameRef.current?.focus();
+  }, [step]);
 
-  const roots = Object.values(pages).filter((p) => !p.isDeleted).sort((a, b) => a.updatedAt - b.updatedAt);
+  const snippet = snippetFor(harness);
   const canNext = step !== 0 || name.trim().length > 0;
-
-  const toggleScope = (pageId: string, scope: string) => {
-    setGrants((g) => {
-      const cur = g[pageId] ?? { scopes: [], inherit: true };
-      const scopes = cur.scopes.includes(scope) ? cur.scopes.filter((s) => s !== scope) : [...cur.scopes, scope];
-      const next = { ...g };
-      if (scopes.length === 0) delete next[pageId];
-      else next[pageId] = { ...cur, scopes };
-      return next;
-    });
-  };
 
   const submit = () => {
     onCreate({
       name: name.trim(),
       kind: HARNESS_KIND[harness] ?? "acp_local",
-      role,
-      capabilities,
-      monthly_budget_usd: budget.trim() === "" ? null : Number(budget),
-      rate_limit_per_min: rate,
-      grants: Object.entries(grants).map(([pageId, g]) => ({ pageId, scopes: g.scopes, inherit: g.inherit })),
+      role: "worker",
+      capabilities: DEFAULT_CAPABILITIES,
+      monthly_budget_usd: null,
+      rate_limit_per_min: 120,
+      grants: [],
       harness,
     });
   };
@@ -76,64 +61,29 @@ export function NewAgentWizard({ onCancel, onCreate, busy }: { onCancel: () => v
               onChange={(e) => setName(e.target.value)}
               placeholder="Codex worker"
               maxLength={80}
-              autoFocus
+              ref={nameRef}
             />
           </label>
-          <fieldset className="flex gap-4">
-            <legend className="text-text-secondary">Role</legend>
-            {(["worker", "lead"] as const).map((r) => (
-              <label key={r} className="flex items-center gap-1">
-                <input type="radio" name="role" checked={role === r} onChange={() => setRole(r)} />
-                {r === "worker" ? "Worker: does the work" : "Lead: splits, reviews, delegates"}
-              </label>
-            ))}
-          </fieldset>
+          <div className="space-y-1">
+            <label className="block text-text-secondary" htmlFor="new-agent-harness">Harness</label>
+            <select id="new-agent-harness" className="w-full rounded border border-border bg-bg px-2 py-1" value={harness} onChange={(e) => setHarness(e.target.value)}>
+              {HARNESS_SNIPPETS.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+            </select>
+          </div>
         </div>
       )}
 
       {step === 1 && (
-        <div className="space-y-2">
-          <p className="text-text-secondary">Which pages can it touch? Access covers sub-pages up to three levels.</p>
-          {roots.length === 0 && <p className="text-text-tertiary">No pages yet. You can grant access later from the agent detail.</p>}
-          <ul className="max-h-64 space-y-1 overflow-auto">
-            {roots.map((p) => (
-              <li key={p.id} className="flex items-center gap-2 rounded px-2 py-1 hover:bg-bg-secondary">
-                <span className="min-w-0 flex-1 truncate">{p.icon ? `${p.icon} ` : ""}{p.title || "Untitled"}</span>
-                {SCOPES.map((s) => (
-                  <label key={s} className="flex items-center gap-1 text-xs">
-                    <input type="checkbox" checked={grants[p.id]?.scopes.includes(s) ?? false} onChange={() => toggleScope(p.id, s)} />
-                    {s}
-                  </label>
-                ))}
-              </li>
-            ))}
-          </ul>
+        <div className="space-y-3">
+          <ConnectionSnippet harness={harness} />
+          <p className="text-text-secondary">Paste this where the recipe says, then come back and press Next.</p>
         </div>
       )}
 
-      {step === 2 && <ConnectionSnippet harness={harness} onChange={setHarness} />}
-
-      {step === 3 && (
-        <div className="space-y-3">
-          <label className="block">
-            <span className="text-text-secondary">Monthly budget (USD, empty = no cap)</span>
-            <input className="mt-1 w-40 rounded border border-border bg-bg px-2 py-1" value={budget} onChange={(e) => setBudget(e.target.value)} inputMode="decimal" />
-          </label>
-          <label className="block">
-            <span className="text-text-secondary">Calls per minute</span>
-            <input className="mt-1 w-40 rounded border border-border bg-bg px-2 py-1" type="number" min={1} value={rate} onChange={(e) => setRate(Math.max(1, Number(e.target.value) || 1))} />
-          </label>
-          <fieldset>
-            <legend className="text-text-secondary">What this connection can do</legend>
-            <div className="mt-1 flex flex-wrap gap-3">
-              {CAPABILITIES.map((c) => (
-                <label key={c} className="flex items-center gap-1 text-xs">
-                  <input type="checkbox" checked={capabilities[c] ?? false} onChange={(e) => setCapabilities({ ...capabilities, [c]: e.target.checked })} />
-                  {c}
-                </label>
-              ))}
-            </div>
-          </fieldset>
+      {step === 2 && (
+        <div className="space-y-2">
+          <p>{name} on {snippet.name}.</p>
+          <p className="text-text-secondary">Access to pages, budget and limits are set afterwards in the agent detail.</p>
         </div>
       )}
 

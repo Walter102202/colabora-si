@@ -1,5 +1,5 @@
 begin;
-select plan(9);
+select plan(10);
 
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_A2', 'page_A');
@@ -30,6 +30,8 @@ select is((select status from public.agent_approvals where id = :'q'::uuid), 'ca
 select tests.reset_role();
 select is((select state from public.agent_tasks where id = :'sub'::uuid), 'done', 'a person closes the escalated subtask');
 select is((select acceptance from public.agent_tasks where id = :'sub'::uuid), 'accepted', 'the subtask is accepted');
+select is((select count(*)::int from public.agent_events where task_id = :'parent'::uuid and type = 'task.updated'), 0,
+          'no task.updated when the parent has no delegate');
 
 -- close_subtask: only the Lead of the parent, and only by brief policy or a verified deterministic check.
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_A3','page_A4','page_A5','page_A6','page_A7']) p;

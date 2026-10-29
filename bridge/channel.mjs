@@ -29,6 +29,7 @@ const REASON_BY_TYPE = /** @type {Record<string, string>} */ ({
   "task.stop": "stop",
   "approval.decided": "approval_decided",
   "brief.updated": "brief",
+  "task.updated": "updated",
 });
 
 /**

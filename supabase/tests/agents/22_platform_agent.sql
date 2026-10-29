@@ -1,5 +1,5 @@
 begin;
-select plan(14);
+select plan(15);
 select has_column('public', 'agents', 'is_platform', 'agents.is_platform exists');
 select has_index('public', 'agents', 'agents_platform_per_workspace_uidx', 'one platform agent per workspace index exists');
 select tests.fixture() as f \gset
@@ -14,6 +14,11 @@ select tests.reset_role();
 select tests.set_service();
 select is(tests.sqlstate_of(format('select public.ensure_platform_agent(%L::uuid, %L::uuid, %L::uuid)', :'f'::jsonb->>'ws', :'f'::jsonb->>'viewer', :'pu')),
           'PT403', 'a viewer cannot enable the platform agent');
+-- A member with the owner role is not the workspace owner (workspaces.owner_id) and is refused too.
+select tests.make_user('coowner@test.local') as co \gset
+insert into public.workspace_members (workspace_id, user_id, role) values ((:'f'::jsonb->>'ws')::uuid, :'co'::uuid, 'owner');
+select is(tests.sqlstate_of(format('select public.ensure_platform_agent(%L::uuid, %L::uuid, %L::uuid)', :'f'::jsonb->>'ws', :'co', :'pu')),
+          'PT403', 'a member with the owner role who is not workspaces.owner_id cannot enable the platform agent');
 
 -- first call creates
 select public.ensure_platform_agent((:'f'::jsonb->>'ws')::uuid, (:'f'::jsonb->>'owner')::uuid, :'pu'::uuid) as r1 \gset
