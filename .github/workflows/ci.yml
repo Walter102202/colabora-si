@@ -38,10 +38,9 @@ jobs:
         run: deno task test
 
       - name: Task card is up to date (generated file is committed)
-        continue-on-error: true
         run: |
           npm run build:card
-          git diff --stat -- supabase/functions/_shared/cardHtml.ts
+          git diff --exit-code --stat -- supabase/functions/_shared/cardHtml.ts
 
       - name: Supabase CLI
         if: hashFiles('supabase/migrations/*.sql') != ''
