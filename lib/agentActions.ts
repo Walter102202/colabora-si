@@ -26,9 +26,16 @@ async function rpc<T>(name: string, args: Record<string, unknown>): Promise<T> {
   return data as T;
 }
 
-async function refresh() {
-  const ws = useAgentTasks.getState().workspaceId;
-  if (ws) await useAgentTasks.getState().load(ws);
+// After an action: reload the one task it touched (row, runs, pending approvals,
+// detail and newer activities); without a task id, the workspace's first page.
+async function refresh(taskId: string | null = null) {
+  const store = useAgentTasks.getState();
+  if (!store.workspaceId) return;
+  if (taskId) {
+    await Promise.all([store.loadTask(taskId), store.loadTaskDetail(taskId), store.loadActivities(taskId)]);
+  } else {
+    await store.load(store.workspaceId);
+  }
 }
 
 export async function createTask(
@@ -46,7 +53,7 @@ export async function createTask(
     p_depends_on_task_ids: opts.dependsOn ?? [],
     p_idempotency_key: opts.idempotencyKey ?? null,
   });
-  await refresh();
+  await refresh(res.task_id);
   return res;
 }
 
@@ -66,7 +73,7 @@ export async function sendMessage(
     p_block_ids: blockIds,
     p_comment_id: commentId,
   });
-  await refresh();
+  await refresh(taskId);
   return res;
 }
 
@@ -82,13 +89,13 @@ export async function decideApproval(
     p_decision: decision,
     p_response: response,
   });
-  await refresh();
+  await refresh(useAgentTasks.getState().approvals[approvalId]?.task_id ?? null);
   return res;
 }
 
 export async function closeTask(taskId: string, acceptance: "accepted" | "rejected", note: string | null = null): Promise<void> {
   await rpc("close_task", { p_task_id: taskId, p_acceptance: acceptance, p_note: note });
-  await refresh();
+  await refresh(taskId);
 }
 
 export async function reviewTask(
@@ -105,7 +112,7 @@ export async function reviewTask(
     p_evidence: evidence,
     p_artifact_id: artifactId,
   });
-  await refresh();
+  await refresh(taskId);
   return res;
 }
 
@@ -114,7 +121,7 @@ export async function updateBrief(
   patch: Partial<BriefInput> & { delegate_agent_id?: string | null; depends_on_task_ids?: string[] },
 ): Promise<number> {
   const version = await rpc<number>("update_brief", { p_task_id: taskId, p_patch: patch });
-  await refresh();
+  await refresh(taskId);
   return version;
 }
 

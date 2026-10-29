@@ -102,12 +102,13 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
   const activities = useAgentTasks((s) => s.activities[task.id]);
   const tasks = useAgentTasks((s) => s.tasks);
   const runs = useAgentTasks((s) => s.runs);
-  const loadBriefs = useAgentTasks((s) => s.loadBriefs);
+  const loadTaskDetail = useAgentTasks((s) => s.loadTaskDetail);
   const loadActivities = useAgentTasks((s) => s.loadActivities);
 
+  // The workspace page holds the rows; briefs, artifacts and reviews load when the panel opens.
   useEffect(() => {
-    void loadBriefs(task.id);
-  }, [task.id, task.brief_version, loadBriefs]);
+    void loadTaskDetail(task.id);
+  }, [task.id, task.brief_version, loadTaskDetail]);
   useEffect(() => {
     void loadActivities(task.id);
   }, [task.id, task.last_activity_at, loadActivities]);
