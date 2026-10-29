@@ -430,9 +430,8 @@ begin
   select * into v_t from public.agent_tasks where id = p_task_id;
   if not found then return null; end if;
   select * into v_b from public.task_briefs where task_id = v_t.id and version = v_t.brief_version;
-  if jsonb_typeof(v_b.policies -> 'require_approval') = 'array' and (v_b.policies -> 'require_approval') ? p_action then
-    return null;
-  end if;
+  -- Fails closed: one string, an element of a list or a key of an object all ask.
+  if (v_b.policies -> 'require_approval') ? p_action then return null; end if;
   if v_t.parent_task_id is not null and private.action_allowed(p_action, v_t.parent_task_id, p_depth + 1) is null then
     return null;
   end if;
@@ -595,6 +594,11 @@ begin
   if v_bad is not null then raise exception using errcode = 'PT422', message = 'field_not_allowed', detail = v_bad; end if;
 
   select * into v_b from public.task_briefs where task_id = v_t.id and version = v_t.brief_version;
+  -- A chat session acts for a person but never unlocks an action: what the brief allows or asks for is set from the app.
+  if v_author_type = 'human' and private.jwt_client_id() is not null and p_patch ? 'policies'
+     and (p_patch -> 'policies') is distinct from v_b.policies then
+    raise exception using errcode = 'PT403', message = 'direct_session_required';
+  end if;
   v_new := (to_jsonb(v_b) - 'task_id' - 'version' - 'workspace_id' - 'author_id' - 'author_type' - 'created_at' - 'preapproved_trusted')
            || (p_patch - 'delegate_agent_id' - 'depends_on_task_ids');
   perform private.validate_brief(v_new);
@@ -800,7 +804,14 @@ begin
     'source', case when v_level <> v_own then 'parent' when v_req is not null and v_own = v_req then 'task' else 'workspace' end,
     'workspace_level', private.workspace_autonomy(v_t.workspace_id),
     'auto_approved', to_jsonb(v_auto),
-    'require_approval', case when jsonb_typeof(v_b.policies->'require_approval') = 'array' then v_b.policies->'require_approval' else '[]'::jsonb end);
+    -- What the ? test of action_allowed matches, always as a list: one string, the strings of a list, the keys of an object.
+    'require_approval', to_jsonb(case jsonb_typeof(v_b.policies->'require_approval')
+      when 'string' then array[v_b.policies->>'require_approval']
+      when 'array' then array(select e #>> '{}' from jsonb_array_elements(v_b.policies->'require_approval') e where jsonb_typeof(e) = 'string')
+      when 'object' then array(select jsonb_object_keys(v_b.policies->'require_approval'))
+      else array[]::text[] end),
+    -- Whether set_task_autonomy would let the caller change the level: the workspace owner, from the app itself.
+    'can_edit', private.is_workspace_owner(v_t.workspace_id) and private.jwt_client_id() is null);
 end $$;
 
 -- Only the workspace owner, from the app itself: raising a task unlocks actions a person would otherwise approve.

@@ -2,7 +2,7 @@
 -- exceeds the parent, a workspace at ask that caps every task, recorded automatic approvals, and questions and
 -- payments that always reach a person.
 begin;
-select plan(56);
+select plan(71);
 
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A')
@@ -64,6 +64,8 @@ select ok(exists (select 1 from public.audit_events where action = 'approval.aut
                    and target->>'approval_id' = :'a1'::jsonb->>'approval_id'), 'the automatic approval is audited');
 select is((select count(*)::int from public.notifications where task_id = :'t1'::uuid and kind = 'approval_requested'), 0,
           'nobody is notified of an automatic approval');
+select is((select count(*)::int from public.agent_events where task_id = :'t1'::uuid and type = 'approval.decided'), 0,
+          'nor is the agent sent approval.decided for it');
 
 -- C. What the level does not cover still asks; require_approval in the brief beats the preset.
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
@@ -212,6 +214,57 @@ select tests.set_human(:'stranger'::uuid);
 select is(tests.error_of(format('select public.task_autonomy(%L::uuid)', :'t1')), 'not_found', 'a stranger cannot read a task autonomy');
 select is(tests.error_of(format('select public.set_task_autonomy(%L::uuid, %L)', :'t1', 'ask')), 'not_found', 'nor set it');
 select tests.reset_role();
+
+-- J. require_approval asks whatever its shape; only the owner from the app may set a task level, and task_autonomy
+--    says so; a chat session never changes the policies of a brief; trust follows who writes the preapproved list.
+select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_A9','page_A10']) p;
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.set_workspace_autonomy((:'f'::jsonb->>'ws')::uuid, 'balanced');
+select public.create_agent_task('page_A9', '{"objective":"Publish carefully","policies":{"require_approval":"publish_page"}}'::jsonb,
+                                (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as t10 \gset
+select is(public.task_autonomy(:'t10'::uuid) -> 'require_approval', '["publish_page"]'::jsonb,
+          'task_autonomy lists a require_approval written as one string');
+select is((public.task_autonomy(:'t10'::uuid) ->> 'can_edit')::boolean, true, 'the owner may set the task level');
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'t10'::uuid, 'custom') ->> 'run_id' as r10 \gset
+select is(public.request_approval(:'r10'::uuid, 'publish_page', '{"page_id":"page_A9"}'::jsonb) ->> 'status', 'pending',
+          'a require_approval written as one string still beats the preset');
+select is((public.task_autonomy(:'t10'::uuid) ->> 'can_edit')::boolean, false, 'the agent may not set it');
+select tests.reset_role();
+select tests.set_human(:'editor'::uuid);
+select is((public.task_autonomy(:'t10'::uuid) ->> 'can_edit')::boolean, false, 'nor an editor');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'mcp-client-1');
+select is((public.task_autonomy(:'t10'::uuid) ->> 'can_edit')::boolean, false, 'nor a chat session of the owner');
+select is(tests.error_of(format('select public.update_brief(%L::uuid, %L::jsonb)', :'t10', '{"policies":{}}')), 'direct_session_required',
+          'a chat session cannot change the policies of a brief');
+select is(tests.error_of(format('select public.update_brief(%L::uuid, %L::jsonb)', :'t10',
+                                '{"policies":{"require_approval":"publish_page"},"next_step":"Check the links"}')), '',
+          'it may send them back unchanged with other fields');
+select is(tests.sqlstate_of(format('insert into public.agent_task_policies (task_id, autonomy, set_by) values (%L::uuid, %L, %L::uuid)',
+                                   :'t10', 'autonomous', :'f'::jsonb->>'owner')), '42501', 'a chat session cannot write a task level directly');
+select is(tests.sqlstate_of(format('update public.agent_workspace_policies set autonomy = %L where workspace_id = %L::uuid',
+                                   'autonomous', :'f'::jsonb->>'ws')), '', 'a direct update of the workspace level runs');
+select tests.reset_role();
+select is((select autonomy from public.agent_workspace_policies where workspace_id = (:'f'::jsonb->>'ws')::uuid), 'balanced',
+          'and changes nothing');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.create_agent_task('page_A10', '{"objective":"Call the billing API"}'::jsonb, (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as t11 \gset
+select public.update_brief(:'t11'::uuid, '{"policies":{"preapproved":["send_email","http_request"]}}'::jsonb);
+select tests.reset_role();
+select is((select preapproved_trusted from public.task_briefs where task_id = :'t11'::uuid and version = 2), true,
+          'a person who changes the preapproved list from the app makes it trusted');
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'t11'::uuid, 'custom') ->> 'run_id' as r11 \gset
+select is(public.request_approval(:'r11'::uuid, 'http_request', '{"url":"https://api.example/x"}'::jsonb) -> 'auto_approved' ->> 'by', 'brief',
+          'a web request preapproved from the app runs without asking');
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select public.update_brief(:'sub'::uuid, '{"policies":{"preapproved":["send_email","publish_page"]}}'::jsonb);
+select tests.reset_role();
+select is((select preapproved_trusted from public.task_briefs where task_id = :'sub'::uuid and version = 2), false,
+          'a Lead that changes the preapproved list of its subtask leaves it untrusted');
 
 select * from finish();
 rollback;
