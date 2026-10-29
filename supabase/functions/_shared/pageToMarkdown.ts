@@ -33,6 +33,15 @@ export function htmlToText(html: string): string {
 
 const MARKS: Record<string, string> = { strong: '**', b: '**', em: '*', i: '*', code: '`', s: '~~', del: '~~', strike: '~~' };
 
+/** Link targets an agent may follow: http(s), mailto, and in-app page paths. Anything else drops the link and keeps the text. */
+export function safeMarkdownHref(raw: string | undefined): string | null {
+  const value = (raw ?? '').trim();
+  if (/^\/p\/[A-Za-z0-9_-]+$/.test(value)) return value;
+  if (/^mailto:[^\s<>"']+$/i.test(value)) return value;
+  if (/^https?:\/\/[^\s<>"']+$/i.test(value)) return value;
+  return null;
+}
+
 /** Inline HTML (the sanitizer's subset) to Markdown. */
 export function htmlToMarkdown(html: string): string {
   let out = '';
@@ -61,8 +70,13 @@ export function htmlToMarkdown(html: string): string {
         continue;
       }
       if (tag === 'a') {
-        out += '[';
-        stack.push({ tag, close: `](${a.href ?? ''})` });
+        const href = safeMarkdownHref(a.href);
+        if (href) {
+          out += '[';
+          stack.push({ tag, close: `](${href})` });
+        } else {
+          stack.push({ tag, close: '' });
+        }
       } else if (MARKS[tag]) {
         out += MARKS[tag];
         stack.push({ tag, close: MARKS[tag] });
@@ -159,7 +173,7 @@ function renderBlock(b: Block, ctx: RenderContext, depth = 0, counters: number[]
     counters.length = Math.min(counters.length, indent);
   }
   const unknown: string[] = UNREPRESENTABLE_TYPES.has(b.type) ? [b.id] : [];
-  const done = (markdown: string): Rendered => ({ markdown, unknown });
+  const done = (markdown: string): Rendered => ({ markdown: markdown.replace(/<!--[\s\S]*?-->/g, ''), unknown });
   switch (b.type) {
     case 'paragraph':
       return done(`${pad}${text}`);
