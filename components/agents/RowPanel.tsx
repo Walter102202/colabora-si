@@ -12,7 +12,6 @@ import {
   latestReviewFor,
   lastCheckpointFor,
   pendingApprovalFor,
-  openQuestionsFor,
   taskForPage,
   useAgentTasks,
   type TaskRow,
@@ -21,7 +20,7 @@ import { briefFromRow, closeTask, createTask, decideApproval, getTaskAutonomy, s
 import { continuityFrom } from "@/lib/agentContinuity";
 import type { TaskAutonomy } from "@/lib/agentAutonomy";
 import type { TaskDiff } from "@/lib/agentRunDiff";
-import { approvalIdFromHash } from "@/lib/agentCard";
+import { approvalIdFromHash, openQuestionsFor } from "@/lib/agentCard";
 import { AssignView, TaskView, type SubtaskItem } from "@/components/agents/panel";
 
 // Agent layer plug. Mounted by the page view of a database row, under the row
@@ -104,7 +103,7 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
   const run = useAgentTasks((s) => activeRunFor(s, task));
   const approval = useAgentTasks((s) => pendingApprovalFor(s, task.id, focusApprovalId));
   const approvals = useAgentTasks((s) => s.approvals);
-  const openQuestions = useMemo(() => openQuestionsFor(approvals, task.id), [approvals, task.id]);
+  const openQuestions = useMemo(() => openQuestionsFor(approvals, task.id, approval?.id ?? null), [approvals, task.id, approval?.id]);
   const artifact = useAgentTasks((s) => currentArtifactFor(s, task.id));
   const review = useAgentTasks((s) => latestReviewFor(s, task.id));
   const brief = useAgentTasks((s) => currentBriefFor(s, task));

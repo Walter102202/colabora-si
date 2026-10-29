@@ -7,7 +7,9 @@ import type { CardActions } from "@/components/agents/card/Card";
 // Fake data for `apps/card.html?mock=<scenario>`: renders the card without a
 // host, so the views can be checked in a browser. Scenarios: 1 (ready for
 // review, Lead review attached), approval (irreversible action), question
-// (elicitation), done, list (waiting on you), denied (server wants the app).
+// (elicitation), side-question (asked without blocking, the run keeps going),
+// diff (changes of the runs), handover (checkpoint and handover), done,
+// list (waiting on you), denied (server wants the app).
 
 const APP_URL = "https://colabora.example";
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
@@ -123,7 +125,7 @@ export function mockCard(scenario: string): CardData {
     case "question":
       return { ...base, task: { ...task, state: "input_required", waiting_on: "human", active_run_id: run.id }, run, approval: question };
     case "side-question":
-      return { ...base, task: { ...task, state: "working", waiting_on: null, active_run_id: run.id }, run, approval: null,
+      return { ...base, task: { ...task, state: "working", waiting_on: null, active_run_id: run.id }, run: { ...run, status: "running" }, approval: null,
         questions: [{ ...question, id: "ap-side", params: {}, question: "Should the summary mention the two rows we merged?", blocking: false }] };
     case "done":
       return { ...base, task: { ...task, state: "done", acceptance: "accepted", closed_at: minutesAgo(1), closed_by: "u1" } };

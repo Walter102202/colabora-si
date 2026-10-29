@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { MessageSignal } from "@/lib/agentActions";
-import { approvalLink, cardDataFrom, pageLink, taskLink, toolFailure, type CardData, type TaskCardData, type WaitingItem, type WaitingListData } from "@/lib/agentCard";
+import { approvalLink, cardDataFrom, openQuestionsFor, pageLink, taskLink, toolFailure, type CardData, type TaskCardData, type WaitingItem, type WaitingListData } from "@/lib/agentCard";
 import type { ToolResult } from "@/lib/agentCardHost";
 import { TaskView, type SubtaskItem } from "@/components/agents/panel";
 import { WaitingList } from "@/components/agents/card/WaitingList";
@@ -159,7 +159,7 @@ function TaskCard({
       agent={agent}
       run={data.run}
       approval={approval}
-      openQuestions={data.questions ?? []}
+      openQuestions={data.approvals_pending ? openQuestionsFor(data.approvals_pending, task.id, approval?.id ?? null) : (data.questions ?? [])}
       autonomy={data.autonomy ?? null}
       onDecideQuestion={async (id, decision, response) => {
         const result = await call("decide_approval", { approval_id: id, decision, ...(response ? { response } : {}) }, link);

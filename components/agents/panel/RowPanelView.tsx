@@ -62,7 +62,7 @@ export interface TaskViewProps {
   onHandOver?: (toAgentId: string | null, note: string) => Promise<void>;
   // Approval a deep link (#approval-<id>) asked to land on, if any.
   focusApprovalId?: string | null;
-  // Questions that do not block (request_input blocking false), each answered by its own id.
+  // The other pending questions, each answered by its own id: those asked with blocking false and those waiting behind `approval`.
   openQuestions?: ApprovalRow[];
   // What the task may do without asking; the select appears only with onSetAutonomy (not in the chat card).
   autonomy?: TaskAutonomy | null;
@@ -267,7 +267,7 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
         : <DecisionCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />)}
 
       {openQuestions.map((q) => (
-        <DecisionCard key={q.id} approval={q} nonBlocking focus={focusApprovalId === q.id}
+        <DecisionCard key={q.id} approval={q} nonBlocking={q.blocking === false} focus={focusApprovalId === q.id}
           onDecide={(decision, response) => (onDecideQuestion ? onDecideQuestion(q.id, decision, response) : Promise.resolve())} />
       ))}
 

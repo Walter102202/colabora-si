@@ -461,12 +461,6 @@ export function pendingApprovalFor(state: AgentTasksState, taskId: string, prefe
   return pending.sort((a, b) => a.created_at.localeCompare(b.created_at))[0] ?? null;
 }
 
-// Questions an agent asked with blocking false: the task keeps working while they wait. Oldest first.
-export function openQuestionsFor(approvals: Record<string, ApprovalRow>, taskId: string): ApprovalRow[] {
-  return Object.values(approvals)
-    .filter((a) => a.task_id === taskId && a.status === "pending" && a.blocking === false)
-    .sort((a, b) => a.created_at.localeCompare(b.created_at));
-}
 
 export function activeRunFor(state: AgentTasksState, task: TaskRow): RunRow | null {
   return task.active_run_id ? (state.runs[task.active_run_id] ?? null) : null;

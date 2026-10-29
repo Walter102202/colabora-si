@@ -3,6 +3,9 @@ import { TASK_STATE_LABEL } from "@/lib/agentState";
 import { expiresIn } from "@/lib/agentTaskText";
 import { formatRelative } from "@/lib/utils";
 
+// A task that waits only on side questions has no approval; its first question carries the text.
+const questionOf = (item: WaitingItem) => item.approval?.question || item.questions?.[0]?.question || "";
+
 // Compact list of the tasks that wait on the person (list_waiting_on_me).
 // Pure: "Show" loads the task card in place, "Open" goes to the app.
 export function WaitingList({
@@ -27,7 +30,7 @@ export function WaitingList({
               <p className="truncate font-medium">{item.title || "Untitled task"}</p>
               <p className="text-xs text-text-secondary">
                 {WAITING_REASON_LABEL[item.reason]}
-                {item.approval?.question ? `: ${item.approval.question}` : ""}
+                {questionOf(item) && `: ${questionOf(item)}`}
               </p>
               <p className="text-xs text-text-tertiary">
                 {TASK_STATE_LABEL[item.state]} · {item.agent_name ?? "no agent"}

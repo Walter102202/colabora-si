@@ -32,6 +32,8 @@ export interface TaskCardData {
   approval: ApprovalRow | null;
   // Questions asked with blocking false, oldest first; the task keeps working.
   questions?: ApprovalRow[];
+  // Every pending approval of the task, oldest first (get_task's bundle); the card lists the questions beyond `approval` from it.
+  approvals_pending?: ApprovalRow[];
   autonomy?: TaskAutonomy | null;
   artifact: ArtifactRow | null;
   review: ReviewRow | null;
@@ -142,6 +144,15 @@ export function approvalIdFromHash(hash: string): string | null {
 
 export function pageLink(appUrl: string, pageId: string): string {
   return `${appUrl.replace(/\/+$/, "")}${pageUrl(pageId)}`;
+}
+
+// The pending questions of a task other than the approval already shown, oldest first: those asked with
+// blocking false and those waiting behind it once await_questions made them block. Actions show one at a time.
+// Takes the store's map or the card's list; pure, so the card bundle can use it without the store.
+export function openQuestionsFor(approvals: Record<string, ApprovalRow> | ApprovalRow[], taskId: string, shownId: string | null = null): ApprovalRow[] {
+  return Object.values(approvals)
+    .filter((a) => a.task_id === taskId && a.status === "pending" && a.kind !== "action" && a.id !== shownId)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 
 export const WAITING_REASON_LABEL: Record<WaitingReason, string> = {
