@@ -29,10 +29,16 @@ begin
       if coalesce((new.body->>'recoverable')::boolean, true) = false then
         update public.agent_runs set status = 'error', ended_at = now(), error_message = new.body->>'message'
           where id = new.run_id and status in ('running','waiting');
+        -- The run's requests end as with end_run: all of them when the task fails; otherwise a question that does not
+        -- block outlives the run, detached, and the task goes back to the queue even if it waited on a person.
         if coalesce((new.body->>'terminal')::boolean, false) then
+          update public.agent_approvals set status = 'cancelled' where run_id = new.run_id and status = 'pending';
           update public.agent_tasks set state = 'failed', active_run_id = null where id = new.task_id and state <> 'done';
         else
-          update public.agent_tasks set state = 'queued', active_run_id = null where id = new.task_id and state = 'working';
+          update public.agent_approvals set status = 'cancelled' where run_id = new.run_id and status = 'pending' and blocking;
+          update public.agent_approvals set run_id = null where run_id = new.run_id and status = 'pending' and not blocking;
+          update public.agent_tasks set state = 'queued', active_run_id = null, waiting_on = null
+           where id = new.task_id and state in ('working','input_required');
         end if;
       end if;
     else null;
@@ -97,11 +103,15 @@ grant execute on function public.await_questions(uuid) to authenticated;
 
 create or replace function public.decide_approval(p_approval_id uuid, p_decision text, p_response jsonb default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
-declare v_a public.agent_approvals%rowtype; v_t public.agent_tasks%rowtype; v_receipt uuid; v_params jsonb;
+declare v_a public.agent_approvals%rowtype; v_t public.agent_tasks%rowtype; v_receipt uuid; v_params jsonb; v_run uuid; v_task uuid;
 begin
   if private.principal_type() <> 'human' then raise exception using errcode='PT403', message='humans_only'; end if;
-  select * into v_a from public.agent_approvals where id = p_approval_id for update;
+  -- Run, task, then approval: the order the agent's RPCs lock them in, so an answer never deadlocks with the agent.
+  select run_id, task_id into v_run, v_task from public.agent_approvals where id = p_approval_id;
   if not found then raise exception using errcode='PT404', message='not_found'; end if;
+  if v_run is not null then perform 1 from public.agent_runs where id = v_run for update; end if;
+  perform 1 from public.agent_tasks where id = v_task for update;
+  select * into v_a from public.agent_approvals where id = p_approval_id for update;
   select * into v_t from public.agent_tasks where id = v_a.task_id;
   if not private.can_write_page(v_t.row_page_id, v_t.workspace_id) then raise exception using errcode='PT403', message='forbidden'; end if;
   if v_a.status <> 'pending' then raise exception using errcode='PT409', message='approval_not_pending'; end if;
@@ -128,8 +138,9 @@ begin
   values (v_t.workspace_id, v_t.id, v_a.run_id, private.next_seq(v_t.id), 'prompt',
           jsonb_build_object('signal','feedback','source','row_panel','approval_id',v_a.id,'decision',p_decision,
                              'text', coalesce(p_response->>'text',''), 'blocking', v_a.blocking, 'question', left(v_a.question, 280)), 'human', (select auth.uid()));
-  -- A question that does not block never paused the run or the task: nothing to resume.
-  if v_a.blocking then
+  -- A question that does not block never paused the run or the task: nothing to resume. Nor does an answer while
+  -- another request still blocks: the task keeps waiting on a person until the last one.
+  if v_a.blocking and not private.task_waits_on_human(v_t.id) then
     update public.agent_runs  set status='running' where id = v_a.run_id and status='waiting';
     update public.agent_tasks set state = case when active_run_id is not null then 'working' else 'queued' end, waiting_on=null
      where id = v_t.id and state='input_required';
@@ -205,6 +216,57 @@ begin
   return jsonb_build_object('task_state', (select state from public.agent_tasks where id = v_r.task_id));
 end $$;
 
+-- A delivery ends the run, so a question still open dies with it: an answer given during the review would otherwise
+-- wake the agent as if the task had been handed over, and take the task out of review.
+create or replace function public.submit_for_review(p_run_id uuid, p_summary text, p_artifact_ids uuid[])
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_r public.agent_runs%rowtype; v_t public.agent_tasks%rowtype; v_uncovered text[]; v_lead uuid; v_actor uuid;
+begin
+  v_actor := private.task_actor_agent_id();
+  if v_actor is null then raise exception using errcode='PT403', message='agent_disabled'; end if;
+  perform private.check_rate(v_actor);
+  select * into v_r from public.agent_runs where id = p_run_id and agent_id = v_actor for update;
+  if not found then raise exception using errcode='PT403', message='forbidden'; end if;
+  if v_r.status not in ('running','waiting') then raise exception using errcode='PT422', message='run_not_active'; end if;
+  select * into v_t from public.agent_tasks where id = v_r.task_id for update;
+  if v_t.state <> 'working' or v_t.active_run_id is distinct from v_r.id then
+    raise exception using errcode='PT422', message='invalid_state', detail='submit from the active run of a working task';
+  end if;
+  if coalesce(array_length(p_artifact_ids,1),0) = 0 then raise exception using errcode='PT422', message='artifact_required'; end if;
+  if exists (select 1 from unnest(p_artifact_ids) x where not exists (
+       select 1 from public.agent_artifacts a where a.id = x and a.task_id = v_t.id)) then
+    raise exception using errcode='PT404', message='artifact_not_found';
+  end if;
+
+  select array_agg(c->>'id') into v_uncovered
+    from public.task_briefs b, jsonb_array_elements(b.done_when) c
+   where b.task_id = v_t.id and b.version = v_r.brief_version and c->>'check' <> 'human'
+     and not exists (select 1 from public.agent_artifacts a where a.id = any(p_artifact_ids) and (c->>'id') = any(a.satisfies));
+  if v_uncovered is not null then
+    raise exception using errcode='PT422', message='criteria_uncovered', detail=to_jsonb(v_uncovered)::text;
+  end if;
+
+  insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, author_type, author_id)
+  values (v_t.workspace_id, v_t.id, v_r.id, private.next_seq(v_t.id), 'response',
+          jsonb_build_object('text',p_summary,'artifact_ids',to_jsonb(p_artifact_ids),'submit',true), 'agent', v_r.agent_id);
+  update public.agent_runs  set status='completed', ended_at=now() where id = v_r.id;
+  update public.agent_approvals set status = 'cancelled' where run_id = v_r.id and status = 'pending';
+  update public.agent_tasks set state='ready_for_review', review_state='pending', active_run_id=null, waiting_on=null where id = v_t.id;
+
+  select p.delegate_agent_id into v_lead from public.agent_tasks p join public.agents a on a.id=p.delegate_agent_id
+   where p.id = v_t.parent_task_id and a.role='lead';
+  if v_lead is not null then
+    insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
+    values (v_t.workspace_id, v_t.parent_task_id, null, v_lead, 'task.continue',
+            jsonb_build_object('review_of', v_t.id, 'artifact_ids', to_jsonb(p_artifact_ids)), private.next_event_seq(v_t.parent_task_id));
+  else
+    insert into public.notifications (workspace_id, user_id, kind, page_id, task_id, actor_id, payload)
+    values (v_t.workspace_id, v_t.owner_user_id, 'ready_for_review', v_t.row_page_id, v_t.id, v_r.agent_id,
+            jsonb_build_object('summary', left(p_summary, 280)));
+  end if;
+  return jsonb_build_object('task_state','ready_for_review');
+end $$;
+
 create or replace function public.heartbeat(p_run_id uuid, p_usage jsonb default null, p_after_seq bigint default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare v_r public.agent_runs%rowtype; v_from bigint;
@@ -250,10 +312,12 @@ begin
     values (v_run.workspace_id, v_run.task_id, v_run.id, p_agent_id, 'task.stop', jsonb_build_object('reason', 'agent_revoked'),
             private.next_event_seq(v_run.task_id));
   end loop;
-  -- Questions that do not block outlive their run, detached from it; revoking the agent ends them too.
-  update public.agent_approvals set status = 'cancelled'
-   where status = 'pending' and run_id is null
-     and task_id in (select id from public.agent_tasks where delegate_agent_id = p_agent_id);
+  -- Questions that do not block outlive their run, detached from it, and a run that ended without cleaning up (an
+  -- error, housekeeping) leaves its own; revoking the agent ends them too.
+  update public.agent_approvals ap set status = 'cancelled'
+   where ap.status = 'pending'
+     and ap.task_id in (select id from public.agent_tasks where delegate_agent_id = p_agent_id)
+     and not exists (select 1 from public.agent_runs r where r.id = ap.run_id and r.status in ('running','waiting'));
   update public.agent_tasks set state = 'input_required', waiting_on = 'human', active_run_id = null, updated_at = now()
    where delegate_agent_id = p_agent_id and state in ('queued','working','input_required');
   perform private.audit(v_a.workspace_id, 'agent.revoke', jsonb_build_object('agent_id', p_agent_id, 'reason', p_reason));

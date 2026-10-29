@@ -1,8 +1,8 @@
 -- Questions that do not block: the task keeps its state, the run keeps running, the answer arrives as an activity
 -- and an event linked to the question, the question outlives a run that sends the task back to the queue, and it
--- dies with a task that stops, fails or loses its agent.
+-- dies with a task that stops, fails, is delivered or loses its agent.
 begin;
-select plan(37);
+select plan(53);
 
 select tests.fixture() as f \gset
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
@@ -77,9 +77,8 @@ select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent
 select public.claim_task(:'task'::uuid, 'custom') ->> 'run_id' as run2 \gset
 select is((select run_id from public.agent_approvals where id = :'q2'::uuid), :'run2'::uuid,
           'the claim binds the question answered while no run was active to the new run');
-select is((select response->>'text' from public.agent_approvals
-            where id = :'q2'::uuid and decided_at >= (select max(ended_at) from public.agent_runs where task_id = :'task'::uuid)),
-          'Yes, a short one', 'the new run reads the late answer, newer than the end of the last run');
+select is((select status || '/' || (response->>'text') from public.agent_approvals where id = :'q2'::uuid),
+          'decided/Yes, a short one', 'the late answer stays on the question bound to the new run');
 select public.request_input(:'run2'::uuid, 'Which date?') ->> 'approval_id' as q3 \gset
 select public.end_run(:'run2'::uuid, 'completed');
 select tests.reset_role();
@@ -173,6 +172,100 @@ select is((select status from public.agent_approvals where id = :'q_fail'::uuid)
           'a run that fails the task cancels its question that does not block');
 select is((select status from public.agent_approvals where id = :'q_rev'::uuid), 'cancelled',
           'revoking the agent cancels its detached question');
+
+-- K. With two questions awaited, answering one keeps the task waiting on a person; the last answer resumes it.
+select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A')
+  from unnest(array['page_A5','page_A6','page_A7','page_A8','page_A9','page_A10']) p;
+select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+third@agents.invalid', 'worker', 'page_A') as a3 \gset
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.create_agent_task('page_A5', '{"objective":"Two questions"}'::jsonb, (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as t_two \gset
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'t_two'::uuid, 'custom') ->> 'run_id' as r_two \gset
+select public.request_input(:'r_two'::uuid, 'Formal or casual?', array['respond','ignore'], 'elicitation', false) ->> 'approval_id' as q_two1 \gset
+select public.request_input(:'r_two'::uuid, 'Add a P.S.?', array['respond','ignore'], 'elicitation', false) ->> 'approval_id' as q_two2 \gset
+select public.await_questions(:'r_two'::uuid);
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.decide_approval(:'q_two1'::uuid, 'respond', '{"text":"Casual"}'::jsonb);
+select tests.reset_role();
+select is((select t.state || '/' || r.status from public.agent_tasks t join public.agent_runs r on r.id = t.active_run_id
+            where t.id = :'t_two'::uuid), 'input_required/waiting', 'answering one of two awaited questions keeps the task and the run waiting');
+select is((select blocking::text || '/' || status from public.agent_approvals where id = :'q_two2'::uuid), 'true/pending',
+          'the other question still blocks');
+select ok(exists (select 1 from public.agent_activities where task_id = :'t_two'::uuid and type = 'prompt' and body->>'approval_id' = :'q_two1'),
+          'the first answer still reaches the agent');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.decide_approval(:'q_two2'::uuid, 'ignore');
+select tests.reset_role();
+select is((select t.state || '/' || r.status from public.agent_tasks t join public.agent_runs r on r.id = t.active_run_id
+            where t.id = :'t_two'::uuid), 'working/running', 'the last answer resumes the task and the run');
+
+-- L. Only the run's agent makes its questions block.
+select tests.set_agent((:'a3'::jsonb->>'user')::uuid, (:'a3'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.await_questions(%L::uuid)', :'r_two')), 'forbidden', 'another agent cannot make my questions block');
+select tests.reset_role();
+select tests.set_anon();
+select is(tests.sqlstate_of(format('select public.await_questions(%L::uuid)', :'r_two')), '42501', 'a signed-out caller cannot call await_questions');
+select tests.reset_role();
+
+-- M. A delivery ends the run: a question still open dies with it, so a late answer cannot take the task out of review.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.create_agent_task('page_A6', '{"objective":"Deliver with a question open","done_when":[{"id":"c1","text":"Plan drafted","check":"lead"}]}'::jsonb,
+                                (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as t_sub \gset
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'t_sub'::uuid, 'custom') ->> 'run_id' as r_sub \gset
+select public.request_input(:'r_sub'::uuid, 'Add a P.S.?', array['respond','ignore'], 'elicitation', false) ->> 'approval_id' as q_sub \gset
+select public.add_artifact(:'r_sub'::uuid, 'page', 'page_A6', 'Plan', array['c1']) ->> 'artifact_id' as art_sub \gset
+select public.submit_for_review(:'r_sub'::uuid, 'Done', array[:'art_sub'::uuid]);
+select tests.reset_role();
+select is((select status from public.agent_approvals where id = :'q_sub'::uuid), 'cancelled', 'submit_for_review cancels a question still open');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('select public.decide_approval(%L::uuid, %L, %L::jsonb)', :'q_sub', 'respond', '{"text":"Yes"}')),
+          'approval_not_pending', 'nobody can answer it any more');
+select tests.reset_role();
+select is((select state from public.agent_tasks where id = :'t_sub'::uuid), 'ready_for_review', 'the task stays under review');
+
+-- N. A run that an error activity ends treats its questions like end_run; revoking the agent ends what is left.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.create_agent_task('page_A7', '{"objective":"Fails by an error activity"}'::jsonb, (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as t_ef \gset
+select public.create_agent_task('page_A8', '{"objective":"Waits, then errs"}'::jsonb, (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as t_eb \gset
+select public.create_agent_task('page_A9', '{"objective":"Requeued by an error activity"}'::jsonb, (:'a3'::jsonb->>'agent')::uuid) ->> 'task_id' as t_eq \gset
+select public.create_agent_task('page_A10', '{"objective":"Run closed by housekeeping"}'::jsonb, (:'a3'::jsonb->>'agent')::uuid) ->> 'task_id' as t_dead \gset
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'t_ef'::uuid, 'custom') ->> 'run_id' as r_ef \gset
+select public.request_input(:'r_ef'::uuid, 'Which font?', array['respond','ignore'], 'elicitation', false) ->> 'approval_id' as q_ef \gset
+select public.post_activity(:'r_ef'::uuid, 'error', '{"code":"boom","message":"boom","recoverable":false,"terminal":true}'::jsonb);
+select public.claim_task(:'t_eb'::uuid, 'custom') ->> 'run_id' as r_eb \gset
+select public.request_input(:'r_eb'::uuid, 'Which list?') ->> 'approval_id' as q_eb \gset
+select public.post_activity(:'r_eb'::uuid, 'error', '{"code":"boom","message":"boom","recoverable":false}'::jsonb);
+select tests.reset_role();
+select tests.set_agent((:'a3'::jsonb->>'user')::uuid, (:'a3'::jsonb->>'agent')::uuid);
+select public.claim_task(:'t_eq'::uuid, 'custom') ->> 'run_id' as r_eq \gset
+select public.request_input(:'r_eq'::uuid, 'Which region?', array['respond','ignore'], 'elicitation', false) ->> 'approval_id' as q_eq \gset
+select public.post_activity(:'r_eq'::uuid, 'error', '{"code":"boom","message":"boom","recoverable":false}'::jsonb);
+select public.claim_task(:'t_dead'::uuid, 'custom') ->> 'run_id' as r_dead \gset
+select public.request_input(:'r_dead'::uuid, 'Which date?', array['respond','ignore'], 'elicitation', false) ->> 'approval_id' as q_dead \gset
+select tests.reset_role();
+-- What housekeeping does to a run stopped without an acknowledgement: run and task end, the question stays.
+update public.agent_runs set status = 'cancelled', ended_at = now() where id = :'r_dead'::uuid;
+update public.agent_tasks set state = 'cancelled', active_run_id = null where id = :'t_dead'::uuid;
+select is((select state from public.agent_tasks where id = :'t_ef'::uuid), 'failed', 'a terminal error activity fails the task');
+select is((select status from public.agent_approvals where id = :'q_ef'::uuid), 'cancelled',
+          'and cancels its question that does not block');
+select is((select state || '/' || coalesce(waiting_on, '-') from public.agent_tasks where id = :'t_eb'::uuid), 'queued/-',
+          'an error activity sends a task that waited on a person back to the queue');
+select is((select status from public.agent_approvals where id = :'q_eb'::uuid), 'cancelled', 'and cancels the question that blocked');
+select is((select status || '/' || coalesce(run_id::text, 'detached') from public.agent_approvals where id = :'q_eq'::uuid), 'pending/detached',
+          'a question that does not block outlives an error activity that requeues the task, detached from the run');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.revoke_agent((:'a3'::jsonb->>'agent')::uuid, 'no longer needed');
+select tests.reset_role();
+select is((select status from public.agent_approvals where id = :'q_eq'::uuid), 'cancelled', 'revoking the agent cancels that question');
+select is((select status from public.agent_approvals where id = :'q_dead'::uuid), 'cancelled',
+          'and one left on a run that ended without cleaning up');
 
 select * from finish();
 rollback;
