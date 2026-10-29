@@ -551,3 +551,203 @@ begin
 end $$;
 
 -- ============ review and revert (appended by a/revert-run) ============
+
+create or replace function private.after_revs(p_body jsonb)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare v_data jsonb; v_id text; v_result jsonb := '{}'; v_row jsonb;
+begin
+  select data into v_data from public.pages where id = p_body->>'page_id';
+  for v_id in select jsonb_array_elements_text(coalesce(p_body->'block_ids', '[]')) loop
+    v_result := v_result || jsonb_build_object(v_id, v_data #> (private.block_path(v_data, v_id) || array['rev']));
+  end loop;
+  if p_body->>'row_id' is not null then
+    select value into v_row from jsonb_array_elements(coalesce(v_data->'database'->'rows', '[]')) where value->>'id' = p_body->>'row_id';
+    v_result := v_result || jsonb_build_object('row:' || (p_body->>'row_id'), v_row->'rev');
+  end if;
+  return v_result;
+end $$;
+
+create or replace function private.pw_activity(p_run uuid, p_body jsonb, p_inverse jsonb)
+returns void language plpgsql security definer set search_path = '' as $$
+declare v_r public.agent_runs%rowtype;
+begin
+  if p_run is null then return; end if;
+  select * into v_r from public.agent_runs where id = p_run;
+  insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, inverse_ops, author_type, author_id)
+  values (v_r.workspace_id, v_r.task_id, v_r.id, private.next_seq(v_r.task_id), 'action',
+    p_body || jsonb_build_object('after_revs', private.after_revs(p_body)), p_inverse, 'agent', v_r.agent_id);
+end $$;
+
+-- Collapse successive inverse patches: the earliest value of each property wins.
+create or replace function private.run_revert_items(p_run_id uuid)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare v_a public.agent_activities%rowtype; v_map jsonb := '{}'; v_candidates jsonb; v_op jsonb; v_item jsonb; v_old jsonb;
+        v_key text; v_page text; v_id text; v_kind text; v_change text; v_rev jsonb; v_ops jsonb; v_patch jsonb;
+        v_result jsonb := '[]'; v_data jsonb; v_current jsonb; v_status text; v_task uuid; v_row_page text;
+begin
+  select t.id, t.row_page_id into v_task, v_row_page from public.agent_runs r join public.agent_tasks t on t.id = r.task_id where r.id = p_run_id;
+  for v_a in select * from public.agent_activities where run_id = p_run_id and type = 'action' and author_type = 'agent'
+    and (inverse_ops is not null or body->>'op' = 'external') order by seq
+  loop
+    v_page := coalesce(v_a.body->>'page_id', v_row_page);
+    v_candidates := coalesce(v_a.inverse_ops, '[]');
+    if v_a.body->>'op' = 'add_row' then v_candidates := jsonb_build_array(jsonb_build_object('op', 'row_added', 'rowId', v_a.body->'row_id')); end if;
+    if v_a.body->>'op' = 'external' then v_candidates := jsonb_build_array(jsonb_build_object('op', 'external', 'id', v_a.body->'external_op_id')); end if;
+    for v_op in select value from jsonb_array_elements(v_candidates) loop
+      v_id := null; v_rev := null; v_ops := '[]'; v_kind := null; v_change := 'manual';
+      if v_a.body->>'op' = 'append_blocks' and v_op->>'op' = 'delete_block' then
+        v_kind := 'block'; v_id := v_op->>'id'; v_change := 'added'; v_ops := jsonb_build_array(v_op);
+      elsif v_a.body->>'op' = 'edit_block' and v_op->>'op' = 'update_block' then
+        v_kind := 'block'; v_id := v_op->>'id'; v_change := 'edited'; v_ops := jsonb_build_array(v_op);
+      elsif v_a.body->>'op' = 'set_cells' then
+        if v_op->>'op' = 'db_cell_set' then
+          v_kind := 'row'; v_id := v_op->>'rowId'; v_change := 'cells'; v_ops := jsonb_build_array(v_op);
+        elsif v_op->>'op' like 'db_prop_%' then v_kind := 'schema';
+        elsif v_op ? 'page_id' then v_kind := 'title';
+        end if;
+      elsif v_op->>'op' = 'row_added' then v_kind := 'row_added'; v_id := v_op->>'rowId';
+      elsif v_op->>'op' = 'external' then v_kind := 'external'; v_id := v_op->>'id';
+      end if;
+      if v_kind is null then continue; end if;
+      v_key := case when v_kind = 'external' then 'external:' || v_id
+        else v_kind || ':' || case when v_kind = 'title' then v_op->>'page_id' else v_page end || case when v_id is not null then ':' || v_id else '' end end;
+      v_rev := v_a.body->'after_revs'->(case when v_kind = 'row' then 'row:' || v_id else v_id end);
+      v_old := v_map->v_key;
+      if v_old is not null then
+        if v_old->>'change' = 'added' then v_change := 'added'; v_ops := v_old->'ops';
+        elsif v_kind = 'block' then
+          v_patch := coalesce(v_op->'patch', '{}') || coalesce(v_old->'ops'->0->'patch', '{}');
+          v_ops := jsonb_build_array(jsonb_build_object('op', 'update_block', 'id', v_id, 'patch', v_patch));
+        elsif v_kind = 'row' then
+          v_ops := v_old->'ops';
+          if not exists (select 1 from jsonb_array_elements(v_ops) x where x->>'propertyId' = v_op->>'propertyId') then
+            v_ops := v_ops || jsonb_build_array(v_op);
+          end if;
+        end if;
+      end if;
+      v_item := jsonb_build_object('key', v_key, 'kind', v_kind, 'change', v_change,
+        'page_id', case when v_kind = 'title' then v_op->>'page_id' else v_page end,
+        'status', case when v_change = 'manual' or v_rev is null or v_rev = 'null'::jsonb or v_old->>'status' = 'manual' then 'manual' else 'revertable' end,
+        'before_text', case when v_change = 'added' then '' when v_kind = 'block' then left(private.html_to_text(v_ops->0->'patch'->>'html'), 2000) end,
+        'after_text', null, 'after_rev', v_rev, 'current_rev', null, 'summary', coalesce(v_a.body->>'summary', v_kind || ' change'),
+        'first_seq', coalesce((v_old->>'first_seq')::bigint, v_a.seq), 'last_seq', v_a.seq, 'ops', v_ops)
+        || case when v_kind = 'block' then jsonb_build_object('block_id', v_id)
+                when v_kind in ('row','row_added') then jsonb_build_object('row_id', v_id) else '{}'::jsonb end;
+      v_map := v_map || jsonb_build_object(v_key, v_item);
+    end loop;
+  end loop;
+  for v_item in select value from jsonb_each(v_map) order by (value->>'first_seq')::bigint, key loop
+    select data into v_data from public.pages where id = v_item->>'page_id';
+    v_current := null;
+    if v_item->>'kind' = 'block' then v_current := v_data #> private.block_path(v_data, v_item->>'block_id');
+    elsif v_item->>'kind' = 'row' then
+      select value into v_current from jsonb_array_elements(coalesce(v_data->'database'->'rows', '[]')) where value->>'id' = v_item->>'row_id';
+    end if;
+    v_status := case
+      when v_item->>'status' = 'manual' then 'manual'
+      when exists (select 1 from public.agent_activities where task_id = v_task and body->>'op' = 'revert_run'
+        and body->>'run_id' = p_run_id::text and body->'keys' ? (v_item->>'key') and seq > (v_item->>'last_seq')::bigint) then 'reverted'
+      when v_current is null then 'gone'
+      when v_current->'rev' = v_item->'after_rev' then 'revertable'
+      else 'changed_since' end;
+    v_result := v_result || jsonb_build_array(v_item || jsonb_build_object('status', v_status, 'current_rev', v_current->'rev',
+      'after_text', case when v_item->>'kind' = 'block' then left(private.html_to_text(v_current->>'html'), 2000) end));
+  end loop;
+  return v_result;
+end $$;
+
+create or replace function public.task_diff(p_task_id uuid, p_run_id uuid default null)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare v_run public.agent_runs%rowtype; v_item jsonb; v_items jsonb; v_runs jsonb := '[]'; v_hidden int; v_total int := 0;
+begin
+  if not private.can_read_task(p_task_id) then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+  if p_run_id is not null and not exists (select 1 from public.agent_runs where id = p_run_id and task_id = p_task_id) then
+    raise exception using errcode = 'PT404', message = 'not_found';
+  end if;
+  for v_run in select r.* from public.agent_runs r where r.task_id = p_task_id and (p_run_id is null or r.id = p_run_id)
+    and exists (select 1 from public.agent_activities a where a.run_id = r.id and a.type = 'action' and a.author_type = 'agent')
+    order by r.started_at, r.id
+  loop
+    v_items := '[]'; v_hidden := 0;
+    for v_item in select value from jsonb_array_elements(private.run_revert_items(v_run.id)) loop
+      if private.can_read_page(v_item->>'page_id', v_run.workspace_id) then v_items := v_items || jsonb_build_array(v_item - 'ops');
+      else v_hidden := v_hidden + 1; end if;
+    end loop;
+    v_total := v_total + v_hidden;
+    v_runs := v_runs || jsonb_build_array(jsonb_build_object('run_id', v_run.id, 'agent_id', v_run.agent_id, 'harness', v_run.harness,
+      'status', v_run.status, 'started_at', v_run.started_at, 'ended_at', v_run.ended_at, 'hidden_items', v_hidden, 'items', v_items));
+  end loop;
+  return jsonb_build_object('task_id', p_task_id, 'hidden_items', v_total, 'runs', v_runs);
+end $$;
+
+create or replace function public.revert_run(p_run_id uuid, p_item_keys text[])
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_run public.agent_runs%rowtype; v_page public.pages%rowtype; v_pages text[]; v_items jsonb; v_item jsonb;
+        v_key text; v_keys text[]; v_ops jsonb; v_batch jsonb; v_result jsonb; v_inverse jsonb; v_all_inverse jsonb := '[]';
+        v_changed jsonb := '[]'; v_activity uuid; v_offset int;
+begin
+  if private.principal_type() <> 'human' then raise exception using errcode = 'PT403', message = 'humans_only'; end if;
+  select * into v_run from public.agent_runs where id = p_run_id;
+  if not found or not private.can_read_task(v_run.task_id) then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+  if v_run.status in ('running','waiting') then raise exception using errcode = 'PT409', message = 'run_active'; end if;
+  if p_item_keys is null or cardinality(p_item_keys) not between 1 and 200 or array_position(p_item_keys, null) is not null then
+    raise exception using errcode = 'PT400', message = 'invalid_input';
+  end if;
+  select array_agg(key order by first_seen) into v_keys from (select key, min(i) as first_seen from unnest(p_item_keys) with ordinality k(key, i) group by key) x;
+  select array_agg(distinct page_id) into v_pages from (
+    select a.body->>'page_id' as page_id from public.agent_activities a where a.run_id = p_run_id
+    union all
+    select x->>'page_id' from public.agent_activities a, lateral jsonb_array_elements(coalesce(a.inverse_ops, '[]')) x where a.run_id = p_run_id
+  ) pages;
+  perform 1 from public.pages where id = any(v_pages) order by id for update;
+  v_items := private.run_revert_items(p_run_id);
+  foreach v_key in array v_keys loop
+    select value into v_item from jsonb_array_elements(v_items) where value->>'key' = v_key;
+    if not found then raise exception using errcode = 'PT404', message = 'item_not_found', detail = jsonb_build_object('key', v_key)::text; end if;
+    select * into v_page from public.pages where id = v_item->>'page_id';
+    if not found or v_page.deleted_at is not null or v_page.data is null then
+      raise exception using errcode = 'PT404', message = 'not_found', detail = jsonb_build_object('page_id', v_item->>'page_id')::text;
+    end if;
+    if coalesce((v_page.data->>'locked')::boolean, false) then
+      raise exception using errcode = 'PT423', message = 'page_locked', detail = jsonb_build_object('locked_by', v_page.last_edited_by)::text;
+    end if;
+    if v_item->>'status' <> 'revertable' then
+      raise exception using errcode = 'PT409', message = 'revert_conflict',
+        detail = jsonb_build_object('key', v_key, 'status', v_item->'status', 'after_rev', v_item->'after_rev', 'current_rev', v_item->'current_rev')::text;
+    end if;
+    if not private.can_write_page(v_page.id, v_page.workspace_id) then raise exception using errcode = 'PT403', message = 'forbidden'; end if;
+  end loop;
+  perform set_config('app.run_id', '', true);
+  for v_page in select * from public.pages where id in (
+    select x->>'page_id' from jsonb_array_elements(v_items) x where x->>'key' = any(v_keys)) order by id
+  loop
+    select jsonb_agg(op - 'rev' order by (item->>'first_seq')::bigint, item->>'key', i) into v_ops
+      from jsonb_array_elements(v_items) item, lateral jsonb_array_elements(item->'ops') with ordinality o(op, i)
+      where item->>'page_id' = v_page.id and item->>'key' = any(v_keys);
+    v_offset := 0; v_inverse := '[]';
+    -- The core accepts at most 200 operations; a row item may restore several cells.
+    while v_offset < jsonb_array_length(v_ops) loop
+      select jsonb_agg(value order by i) into v_batch from jsonb_array_elements(v_ops) with ordinality x(value, i)
+        where i > v_offset and i <= v_offset + 200;
+      v_result := private.apply_page_ops_core(v_page.id, v_batch, 'revert:' || p_run_id::text);
+      v_inverse := v_result->'inverse' || v_inverse;
+      v_offset := v_offset + 200;
+    end loop;
+    v_changed := v_changed || jsonb_build_array(jsonb_build_object('page_id', v_page.id, 'revision', v_result->'revision'));
+    v_all_inverse := v_all_inverse || jsonb_build_array(jsonb_build_object('page_id', v_page.id, 'ops', v_inverse));
+  end loop;
+  insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, inverse_ops, author_type, author_id)
+  values (v_run.workspace_id, v_run.task_id, null, private.next_seq(v_run.task_id), 'action',
+    jsonb_build_object('op', 'revert_run', 'run_id', p_run_id, 'keys', to_jsonb(v_keys),
+      'summary', format('Reverted %s change(s) of a %s run', cardinality(v_keys), v_run.harness)), v_all_inverse, 'human', auth.uid())
+  returning id into v_activity;
+  perform private.audit(v_run.workspace_id, 'run.revert', jsonb_build_object('run_id', p_run_id, 'task_id', v_run.task_id, 'keys', to_jsonb(v_keys)));
+  return jsonb_build_object('reverted', to_jsonb(v_keys), 'pages', v_changed, 'activity_id', v_activity);
+end $$;
+
+revoke execute on function private.after_revs(jsonb) from public;
+revoke execute on function private.run_revert_items(uuid) from public;
+revoke all on function public.task_diff(uuid, uuid) from public, anon;
+revoke all on function public.revert_run(uuid, text[]) from public, anon;
+grant execute on function public.task_diff(uuid, uuid) to authenticated;
+grant execute on function public.revert_run(uuid, text[]) to authenticated;
