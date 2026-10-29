@@ -5,7 +5,7 @@ import refresh from "eslint-plugin-react-refresh";
 import a11y from "eslint-plugin-jsx-a11y";
 
 export default defineConfig([
-  globalIgnores([".next/**", "dist/**", "out/**", "build/**", "public/sw.js", "supabase/functions/**", "agent/**", "bridge/**", "connect/**", ".local/**", ".superpowers/**"]),
+  globalIgnores([".next/**", "dist/**", "out/**", "build/**", "public/sw.js", "supabase/functions/**", "agent/**", "bridge/**", "connect/**", ".local/**", ".superpowers/**", ".claude/**"]),
   ...tseslint.configs.recommended,
   { files: ["**/*.{ts,tsx}"], plugins: { "react-hooks": hooks }, rules: hooks.configs.recommended.rules },
   { files: ["app/**/*.tsx", "components/**/*.tsx", "lib/**/*.tsx"],

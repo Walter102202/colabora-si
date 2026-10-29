@@ -57,3 +57,6 @@ yarn-error.log*
 
 # local artifacts (videos, renders); never versioned
 /.local/
+
+# worktrees that Claude Code nests under the checkout
+/.claude/worktrees/
