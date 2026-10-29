@@ -138,19 +138,26 @@ export interface ActivityRow {
 }
 
 type ById<T> = Record<string, T>;
+type Client = NonNullable<ReturnType<typeof getAgentClient>>;
+type ClosedCursor = { updated_at: string; id: string };
 
 export interface AgentTasksState {
   workspaceId: string | null;
   status: "idle" | "loading" | "ready" | "error";
   error: string | null;
-  tasks: ById<TaskRow>;
-  runs: ById<RunRow>;
-  approvals: ById<ApprovalRow>;
-  reviews: ById<ReviewRow>;
-  artifacts: ById<ArtifactRow>;
+  tasks: ById<TaskRow>; // open tasks plus the closed pages loaded so far
+  runs: ById<RunRow>; // the most recent runs of the workspace plus every run of a loaded task
+  approvals: ById<ApprovalRow>; // pending approvals plus what Realtime delivers
+  reviews: ById<ReviewRow>; // per task, loaded with the detail
+  artifacts: ById<ArtifactRow>; // per task, loaded with the detail
   briefs: ById<BriefRow>; // key `${task_id}:${version}`
   activities: ById<ActivityRow[]>; // by task id, ordered by seq (loaded on demand)
+  closedCursor: ClosedCursor | null; // keyset of the oldest closed task loaded
+  closedExhausted: boolean;
   load: (workspaceId: string) => Promise<void>;
+  loadMoreClosed: () => Promise<void>;
+  loadTask: (taskId: string) => Promise<void>;
+  loadTaskDetail: (taskId: string) => Promise<void>;
   subscribe: (workspaceId: string) => () => void;
   loadActivities: (taskId: string) => Promise<void>;
   loadBriefs: (taskId: string) => Promise<void>;
@@ -166,10 +173,43 @@ const KEY: Record<Table, keyof Pick<AgentTasksState, "tasks" | "runs" | "approva
   agent_artifacts: "artifacts",
 };
 
-function index<T extends { id: string }>(rows: T[] | null | undefined): ById<T> {
-  const out: ById<T> = {};
+const OPEN: TaskState[] = ["queued", "working", "input_required", "ready_for_review"];
+const CLOSED: TaskState[] = ["done", "failed", "cancelled"];
+
+// Page sizes. Open tasks and runs take a plain limit because their cardinality is
+// that of the live work; closed tasks grow forever and page by keyset.
+export const CLOSED_PAGE_SIZE = 50;
+export const ACTIVITIES_PAGE_SIZE = 200;
+const OPEN_LIMIT = 500;
+const RUNS_LIMIT = 500;
+const REVIEWS_LIMIT = 20;
+
+/** Merges a page of rows into a map by id: rows outside the page stay, rows inside it are replaced. */
+export function mergeRows<T extends { id: string }>(current: ById<T>, rows: T[] | null | undefined): ById<T> {
+  const out: ById<T> = { ...current };
   for (const r of rows ?? []) out[r.id] = r;
   return out;
+}
+
+/** Merges a page of activities into a task's list: deduped by id, ordered by seq. */
+export function mergeActivities(current: ActivityRow[] | undefined, rows: ActivityRow[]): ActivityRow[] {
+  const byId = new Map<string, ActivityRow>();
+  for (const a of current ?? []) byId.set(a.id, a);
+  for (const a of rows) byId.set(a.id, a);
+  return [...byId.values()].sort((a, b) => a.seq - b.seq);
+}
+
+// Closed tasks, newest first, by (updated_at, id) so that a page boundary between two
+// rows with the same timestamp is stable; `cursor` is the last row of the previous page.
+function closedTasksQuery(client: Client, workspaceId: string, cursor: ClosedCursor | null) {
+  let q = client.from("agent_tasks").select("*").eq("workspace_id", workspaceId).in("state", CLOSED);
+  if (cursor) q = q.or(`updated_at.lt.${cursor.updated_at},and(updated_at.eq.${cursor.updated_at},id.lt.${cursor.id})`);
+  return q.order("updated_at", { ascending: false }).order("id", { ascending: false }).limit(CLOSED_PAGE_SIZE);
+}
+
+function cursorAfter(rows: TaskRow[]): ClosedCursor | null {
+  const last = rows[rows.length - 1];
+  return last ? { updated_at: last.updated_at, id: last.id } : null;
 }
 
 let channel: RealtimeChannel | null = null;
@@ -198,28 +238,97 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
   artifacts: {},
   briefs: {},
   activities: {},
+  closedCursor: null,
+  closedExhausted: false,
 
+  // The first page of a workspace: open tasks, the latest closed ones, the most recent
+  // runs and the pending approvals. Reviews and artifacts arrive with each task's detail.
   async load(workspaceId) {
     const client = getAgentClient();
     if (!client) return;
-    set({ status: "loading", error: null, workspaceId });
+    const reset = get().workspaceId === workspaceId
+      ? {}
+      : { tasks: {}, runs: {}, approvals: {}, reviews: {}, artifacts: {}, closedCursor: null, closedExhausted: false };
+    set({ status: "loading", error: null, workspaceId, ...reset });
     try {
-      const [tasks, runs, approvals, reviews, artifacts] = await Promise.all(
-        TABLES.map((t) => client.from(t).select("*").eq("workspace_id", workspaceId)),
-      );
-      const failed = [tasks, runs, approvals, reviews, artifacts].find((r) => r.error);
+      const [open, closed, runs, approvals] = await Promise.all([
+        client.from("agent_tasks").select("*").eq("workspace_id", workspaceId).in("state", OPEN).limit(OPEN_LIMIT),
+        closedTasksQuery(client, workspaceId, null),
+        client.from("agent_runs").select("*").eq("workspace_id", workspaceId).order("started_at", { ascending: false }).limit(RUNS_LIMIT),
+        client.from("agent_approvals").select("*").eq("workspace_id", workspaceId).eq("status", "pending"),
+      ]);
+      const failed = [open, closed, runs, approvals].find((r) => r.error);
       if (failed?.error) throw new Error(agentErrorMessage(failed.error));
+      const closedRows = (closed.data ?? []) as TaskRow[];
+      const s = get();
       set({
         status: "ready",
-        tasks: index(tasks.data as TaskRow[]),
-        runs: index(runs.data as RunRow[]),
-        approvals: index(approvals.data as ApprovalRow[]),
-        reviews: index(reviews.data as ReviewRow[]),
-        artifacts: index(artifacts.data as ArtifactRow[]),
+        tasks: mergeRows(s.tasks, [...((open.data ?? []) as TaskRow[]), ...closedRows]),
+        runs: mergeRows(s.runs, runs.data as RunRow[]),
+        approvals: mergeRows(s.approvals, approvals.data as ApprovalRow[]),
+        closedCursor: cursorAfter(closedRows),
+        closedExhausted: closedRows.length < CLOSED_PAGE_SIZE,
       });
     } catch (e) {
       set({ status: "error", error: agentErrorMessage(e) });
     }
+  },
+
+  async loadMoreClosed() {
+    const client = getAgentClient();
+    const { workspaceId, closedCursor, closedExhausted } = get();
+    if (!client || !workspaceId || !closedCursor || closedExhausted) return;
+    const { data, error } = await closedTasksQuery(client, workspaceId, closedCursor);
+    if (error) return;
+    const rows = (data ?? []) as TaskRow[];
+    set({
+      tasks: mergeRows(get().tasks, rows),
+      closedCursor: cursorAfter(rows) ?? closedCursor,
+      closedExhausted: rows.length < CLOSED_PAGE_SIZE,
+    });
+  },
+
+  // One task after an action on it: the row, all of its runs (blocks edited by closed runs
+  // still name them) and its pending approvals. Approvals of the task that are no longer
+  // pending (decided, expired or cancelled with the task) leave the store.
+  async loadTask(taskId) {
+    const client = getAgentClient();
+    if (!client) return;
+    const [task, runs, approvals] = await Promise.all([
+      client.from("agent_tasks").select("*").eq("id", taskId),
+      client.from("agent_runs").select("*").eq("task_id", taskId),
+      client.from("agent_approvals").select("*").eq("task_id", taskId).eq("status", "pending"),
+    ]);
+    if (task.error || runs.error || approvals.error) return;
+    const s = get();
+    const pending = (approvals.data ?? []) as ApprovalRow[];
+    const stillPending = new Set(pending.map((a) => a.id));
+    const kept: ById<ApprovalRow> = {};
+    for (const a of Object.values(s.approvals)) {
+      if (a.task_id === taskId && a.status === "pending" && !stillPending.has(a.id)) continue;
+      kept[a.id] = a;
+    }
+    set({
+      tasks: mergeRows(s.tasks, task.data as TaskRow[]),
+      runs: mergeRows(s.runs, runs.data as RunRow[]),
+      approvals: mergeRows(kept, pending),
+    });
+  },
+
+  // What the panel shows beyond the row: briefs, artifacts and the latest reviews.
+  async loadTaskDetail(taskId) {
+    const client = getAgentClient();
+    if (!client) return;
+    const [, artifacts, reviews] = await Promise.all([
+      get().loadBriefs(taskId),
+      client.from("agent_artifacts").select("*").eq("task_id", taskId),
+      client.from("agent_reviews").select("*").eq("task_id", taskId).order("created_at", { ascending: false }).limit(REVIEWS_LIMIT),
+    ]);
+    const s = get();
+    set({
+      ...(artifacts.error ? {} : { artifacts: mergeRows(s.artifacts, artifacts.data as ArtifactRow[]) }),
+      ...(reviews.error ? {} : { reviews: mergeRows(s.reviews, reviews.data as ReviewRow[]) }),
+    });
   },
 
   // Reference counted: the first caller for a workspace opens the channel and loads the
@@ -298,12 +407,19 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
     };
   },
 
+  // First call: the last ACTIVITIES_PAGE_SIZE activities of the task. Later calls: only
+  // what is newer than the list already held, so a refresh after an action is one short read.
   async loadActivities(taskId) {
     const client = getAgentClient();
     if (!client) return;
-    const { data, error } = await client.from("agent_activities").select("*").eq("task_id", taskId).order("seq");
+    const current = get().activities[taskId];
+    const base = client.from("agent_activities").select("*").eq("task_id", taskId);
+    const { data, error } = current
+      ? await base.gt("seq", current.reduce((max, a) => Math.max(max, a.seq), 0)).order("seq").limit(ACTIVITIES_PAGE_SIZE)
+      : await base.order("seq", { ascending: false }).limit(ACTIVITIES_PAGE_SIZE);
     if (error) return;
-    set({ activities: { ...get().activities, [taskId]: (data ?? []) as ActivityRow[] } });
+    const activities = get().activities;
+    set({ activities: { ...activities, [taskId]: mergeActivities(activities[taskId], (data ?? []) as ActivityRow[]) } });
   },
 
   async loadBriefs(taskId) {
@@ -318,8 +434,6 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
 }));
 
 // Selectors.
-
-const OPEN: TaskState[] = ["queued", "working", "input_required", "ready_for_review"];
 
 export function taskForPage(state: AgentTasksState, pageId: string): TaskRow | null {
   const rows = Object.values(state.tasks).filter((t) => t.row_page_id === pageId);

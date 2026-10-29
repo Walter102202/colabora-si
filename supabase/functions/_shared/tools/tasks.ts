@@ -103,6 +103,7 @@ const getTask: ToolDef = {
   inputSchema: object({
     task_id: { type: 'string', minLength: 1 },
     activities_limit: { type: 'integer', minimum: 0, maximum: 200, default: 20 },
+    after_seq: { type: 'integer', minimum: 0, description: 'Only activities after this seq, oldest first; omit for the last activities_limit.' },
     include_ephemeral: { type: 'boolean' },
   }, ['task_id']),
   outputSchema: output({
@@ -111,6 +112,7 @@ const getTask: ToolDef = {
     artifacts: { type: 'array', items: { type: 'object' } },
     approvals_pending: { type: 'array', items: { type: 'object' } },
     activities: { type: 'array', items: { type: 'object' } },
+    next_seq: { type: 'integer', description: 'Pass as after_seq on the next call to read only what is newer.' },
     ...CARD_OUTPUT,
   }),
   annotations: READ,
@@ -120,6 +122,7 @@ const getTask: ToolDef = {
     const t = await loadTaskCard(ctx.db, String(args.task_id), ctx.appUrl, {
       activitiesLimit: num(args.activities_limit) ?? 20,
       includeEphemeral: bool(args.include_ephemeral) ?? false,
+      afterSeq: num(args.after_seq),
     });
     return {
       text: `Task "${String(t.task.title || t.task.id)}": ${String(t.task.state)}, brief v${String(t.task.brief_version)}, ` +

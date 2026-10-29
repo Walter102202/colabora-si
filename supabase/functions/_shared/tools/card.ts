@@ -95,7 +95,7 @@ export async function loadTaskCard(
   db: Db,
   taskId: string,
   appUrl: string,
-  opts: { activitiesLimit?: number; includeEphemeral?: boolean } = {},
+  opts: { activitiesLimit?: number; includeEphemeral?: boolean; afterSeq?: number } = {},
 ): Promise<TaskCard> {
   const bundle = await loadTaskBundle(db, taskId, opts);
   const task = bundle.task;

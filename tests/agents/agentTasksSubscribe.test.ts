@@ -35,7 +35,14 @@ const client = {
     removed.push(ch);
     return Promise.resolve().then(() => { registry.delete(ch.topic); return "ok"; });
   },
-  from() { return { select: () => ({ eq: () => ({ order: () => Promise.resolve({ data: [], error: null }) }), order: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }) }) }; },
+  // Any filter chain resolves to an empty page, like a PostgREST builder that is awaited.
+  from() {
+    const chain: Record<string, unknown> = {};
+    const resolved = Promise.resolve({ data: [], error: null });
+    for (const m of ["select", "eq", "in", "gt", "lt", "or", "order", "limit", "is"]) chain[m] = () => chain;
+    chain.then = resolved.then.bind(resolved);
+    return chain as { select: () => typeof chain };
+  },
 };
 vi.mock("@/lib/agentClient", () => ({ getAgentClient: () => client, agentErrorMessage: (e: unknown) => String(e) }));
 

@@ -9,6 +9,8 @@ export interface TaskBundle {
   artifacts: Row[];
   approvals_pending: Row[];
   activities: Row[];
+  /** Cursor for the next read: the highest activity seq returned, or the one asked for when nothing is newer. */
+  next_seq: number;
 }
 
 export const TASK_COLUMNS =
@@ -39,14 +41,20 @@ export async function loadBrief(db: Db, taskId: string, version: unknown): Promi
   return rows?.[0] ?? null;
 }
 
+/**
+ * Without `afterSeq`: the last `activitiesLimit` activities, oldest first. With it: only the
+ * activities after that seq, oldest first, so a caller can page forward without re-reading.
+ */
 export async function loadTaskBundle(
   db: Db,
   taskId: string,
-  opts: { activitiesLimit?: number; includeEphemeral?: boolean } = {},
+  opts: { activitiesLimit?: number; includeEphemeral?: boolean; afterSeq?: number } = {},
 ): Promise<TaskBundle> {
   const task = await loadTask(db, taskId);
+  const paged = opts.afterSeq !== undefined;
   const activityFilters: Filter[] = [{ col: 'task_id', op: 'eq', value: taskId }];
   if (!opts.includeEphemeral) activityFilters.push({ col: 'ephemeral', op: 'eq', value: false });
+  if (paged) activityFilters.push({ col: 'seq', op: 'gt', value: opts.afterSeq });
   const [brief, artifacts, approvals, activities] = await Promise.all([
     loadBrief(db, taskId, task.brief_version),
     must(db.select<Row>({
@@ -66,16 +74,19 @@ export async function loadTaskBundle(
       table: 'agent_activities',
       columns: 'id,task_id,run_id,seq,type,body,ephemeral,author_type,author_id,created_at',
       filters: activityFilters,
-      order: [{ column: 'seq', ascending: false }],
+      order: [{ column: 'seq', ascending: paged }],
       limit: opts.activitiesLimit ?? 20,
     })),
   ]);
+  const ordered = paged ? (activities ?? []) : (activities ?? []).slice().reverse();
+  const lastSeq = ordered.length ? Number(ordered[ordered.length - 1].seq) : null;
   return {
     task,
     brief,
     artifacts: artifacts ?? [],
     approvals_pending: approvals ?? [],
-    activities: (activities ?? []).slice().reverse(),
+    activities: ordered,
+    next_seq: lastSeq ?? opts.afterSeq ?? 0,
   };
 }
 
