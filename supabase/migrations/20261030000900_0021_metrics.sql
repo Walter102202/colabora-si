@@ -12,12 +12,15 @@ returns jsonb language sql immutable set search_path = '' as $$
     'unit', p_unit, 'sample', coalesce(p_sample, 0), 'reason', p_reason);
 $$;
 
--- p_agent limits every metric to that agent's runs and requests; null measures the tasks as a whole.
+-- p_agent limits to that agent's own requests, runs and effects the decision latency, the first signal, the resume
+-- time, the duplicated effects, the cost and the denied calls; null measures the tasks as a whole. The accepted
+-- deliverables, the interventions and the reverts belong to the cohort: after a handover both agents count them.
 create or replace function private.metrics_for(p_tasks uuid[], p_ws uuid, p_agent uuid, p_since timestamptz)
 returns jsonb language plpgsql stable security invoker set search_path = '' as $$
 declare
   v_accepted int; v_interventions int; v_lat numeric; v_lat_n int; v_reverted int; v_first numeric; v_first_n int;
-  v_resume numeric; v_resume_n int; v_dups int; v_done_ops int; v_cost numeric; v_denied int := 0;
+  v_resume numeric; v_resume_n int; v_dups int; v_done_ops int; v_cost numeric; v_cost_known int; v_cost_unknown int;
+  v_denied int := 0; v_webhook boolean := false;
   v_has_log boolean := to_regprocedure('public.record_access_denial(text,text,uuid)') is not null;
 begin
   select count(*) into v_accepted from public.agent_tasks where id = any (p_tasks) and acceptance = 'accepted';
@@ -41,15 +44,18 @@ begin
                   and a.body->>'op' = 'revert_run' and a.author_type = 'human' and a.run_id is null
                   and a.created_at > t.closed_at);
 
-  -- First signal: the first activity of the agent on the task, the claim included on purpose: it measures how long a
-  -- new task waits until an agent takes it. resume_time_s, below, measures until real work.
+  -- First signal: per task, the first activity of an agent inside a run of that task, the claim included on purpose: it
+  -- measures how long a new task waits until an agent takes it. The start prompt a Lead writes when it creates a
+  -- subtask has no run and is not a signal. With p_agent a task counts only when that agent took it first: an agent
+  -- that takes a task over did not find it new, and what it waited is resume_time_s, below.
   select percentile_cont(0.5) within group (order by s.secs), count(*) into v_first, v_first_n
-    from (select extract(epoch from min(a.created_at) - t.created_at) as secs
+    from (select distinct on (t.id) r.agent_id, extract(epoch from a.created_at - t.created_at) as secs
             from public.agent_tasks t
             join public.agent_activities a on a.task_id = t.id and a.author_type = 'agent'
-            left join public.agent_runs r on r.id = a.run_id
-           where t.id = any (p_tasks) and (p_agent is null or r.agent_id = p_agent)
-           group by t.id, t.created_at) s;
+            join public.agent_runs r on r.id = a.run_id and r.task_id = t.id
+           where t.id = any (p_tasks)
+           order by t.id, a.created_at, a.seq) s
+   where p_agent is null or s.agent_id = p_agent;
 
   -- Resume: from the end of the run that handed over to the first activity of the new run that is work (not the
   -- claim, not the handover activity, not an automatic approval). claim_task of the new run writes the handover
@@ -73,15 +79,23 @@ begin
              and (p_agent is null or exists (select 1 from public.agent_runs r where r.id = o.run_id and r.agent_id = p_agent))
            group by o.task_id, o.provider, o.action, o.params_hash) g;
 
-  select coalesce(sum(r.cost_usd), 0) into v_cost from public.agent_runs r
+  -- Cost: only what a harness reported (cost_kind measured or estimated). A run that reported nothing is unknown, not
+  -- free: with no report there is no cost; with some, the reported sum is a lower bound and the reason says so.
+  select coalesce(sum(r.cost_usd) filter (where r.cost_kind <> 'unknown'), 0),
+         count(*) filter (where r.cost_kind <> 'unknown'), count(*) filter (where r.cost_kind = 'unknown')
+    into v_cost, v_cost_known, v_cost_unknown
+    from public.agent_runs r
    where r.task_id = any (p_tasks) and (p_agent is null or r.agent_id = p_agent);
 
-  if v_has_log and private.is_workspace_owner(p_ws) then
+  -- Denied calls are counted per agent only: most tools carry no task, so a task cannot count its own. A webhook
+  -- agent calls through agent-webhook, which logs no denial, so its count would always read 0.
+  if p_agent is not null then
+    select coalesce(a.kind = 'webhook', false) into v_webhook from public.agents a where a.id = p_agent;
+  end if;
+  if v_has_log and p_agent is not null and private.is_workspace_owner(p_ws) then
     select count(*) into v_denied from public.audit_events e
-     where e.workspace_id = p_ws and e.action = 'access.denied'
-       and (p_since is null or e.created_at >= p_since)
-       and ((p_agent is not null and e.target->>'agent_id' = p_agent::text)
-            or (p_agent is null and (e.target->>'task_id')::uuid = any (p_tasks)));
+     where e.workspace_id = p_ws and e.action = 'access.denied' and e.target->>'agent_id' = p_agent::text
+       and (p_since is null or e.created_at >= p_since);
   end if;
 
   return jsonb_build_array(
@@ -92,9 +106,15 @@ begin
     private.metric('repeated_corrections', null, 'corrections', 0, 'not_measured', 'needs_lessons'),
     private.metric('resume_time_s', case when v_resume_n > 0 then round(v_resume, 0) end, 's', v_resume_n),
     private.metric('duplicate_effects', case when v_done_ops > 0 then v_dups end, 'ops', v_done_ops),
-    private.metric('cost_per_accepted_usd', case when v_accepted > 0 then round(v_cost / v_accepted, 4) end, 'usd', v_accepted),
+    case when v_accepted = 0 then private.metric('cost_per_accepted_usd', null, 'usd', 0)
+         when v_cost_known = 0 then private.metric('cost_per_accepted_usd', null, 'usd', v_accepted, null,
+                                                   case when v_cost_unknown > 0 then 'cost_unreported' end)
+         else private.metric('cost_per_accepted_usd', round(v_cost / v_accepted, 4), 'usd', v_accepted, null,
+                             case when v_cost_unknown > 0 then 'cost_partial' end) end,
     private.metric('stale_knowledge_answers', null, 'answers', 0, 'not_measured', 'needs_sources'),
     case when not v_has_log then private.metric('out_of_scope_attempts', null, 'attempts', 0, 'not_measured', 'needs_denial_log')
+         when p_agent is null then private.metric('out_of_scope_attempts', null, 'attempts', 0, 'not_measured', 'per_agent_only')
+         when v_webhook then private.metric('out_of_scope_attempts', null, 'attempts', 0, 'not_measured', 'webhook_agent')
          when not private.is_workspace_owner(p_ws) then private.metric('out_of_scope_attempts', null, 'attempts', 0, 'not_measured', 'owners_only')
          when cardinality(p_tasks) = 0 then private.metric('out_of_scope_attempts', null, 'attempts', 0)
          else private.metric('out_of_scope_attempts', v_denied, 'attempts', v_denied) end);
