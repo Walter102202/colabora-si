@@ -5,7 +5,7 @@ import { must, ToolError } from '../db.ts';
 import type { ToolContext, ToolDef } from '../mcp.ts';
 import { num, object, output, plural, READ, str } from './common.ts';
 import { markDelivered, myTasksFilter } from './tasks.ts';
-import { answeredQuestions, excerpt, type Row } from './taskData.ts';
+import { answeredQuestions, excerpt, openQuestions, type Row } from './taskData.ts';
 
 export const POLL_MS = 1500;
 export const MAX_POLL_MS = 10_000;
@@ -119,7 +119,13 @@ function activityView(a: Row) {
   };
   if (typeof body.signal === 'string') out.signal = body.signal;
   if (typeof body.approval_id === 'string') out.approval_id = body.approval_id;
-  if (typeof body.decision === 'string') out.decision = body.decision;
+  if (typeof body.decision === 'string') {
+    // An answer also carries the question it answers: its excerpt is what the person wrote, or the option chosen.
+    const text = typeof body.text === 'string' ? body.text : '';
+    out.decision = body.decision;
+    out.text = text;
+    out.excerpt = text ? excerpt({ text }) : body.decision;
+  }
   return out;
 }
 
@@ -156,7 +162,8 @@ const waitForTask: ToolDef = {
   description:
     'Holds the call until the task (or one of its direct subtasks) changes, a new activity arrives after after_seq, ' +
     'a stop is requested on run_id, or timeout_s passes (default 50, max 120). Without after_seq it answers at once with ' +
-    'the current state and next_seq. With run_id the wait counts as a heartbeat; timeout_s = 0 only registers the wait ' +
+    'the current state, next_seq, the answers given since the last run ended (answered_questions) and the questions asked ' +
+    'without blocking that still wait for one (open_questions). With run_id the wait counts as a heartbeat; timeout_s = 0 only registers the wait ' +
     '(use it before ending your turn when something else will wake you). On changed:false call again with next_seq.',
   inputSchema: object({
     task_id: { type: 'string', minLength: 1 },
@@ -172,6 +179,7 @@ const waitForTask: ToolDef = {
     next_seq: { type: 'integer' },
     waited_s: { type: 'integer' },
     answered_questions: { type: 'array', items: { type: 'object' } },
+    open_questions: { type: 'array', items: { type: 'object' } },
   }),
   annotations: READ,
   cacheTtlMs: 0,
@@ -208,9 +216,11 @@ const waitForTask: ToolDef = {
     };
 
     if (afterSeq === undefined) {
-      // The read a harness makes right after claim_task: it also brings answers given while no run was active.
+      // The read a harness makes right after claim_task: it also brings the answers given since the last run ended and
+      // the questions an earlier run left open, which this run now waits on.
       const out = finish(false);
-      return { ...out, structured: { ...out.structured, answered_questions: await answeredQuestions(ctx.db, taskId) } };
+      const [answered, open] = await Promise.all([answeredQuestions(ctx.db, taskId), openQuestions(ctx.db, taskId)]);
+      return { ...out, structured: { ...out.structured, answered_questions: answered, open_questions: open } };
     }
     const isChanged = () => snap.activities.length > 0 || snap.stop || fingerprint(snap) !== baseline;
 
@@ -299,8 +309,12 @@ export function reasonFor(task: Row, prompt: Row | undefined): Reason | null {
     const body = (prompt.body ?? {}) as Row;
     if (body.signal === 'stop') return 'stop';
     if (body.handover === true) return 'handover';
-    // A decision with no run waiting for it was taken after a handover: the next session picks the task up.
-    if (body.approval_id !== undefined || body.decision !== undefined) return task.active_run_id ? 'approval_decided' : 'handover';
+    // A decision with no run waiting for it was taken after a handover: the next session picks the task up. A task
+    // under review is not handed over: a delivery cancels its open questions, so the agent has nothing to pick up.
+    if (body.approval_id !== undefined || body.decision !== undefined) {
+      if (task.active_run_id) return 'approval_decided';
+      return task.state === 'ready_for_review' ? null : 'handover';
+    }
     if (body.signal === 'feedback' || body.signal === 'continue') return 'feedback';
     if (body.signal === 'start' && task.state === 'queued') return 'queued';
   }

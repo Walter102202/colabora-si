@@ -339,6 +339,11 @@ Deno.test('reasonFor: a handed-over task that waits on a person, or whose approv
   assert.equal(reasonFor({ state: 'working', active_run_id: 'run-1' }, decided), 'approval_decided');
 });
 
+Deno.test('reasonFor: an answer given while the task is under review does not wake its agent', () => {
+  const answer = { body: { signal: 'feedback', source: 'row_panel', approval_id: 'q1', decision: 'respond', text: 'Yes' } };
+  assert.equal(reasonFor({ state: 'ready_for_review', active_run_id: null, brief_stale: false }, answer), null);
+});
+
 Deno.test('wait_for_my_tasks without after lists a handed-over task that waits on a person', async () => {
   const h = harness({
     agent_tasks: [
@@ -365,9 +370,27 @@ Deno.test('wait_for_task hands over the approval_id and decision of an answer', 
   assert.equal(acts.length, 1);
   assert.equal(acts[0].approval_id, 'q1');
   assert.equal(acts[0].decision, 'respond');
+  assert.equal(acts[0].text, 'Casual');
+  assert.equal(acts[0].excerpt, 'Casual');
 });
 
-Deno.test('wait_for_task without after_seq brings the answers given since the last run ended', async () => {
+Deno.test('wait_for_task: an answer without text shows the option chosen, never the question it answers', async () => {
+  const tables = { agent_tasks: [task()], agent_activities: [activity(1)], agent_events: [] as Row[] };
+  const h = harness(tables, (n) => {
+    if (n === 1) {
+      tables.agent_events.push(event('e2', '2026-10-27T10:00:02+00:00'));
+      tables.agent_activities.push(activity(2, { type: 'prompt', author_type: 'human',
+        body: { text: '', signal: 'feedback', source: 'row_panel', approval_id: 'q1', decision: 'ignore', blocking: true, question: 'Add a P.S.?' } }));
+    }
+  });
+  const out = await tool('wait_for_task').handler({ task_id: 't1', after_seq: 1, timeout_s: 30 }, h.ctx);
+  const [answer] = out.structured.activities as Row[];
+  assert.equal(answer.excerpt, 'ignore');
+  assert.equal(answer.text, '');
+  assert.equal(answer.decision, 'ignore');
+});
+
+Deno.test('wait_for_task without after_seq brings the answers given since the last run ended and the questions still open', async () => {
   const h = harness({
     agent_tasks: [task()],
     agent_activities: [activity(1)],
@@ -376,15 +399,22 @@ Deno.test('wait_for_task without after_seq brings the answers given since the la
       { id: 'run-1', task_id: 't1', status: 'running', ended_at: null },
     ],
     agent_approvals: [
-      { id: 'q-late', task_id: 't1', blocking: false, status: 'decided', question: 'Add a P.S.?', decision: 'respond', response: { text: 'Yes, a short one' }, decided_at: '2026-10-27T09:30:00+00:00' },
-      { id: 'q-seen', task_id: 't1', blocking: false, status: 'decided', question: 'Formal or casual?', decision: 'respond', response: { text: 'Casual' }, decided_at: '2026-10-27T08:30:00+00:00' },
-      { id: 'q-open', task_id: 't1', blocking: false, status: 'pending', question: 'Any image?', decision: null, response: null, decided_at: null },
-      { id: 'gate', task_id: 't1', blocking: true, status: 'decided', question: 'Send it?', decision: 'approve', response: null, decided_at: '2026-10-27T09:40:00+00:00' },
+      { id: 'q-late', task_id: 't1', kind: 'elicitation', blocking: false, status: 'decided', question: 'Add a P.S.?', decision: 'respond', response: { text: 'Yes, a short one' }, decided_at: '2026-10-27T09:30:00+00:00', created_at: '2026-10-27T08:10:00+00:00' },
+      { id: 'q-seen', task_id: 't1', kind: 'elicitation', blocking: false, status: 'decided', question: 'Formal or casual?', decision: 'respond', response: { text: 'Casual' }, decided_at: '2026-10-27T08:30:00+00:00', created_at: '2026-10-27T08:00:00+00:00' },
+      // Made blocking by await_questions before the run handed over, answered afterwards.
+      { id: 'q-awaited', task_id: 't1', kind: 'elicitation', blocking: true, status: 'decided', question: 'Which list?', decision: 'respond', response: { text: 'October' }, decided_at: '2026-10-27T09:35:00+00:00', created_at: '2026-10-27T08:20:00+00:00' },
+      { id: 'q-open', task_id: 't1', kind: 'elicitation', blocking: false, status: 'pending', question: 'Any image?', decision: null, response: null, decided_at: null, created_at: '2026-10-27T08:40:00+00:00' },
+      { id: 'gate', task_id: 't1', kind: 'action', blocking: true, status: 'decided', question: 'Send it?', decision: 'approve', response: null, decided_at: '2026-10-27T09:40:00+00:00', created_at: '2026-10-27T08:50:00+00:00' },
+      { id: 'gate-open', task_id: 't1', kind: 'action', blocking: true, status: 'pending', question: 'Publish it?', decision: null, response: null, decided_at: null, created_at: '2026-10-27T08:55:00+00:00' },
     ],
   });
   const out = await tool('wait_for_task').handler({ task_id: 't1', run_id: 'run-1' }, h.ctx);
   assert.deepEqual(out.structured.answered_questions, [
     { approval_id: 'q-late', question: 'Add a P.S.?', decision: 'respond', text: 'Yes, a short one', answered_at: '2026-10-27T09:30:00+00:00' },
+    { approval_id: 'q-awaited', question: 'Which list?', decision: 'respond', text: 'October', answered_at: '2026-10-27T09:35:00+00:00' },
+  ]);
+  assert.deepEqual(out.structured.open_questions, [
+    { approval_id: 'q-open', question: 'Any image?', asked_at: '2026-10-27T08:40:00+00:00' },
   ]);
   assert.equal(h.selects.filter((t) => t === 'agent_events').length, 0, 'still no event mark on a call that does not wait');
 });

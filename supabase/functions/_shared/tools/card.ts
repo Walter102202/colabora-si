@@ -264,8 +264,8 @@ const listWaitingOnMe: ToolDef = {
   name: 'list_waiting_on_me',
   title: 'List what waits on me',
   description:
-    'People only. Your tasks that need you: approvals and questions from agents (input_required) and deliverables ' +
-    'ready for review. Compact rows with a link to each task; get_task has the details.',
+    'People only. Your tasks that need you: approvals and questions from agents, including questions that let the task ' +
+    'keep working, and deliverables ready for review. Compact rows with a link to each task; get_task has the details.',
   inputSchema: object({ limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 } }),
   outputSchema: output({
     kind: { type: 'string', enum: ['waiting'] },

@@ -289,8 +289,9 @@ const requestInput: ToolDef = {
 const awaitQuestions: ToolDef = {
   name: 'await_questions',
   title: 'Wait on my open questions',
-  description: 'Call it when only the answers to your questions asked with blocking: false are left. They start to block, the ' +
-    'task becomes input_required and shows that it waits on a person, and an answer resumes it. Then wait with wait_for_task.',
+  description: 'Call it when only the answers to your questions asked with blocking: false are left. They start to block: the ' +
+    'task becomes input_required, shows that it waits on a person, and resumes once the last one is answered. Then wait with ' +
+    'wait_for_task. From then on they block for good: end_run cancels them, while hand_over keeps them for the next session.',
   inputSchema: object({ run_id: { type: 'string', minLength: 1 } }, ['run_id']),
   outputSchema: output({ questions: { type: 'integer' }, task_state: { type: 'string' } }),
   annotations: WRITE_IDEMPOTENT,

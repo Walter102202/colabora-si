@@ -109,9 +109,12 @@ export function doneWhen(brief: Row | null): DoneWhen[] {
   return Array.isArray(brief?.done_when) ? brief!.done_when as DoneWhen[] : [];
 }
 
+const QUESTION_KINDS = ['elicitation', 'plan', 'escalation'];
+
 /**
- * Questions asked with blocking false and answered after the task's last run ended. A new run has not seen them: their
- * activities are older than its cursor. Empty while no run has ended. Readable by the agent once claim_task rebinds them.
+ * Questions answered after the task's last run ended, whether they blocked or not (await_questions makes a question
+ * block). A new run has not seen them: their activities are older than its cursor. Empty while no run has ended.
+ * Readable by the agent once claim_task rebinds them. Approvals of actions are not questions.
  */
 export async function answeredQuestions(db: Db, taskId: string): Promise<Row[]> {
   const ended = await must(db.select<Row>({
@@ -128,7 +131,7 @@ export async function answeredQuestions(db: Db, taskId: string): Promise<Row[]> 
     columns: 'id,question,decision,response,decided_at',
     filters: [
       { col: 'task_id', op: 'eq', value: taskId },
-      { col: 'blocking', op: 'eq', value: false },
+      { col: 'kind', op: 'in', value: QUESTION_KINDS },
       { col: 'status', op: 'eq', value: 'decided' },
       { col: 'decided_at', op: 'gte', value: since },
     ],
@@ -139,4 +142,20 @@ export async function answeredQuestions(db: Db, taskId: string): Promise<Row[]> 
     const text = (a.response as Row | null)?.text;
     return { approval_id: a.id, question: a.question ?? '', decision: a.decision ?? null, text: typeof text === 'string' ? text : '', answered_at: a.decided_at };
   });
+}
+
+/** Questions asked with blocking false that still wait for an answer. A run that claims the task waits on them too. */
+export async function openQuestions(db: Db, taskId: string): Promise<Row[]> {
+  const rows = await must(db.select<Row>({
+    table: 'agent_approvals',
+    columns: 'id,question,created_at',
+    filters: [
+      { col: 'task_id', op: 'eq', value: taskId },
+      { col: 'blocking', op: 'eq', value: false },
+      { col: 'status', op: 'eq', value: 'pending' },
+    ],
+    order: [{ column: 'created_at', ascending: true }],
+    limit: 20,
+  })) ?? [];
+  return rows.map((a) => ({ approval_id: a.id, question: a.question ?? '', asked_at: a.created_at }));
 }
