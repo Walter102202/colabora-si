@@ -20,7 +20,7 @@
 - Inline rewrite: select text and choose ✦ AI. The platform loop uses `get_ai_request` and `apply_ai_rewrite`; the signed block change can be undone. Other runs get `not_a_request_run`.
 - A person's @agent mention on a page without an open work task creates a task. Reply with `add_comment` and its `parent_id`, then deliver for review. An agent's mention never creates work.
 - `read_file(page_id, file_id, from_page?, to_page?)` reads attached text up to 2 MB and PDF text layers up to 5 MB. Replies stop at 50,000 characters. Encrypted PDFs and unsupported types return a reason; unread scans/images return not_extracted. The platform loop can extract and cache them once with WORKSPACE_MODEL_VISION=1 or WORKSPACE_MODEL_PDF=1 after checking model support; save_file_text is a runtime tool hidden from the model.
-- Lead: `create_task`, `create_subtask`, `update_subtask`, `list_subtasks`, `review_task`, `close_subtask`
+- Lead: `create_task`, `create_subtask`, `import_plan`, `update_subtask`, `list_subtasks`, `review_task`, `close_subtask`
 - Wait: `wait_for_task`, `wait_for_my_tasks` (the server holds the call up to 120 s and answers on the first change, with a cursor to call again)
 - Prompts: `continue_task`, `review_as_lead`. Resources: `workspace://page/<pageId>` (Markdown) and `workspace://task/<taskId>/brief` (JSON).
 

@@ -36,6 +36,64 @@ Deno.test('update_subtask rejects an empty patch before writing', async () => {
     (error: unknown) => error instanceof ToolError && error.code === 'invalid_input');
 });
 
+const planBrief = { objective: 'Work', done_when: [{ id: 'c1', text: 'Delivered', check: 'lead' }] };
+const planArgs = { parent_task_id: 'parent', idempotency_key: 'plan-key' };
+function planContext(failKey?: string) {
+  const calls: { fn: string; args: Row }[] = [];
+  const ctx = context((fn, args) => {
+    calls.push({ fn, args });
+    if (fn === 'add_row') return { data: { row_id: `row:${args.p_idempotency_key}`, page_id: `page:${args.p_idempotency_key}` }, error: null };
+    if (args.p_idempotency_key === failKey) return { data: null, error: { code: 'PT403', message: 'forbidden' } };
+    return { data: { task_id: `task:${args.p_idempotency_key}`, context_id: 'context' }, error: null };
+  });
+  return { ctx, calls };
+}
+
+Deno.test('import_plan sorts dependencies, resolves their ids and retries with identical keys', async () => {
+  const { ctx, calls } = planContext();
+  const args = { ...planArgs, subtasks: [
+    { key: 'second', depends_on: ['first'], brief: planBrief, delegate_agent_id: 'worker' },
+    { key: 'first', brief: planBrief },
+    { key: '__proto__', depends_on: ['second'], brief: planBrief },
+  ] };
+  const first = await tool('import_plan').handler(args, ctx);
+  const created = Object.fromEntries(['first', 'second', '__proto__'].map((key) => [key, `task:plan-key:${key}`]));
+  assert.deepEqual(first.structured, { created });
+  const writes = calls.filter((c) => c.fn === 'create_subtask');
+  assert.deepEqual(writes.map((c) => c.args.p_idempotency_key), ['plan-key:first', 'plan-key:second', 'plan-key:__proto__']);
+  assert.deepEqual(writes[1].args.p_depends_on_task_ids, ['task:plan-key:first']);
+  assert.equal(writes[1].args.p_delegate_agent_id, 'worker');
+  const before = structuredClone(calls);
+  assert.deepEqual((await tool('import_plan').handler(args, ctx)).structured, first.structured);
+  assert.deepEqual(calls.slice(before.length), before);
+});
+
+Deno.test('import_plan rejects duplicate, missing, cyclic and invalid briefs before any write', async () => {
+  for (const subtasks of [
+    [{ key: 'a', brief: planBrief }, { key: 'a', brief: planBrief }],
+    [{ key: 'a', brief: planBrief, depends_on: ['missing'] }],
+    [{ key: 'a', brief: planBrief, depends_on: ['b'] }, { key: 'b', brief: planBrief, depends_on: ['a'] }],
+    [{ key: 'a', brief: planBrief }, { key: 'b', brief: {} }],
+  ]) {
+    const { ctx, calls } = planContext();
+    await assert.rejects(() => tool('import_plan').handler({ ...planArgs, subtasks }, ctx),
+      (error: unknown) => error instanceof ToolError && error.code === 'invalid_input');
+    assert.deepEqual(calls, []);
+  }
+});
+
+Deno.test('import_plan includes completed subtasks in a partial failure', async () => {
+  const { ctx } = planContext('plan-key:b');
+  await assert.rejects(() => tool('import_plan').handler({ ...planArgs, subtasks: [
+    { key: 'a', brief: planBrief }, { key: 'b', brief: planBrief },
+  ] }, ctx), (error: unknown) => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.code, 'forbidden');
+    assert.deepEqual((error.detail as Row).created, { a: 'task:plan-key:a' });
+    return true;
+  });
+});
+
 // The app's briefFromRow reads brief sections by block key, so create_task must write the same keys as the row template.
 Deno.test('briefBlocks keys its section headings like the Task brief template', () => {
   const blocks = briefBlocks('Map needs', ['Three segments listed', 'Sources cited'], 'No external calls', ['https://x.test']);

@@ -3,6 +3,7 @@
 import { type Db, must, ToolError } from '../db.ts';
 import type { AgentBlockInput } from '../lib/agentInput.ts';
 import type { ToolContext, ToolDef } from '../mcp.ts';
+import { validate } from '../jsonSchema.ts';
 import { num, object, output, plural, READ, str, WRITE } from './common.ts';
 import type { Row } from './taskData.ts';
 
@@ -127,6 +128,39 @@ const createTask: ToolDef = {
   },
 };
 
+async function createOneSubtask(ctx: ToolContext, args: Record<string, unknown>) {
+  const brief = args.brief as { objective: string; constraints?: string; done_when: { text: string }[]; sources?: { ref: string }[] };
+  const key = str(args.idempotency_key);
+  let rowPageId = str(args.row_page_id);
+  if (!rowPageId) {
+    const parents = await must(ctx.db.select<{ db_page_id: string | null }>({
+      table: 'agent_tasks',
+      columns: 'db_page_id',
+      filters: [{ col: 'id', op: 'eq', value: args.parent_task_id }],
+      limit: 1,
+    }));
+    const parent = parents?.[0];
+    if (!parent) throw new ToolError('not_found', `Task ${String(args.parent_task_id)} was not found, or you have no access to it.`);
+    if (!parent.db_page_id) throw new ToolError('invalid_input', 'The parent task is not in a database: pass row_page_id.');
+    const title = str(args.title) || brief.objective.slice(0, 120);
+    const row = await addTaskRow(ctx, parent.db_page_id, title, briefBlocks(
+      brief.objective, brief.done_when.map((d) => d.text), brief.constraints, (brief.sources ?? []).map((s) => s.ref),
+    ), key);
+    rowPageId = row.page_id;
+  }
+  const data = await must(ctx.db.rpc<Row>('create_subtask', {
+    p_parent_task_id: args.parent_task_id,
+    p_row_page_id: rowPageId,
+    p_brief: args.brief,
+    p_delegate_agent_id: str(args.delegate_agent_id),
+    p_reference_task_ids: args.reference_task_ids,
+    p_depends_on_task_ids: args.depends_on_task_ids,
+    p_idempotency_key: key,
+  })) ?? {};
+  const structured = { task_id: data.task_id, context_id: data.context_id, row_page_id: rowPageId };
+  return { text: `Subtask ${String(data.task_id)} created on page ${rowPageId}. Wait for it with wait_for_task.`, structured };
+}
+
 const createSubtask: ToolDef = {
   name: 'create_subtask',
   title: 'Delegate a subtask',
@@ -152,37 +186,67 @@ const createSubtask: ToolDef = {
   }, ['parent_task_id', 'brief']),
   outputSchema: output({ task_id: { type: 'string' }, context_id: { type: 'string' }, row_page_id: { type: 'string' } }),
   annotations: WRITE,
+  handler: (args, ctx) => createOneSubtask(ctx, args),
+};
+
+const importPlan: ToolDef = {
+  name: 'import_plan',
+  title: 'Import a plan as subtasks',
+  description:
+    'Lead only, on a task you lead. Creates up to 30 subtasks in dependency order. Each has a key; depends_on names other keys. ' +
+    'Nothing is created when the plan does not validate. A retry with the same idempotency_key resumes.',
+  inputSchema: object({
+    parent_task_id: { type: 'string', minLength: 1 },
+    idempotency_key: { type: 'string', minLength: 1, maxLength: 160 },
+    subtasks: { type: 'array', minItems: 1, maxItems: 30, items: object({
+      key: { type: 'string', minLength: 1, maxLength: 30 },
+      title: { type: 'string', maxLength: 300 },
+      delegate_agent_id: { type: 'string' },
+      depends_on: { type: 'array', items: { type: 'string' } },
+      brief: { type: 'object' },
+    }, ['key', 'brief']) },
+  }, ['parent_task_id', 'idempotency_key', 'subtasks']),
+  outputSchema: output({ created: { type: 'object' } }),
+  annotations: WRITE,
   async handler(args, ctx) {
-    const brief = args.brief as { objective: string; constraints?: string; done_when: { text: string }[]; sources?: { ref: string }[] };
-    const key = str(args.idempotency_key);
-    let rowPageId = str(args.row_page_id);
-    if (!rowPageId) {
-      const parents = await must(ctx.db.select<{ db_page_id: string | null }>({
-        table: 'agent_tasks',
-        columns: 'db_page_id',
-        filters: [{ col: 'id', op: 'eq', value: args.parent_task_id }],
-        limit: 1,
-      }));
-      const parent = parents?.[0];
-      if (!parent) throw new ToolError('not_found', `Task ${String(args.parent_task_id)} was not found, or you have no access to it.`);
-      if (!parent.db_page_id) throw new ToolError('invalid_input', 'The parent task is not in a database: pass row_page_id.');
-      const title = str(args.title) || brief.objective.slice(0, 120);
-      const row = await addTaskRow(ctx, parent.db_page_id, title, briefBlocks(
-        brief.objective, brief.done_when.map((d) => d.text), brief.constraints, (brief.sources ?? []).map((s) => s.ref),
-      ), key);
-      rowPageId = row.page_id;
+    type Subtask = { key: string; title?: string; delegate_agent_id?: string; depends_on?: string[]; brief: Row };
+    const subtasks = args.subtasks as Subtask[];
+    const pending = new Map<string, Subtask>();
+    for (const subtask of subtasks) {
+      if (pending.has(subtask.key)) throw new ToolError('invalid_input', `Duplicate subtask key: ${subtask.key}`);
+      const errors = validate(createSubtask.inputSchema.properties!.brief, subtask.brief);
+      if (errors.length) throw new ToolError('invalid_input', `Invalid brief for ${subtask.key}.`, errors);
+      pending.set(subtask.key, subtask);
     }
-    const data = await must(ctx.db.rpc<Row>('create_subtask', {
-      p_parent_task_id: args.parent_task_id,
-      p_row_page_id: rowPageId,
-      p_brief: args.brief,
-      p_delegate_agent_id: str(args.delegate_agent_id),
-      p_reference_task_ids: args.reference_task_ids,
-      p_depends_on_task_ids: args.depends_on_task_ids,
-      p_idempotency_key: key,
-    })) ?? {};
-    const structured = { task_id: data.task_id, context_id: data.context_id, row_page_id: rowPageId };
-    return { text: `Subtask ${String(data.task_id)} created on page ${rowPageId}. Wait for it with wait_for_task.`, structured };
+    for (const subtask of subtasks) for (const dependency of subtask.depends_on ?? []) {
+      if (!pending.has(dependency)) throw new ToolError('invalid_input', `Unknown dependency: ${dependency}`);
+    }
+    // Kahn's algorithm: resolve the whole graph before the first write.
+    const ordered: Subtask[] = [];
+    while (pending.size) {
+      const ready = [...pending.values()].filter((subtask) => (subtask.depends_on ?? []).every((key) => !pending.has(key)));
+      if (!ready.length) throw new ToolError('invalid_input', 'The plan has a dependency cycle.');
+      for (const subtask of ready) { ordered.push(subtask); pending.delete(subtask.key); }
+    }
+    const created = new Map<string, string>();
+    for (const subtask of ordered) {
+      try {
+        const result = await createOneSubtask(ctx, {
+          parent_task_id: args.parent_task_id,
+          title: subtask.title,
+          delegate_agent_id: subtask.delegate_agent_id,
+          brief: subtask.brief,
+          depends_on_task_ids: (subtask.depends_on ?? []).map((key) => created.get(key)!),
+          idempotency_key: `${String(args.idempotency_key)}:${subtask.key}`,
+        });
+        created.set(subtask.key, String(result.structured.task_id));
+      } catch (error) {
+        throw new ToolError(error instanceof ToolError ? error.code : 'internal',
+          error instanceof Error ? error.message : 'The plan could not be imported.',
+          { created: Object.fromEntries(created), cause: error instanceof ToolError ? error.detail : null });
+      }
+    }
+    return { text: `${plural(created.size, 'subtask')} imported.`, structured: { created: Object.fromEntries(created) } };
   },
 };
 
@@ -317,4 +381,4 @@ const listSubtasks: ToolDef = {
   },
 };
 
-export const leadTools: ToolDef[] = [createTask, createSubtask, updateSubtask, reviewTask, closeSubtask, listSubtasks];
+export const leadTools: ToolDef[] = [createTask, createSubtask, updateSubtask, importPlan, reviewTask, closeSubtask, listSubtasks];
