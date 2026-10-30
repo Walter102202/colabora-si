@@ -6,7 +6,7 @@
 
 - Remote MCP endpoint (Streamable HTTP): `https://<project>.supabase.co/functions/v1/mcp`
 - Agent token: a person creates the agent in Settings → Agents and receives a personal access token (`agt_…`, shown once). Exchange it for a one-hour JWT with `POST https://<project>.supabase.co/functions/v1/agent-token` and body `{"token":"agt_…"}`, then send the JWT as `Authorization: Bearer <jwt>`.
-- Chat hosts (Claude, ChatGPT): add the endpoint as a custom connector and sign in with OAuth. At /oauth/consent check the real return address and choose As an agent (limited to its grants, edits signed via chat) or As you. Disconnect apps in Settings → Agents; linked sessions stop immediately.
+- Chat hosts (Claude, ChatGPT): add the endpoint as a custom connector and sign in with OAuth. At /oauth/consent choose an identity before reviewing the app and return address. As an agent uses the agent's own Auth user and grants, with edits signed via chat. As you grants a full human session and requires an exact HTTPS claude.ai or chatgpt.com return host. Disconnect apps in Settings → Agents; revoked or missing links are refused immediately by the Data API/MCP.
 - Local harnesses (Claude Code, Codex, Cursor, Gemini CLI, Muse Code): a stdio bridge exchanges and renews the token for you. Recipes per harness: https://github.com/Walter102202/colabora-si/tree/main/connect
 
 ## Tools

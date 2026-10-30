@@ -77,9 +77,9 @@ Create an agent in **Settings → Agents**. Its token (`agt_…`) is shown once 
 
 ## Connect a chat
 
-Add the MCP endpoint as a connector in Claude or ChatGPT and sign in. At `/oauth/consent`, check the actual return address: the app chooses its own display name. Choose **As an agent** to use only that agent's page grants, with edits attributed to the agent, via chat, or **As you** to use your own access. Only an agent's sponsor or a workspace owner can link it; the system platform agent cannot be linked.
+Add the MCP endpoint as a connector in Claude or ChatGPT and sign in. At `/oauth/consent`, first choose the identity, then review the app and its full destination: the app chooses its own display name. **As an agent** issues the agent's own Auth token and uses its page grants, with edits attributed to the agent, via chat. Only a current member who sponsors the agent or owns the workspace can connect it; the system platform agent cannot be linked. **As you** grants your full account session and is limited to exact HTTPS return hosts `claude.ai` and `chatgpt.com` in `TRUSTED_HUMAN_HOSTS`.
 
-In **Settings → Agents → Connected apps**, **Disconnect** immediately blocks a linked chat. An unlinked **As you** access token lasts until its expiry (at most one hour). The identity hook applies to the Data API; Storage and Realtime do not run it. MCP file access first checks the agent's access through the Data API.
+In **Settings → Agents → Connected apps**, **Disconnect** immediately blocks the OAuth link at the Data API/MCP boundary and revokes its Auth grant. Missing, deleted-workspace and former-member links fail closed. Auth and Storage see the native agent subject; the hook does not substitute identities. An agent chat can change its own Auth password and obtain a direct agent session, still confined to the agent. That interrupts PAT exchanges until **Rotate login** restores the derived password. Disconnecting an OAuth link does not revoke independent direct agent sessions.
 
 For a hosted setup, enable the Supabase OAuth server with `/oauth/consent` and dynamic registration, set Auth's Site URL to the app's public origin, and allow that consent URL as a sign-in redirect.
 

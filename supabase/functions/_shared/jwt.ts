@@ -84,7 +84,8 @@ export async function resolveLinkedSession(bearer: VerifiedBearer, identity: Ses
   if (!bearer.principal.clientId) return bearer;
   const { data, error } = await identity();
   if (error?.message === 'link_revoked') throw new AuthError(401, 'invalid_token', 'This connection was disconnected. Connect it again.');
-  if (error || !data || !['human', 'agent'].includes(String(data.principal_type))) {
+  if (error || !data || data.principal_type !== bearer.principal.type || data.user_id !== bearer.principal.userId
+    || (bearer.principal.type === 'agent' && (data.agent_id !== bearer.principal.agentId || !str(data.via_user)))) {
     throw new AuthError(403, 'wrong_principal', 'The session could not be resolved.');
   }
   if (data.principal_type === 'human') return bearer;
@@ -92,10 +93,6 @@ export async function resolveLinkedSession(bearer: VerifiedBearer, identity: Ses
     ...bearer,
     principal: {
       ...bearer.principal,
-      type: 'agent',
-      userId: str(data.user_id) ?? bearer.principal.userId,
-      agentId: str(data.agent_id),
-      workspaceId: str(data.workspace_id),
       viaUserId: str(data.via_user),
     },
   };

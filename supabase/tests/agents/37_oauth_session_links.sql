@@ -1,5 +1,10 @@
 begin;
-select plan(40);
+select plan(45);
+create or replace function tests.set_oauth_agent(p_uid uuid, p_agent uuid, p_client text)
+returns void language sql as $$
+  select tests.set_claims(jsonb_build_object('sub', p_uid, 'role', 'authenticated', 'aud', 'authenticated',
+    'client_id', p_client, 'app_metadata', jsonb_build_object('principal_type', 'agent', 'agent_id', p_agent)), 'authenticated');
+$$;
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_G']) p;
 select tests.make_user('other-person@test.local') as other \gset
@@ -31,18 +36,23 @@ select is((public.set_oauth_link('client-1', (:'f'::jsonb->>'agent')::uuid))->>'
 select is(public.set_oauth_link('client-1', (:'f'::jsonb->>'agent')::uuid)->>'linked', 'true', 'linking again is idempotent');
 select tests.reset_role();
 
--- 9-10. A session without a link stays the person.
+-- An explicitly authorized As-you session stays the person.
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.set_oauth_link('client-other', null);
 select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'client-other');
 select private.apply_session_link();
-select is(private.principal_type(), 'human', 'a chat without a link stays the person');
+select is(private.principal_type(), 'human', 'an explicit human link stays the person');
 select is((select auth.uid()), (:'f'::jsonb->>'owner')::uuid, 'and keeps the person''s id');
 select tests.reset_role();
 
--- 11-15. A linked session becomes the agent: identity, reads, and what only people may do.
+-- A legacy human-subject token must not be converted into an agent.
 select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'client-1');
+select ok(tests.error_of('select private.apply_session_link()') like '%link_revoked%', 'a human-subject token cannot use an agent link');
+select tests.reset_role();
+
+-- A linked session already is the agent: the hook only validates and stamps it.
+select tests.set_oauth_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid, 'client-1');
 select private.apply_session_link();
 select is(private.principal_type(), 'agent', 'a linked chat is an agent');
 select is((select auth.uid()), (:'f'::jsonb->>'agent_user')::uuid, 'it carries the agent''s user id');
@@ -57,7 +67,7 @@ select is(tests.error_of(format('select public.close_task(%L::uuid, %L)', gen_ra
 select tests.reset_role();
 
 -- 19. The stamp names the agent and the person.
-select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'client-1');
+select tests.set_oauth_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid, 'client-1');
 select private.apply_session_link();
 select public.append_page_blocks('page_G', '[{"type":"paragraph","spans":["hello"]}]'::jsonb);
 select tests.reset_role();
@@ -65,13 +75,13 @@ select is((select b->'attr'->>'via' from public.pages p, jsonb_array_elements(p.
             where p.id = 'page_G' and b->'attr' ? 'via' limit 1), :'f'::jsonb->>'owner', 'the block stamp records via');
 
 -- 20. Without the hook a live link is refused, so a missing hook cannot hand the chat the person's reach.
-select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'client-1');
+select tests.set_oauth_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid, 'client-1');
 select is(tests.error_of('select public.session_identity()'), 'session_link_not_applied', 'an unapplied link fails closed');
 select tests.reset_role();
 
 -- 21-22. A disabled agent stays the principal and every agent RPC refuses it.
 update public.agents set status = 'disabled' where id = (:'f'::jsonb->>'agent')::uuid;
-select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'client-1');
+select tests.set_oauth_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid, 'client-1');
 select is(tests.error_of('select public.session_identity()'), 'session_link_not_applied', 'a disabled link also fails closed without the hook');
 select private.apply_session_link();
 select is(private.principal_type(), 'agent', 'a disabled agent does not fall back to the person');
@@ -85,12 +95,12 @@ select is((public.revoke_oauth_link('client-1'))->>'revoked', 'true', 'the perso
 select is(tests.error_of('select public.revoke_oauth_link(''client-1'')'), 'not_found', 'disconnecting twice says so');
 select tests.reset_role();
 -- 25. raise sqlstate PGRST carries the code inside the message JSON.
-select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'client-1');
+select tests.set_oauth_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid, 'client-1');
 select ok(tests.error_of('select public.session_identity()') like '%link_revoked%', 'a revoked link is refused even without the hook');
 select ok(tests.error_of('select private.apply_session_link()') like '%link_revoked%', 'a disconnected chat is refused by the hook');
 select tests.reset_role();
 
--- 26. A null agent removes the link, so reconnecting "as you" works.
+-- A null agent writes an explicit human link.
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.set_oauth_link('client-1', null);
 select tests.reset_role();
@@ -119,8 +129,18 @@ select is(tests.error_of(format('select public.issue_agent_token(%L::uuid)', :'f
 select is(tests.error_of(format('select public.update_agent(%L::uuid, %L::jsonb)', :'f'::jsonb->>'agent', '{"name":"Hijacked"}')), 'forbidden', 'a former-member sponsor cannot manage the agent');
 select is(tests.error_of(format('select public.revoke_agent_token(%L::uuid)', :'member_token')), 'forbidden', 'a former-member sponsor cannot manage its tokens');
 select tests.reset_role();
-select tests.set_human((:'f'::jsonb->>'viewer')::uuid, 'former-member');
+select tests.set_oauth_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid, 'former-member');
 select ok(tests.error_of('select private.apply_session_link()') like '%link_revoked%', 'an existing link stops when its person leaves the workspace');
+select tests.reset_role();
+
+-- Agent OAuth helpers authorize the direct person, not the chat or a stranger.
+select tests.set_human(:'other'::uuid);
+select is(tests.error_of(format('select public.oauth_agent_context(%L::uuid)', :'f'::jsonb->>'agent')), 'forbidden', 'a stranger cannot obtain an OAuth agent context');
+select is(tests.sqlstate_of(format('select public.oauth_authorization_context(%L, %L::uuid)', 'authz', :'f'::jsonb->>'agent_user')), '42501', 'only the server reads Auth authorization metadata');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'client-other');
+select is(tests.error_of(format('select public.set_oauth_app(%L, null, %L, %L)', 'x', 'App', 'https://claude.ai/cb')), 'direct_session_required', 'a chat cannot register its own app link');
+select is(tests.error_of('select public.oauth_human_context(''authz'')'), 'direct_session_required', 'a chat cannot inspect human authorizations');
 select tests.reset_role();
 
 -- Keep a tombstone when the agent's workspace is deleted; absence must never recover human reach.
@@ -130,7 +150,7 @@ delete from public.workspaces where id = (:'f'::jsonb->>'ws')::uuid;
 select is((select count(*)::int from public.agent_oauth_links where client_id = 'deleted-workspace' and agent_id is null and workspace_id is null), 1,
           'workspace deletion preserves an orphaned link');
 select tests.reset_role();
-select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'deleted-workspace');
+select tests.set_oauth_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid, 'deleted-workspace');
 select ok(tests.error_of('select private.apply_session_link()') like '%link_revoked%', 'workspace deletion cannot turn the agent chat into its person');
 select tests.reset_role();
 

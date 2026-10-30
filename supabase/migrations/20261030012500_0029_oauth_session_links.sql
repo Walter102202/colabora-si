@@ -1,13 +1,8 @@
--- 0029 · OAuth session links: a chat connected "as an agent" is that agent for the whole request.
---
--- A chat app signs in with OAuth as a person, so its token carries the person's sub plus a client_id. When the
--- person picked an agent on the consent screen, agent_oauth_links says which one. Patching each RPC and policy would
--- leave the person's reach open wherever one was missed, so the identity changes in one place instead: PostgREST runs
--- private.apply_session_link before every request, and a linked token continues as the agent's claims. Everything
--- after that (RLS, humans_only, rate limits, attribution) sees a normal agent. `via_user` keeps who connected it.
---
--- The hook covers the Data API only. Storage and Realtime still read the person's claims; the MCP tools reach Storage
--- after a read through the Data API, so the agent's grants decide there too.
+-- 0029 · OAuth chats use the selected Auth principal, never a substituted human session.
+-- Agent authorizations are read/decided by agent-admin after direct-person and membership checks.
+-- Auth and Storage therefore see the agent itself. The Data API hook validates a live explicit link,
+-- refuses orphaned/revoked/second-client tokens, and adds only the server-owned via_user attribution.
+-- As-you mode remains a full human session, restricted in consent to trusted HTTPS hosts.
 
 -- PostgREST calls the hook as the request's role, and without usage on this schema every service-role call fails.
 grant usage on schema private to service_role;
@@ -15,6 +10,8 @@ grant usage on schema private to service_role;
 -- Deletion preserves a tombstone. A missing association must never become human access.
 alter table public.agent_oauth_links
   add column if not exists as_human boolean not null default false,
+  add column if not exists client_name text,
+  add column if not exists redirect_uri text,
   alter column workspace_id drop not null,
   alter column agent_id drop not null,
   alter column user_id drop not null,
@@ -25,6 +22,9 @@ alter table public.agent_oauth_links
   add constraint agent_oauth_links_agent_id_fkey foreign key (agent_id) references public.agents(id) on delete set null,
   add constraint agent_oauth_links_user_id_fkey foreign key (user_id) references auth.users(id) on delete set null;
 
+create unique index if not exists agent_oauth_links_agent_client_idx on public.agent_oauth_links (agent_id, client_id)
+  where agent_id is not null and user_id is not null and revoked_at is null;
+
 -- Explicit user form also works after a request has an agent principal.
 create or replace function private.is_workspace_member_user(p_ws uuid, p_user uuid)
 returns boolean language sql stable security definer set search_path = '' as $$
@@ -33,55 +33,56 @@ returns boolean language sql stable security definer set search_path = '' as $$
 $$;
 revoke all on function private.is_workspace_member_user(uuid, uuid) from public, anon, authenticated;
 
-create or replace function private.apply_session_link()
-returns void language plpgsql security definer set search_path = '' as $$
-declare v_claims jsonb; v_user uuid; v_client text; v_l public.agent_oauth_links%rowtype; v_a public.agents%rowtype;
+-- Validate the token's existing identity; never exchange a person's subject for an agent's.
+create or replace function private.oauth_session_link()
+returns public.agent_oauth_links language plpgsql stable security definer set search_path = '' as $$
+declare v_l public.agent_oauth_links%rowtype; v_uid uuid := (select auth.uid()); v_client text := private.jwt_client_id();
 begin
-  v_claims := nullif(current_setting('request.jwt.claims', true), '')::jsonb;
-  v_client := nullif(v_claims->>'client_id', '');
-  if v_client is null then return; end if;
-  v_user := (v_claims->>'sub')::uuid;
-  select * into v_l from public.agent_oauth_links where user_id = v_user and client_id = v_client;
-  -- A disconnected chat is refused at once, not when its token expires, and never falls back to the person.
-  if not found or v_l.revoked_at is not null or (not v_l.as_human and
-     (v_l.agent_id is null or v_l.workspace_id is null or not private.is_workspace_member_user(v_l.workspace_id, v_l.user_id))) then
+  select l.* into v_l from public.agent_oauth_links l
+   where l.client_id = v_client and l.user_id is not null and (
+     (l.as_human and private.principal_type() = 'human' and l.user_id = v_uid)
+     or (not l.as_human and private.principal_type() = 'agent'
+         and l.agent_id::text = auth.jwt()->'app_metadata'->>'agent_id'
+         and exists (select 1 from public.agents a where a.id = l.agent_id and a.auth_user_id = v_uid)));
+  if not found or v_l.revoked_at is not null or (not v_l.as_human and (
+      v_l.agent_id is null or v_l.workspace_id is null
+      or not private.is_workspace_member_user(v_l.workspace_id, v_l.user_id)
+      or not exists (select 1 from public.agents a where a.id = v_l.agent_id
+                      and (a.sponsor_user_id = v_l.user_id or private.is_owner_user(a.workspace_id, v_l.user_id))))) then
     raise sqlstate 'PGRST' using
       message = json_build_object('code', 'link_revoked', 'message', 'link_revoked', 'details', null, 'hint', null)::text,
       detail = json_build_object('status', 401, 'headers', json_build_object())::text;
   end if;
-  if v_l.as_human then return; end if;
-  -- The status of the agent is not read here: a disabled agent stays the principal, so current_agent_id() is null
-  -- and every agent RPC refuses it. Falling back to the person would widen the chat's reach.
-  select * into v_a from public.agents where id = v_l.agent_id;
-  perform set_config('request.jwt.claims', (v_claims || jsonb_build_object(
-    'sub', v_a.auth_user_id, 'via_user', v_user,
-    'app_metadata', jsonb_build_object('principal_type', 'agent', 'agent_id', v_a.id, 'workspace_id', v_a.workspace_id)))::text, true);
-  perform set_config('request.jwt.claim.sub', v_a.auth_user_id::text, true);
+  return v_l;
+end $$;
+revoke all on function private.oauth_session_link() from public, anon, authenticated;
+
+create or replace function private.apply_session_link()
+returns void language plpgsql security definer set search_path = '' as $$
+declare v_l public.agent_oauth_links%rowtype; v_claims jsonb;
+begin
+  if private.jwt_client_id() is null then return; end if;
+  v_l := private.oauth_session_link();
+  v_claims := auth.jwt() - 'via_user';
+  if not v_l.as_human then v_claims := v_claims || jsonb_build_object('via_user', v_l.user_id); end if;
+  perform set_config('request.jwt.claims', v_claims::text, true);
 end $$;
 revoke execute on function private.apply_session_link() from public;
 grant execute on function private.apply_session_link() to anon, authenticated, service_role;
 
--- Who the caller is after the hook. The mcp function reads it once per request for an OAuth token.
 create or replace function public.session_identity()
 returns jsonb language plpgsql stable security definer set search_path = '' as $$
-declare v_link public.agent_oauth_links%rowtype;
+declare v_l public.agent_oauth_links%rowtype;
 begin
-  -- Check every link, including disabled/revoked ones. linked_agent_id intentionally filters those out.
-  if private.principal_type() = 'human' and private.jwt_client_id() is not null then
-    select * into v_link from public.agent_oauth_links
-     where user_id = (select auth.uid()) and client_id = private.jwt_client_id();
-    if not found or v_link.revoked_at is not null or (not v_link.as_human and (v_link.agent_id is null or v_link.workspace_id is null)) then
-        raise sqlstate 'PGRST' using
-          message = json_build_object('code', 'link_revoked', 'message', 'link_revoked', 'details', null, 'hint', null)::text,
-          detail = json_build_object('status', 401, 'headers', json_build_object())::text;
-    end if;
-    if not v_link.as_human then
+  if private.jwt_client_id() is not null then
+    v_l := private.oauth_session_link();
+    if not v_l.as_human and auth.jwt()->>'via_user' is distinct from v_l.user_id::text then
       raise exception using errcode = 'PT500', message = 'session_link_not_applied';
     end if;
   end if;
   return jsonb_build_object('principal_type', private.principal_type(), 'user_id', (select auth.uid()),
-    'agent_id', auth.jwt() -> 'app_metadata' ->> 'agent_id', 'workspace_id', auth.jwt() -> 'app_metadata' ->> 'workspace_id',
-    'via_user', auth.jwt() ->> 'via_user');
+    'agent_id', auth.jwt()->'app_metadata'->>'agent_id', 'workspace_id', auth.jwt()->'app_metadata'->>'workspace_id',
+    'via_user', auth.jwt()->>'via_user');
 end $$;
 revoke all on function public.session_identity() from public, anon;
 grant execute on function public.session_identity() to authenticated;
@@ -153,6 +154,75 @@ begin
 end $$;
 revoke all on function public.revoke_oauth_link(text) from public, anon;
 grant execute on function public.revoke_oauth_link(text) to authenticated;
+
+-- Server login authorization. Disabled agents may only be used to disconnect an existing link.
+create or replace function public.oauth_agent_context(p_agent_id uuid, p_client_id text default null, p_require_enabled boolean default true)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare v_a public.agents%rowtype; v_l public.agent_oauth_links%rowtype;
+begin
+  if private.principal_type() <> 'human' then raise exception using errcode = 'PT403', message = 'humans_only'; end if;
+  if private.jwt_client_id() is not null then raise exception using errcode = 'PT403', message = 'direct_session_required'; end if;
+  select * into v_a from public.agents where id = p_agent_id and not is_platform;
+  if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+  if not private.is_workspace_member(v_a.workspace_id)
+     or not (v_a.sponsor_user_id = (select auth.uid()) or private.is_workspace_owner(v_a.workspace_id)) then
+    raise exception using errcode = 'PT403', message = 'forbidden';
+  end if;
+  if p_require_enabled and (v_a.status <> 'enabled' or v_a.revoked_at is not null) then
+    raise exception using errcode = 'PT403', message = 'agent_disabled';
+  end if;
+  if p_client_id is not null then
+    select * into v_l from public.agent_oauth_links where user_id = (select auth.uid())
+      and client_id = p_client_id and agent_id = v_a.id and not as_human;
+    if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+  elsif not p_require_enabled then
+    raise exception using errcode = 'PT400', message = 'invalid_input';
+  end if;
+  return jsonb_build_object('agent_id', v_a.id, 'auth_user_id', v_a.auth_user_id,
+    'login_nonce', v_a.connection->>'login_nonce', 'link_revoked', v_l.revoked_at is not null);
+end $$;
+revoke all on function public.oauth_agent_context(uuid, text, boolean) from public, anon;
+grant execute on function public.oauth_agent_context(uuid, text, boolean) to authenticated;
+
+-- Read only the metadata needed before GoTrue binds/consumes an authorization. No code or secret is returned.
+-- The server uses this before getAuthorizationDetails, whose remembered-consent response contains only a redirect.
+create or replace function public.oauth_authorization_context(p_authorization_id text, p_auth_user_id uuid)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare v_result jsonb;
+begin
+  select jsonb_build_object('client_id', a.client_id, 'client_name', c.client_name,
+                           'redirect_uri', a.redirect_uri, 'user_id', a.user_id) into v_result
+    from auth.oauth_authorizations a join auth.oauth_clients c on c.id = a.client_id
+   where a.authorization_id = p_authorization_id and a.expires_at > now() and a.status = 'pending'
+     and c.deleted_at is null and (a.user_id is null or a.user_id = p_auth_user_id);
+  if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+  return v_result;
+end $$;
+revoke all on function public.oauth_authorization_context(text, uuid) from public, anon, authenticated;
+grant execute on function public.oauth_authorization_context(text, uuid) to service_role;
+
+-- For the explicitly chosen human flow only. Metadata reads do not bind the authorization in GoTrue.
+create or replace function public.oauth_human_context(p_authorization_id text)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+begin
+  if private.principal_type() <> 'human' then raise exception using errcode = 'PT403', message = 'humans_only'; end if;
+  if private.jwt_client_id() is not null then raise exception using errcode = 'PT403', message = 'direct_session_required'; end if;
+  return public.oauth_authorization_context(p_authorization_id, (select auth.uid()));
+end $$;
+revoke all on function public.oauth_human_context(text) from public, anon;
+grant execute on function public.oauth_human_context(text) to authenticated;
+
+create or replace function public.set_oauth_app(p_client_id text, p_agent_id uuid, p_client_name text, p_redirect_uri text)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_result jsonb;
+begin
+  v_result := public.set_oauth_link(p_client_id, p_agent_id);
+  update public.agent_oauth_links set client_name = p_client_name, redirect_uri = p_redirect_uri
+   where user_id = (select auth.uid()) and client_id = p_client_id;
+  return v_result;
+end $$;
+revoke all on function public.set_oauth_app(text, uuid, text, text) from public, anon;
+grant execute on function public.set_oauth_app(text, uuid, text, text) to authenticated;
 
 -- The stamp on a block says the agent wrote it and who connected the chat (via).
 create or replace function private.apply_page_ops_core(p_page_id text, p_ops jsonb, p_client text)

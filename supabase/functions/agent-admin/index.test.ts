@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { hmacSha256Hex } from '../_shared/hmac.ts';
+import { agentLoginPassword } from '../_shared/agentLogin.ts';
 import { type AgentAdminDeps, type AgentRecord, handleAgentAdmin } from './handler.ts';
 
 const HUMAN = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -61,6 +62,7 @@ function makeDeps(opts: { member?: boolean; rpcFails?: boolean; owner?: boolean;
           : { agent_id: AGENT_ID });
     },
     newId: () => AGENT_ID,
+    signInAgent: () => Promise.reject(new Error('Unexpected agent OAuth login')),
     randomSecret: () => 'temporary-secret',
   };
   return { deps, calls };
@@ -214,4 +216,65 @@ Deno.test('every admin action rejects an OAuth chat before any privileged operat
     assert.equal((await res.json()).error, 'direct_session_required', action);
     assert.deepEqual(calls, [], action);
   }
+});
+
+Deno.test('OAuth read and decisions use only the selected agent login and persist app metadata', async () => {
+  for (const action of ['oauth_read', 'oauth_approve', 'oauth_deny', 'oauth_disconnect']) {
+    const { deps, calls } = makeDeps();
+    const api = deps.caller('human-jwt');
+    api.rpc = async (fn, args) => {
+      calls.push({ op: fn, args: [args] });
+      return fn === 'oauth_agent_context' ? { agent_id: AGENT_ID, auth_user_id: AUTH_USER, login_nonce: 'rotated', link_revoked: false } : {};
+    };
+    deps.caller = () => api;
+    deps.serviceRpc = async () => ({ client_id: 'client', client_name: 'App', redirect_uri: 'cursor://cb', user_id: AUTH_USER });
+    const login: string[][] = [];
+    deps.signInAgent = async (email, password) => {
+      login.push([email, password]);
+      return { read: async () => ({ client: { id: 'client', name: 'App' }, redirect_uri: 'cursor://cb', user: { email: 'agent@test.local' } }),
+        approve: async () => ({ redirect_url: 'cursor://cb?code=secret-code' }), deny: async () => ({ redirect_url: 'cursor://cb?error=access_denied' }),
+        disconnect: async () => { calls.push({ op: 'revokeGrant', args: [] }); } };
+    };
+    const res = await handleAgentAdmin(new Request('http://localhost/functions/v1/agent-admin', {
+      method: 'POST', headers: { Authorization: 'Bearer human-jwt', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, agent_id: AGENT_ID, authorization_id: 'authz', client_id: 'client' }),
+    }), deps);
+    assert.equal(res.status, 200, action);
+    assert.deepEqual(login, [[`agent+${AGENT_ID}@agents.invalid`, await agentLoginPassword(PEPPER, AUTH_USER, 'rotated')]]);
+    assert.equal(calls[0].op, 'oauth_agent_context');
+    if (action === 'oauth_approve') assert.ok(calls.some((c) => c.op === 'set_oauth_app'));
+    if (action === 'oauth_disconnect') assert.ok(calls.findIndex((c) => c.op === 'revoke_oauth_link') < calls.findIndex((c) => c.op === 'revokeGrant'));
+    const text = await res.text(); assert.ok(!text.includes('access_token')); assert.ok(!text.includes('rotated'));
+  }
+});
+
+Deno.test('OAuth remembered consent records its link before returning and rejected contexts never log in', async () => {
+  const { deps, calls } = makeDeps();
+  const api = deps.caller('human-jwt');
+  let allowed = false, persisted = false, logins = 0, saveFails = false;
+  api.rpc = async (fn) => {
+    if (!allowed) throw { code: 'PT403', message: 'forbidden' };
+    if (fn === 'set_oauth_app') {
+      if (saveFails) throw { code: 'PT403', message: 'forbidden' };
+      persisted = true; return {};
+    }
+    return { agent_id: AGENT_ID, auth_user_id: AUTH_USER, link_revoked: false };
+  };
+  deps.caller = () => api;
+  deps.serviceRpc = async () => ({ client_id: 'c', client_name: 'App', redirect_uri: 'https://app.test/cb', user_id: null });
+  deps.signInAgent = async () => {
+    logins++;
+    return { read: async () => ({ redirect_url: 'https://app.test/cb?code=remembered' }), approve: async () => ({}), deny: async () => ({}), disconnect: async () => {} };
+  };
+  const req = () => new Request('http://localhost/functions/v1/agent-admin', { method: 'POST', headers: { Authorization: 'Bearer human-jwt' },
+    body: JSON.stringify({ action: 'oauth_read', agent_id: AGENT_ID, authorization_id: 'authz' }) });
+  assert.equal((await handleAgentAdmin(req(), deps)).status, 403); assert.equal(logins, 0); assert.deepEqual(calls, []);
+  allowed = true;
+  const res = await handleAgentAdmin(req(), deps);
+  assert.equal(res.status, 200); assert.equal(persisted, true);
+  assert.deepEqual(await res.json(), { redirect_url: 'https://app.test/cb?code=remembered' });
+  saveFails = true;
+  const refused = await handleAgentAdmin(req(), deps);
+  assert.equal(refused.status, 403);
+  assert.ok(!(await refused.text()).includes('remembered'));
 });

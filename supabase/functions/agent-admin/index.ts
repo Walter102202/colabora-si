@@ -92,6 +92,16 @@ Deno.serve((req) => {
     async serviceRpc(fn, args) {
       return unwrap(await service.rpc(fn, args));
     },
+    async signInAgent(email, password) {
+      const agent = anonClient(env);
+      unwrap(await agent.auth.signInWithPassword({ email, password }));
+      return {
+        read: async (id) => unwrap(await agent.auth.oauth.getAuthorizationDetails(id)) as unknown as Record<string, unknown>,
+        approve: async (id) => unwrap(await agent.auth.oauth.approveAuthorization(id, { skipBrowserRedirect: true })) as unknown as Record<string, unknown>,
+        deny: async (id) => unwrap(await agent.auth.oauth.denyAuthorization(id, { skipBrowserRedirect: true })) as unknown as Record<string, unknown>,
+        disconnect: async (clientId) => { unwrap(await agent.auth.oauth.revokeGrant({ clientId })); },
+      };
+    },
     newId: () => crypto.randomUUID(),
     randomSecret: () => randomHex(32),
   });

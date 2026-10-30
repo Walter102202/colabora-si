@@ -14,18 +14,26 @@ Deno.test('direct sessions do not resolve a link', async () => {
   const bearer = linkedBearer(null);
   assert.equal(await resolveLinkedSession(bearer, () => { throw new Error('unexpected RPC'); }), bearer);
 });
-Deno.test('an unlinked OAuth session stays human', async () => {
+Deno.test('an explicitly linked human OAuth session keeps its native identity', async () => {
   const bearer = linkedBearer();
-  assert.equal(await resolveLinkedSession(bearer, async () => ({ data: { principal_type: 'human' }, error: null })), bearer);
+  assert.equal(await resolveLinkedSession(bearer, async () => ({ data: { principal_type: 'human', user_id: 'person' }, error: null })), bearer);
 });
-Deno.test('a linked OAuth session uses the database agent identity and keeps the caller token', async () => {
+Deno.test('a linked OAuth session already has the agent identity and keeps the caller token', async () => {
   const bearer = linkedBearer();
+  bearer.principal = { ...bearer.principal, type: 'agent', userId: 'agent-user', agentId: AGENT_ID, workspaceId: 'workspace' };
   const result = await resolveLinkedSession(bearer, async () => ({ data: {
     principal_type: 'agent', user_id: 'agent-user', agent_id: AGENT_ID, workspace_id: 'workspace', via_user: 'person',
   }, error: null }));
   assert.equal(result.token, bearer.token);
   assert.deepEqual(result.principal, { type: 'agent', userId: 'agent-user', agentId: AGENT_ID,
     workspaceId: 'workspace', viaUserId: 'person', clientId: 'chat' });
+});
+Deno.test('session resolution cannot substitute another principal or subject', async () => {
+  for (const data of [{ principal_type: 'agent', user_id: 'agent-user', agent_id: AGENT_ID, via_user: 'person' },
+    { principal_type: 'human', user_id: 'another-person' }]) {
+    await assert.rejects(resolveLinkedSession(linkedBearer(), async () => ({ data, error: null })),
+      (e) => e instanceof AuthError && e.status === 403 && e.code === 'wrong_principal');
+  }
 });
 Deno.test('a revoked OAuth link is an invalid token', async () => {
   await assert.rejects(resolveLinkedSession(linkedBearer(), async () => ({ data: null, error: { message: 'link_revoked' } })),

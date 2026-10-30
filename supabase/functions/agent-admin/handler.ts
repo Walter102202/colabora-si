@@ -55,8 +55,17 @@ export interface AgentAdminDeps {
     deleteUser(id: string): Promise<void>;
   };
   serviceRpc(fn: string, args: Record<string, unknown>): Promise<unknown>;
+  /** Fresh server-only login as the selected agent; its credentials never leave this handler. */
+  signInAgent(email: string, password: string): Promise<AgentOAuthApi>;
   newId(): string;
   randomSecret(): string;
+}
+
+export interface AgentOAuthApi {
+  read(id: string): Promise<Record<string, unknown>>;
+  approve(id: string): Promise<Record<string, unknown>>;
+  deny(id: string): Promise<Record<string, unknown>>;
+  disconnect(clientId: string): Promise<void>;
 }
 
 export const CORS_HEADERS = {
@@ -122,6 +131,11 @@ export async function handleAgentAdmin(req: Request, deps: AgentAdminDeps): Prom
 
   const api = deps.caller(token);
   switch (body.action) {
+    case 'oauth_read':
+    case 'oauth_approve':
+    case 'oauth_deny':
+    case 'oauth_disconnect':
+      return agentOAuth(body, api, deps);
     case 'ci_connect': {
       if (!deps.ciPepper || !deps.functionsBaseUrl) return error(500, 'misconfigured', 'CI_WEBHOOK_PEPPER and the functions URL must be set.');
       if (!isUuid(body.workspace_id) || typeof body.repo !== 'string') return error(400, 'invalid_input', 'Use a workspace id and owner/name repository.');
@@ -141,8 +155,46 @@ export async function handleAgentAdmin(req: Request, deps: AgentAdminDeps): Prom
     case 'rotate_login':
       return rotateLogin(body, api, deps);
     default:
-      return error(400, 'invalid_request', 'action must be create_agent, enable_platform_agent, revoke_agent, rotate_login or ci_connect.');
+      return error(400, 'invalid_request', 'action must be create_agent, enable_platform_agent, revoke_agent, rotate_login, ci_connect, oauth_read, oauth_approve, oauth_deny or oauth_disconnect.');
   }
+}
+
+async function agentOAuth(body: Record<string, unknown>, api: CallerApi, deps: AgentAdminDeps): Promise<Response> {
+  if (!isUuid(body.agent_id)) return error(400, 'invalid_input', 'agent_id must be a uuid.');
+  const disconnect = body.action === 'oauth_disconnect';
+  const id = disconnect ? body.client_id : body.authorization_id;
+  if (typeof id !== 'string' || !id) return error(400, 'invalid_input', 'An authorization or client id is required.');
+  try {
+    // This caller-token RPC enforces direct human, current membership and sponsor/owner on every action.
+    const context = await api.rpc('oauth_agent_context', {
+      p_agent_id: body.agent_id, p_client_id: disconnect ? id : null, p_require_enabled: !disconnect,
+    });
+    if (!isRecord(context) || !isUuid(context.auth_user_id)) throw new Error('Invalid agent context');
+    // Block the Data API first, even if the chat rotated the agent's password and Auth login now fails.
+    if (disconnect && !context.link_revoked) await api.rpc('revoke_oauth_link', { p_client_id: id });
+    const authorization = disconnect ? null : await deps.serviceRpc('oauth_authorization_context', {
+      p_authorization_id: id, p_auth_user_id: context.auth_user_id,
+    });
+    if (!disconnect && (!isRecord(authorization) || typeof authorization.client_id !== 'string' || typeof authorization.redirect_uri !== 'string')) {
+      throw new Error('Invalid authorization');
+    }
+    if (!disconnect && body.action !== 'oauth_read' && (authorization as Record<string, unknown>).user_id !== context.auth_user_id) {
+      return error(404, 'not_found', 'Read this authorization as the selected agent first.');
+    }
+    const agent = await deps.signInAgent(agentEmail(body.agent_id), await agentLoginPassword(
+      deps.loginPepper, context.auth_user_id, typeof context.login_nonce === 'string' ? context.login_nonce : null,
+    ));
+    if (disconnect) { await agent.disconnect(id); return ok({ disconnected: true }); }
+    const details = authorization as Record<string, unknown>;
+    const result = body.action === 'oauth_read' ? await agent.read(id)
+      : body.action === 'oauth_approve' ? await agent.approve(id) : await agent.deny(id);
+    if (body.action === 'oauth_approve' || (body.action === 'oauth_read' && typeof result.redirect_url === 'string')) {
+      // Withhold the authorization code unless the current person can still establish the link.
+      await api.rpc('set_oauth_app', { p_client_id: details.client_id, p_agent_id: body.agent_id,
+        p_client_name: details.client_name ?? 'An app', p_redirect_uri: details.redirect_uri });
+    }
+    return ok(result);
+  } catch (e) { return dbFailure(e, 'Could not complete this connection. If the agent password changed, use Rotate login and connect again.'); }
 }
 
 async function createAgent(
