@@ -8,8 +8,9 @@
 // VAPID (RFC 8292) and aes128gcm payload encryption (RFC 8291/8188) are
 // implemented directly on WebCrypto — no third-party push library.
 
-import { createClient } from "jsr:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.112.3";
 import { agentPush, pushOutcome, shouldPush, tooOldToPush, type AgentNotification, type PushApproval, type PushPayload, type PushResult } from "./payload.ts";
+import { isBrowserPushEndpoint } from "./endpoint.ts";
 
 const enc = new TextEncoder();
 
@@ -204,17 +205,33 @@ interface Sub {
 // A push service that accepts the connection and never answers would otherwise hold the whole pass.
 const PUSH_TIMEOUT_MS = 10_000;
 
-async function sendPush(
+// Only a server operator running against a local Supabase can enable a capture
+// server. Nothing in the request, subscription or database can enable this.
+function isLocalCaptureEndpoint(endpoint: string): boolean {
+  const origin = Deno.env.get("PUSH_LOCAL_CAPTURE_ORIGIN");
+  if (!origin || Deno.env.has("DENO_DEPLOYMENT_ID")) return false;
+  try {
+    const backend = new URL(Deno.env.get("SUPABASE_URL") ?? "");
+    const url = new URL(endpoint);
+    return backend.protocol === "http:" && ["127.0.0.1", "localhost", "kong"].includes(backend.hostname) &&
+      url.protocol === "http:" && url.hostname === "127.0.0.1" && url.origin === origin &&
+      !url.username && !url.password && !url.hash;
+  } catch {
+    return false;
+  }
+}
+
+export async function sendPush(
   sub: Sub,
   payload: string,
   cfg: { vapid_public: string; vapid_private: string; vapid_subject: string },
 ): Promise<number | "invalid"> {
+  if (!isBrowserPushEndpoint(sub.endpoint) && !isLocalCaptureEndpoint(sub.endpoint)) return "invalid";
   let body: Uint8Array<ArrayBuffer>;
   try {
-    new URL(sub.endpoint);
     body = await encryptPayload(payload, sub.p256dh, sub.auth);
   } catch {
-    // The endpoint is not a URL or the subscription keys are malformed: it can never receive a push.
+    // Malformed subscription keys can never receive a push.
     return "invalid";
   }
   const authorization = await vapidAuthorization(
@@ -225,6 +242,7 @@ async function sendPush(
   );
   const res = await fetch(sub.endpoint, {
     method: "POST",
+    redirect: "manual", // Never follow an allowed provider to an unchecked destination.
     headers: {
       Authorization: authorization,
       "Content-Encoding": "aes128gcm",
@@ -268,7 +286,7 @@ const serviceKey = (() => {
   return "";
 })();
 
-Deno.serve(async (req) => {
+export async function handleRequest(req: Request): Promise<Response> {
   if (req.method !== "POST") {
     return new Response("Method not allowed", { status: 405 });
   }
@@ -403,7 +421,7 @@ Deno.serve(async (req) => {
       const status = results[i];
       if (status === "threw") return;
       statuses[String(status)] = (statuses[String(status)] ?? 0) + 1;
-      if (status === 404 || status === 410) {
+      if (status === "invalid" || status === 404 || status === 410) {
         expired.add(sub.endpoint);
       } else if (typeof status === "number" && status >= 200 && status < 300) {
         sent++;
@@ -471,4 +489,6 @@ Deno.serve(async (req) => {
     removed: expired.size,
     statuses,
   });
-});
+}
+
+if (import.meta.main) Deno.serve(handleRequest);
