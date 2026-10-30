@@ -32,6 +32,15 @@ returns numeric language sql immutable set search_path = '' as $$
   select case when jsonb_typeof(p_cell) = 'object' and jsonb_typeof(p_cell->'at') = 'number' then (p_cell->>'at')::numeric end;
 $$;
 
+-- A clear and a legacy string have no timestamp. Compare them with the request's initial cell as well.
+create or replace function private.ai_person_edit(p_cell jsonb, p_initial jsonb, p_since numeric)
+returns boolean language sql immutable set search_path = '' as $$
+  select coalesce((jsonb_typeof(p_cell) = 'object' and p_cell->>'by' = 'human'
+                   and coalesce(private.ai_cell_at(p_cell), 0) >= p_since), false)
+    or (p_initial is not null and coalesce(p_cell, 'null'::jsonb) is distinct from p_initial
+        and (p_cell is null or jsonb_typeof(p_cell) in ('null', 'string')));
+$$;
+
 -- Creates a request task delegated to p_agent, as the calling person: brief v1, delegate grants on the page,
 -- the start prompt, task.start when the agent takes pushes, and the audit row. Callers check access first.
 create or replace function private.insert_request_task(p_page public.pages, p_kind text, p_agent public.agents,
@@ -153,7 +162,9 @@ begin
       'policies', jsonb_build_object('ai_request', 'fill')),
     jsonb_build_object('page_id', p_db_page_id, 'property_id', p_property_id, 'property_name', v_name,
       'prompt', v_prop->>'aiPrompt', 'inputs', coalesce(v_prop->'aiInputs', 'null'::jsonb), 'mode', p_mode,
-      'row_ids', to_jsonb(v_targets), 'remaining', v_total - cardinality(v_targets)));
+      'row_ids', to_jsonb(v_targets), 'remaining', v_total - cardinality(v_targets),
+      'initial_cells', (select jsonb_object_agg(r->>'id', coalesce(r->'cells'->p_property_id, 'null'::jsonb))
+        from jsonb_array_elements(v_page.data->'database'->'rows') r where r->>'id' = any (v_targets))));
   return jsonb_build_object('task_id', v_id, 'rows', cardinality(v_targets), 'remaining', v_total - cardinality(v_targets));
 end $$;
 
@@ -216,7 +227,7 @@ begin
       continue;
     end if;
     v_cell := v_row->'cells'->v_prop;
-    if jsonb_typeof(v_cell) = 'object' and v_cell->>'by' = 'human' and coalesce(private.ai_cell_at(v_cell), 0) >= v_since then
+    if private.ai_person_edit(v_cell, v_t.request->'initial_cells'->(v_v->>'row_id'), v_since) then
       v_skipped := v_skipped || jsonb_build_object('row_id', v_v->>'row_id', 'reason', 'edited_by_person');
       continue;
     end if;
@@ -264,7 +275,8 @@ begin
   select array_agg(x order by x) into v_missing
     from jsonb_array_elements_text(v_t.request->'row_ids') x
     join jsonb_array_elements(coalesce(v_data->'database'->'rows', '[]')) r on r->>'id' = x
-   where coalesce(private.ai_cell_at(r->'cells'->v_prop), 0) < v_since;
+   where coalesce(private.ai_cell_at(r->'cells'->v_prop), 0) < v_since
+     and not private.ai_person_edit(r->'cells'->v_prop, v_t.request->'initial_cells'->x, v_since);
   if v_missing is not null then
     raise exception using errcode = 'PT422', message = 'request_incomplete',
       detail = jsonb_build_object('row_ids', to_jsonb(v_missing))::text;
@@ -272,7 +284,7 @@ begin
   select jsonb_build_object(
     'filled', count(*) filter (where r->'cells'->v_prop->>'by' = 'agent' and not (r->'cells'->v_prop ? 'error')),
     'failed', count(*) filter (where r->'cells'->v_prop->>'by' = 'agent' and r->'cells'->v_prop ? 'error'),
-    'by_person', count(*) filter (where r->'cells'->v_prop->>'by' = 'human'),
+    'by_person', count(*) filter (where private.ai_person_edit(r->'cells'->v_prop, v_t.request->'initial_cells'->x, v_since)),
     'deleted', jsonb_array_length(v_t.request->'row_ids') - count(*)) into v_counts
     from jsonb_array_elements_text(v_t.request->'row_ids') x
     join jsonb_array_elements(coalesce(v_data->'database'->'rows', '[]')) r on r->>'id' = x;
@@ -298,6 +310,7 @@ end $$;
 
 revoke all on function private.ai_cell_empty(jsonb) from public;
 revoke all on function private.ai_cell_at(jsonb) from public;
+revoke all on function private.ai_person_edit(jsonb, jsonb, numeric) from public;
 revoke all on function private.insert_request_task(public.pages, text, public.agents, text, jsonb, jsonb) from public;
 revoke all on function private.ai_property_agent(uuid, jsonb) from public;
 revoke all on function public.request_ai_fill(text, text, text, text[]) from public, anon;

@@ -2,7 +2,7 @@
 -- does not take the page's task slot; the run writes only requested rows, with server-stamped provenance and one
 -- revertable activity per row; a person's edit wins; the request closes itself once every row has a value.
 begin;
-select plan(41);
+select plan(43);
 
 select tests.fixture() as f \gset
 -- The fixture agent plays the workspace's platform agent and takes pushes.
@@ -112,6 +112,18 @@ select is((select r->'cells'->'p_ai' from public.pages p, jsonb_array_elements(p
             where p.id = 'db_L' and r->>'id' = 'r1'), 'null'::jsonb, 'the cell is empty again');
 
 -- E. Failure, generic writes, limits and the agent that fills.
+-- Clearing a cell is a person's edit too, including when the model reads it only after the clear.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.request_ai_fill('db_L', 'p_ai', 'all', array['r3']) ->> 'task_id' as clear_req \gset
+select public.apply_page_ops('db_L', '[{"op":"db_cell_set","rowId":"r3","propertyId":"p_ai","value":null}]'::jsonb);
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'clear_req'::uuid, 'custom') ->> 'run_id' as clear_run \gset
+select is(public.set_ai_cells(:'clear_run'::uuid, '[{"row_id":"r3","text":"Overwrite"}]'::jsonb)->'skipped',
+  '[{"row_id":"r3","reason":"edited_by_person"}]'::jsonb, 'clearing a cell after the request wins over the model');
+select is(public.complete_ai_request(:'clear_run'::uuid)->'counts'->>'by_person', '1', 'a cleared cell closes the request as a person edit');
+select tests.reset_role();
+
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.request_ai_fill('db_L', 'p_ai', 'all') ->> 'task_id' as req2 \gset
 select is((select jsonb_array_length(request->'row_ids') from public.agent_tasks where id = :'req2'::uuid), 3, 'mode all asks for every row');
