@@ -24,6 +24,15 @@ it("tells the Lead a policy reviewer has the delivery", () => {
   expect(event.meta.task_id).toBe("subtask");
 });
 
+it("routes the reviewer start to its own task and the verdict to the parent", () => {
+  const start = eventToChannel({ type: "task.start", task_id: "review-task", payload: { review_of: "delivery" } });
+  expect(start.meta).toMatchObject({ task_id: "review-task", reason: "queued" });
+  expect(start.meta.parent_task_id).toBeUndefined();
+  const verdict = eventToChannel({ type: "task.updated", task_id: "parent", payload: { review_of: "delivery", verdict: "approved", minor_findings: [{ note: "later" }] } });
+  expect(verdict.meta).toMatchObject({ task_id: "parent", reason: "updated" });
+  expect(verdict.content).toContain("1 minor finding(s)");
+});
+
 const MCP_URL = "https://ws.test/functions/v1/mcp";
 const TOKEN_URL = "https://ws.test/functions/v1/agent-token";
 const AGENT = "11111111-1111-1111-1111-111111111111";

@@ -62,10 +62,12 @@ export function oneLine(text) {
  */
 export function eventToChannel(event) {
   const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
-  const reviewOf = typeof payload.review_of === "string" ? payload.review_of : null;
+  // Only the delivery notification to the Lead redirects from parent to child.
+  // A reviewer's start must claim its review task; a verdict updates the parent.
+  const reviewOf = event.type === "task.continue" && typeof payload.review_of === "string" ? payload.review_of : null;
   // A decision with no run waiting for it was taken after a handover: the session claims the task, it has no run to continue.
   const handover = payload.handover === true || (event.type === "approval.decided" && event.run_id == null);
-  const reason = handover ? "handover" : payload.review_task_id ? "under_review" : reviewOf ? "ready_for_review" : (REASON_BY_TYPE[event.type] ?? event.type.replace(/\W+/g, "_"));
+  const reason = handover ? "handover" : reviewOf && payload.review_task_id ? "under_review" : reviewOf ? "ready_for_review" : (REASON_BY_TYPE[event.type] ?? event.type.replace(/\W+/g, "_"));
   const taskId = reviewOf ?? event.task_id;
   const ref = payload.task_ref ?? payload.review_of_ref;
   const label = typeof ref === "string" && META_VALUE.test(ref) ? ref : taskId;
