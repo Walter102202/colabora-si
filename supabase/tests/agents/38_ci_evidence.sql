@@ -1,5 +1,5 @@
 begin;
-select plan(35);
+select plan(38);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_S','page_F','page_O']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+cilead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -75,6 +75,12 @@ select public.review_task(:'sub'::uuid, 'approved', '[{"criterion_id":"c1","stat
                           '[]'::jsonb, null, :'lr'::uuid);
 select is(tests.error_of(format('select public.close_subtask(%L::uuid)', :'sub')), 'policy_denied', 'a verified finding without a passing run does not close');
 select tests.reset_role();
+update public.task_briefs set policies = '{"subtask_close":"lead"}' where task_id = :'parent'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('do $b$ begin perform public.close_subtask(%L::uuid); raise exception ''unexpected_success''; end $b$', :'sub')),
+          'policy_denied', 'lead policy cannot bypass a missing CI pass');
+select tests.reset_role();
+update public.task_briefs set policies = '{}' where task_id = :'parent'::uuid;
 
 -- 18-22. GitHub says it passed: the history shows it and the Lead hears.
 select tests.set_service();
@@ -113,6 +119,16 @@ select public.record_ci_check(:'conn'::uuid, 'acme/app', jsonb_build_object('id'
 select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select is((public.task_ci_status(:'bad'::uuid))->0->>'state', 'passed', 'the newest run on the commit decides');
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.close_subtask(%L::uuid)', :'bad')), 'policy_denied', 'passing CI without a verified review does not close');
+select tests.reset_role();
+update public.task_briefs set policies = '{"subtask_close":"lead"}' where task_id = :'parent'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('do $b$ begin perform public.close_subtask(%L::uuid); raise exception ''unexpected_success''; end $b$', :'bad')),
+          'policy_denied', 'lead policy cannot bypass a missing verified CI review');
+select tests.reset_role();
+update public.task_briefs set policies = '{}' where task_id = :'parent'::uuid;
 -- 29. Evidence stays in its workspace.
 select tests.reset_role();
 select tests.set_human(:'stranger'::uuid);

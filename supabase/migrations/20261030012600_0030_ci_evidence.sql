@@ -318,3 +318,50 @@ begin
 end $$;
 revoke all on function public.record_ci_check(uuid, text, jsonb) from public, anon, authenticated;
 grant execute on function public.record_ci_check(uuid, text, jsonb) to service_role;
+
+
+-- Replaces 0018: parent policy cannot override the two keys for CI evidence.
+create or replace function public.close_subtask(p_task_id uuid, p_verdict text default 'accepted', p_evidence jsonb default '[]'::jsonb)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_agent uuid; v_t public.agent_tasks%rowtype; v_parent public.agent_tasks%rowtype; v_policies jsonb; v_ok boolean; v_review_run uuid;
+begin
+  v_agent := private.current_agent_id();
+  if v_agent is null then raise exception using errcode = 'PT403', message = 'agent_disabled'; end if;
+  perform private.check_rate(v_agent);
+  if coalesce(p_verdict, '') <> 'accepted' then raise exception using errcode = 'PT400', message = 'invalid_input'; end if;
+  select * into v_t from public.agent_tasks where id = p_task_id and parent_task_id is not null for update;
+  if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+  select p.* into v_parent from public.agent_tasks p where p.id = v_t.parent_task_id;
+  select b.policies into v_policies from public.task_briefs b where b.task_id = v_parent.id and b.version = v_parent.brief_version;
+  v_review_run := private.reviewer_run_of(v_t.id);
+  if v_review_run is null and (v_parent.delegate_agent_id is distinct from v_agent
+     or not exists (select 1 from public.agents where id = v_agent and role = 'lead')) then
+    raise exception using errcode = 'PT403', message = 'lead_only';
+  end if;
+  if v_t.state <> 'ready_for_review' then raise exception using errcode = 'PT422', message = 'invalid_state'; end if;
+  -- CI always needs both keys, even when the parent normally lets the Lead close subtasks.
+  if exists (select 1 from public.task_briefs b, jsonb_array_elements(b.done_when) c
+              where b.task_id = v_t.id and b.version = v_t.brief_version and c->>'check' = 'ci') then
+    v_ok := private.deterministic_checks_pass(v_t.id);
+  else
+    v_ok := coalesce(v_policies->>'subtask_close', '') = 'lead' or private.deterministic_checks_pass(v_t.id);
+  end if;
+  if not v_ok then raise exception using errcode = 'PT422', message = 'policy_denied'; end if;
+
+  update public.agent_tasks set state = 'done', acceptance = 'accepted', closed_at = now(), closed_by = null, active_run_id = null,
+         waiting_on = null, updated_at = now()
+   where id = v_t.id;
+  insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, author_type, author_id)
+  values (v_t.workspace_id, v_t.id, null, private.next_seq(v_t.id), 'response',
+          jsonb_build_object('text', case when v_review_run is not null then 'Closed by the reviewer.' else 'Closed by the lead.' end, 'verdict', p_verdict, 'evidence', coalesce(p_evidence, '[]'::jsonb),
+                             'rule', case when coalesce(v_policies->>'subtask_close', '') = 'lead' then 'policy' else 'deterministic' end),
+          'agent', v_agent);
+  insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
+  select v_parent.workspace_id, v_parent.id, v_parent.active_run_id, v_parent.delegate_agent_id, 'task.updated',
+         jsonb_build_object('subtask_id', v_t.id, 'subtask_state', 'done', 'acceptance', 'accepted', 'closed_by', case when v_review_run is not null then 'reviewer' else 'lead' end),
+         private.next_event_seq(v_parent.id)
+   where v_parent.delegate_agent_id is not null;
+  perform private.release_dependents(v_t.id);
+  perform private.audit(v_t.workspace_id, 'task.close_subtask', jsonb_build_object('task_id', v_t.id));
+  return jsonb_build_object('task_state', 'done');
+end $$;
