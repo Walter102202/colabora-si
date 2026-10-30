@@ -14,7 +14,7 @@ type Token = Value | { kind: 'open' | 'close'; value: 'array' | 'dict' };
 interface PdfObject { value: Value; stream?: Uint8Array; decoded?: string | null }
 const MAX_STREAM = 20 * 1024 * 1024, MAX_FILE = 100 * 1024 * 1024, MAX_OBJECTS = 10_000;
 const MAX_TEXT = 2_000_000, MAX_TOKENS = 2_000_000, MAX_DEPTH = 128;
-const MAX_RETAINED = 24 * 1024 * 1024, MAX_WORK = 24_000_000;
+const MAX_RETAINED = 24 * 1024 * 1024, MAX_WORK = 48_000_000;
 interface Work { tokens: number; units: number; mappings: number }
 function spend(work: Work, units: number) {
   work.units += units;

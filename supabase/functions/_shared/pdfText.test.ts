@@ -18,6 +18,18 @@ Deno.test('preserves justified text across 200 pages within the file budget', as
   const expected = Array.from({ length: 1500 }, () => 'word').join(' ');
   for (const page of result.pages) assert.equal(page.text, expected);
 });
+Deno.test('preserves 3900 two-byte glyphs per page across 500 pages', async () => {
+  const stream = pdfStream(await deflate(bytes(`BT /F1 12 Tf <${'0001'.repeat(3900)}> Tj ET`)), '/Filter /FlateDecode');
+  const pdf = textPdf(Array.from({ length: 500 }, () => stream), {
+    3: '<< /Type /Font /Subtype /Type0 /ToUnicode 2000 0 R >>',
+    2000: pdfStream('1 beginbfchar <0001> <0041> endbfchar'),
+  });
+  const result = await extractPdfText(pdf);
+  assert.equal(result.status, 'ok', result.error);
+  assert.equal(result.totalPages, 500);
+  assert.equal(result.pages.length, 500);
+  for (const page of result.pages) assert.equal(page.text, 'A'.repeat(3900));
+});
 Deno.test('inflates FlateDecode streams', async () => {
   const stream = pdfStream(await deflate(bytes('BT /F1 12 Tf (Compressed) Tj ET')), '/Filter /FlateDecode');
   assert.equal((await extractPdfText(textPdf([stream]))).pages[0].text, 'Compressed');
@@ -82,10 +94,12 @@ for (const [name, build] of Object.entries(hostilePdfCases)) {
     const url = URL.createObjectURL(new Blob([`import { extractPdfText } from ${JSON.stringify(moduleUrl)};
       self.onmessage = async ({ data }) => self.postMessage(await extractPdfText(data));`], { type: 'text/javascript' }));
     const worker = new Worker(url, { type: 'module' });
+    // At 48M work units this case decodes its first glyph-heavy page before the second exceeds the cap.
+    const deadlineMs = name === 'glyph_decode_millions' ? 6000 : 3000;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const result = await new Promise<{ status: string; error?: string }>((resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`${name}: parser exceeded its 3 second work deadline`)), 3000);
+        timer = setTimeout(() => reject(new Error(`${name}: parser exceeded its ${deadlineMs / 1000} second work deadline`)), deadlineMs);
         worker.onmessage = ({ data }) => resolve(data);
         worker.onerror = event => { event.preventDefault(); reject(new Error(event.message)); };
         worker.postMessage(input, [input.buffer]);
