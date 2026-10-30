@@ -6,15 +6,16 @@ import InlineToolbar from "@/components/InlineToolbar";
 import { AiRewritePanel } from "@/components/agents/AiRewritePanel";
 import { AiRequestToasts } from "@/components/agents/AiRequestToasts";
 
-const mocked = vi.hoisted(() => ({ backend: true, client: null as unknown, rewrite: vi.fn(), revert: vi.fn(), requests: [] as Record<string, unknown>[] }));
+const mocked = vi.hoisted(() => ({ backend: true, client: null as unknown, rewrite: vi.fn(), revert: vi.fn(), cancel: vi.fn(), requests: [] as Record<string, unknown>[] }));
 vi.mock("@/lib/supabase", () => ({ getSupabase: () => mocked.backend ? mocked.client ?? {} : null }));
 vi.mock("@/lib/agentAiRequests", async (original) => ({ ...(await original<typeof import("@/lib/agentAiRequests")>()),
   requestAiRewrite: mocked.rewrite, useAiRequests: () => mocked.requests }));
-vi.mock("@/lib/agentActions", () => ({ revertRun: mocked.revert }));
+vi.mock("@/lib/agentActions", () => ({ revertRun: mocked.revert, sendMessage: mocked.cancel }));
 let container: HTMLDivElement, root: Root;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   mocked.backend = true; mocked.client = null; mocked.requests = []; mocked.rewrite.mockReset().mockResolvedValue({ taskId: "t" }); mocked.revert.mockReset().mockResolvedValue({ reverted: [] });
+  mocked.cancel.mockReset().mockResolvedValue({ delivery: "stop_requested" });
   container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); });
@@ -50,6 +51,14 @@ it("the toast says Rewriting, then offers Undo", async () => {
   act(() => root.render(<AiRequestToasts pageId="p" />));
   await act(async () => [...container.querySelectorAll("button")].find((b) => b.textContent === "Undo")!.click());
   expect(mocked.revert).toHaveBeenCalledWith("t", "r", ["block:p:b"]);
+});
+it.each(["fill", "rewrite"])("offers cancellation for queued and working %s requests", async (kind) => {
+  mocked.requests = ["queued", "working"].map((state) => ({ id: state, kind, state, request: {} }));
+  act(() => root.render(<AiRequestToasts pageId="p" />));
+  const buttons = [...container.querySelectorAll("button")].filter(b => b.textContent === "Cancel");
+  expect(buttons).toHaveLength(2);
+  for (const button of buttons) await act(async () => button.click());
+  expect(mocked.cancel.mock.calls).toEqual([["queued", "Cancel AI request", "stop"], ["working", "Cancel AI request", "stop"]]);
 });
 it("errors are readable", async () => {
   mocked.rewrite.mockRejectedValue(new Error("block_has_mentions")); panel();

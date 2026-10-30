@@ -2,7 +2,7 @@
 -- does not take the page's task slot; the run writes only requested rows, with server-stamped provenance and one
 -- revertable activity per row; a person's edit wins; the request closes itself once every row has a value.
 begin;
-select plan(48);
+select plan(54);
 
 select tests.fixture() as f \gset
 -- The fixture agent plays the workspace's platform agent and takes pushes.
@@ -174,6 +174,36 @@ select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select is(public.request_ai_fill('db_big', 'p_ai') - 'task_id', '{"rows":50,"remaining":10}'::jsonb,
           'a fill takes 50 rows and says how many remain');
 select tests.reset_role();
+-- Requests without an available worker expire, while a recent heartbeat preserves live work.
+update public.agent_tasks set updated_at = now() - interval '16 minutes', created_at = now() - interval '16 minutes'
+ where row_page_id = 'db_big' and request_kind = 'fill';
+select private.agent_housekeeping();
+select is((select state from public.agent_tasks where row_page_id = 'db_big' and request_kind = 'fill'), 'failed', 'an unclaimed request expires after fifteen minutes');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.request_ai_fill('db_big', 'p_ai') ->> 'task_id' as retry_fill \gset
+select ok(:'retry_fill' is not null, 'expiry releases the fill slot');
+select public.send_agent_message(:'retry_fill'::uuid, 'Cancel AI request', 'stop');
+select is((select state from public.agent_tasks where id = :'retry_fill'::uuid), 'cancelled', 'a person can cancel an unclaimed request immediately');
+select public.request_ai_fill('db_big', 'p_ai') ->> 'task_id' as idle_fill \gset
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'idle_fill'::uuid) ->> 'run_id' as idle_run \gset
+select tests.reset_role();
+update public.agent_tasks set created_at = now() - interval '16 minutes', updated_at = now() - interval '16 minutes' where id = :'idle_fill'::uuid;
+update public.agent_runs set last_signal_at = now() - interval '16 minutes' where id = :'idle_run'::uuid;
+select private.agent_housekeeping();
+select is((select t.state || '/' || r.status from public.agent_tasks t join public.agent_runs r on r.task_id = t.id where r.id = :'idle_run'::uuid), 'failed/error', 'an abandoned request closes its run and task');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.request_ai_fill('db_big', 'p_ai') ->> 'task_id' as live_fill \gset
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'live_fill'::uuid);
+select tests.reset_role();
+update public.agent_tasks set created_at = now() - interval '16 minutes', updated_at = now() - interval '16 minutes' where id = :'live_fill'::uuid;
+select private.agent_housekeeping();
+select is((select state from public.agent_tasks where id = :'live_fill'::uuid), 'working', 'a recent heartbeat keeps a request alive');
+select is((select state from public.agent_tasks where id = :'work'::uuid), 'working', 'ordinary work is unaffected by request expiry');
+
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'open@agents.invalid', 'worker', 'page_A') as other \gset
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.apply_page_ops('db_L', jsonb_build_array(jsonb_build_object('op', 'db_prop_set', 'property',

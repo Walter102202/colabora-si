@@ -525,3 +525,70 @@ begin
 end $$;
 revoke all on function public.send_agent_message(uuid, text, text, text[], text) from public, anon;
 grant execute on function public.send_agent_message(uuid, text, text, text[], text) to authenticated;
+
+-- Full latest housekeeping definition from 0007; existing variable names and cleanup remain unchanged.
+create or replace function private.agent_housekeeping()
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_stale int; v_cancelled int; v_expired int; v_receipts int;
+begin
+  -- AI requests have no manual worker recovery path: expire after fifteen idle minutes.
+  -- Lock runs before tasks like request writes; skip busy rows instead of racing a heartbeat/write.
+  with idle_runs as materialized (
+    select r.id from public.agent_runs r join public.agent_tasks t on t.active_run_id = r.id
+     where t.request_kind is not null and r.status in ('running','waiting')
+       and r.stop_requested_at is null and r.last_signal_at < now() - interval '15 minutes'
+     for update of r skip locked
+  ), candidates as materialized (
+    select t.id from public.agent_tasks t left join public.agent_runs r on r.id = t.active_run_id
+     where t.request_kind is not null and t.state not in ('done','failed','cancelled')
+       and greatest(t.updated_at, coalesce(r.last_signal_at, t.created_at)) < now() - interval '15 minutes'
+       and r.stop_requested_at is null
+       and (r.id is null or r.status not in ('running','waiting') or r.id in (select id from idle_runs))
+     for update of t skip locked
+  ), expired_requests as (
+    update public.agent_tasks t set state = 'failed', closed_at = now(), closed_by = null,
+      active_run_id = null, waiting_on = null, updated_at = now()
+     where t.id in (select id from candidates) returning t.id
+  ), ended as (
+    update public.agent_runs set status = 'error', ended_at = now(), error_message = 'AI request expired after 15 minutes without progress.'
+     where task_id in (select id from expired_requests) and status in ('running','waiting') returning id
+  )
+  update public.agent_approvals set status = 'cancelled'
+   where task_id in (select id from expired_requests) and status = 'pending';
+
+  update public.agent_runs r set stale_at = now()
+    where r.status in ('running','waiting') and r.stale_at is null and r.last_signal_at < now() - interval '30 minutes'
+      and not exists (
+        select 1 from public.agent_tasks t
+         where t.id = r.waiting_on_task_id
+           and t.state in ('queued','working','input_required','ready_for_review'));
+  get diagnostics v_stale = row_count;
+
+  -- Stop without acknowledgement for 10 minutes: the run and its task are cancelled anyway (D12).
+  with cancelled as (
+    update public.agent_runs set status = 'cancelled', ended_at = now()
+     where stop_requested_at < now() - interval '10 minutes' and stop_acked_at is null and status in ('running','waiting')
+    returning id
+  ), tasks as (
+    update public.agent_tasks t set state = 'cancelled', active_run_id = null, waiting_on = null, updated_at = now()
+      from cancelled c where t.active_run_id = c.id
+    returning t.id
+  )
+  select count(*) into v_cancelled from cancelled;
+
+  with expired as (
+    update public.agent_approvals set status = 'expired' where status = 'pending' and expires_at < now()
+    returning id, workspace_id, task_id
+  )
+  insert into public.notifications (workspace_id, user_id, kind, page_id, task_id, approval_id, actor_type, payload)
+  select e.workspace_id, t.owner_user_id, 'approval_expired', t.row_page_id, t.id, e.id, 'system', '{}'::jsonb
+    from expired e join public.agent_tasks t on t.id = e.task_id;
+  get diagnostics v_expired = row_count;
+  update public.agent_approvals set status = 'expired' where status = 'decided' and receipt_expires_at < now();
+
+  delete from private.write_receipts where created_at < now() - interval '48 hours';
+  get diagnostics v_receipts = row_count;
+
+  return jsonb_build_object('stale', v_stale, 'cancelled', v_cancelled, 'approvals_expired', v_expired, 'receipts_deleted', v_receipts);
+end $$;
+revoke execute on function private.agent_housekeeping() from public;
