@@ -28,6 +28,16 @@ const names = (calls: { name: string }[]) => calls.map((c) => c.name).filter((n)
 const seed = (subtasks: object[] = []) => ({ changed: false, stop_requested: false, activities: [], next_seq: 1, task: { task_id: "task-1", state: "working", subtasks } });
 
 describe("reference agent loop", () => {
+  it.each(["get_ai_request", "fill_ai_cells", "complete_ai_request", "apply_ai_rewrite", "save_file_text"])("rejects a model attempt to call hidden request tool %s", async (name) => {
+    const mcp = createStubMcp({ tasks: queued, handlers: { [name]: () => ({ ok: true }) } });
+    const list = mcp.listTools;
+    mcp.listTools = async () => [...await list(), { name, inputSchema: { type: "object", properties: { run_id: { type: "string" } } } }];
+    const model = createStubModel([{ tool_calls: [toolCall(name, {})] }, { content: "Done" }]);
+    await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, maxTurns: 2 });
+    expect(mcp.calls.some(c => c.name === name)).toBe(false);
+    expect(model.requests[0].tools.some(t => t.function.name === name)).toBe(false);
+    expect(model.requests[1].messages.some(m => m.role === "tool" && m.content.includes("unknown_tool"))).toBe(true);
+  });
   it("acknowledges a stopped AI request without writing or reporting a delivery", async () => {
     const mcp = createStubMcp({ tasks: [{ ...queued[0], request_kind: "fill" }], heartbeats: [{ stop_requested: false }, { stop_requested: true }], handlers: {
       get_ai_request: () => ({ kind: "fill", property: { prompt: "Summarize" }, rows: [{ row_id: "r1", rev: 0, inputs: {} }] }),

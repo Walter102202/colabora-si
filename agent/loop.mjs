@@ -526,7 +526,7 @@ export async function runAgent(opts) {
           messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "deferred", message: "not executed: a decision was pending in this turn; call it again now that you have the answer" }) });
           continue;
         }
-        if (RUNTIME_TOOLS.has(name) || !toolSchemas.has(name)) {
+        if (RUNTIME_TOOLS.has(name) || REQUEST_TOOLS.has(name) || !toolSchemas.has(name)) {
           messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "unknown_tool", message: `${name} is not available to you` }) });
           continue;
         }
