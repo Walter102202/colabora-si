@@ -1,5 +1,5 @@
 begin;
-select plan(39);
+select plan(41);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_S','page_F','page_O']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+cilead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -92,7 +92,20 @@ select tests.reset_role();
 select is((select count(*)::int from public.agent_activities where task_id = :'sub'::uuid and body ? 'ci'), 1, 'one line in the history, and none for the old run');
 select is((select count(*)::int from public.agent_events where task_id = :'parent'::uuid and type = 'task.updated' and payload ? 'ci'), 1, 'the Lead is told once');
 select is((select count(*)::int from public.agent_events where task_id = :'sub'::uuid and type = 'task.updated' and payload ? 'ci'), 0, 'a pass does not wake the worker');
+-- A different commit is a new artifact, not a new version of the same ref. Its review must be its own.
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.add_artifact(:'run'::uuid, 'diff', 'acme/app@cccccccccccccccccccccccccccccccccccccccc', 'New commit', array['c1']) ->> 'artifact_id' as newer_art \gset
+select tests.reset_role();
+update public.agent_artifacts set created_at = now() + interval '1 second' where id = :'newer_art'::uuid;
+select tests.set_service();
+select public.record_ci_check(:'conn'::uuid, 'acme/app', jsonb_build_object('id', 6, 'name', 'check', 'head_sha', repeat('c', 40), 'conclusion', 'success',
+  'html_url', 'https://github.com/acme/app/runs/6', 'completed_at', now() + interval '2 seconds'));
+select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is(public.task_ci_status(:'sub'::uuid)->0->>'sha', repeat('c', 40), 'CI evaluates the newest delivered commit');
+select is(tests.error_of(format('do $b$ begin perform public.close_subtask(%L::uuid); raise exception ''unexpected_success''; end $b$', :'sub')),
+          'policy_denied', 'a verified review of the old commit cannot close a newer passing commit');
+select public.review_task(:'sub'::uuid, 'approved', '[{"criterion_id":"c1","status":"verified"}]'::jsonb, '[]'::jsonb, :'newer_art'::uuid, :'lr'::uuid);
 select is((public.close_subtask(:'sub'::uuid))->>'task_state', 'done', 'the reviewer''s finding plus the passing run close it');
 select tests.reset_role();
 

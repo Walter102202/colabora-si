@@ -110,6 +110,13 @@ returns boolean language sql stable security definer set search_path = '' as $$
            select 1 from public.agent_reviews r, jsonb_array_elements(r.findings) f
             where r.task_id = t.id and r.outdated_by is null
               and f->>'criterion_id' = c->>'id' and f->>'status' = 'verified'
+              -- A new commit has a different ref, so it does not supersede the old artifact or its review.
+              and (c->>'check' <> 'ci' or (r.brief_version = t.brief_version
+                   and (r.artifact_id, r.artifact_version) = (
+                     select a.id, a.version from public.agent_artifacts a, private.ci_commit(a.ref) k
+                      where a.task_id = t.id and a.kind = 'diff' and a.superseded_by is null
+                        and (c->>'id') = any(a.satisfies)
+                      order by a.created_at desc, a.id desc limit 1)))
               and (c->>'check' = 'ci' or (jsonb_array_length(r.evidence) > 0
                    and (c->>'command' is null or exists (
                          select 1 from jsonb_array_elements(r.evidence) e where e->>'ref' = c->>'command'))))))
