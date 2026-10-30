@@ -38,6 +38,7 @@ const CHANNEL_INSTRUCTIONS =
   "handover: another session handed this task to you, claim_task with resume: true and follow the handover section; " +
   "updated with environment_release: stop those resources, then call release_environment. " +
   "minor findings: open a follow-up subtask only if it is worth it. " +
+  "under_review: a reviewer agent has it, do nothing until its verdict arrives. " +
   "Do not wait inside a tool: end your turn and the next event will wake you.";
 
 /** @param {{ channel: boolean, channelOnly: boolean }} opts */

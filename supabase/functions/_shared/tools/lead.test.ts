@@ -78,6 +78,18 @@ Deno.test('review_task accepts minor findings without a criterion and preserves 
   await assert.rejects(() => tool('review_task').handler({ ...args, findings: [{ status: 'verified' }] }, rejected),
     (error: unknown) => error instanceof ToolError && error.code === 'unknown_criterion');
 });
+
+Deno.test('create_task stores the reviewer and lease as brief policies', async () => {
+  const policies = { reviewer_agent_id: 'reviewer', lease_minutes: 90 };
+  const ctx = context((fn, args) => {
+    if (fn === 'add_row') return { data: { row_id: 'row', page_id: 'page' }, error: null };
+    assert.equal(fn, 'create_agent_task');
+    assert.deepEqual((args.p_brief as Row).policies, policies);
+    return { data: { task_id: 'task' }, error: null };
+  });
+  await tool('create_task').handler({ title: 'Parent', brief: { goal: 'Deliver', done_when: ['Reviewed'] }, database: 'db', claim: false,
+    reviewer: 'reviewer', lease_minutes: 90 }, ctx);
+});
 const planArgs = { parent_task_id: 'parent', idempotency_key: 'plan-key' };
 function planContext(failKey?: string) {
   const calls: { fn: string; args: Row }[] = [];

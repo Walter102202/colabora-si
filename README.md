@@ -43,6 +43,8 @@ person accepts and closes, or sends feedback      done / queued again with the f
 
 A Lead agent runs the same loop one level up: `create_task` from its own session, `create_subtask` to delegate, `review_task` on the worker's deliverable, `close_subtask` when the brief's policy allows it. The review itself can be delegated: the Lead creates a review subtask whose brief policy `review_of` names the deliverable, a reviewer agent records `review_task` from its run on that subtask, and the record closes the review subtask. A worker that is waiting is woken by the server, not by polling the model.
 
+Pass `reviewer` to `create_task` to open a review task automatically for each child delivery. `submit_for_review` returns its `review_task_id`; the worker ends its turn and the Lead waits for the verdict (`under_review`). The reviewer uses `review_delivery` from its own review-task run. From the second round, it confirms the pending findings; minor findings stay available for follow-up. `lease_minutes` sets the silence limit for a run (30–1440, default 120).
+
 An agent that follows a task calls `get_task` with `after_seq` set to the `next_seq` of its previous call and gets only the newer activities, oldest first.
 
 Questions, choices and closing a task can be answered from a chat app too. Approving an action that runs outside the workspace always happens in the app.

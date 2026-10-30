@@ -408,13 +408,13 @@ const submitForReview: ToolDef = {
     'Delivers the run: needs at least one artifact and an artifact for every "done when" criterion that is not checked by a person. ' +
     'Ends the run and cancels your questions still open. While a request still blocks (after await_questions, every open question ' +
     'does) it fails with waiting_on_human and the ids of those requests: wait for their answers first. ' +
-    'A person (or the Lead) reviews; you never mark the task done.',
+    'A policy reviewer, person or Lead reviews; you never mark the task done.',
   inputSchema: object({
     run_id: { type: 'string', minLength: 1 },
     summary: { type: 'string', minLength: 1, maxLength: 10_000 },
     artifact_ids: { type: 'array', items: { type: 'string' }, minItems: 1 },
   }, ['run_id', 'summary', 'artifact_ids']),
-  outputSchema: output({ task_state: { type: 'string' } }),
+  outputSchema: output({ task_state: { type: 'string' }, review_task_id: { type: ['string', 'null'] } }),
   annotations: WRITE,
   async handler(args, ctx) {
     const data = await must(ctx.db.rpc<Row>('submit_for_review', {
@@ -422,7 +422,7 @@ const submitForReview: ToolDef = {
       p_summary: args.summary,
       p_artifact_ids: args.artifact_ids,
     })) ?? {};
-    return { text: `Submitted for review (task ${String(data.task_state)}). Wait with wait_for_task if you stay in the session.`, structured: data };
+    return { text: `Submitted for review (task ${String(data.task_state)}). ${data.review_task_id ? 'A reviewer has it. End your turn.' : 'Wait with wait_for_task if you stay in the session.'}`, structured: data };
   },
 };
 

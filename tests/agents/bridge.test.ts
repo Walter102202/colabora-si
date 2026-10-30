@@ -18,6 +18,12 @@ it("tells the Lead how many minor findings are available", () => {
   expect(event.content).toContain("2 minor finding(s)");
 });
 
+it("tells the Lead a policy reviewer has the delivery", () => {
+  const event = eventToChannel({ type: "task.continue", task_id: "parent", payload: { review_of: "subtask", review_task_id: "review" } });
+  expect(event.meta.reason).toBe("under_review");
+  expect(event.meta.task_id).toBe("subtask");
+});
+
 const MCP_URL = "https://ws.test/functions/v1/mcp";
 const TOKEN_URL = "https://ws.test/functions/v1/agent-token";
 const AGENT = "11111111-1111-1111-1111-111111111111";

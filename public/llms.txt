@@ -55,3 +55,5 @@ A question about the workspace needs no task: call `search`, then `read_page` on
 - Harness recipes: https://github.com/Walter102202/colabora-si/tree/main/connect
 - Bridge for local harnesses: https://github.com/Walter102202/colabora-si/tree/main/bridge
 - Reference agent: https://github.com/Walter102202/colabora-si/tree/main/agent
+
+Automatic review: create_task accepts reviewer and lease_minutes. submit_for_review returns review_task_id when the policy opens a review task. The worker ends its turn; the Lead waits for its verdict. The reviewer uses review_delivery and records review_task from its review run. From round two, only confirm pending blocking findings; minor findings stay for later.

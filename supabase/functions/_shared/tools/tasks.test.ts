@@ -26,6 +26,14 @@ Deno.test('claim_task does not promise to reopen done tasks', () => {
   assert.match(tool('claim_task').description, /only a person reopens it/);
 });
 
+Deno.test('submit_for_review ends the worker turn when a reviewer has the delivery', async () => {
+  const data = { task_state: 'ready_for_review', review_task_id: 'review-1' };
+  const out = await tool('submit_for_review').handler({ run_id: 'run-1', summary: 'Done', artifact_ids: ['art-1'] },
+    ctxWith(() => Promise.resolve({ data, error: null })));
+  assert.deepEqual(out.structured, data);
+  assert.match(out.text, /A reviewer has it\. End your turn\./);
+});
+
 Deno.test('claim_task surfaces task_unavailable as a ToolError the model can act on', async () => {
   const ctx = ctxWith(() => Promise.resolve({ data: null, error: { code: 'PT409', message: 'task_unavailable' } }));
   await assert.rejects(
