@@ -54,3 +54,7 @@ verify_jwt = false
 [functions.pub-html]
 # Public pages for crawlers and agents: no caller token; get_page_bundle decides what is public.
 verify_jwt = false
+
+[functions.github-webhook]
+# GitHub signs each delivery; the function checks the signature.
+verify_jwt = false
