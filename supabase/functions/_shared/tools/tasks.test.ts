@@ -125,6 +125,18 @@ function task(overrides: Row = {}): Row {
   };
 }
 
+Deno.test('list_my_tasks shows blocked_by', async () => {
+  const h = harness({ agent_tasks: [
+    task({ id: 'a', state: 'working' }),
+    task({ id: 'b', state: 'queued', depends_on_task_ids: ['a'] }),
+  ] });
+  const out = await tool('list_my_tasks').handler({}, h.ctx);
+  const tasks = out.structured.tasks as Row[];
+  assert.deepEqual(tasks.map((t) => [t.task_id, t.blocked_by, t.request_kind]), [['a', [], null], ['b', ['a'], null]]);
+  assert.match(out.text, /1 blocked/);
+  assert.match(out.text, /0 queued/);
+});
+
 function approval(overrides: Row = {}): Row {
   return {
     id: 'ap1', task_id: 't1', run_id: 'run-1', kind: 'action', action: 'send_email', params: { to: 'ops@example.com' }, artifact_id: null,

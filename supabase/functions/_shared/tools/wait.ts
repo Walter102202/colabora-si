@@ -300,7 +300,19 @@ export function decodeTaskCursor(raw: string): Cursor {
   throw new ToolError('invalid_input', 'The cursor is not valid. Call wait_for_my_tasks without `after` to get a new one.');
 }
 
-const TASK_FIELDS = 'id,title,state,review_state,waiting_on,brief_version,brief_stale,active_run_id,updated_at';
+const TASK_FIELDS = 'id,title,state,review_state,waiting_on,brief_version,brief_stale,active_run_id,updated_at,depends_on_task_ids';
+
+/** A dependency not visible to the caller is still blocked: only a visible done task releases it. */
+export async function openDependencies(ctx: ToolContext, tasks: Row[]): Promise<Map<string, string[]>> {
+  const dependencies = new Map(tasks.map((t) => [String(t.id), (t.depends_on_task_ids ?? []) as string[]]));
+  const ids = [...new Set([...dependencies.values()].flat())];
+  if (!ids.length) return new Map(tasks.map((t) => [String(t.id), []]));
+  const rows = await must(ctx.db.select<Row>({
+    table: 'agent_tasks', columns: 'id,state', filters: [{ col: 'id', op: 'in', value: ids }],
+  })) ?? [];
+  const done = new Set(rows.filter((r) => r.state === 'done').map((r) => String(r.id)));
+  return new Map([...dependencies].map(([id, deps]) => [id, deps.filter((dep) => !done.has(dep))]));
+}
 
 export function reasonFor(task: Row, prompt: Row | undefined, waitsOnPerson = false): Reason | null {
   if (task.state === 'done' || task.state === 'failed') return 'closed';
@@ -368,7 +380,7 @@ async function waitingOnPerson(ctx: ToolContext, tasks: Row[]): Promise<Set<stri
   return new Set(ids.filter((id) => review.has(id) && (!run.has(id) || review.get(id)! > run.get(id)!)));
 }
 
-function myTaskView(task: Row, reason: Reason, prompts: number) {
+function myTaskView(task: Row, reason: Reason, prompts: number, blockedBy: string[] = []) {
   return {
     task_id: task.id,
     title: task.title,
@@ -378,6 +390,8 @@ function myTaskView(task: Row, reason: Reason, prompts: number) {
     brief_version: task.brief_version,
     active_run_id: task.active_run_id,
     pending_prompts: prompts,
+    blocked_by: blockedBy,
+    request_kind: task.request_kind ?? null,
     reason,
   };
 }
@@ -409,13 +423,15 @@ async function initialState(ctx: ToolContext) {
     })),
   ]);
   const waiting = await waitingOnPerson(ctx, open ?? []);
+  const blocked = await openDependencies(ctx, open ?? []);
   const tasks = (open ?? []).flatMap((t) => {
     // review_state outlives the round it describes: on a task waiting without a run, only the reviews and runs tell.
     const idle = t.state === 'input_required' && !t.active_run_id;
     const reason: Reason | null = t.review_state === 'changes_requested' && !idle
       ? 'feedback'
       : reasonFor(t, undefined, waiting.has(String(t.id)));
-    return reason ? [myTaskView(t, reason, 0)] : [];
+    const blockedBy = blocked.get(String(t.id)) ?? [];
+    return reason && !(reason === 'queued' && blockedBy.length) ? [myTaskView(t, reason, 0, blockedBy)] : [];
   });
   const marks = [
     ...(latest ?? []).map((t) => normTs(String(t.updated_at))),
@@ -484,11 +500,13 @@ async function changesSince(ctx: ToolContext, cursor: Cursor): Promise<Delta> {
 
   const out: ReturnType<typeof myTaskView>[] = [];
   const waiting = await waitingOnPerson(ctx, [...tasks.values()]);
+  const blocked = await openDependencies(ctx, [...tasks.values()]);
   for (const [id, task] of tasks) {
     const list = newPrompts.get(id) ?? [];
     const latest = list.length ? list.reduce((a, b) => (Number(b.seq) > Number(a.seq) ? b : a)) : undefined;
     const reason = reasonFor(task, latest, waiting.has(id));
-    if (reason) out.push(myTaskView(task, reason, list.length));
+    const blockedBy = blocked.get(id) ?? [];
+    if (reason && !(reason === 'queued' && blockedBy.length)) out.push(myTaskView(task, reason, list.length, blockedBy));
   }
 
   let next = cursor;

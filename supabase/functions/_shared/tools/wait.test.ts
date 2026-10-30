@@ -80,6 +80,34 @@ function activity(seq: number, overrides: Row = {}): Row {
   };
 }
 
+Deno.test('a queued task with an open dependency is not offered', async () => {
+  const h = harness({ agent_tasks: [
+    task({ id: 'a', state: 'queued', active_run_id: null }),
+    task({ id: 'b', state: 'queued', active_run_id: null, depends_on_task_ids: ['a'] }),
+  ] });
+  const out = await tool('wait_for_my_tasks').handler({ timeout_s: 0 }, h.ctx);
+  const tasks = out.structured.tasks as Row[];
+  assert.deepEqual(tasks.map((t) => t.task_id), ['a']);
+  assert.deepEqual(tasks[0].blocked_by, []);
+  assert.equal(tasks[0].request_kind, null);
+});
+
+Deno.test('the dependent is offered once its dependency is done', async () => {
+  const tables = { agent_tasks: [
+    task({ id: 'a', state: 'working' }),
+    task({ id: 'b', state: 'queued', active_run_id: null, depends_on_task_ids: ['a'] }),
+  ] };
+  const h = harness(tables);
+  const initial = await tool('wait_for_my_tasks').handler({ timeout_s: 0 }, h.ctx);
+  assert.deepEqual(initial.structured.tasks, []);
+  tables.agent_tasks[0].state = 'done';
+  for (const t of tables.agent_tasks) t.updated_at = '2026-10-27T10:00:01+00:00';
+  const out = await tool('wait_for_my_tasks').handler({ after: initial.structured.next_cursor, timeout_s: 0 }, h.ctx);
+  const dependent = (out.structured.tasks as Row[]).find((t) => t.task_id === 'b');
+  assert.equal(dependent?.reason, 'queued');
+  assert.deepEqual(dependent?.blocked_by, []);
+});
+
 function event(id: string, createdAt: string, overrides: Row = {}): Row {
   return { event_id: id, agent_id: 'agent-1', task_id: 't1', run_id: null, type: 'task.feedback', payload: {}, seq: 1, created_at: createdAt, ...overrides };
 }

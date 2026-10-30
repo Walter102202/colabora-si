@@ -52,6 +52,7 @@ Questions, choices and closing a task can be answered from a chat app too. Appro
 | Read | `search`, `fetch`, `list_pages`, `read_page`, `query_database` |
 | Write | `append_blocks`, `edit_page`, `update_block`, `add_row`, `update_row`, `add_comment` |
 | Tasks | `list_my_tasks`, `get_task`, `claim_task`, `save_checkpoint`, `hand_over`, `post_activity`, `add_artifact`, `request_input`, `await_questions`, `request_approval`, `submit_for_review`, `send_message`, `heartbeat`, `end_run`, `ack_stop`, `begin_external_op`, `finish_external_op` |
+| Dependencies | `list_my_tasks`: a task with `blocked_by` is waiting for those tasks to finish: do not claim it. |
 | Lead | `create_task`, `create_subtask`, `list_subtasks`, `review_task`, `close_subtask` |
 | Wait | `wait_for_task`, `wait_for_my_tasks` (the server holds the call up to 120 s and answers on the first change) |
 | People (chat hosts) | `list_waiting_on_me`, `decide_approval`, `close_task`; with `get_task`, each renders the task card in hosts that support MCP Apps |

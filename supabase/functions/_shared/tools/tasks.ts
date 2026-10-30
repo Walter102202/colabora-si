@@ -4,6 +4,7 @@ import type { ToolContext, ToolDef } from '../mcp.ts';
 import { CARD_OUTPUT, CARD_TOOL_META, loadTaskCard } from './card.ts';
 import { bool, num, object, output, plural, READ, str, WRITE, WRITE_IDEMPOTENT } from './common.ts';
 import type { Row } from './taskData.ts';
+import { openDependencies } from './wait.ts';
 
 const TASK_STATES = ['queued', 'working', 'input_required', 'ready_for_review', 'done', 'failed', 'cancelled'];
 const idempotencyKey = { type: 'string', minLength: 1, maxLength: 200, description: 'Retry-safe key: the same key returns the first result.' } as const;
@@ -57,7 +58,7 @@ async function pendingPrompts(ctx: ToolContext, taskIds: string[]): Promise<Map<
 const listMyTasks: ToolDef = {
   name: 'list_my_tasks',
   title: 'List my assigned tasks',
-  description: 'Tasks assigned to you, newest activity first, with brief version and the number of messages waiting for you.',
+  description: 'Tasks assigned to you, newest activity first, with brief version and the number of messages waiting for you. A task with blocked_by is waiting for those tasks to finish: do not claim it.',
   inputSchema: object({
     state: { type: 'array', items: { type: 'string', enum: TASK_STATES } },
     limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
@@ -70,12 +71,13 @@ const listMyTasks: ToolDef = {
     if (Array.isArray(args.state) && args.state.length) filters.push({ col: 'state', op: 'in', value: args.state });
     const rows = await must(ctx.db.select<Row>({
       table: 'agent_tasks',
-      columns: 'id,title,state,review_state,waiting_on,row_page_id,brief_version,brief_stale,last_activity_at,updated_at',
+      columns: 'id,title,state,review_state,waiting_on,row_page_id,brief_version,brief_stale,last_activity_at,updated_at,depends_on_task_ids',
       filters,
       order: [{ column: 'updated_at', ascending: false }],
       limit: num(args.limit) ?? 20,
     })) ?? [];
     const prompts = await pendingPrompts(ctx, rows.map((r) => String(r.id)));
+    const blocked = await openDependencies(ctx, rows);
     const tasks = rows.map((r) => ({
       task_id: r.id,
       title: r.title,
@@ -87,10 +89,13 @@ const listMyTasks: ToolDef = {
       brief_stale: r.brief_stale,
       last_activity_at: r.last_activity_at,
       pending_prompts: prompts.get(String(r.id)) ?? 0,
+      blocked_by: blocked.get(String(r.id)) ?? [],
+      request_kind: r.request_kind ?? null,
     }));
     if (tasks.length) await markDelivered(ctx);
-    const queued = tasks.filter((t) => t.state === 'queued').length;
-    return { text: `${plural(tasks.length, 'task')} (${queued} queued).`, structured: { tasks } };
+    const queued = tasks.filter((t) => t.state === 'queued' && !t.blocked_by.length).length;
+    const blockedCount = tasks.filter((t) => t.state === 'queued' && t.blocked_by.length).length;
+    return { text: `${plural(tasks.length, 'task')} (${queued} queued${blockedCount ? `, ${blockedCount} blocked` : ''}).`, structured: { tasks } };
   },
 };
 
