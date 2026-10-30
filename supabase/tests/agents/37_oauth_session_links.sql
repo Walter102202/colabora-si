@@ -1,5 +1,5 @@
 begin;
-select plan(74);
+select plan(80);
 create or replace function tests.set_oauth_agent(p_uid uuid, p_agent uuid, p_client text)
 returns void language sql as $$
   select tests.set_claims(jsonb_build_object('sub', p_uid, 'role', 'authenticated', 'aud', 'authenticated',
@@ -175,6 +175,15 @@ select is(tests.error_of('select public.oauth_human_context(''authz'')'), 'direc
 select tests.reset_role();
 
 -- Freeze all credential fields, including pending email/phone changes, regardless of the caller.
+create temporary table credential_inserts (label text, statement text) on commit drop;
+insert into credential_inserts values
+  ('MFA factor', 'insert into auth.mfa_factors (id, user_id, factor_type, status, created_at, updated_at) values (gen_random_uuid(), %L::uuid, ''totp'', ''unverified'', now(), now())'),
+  ('WebAuthn credential', 'insert into auth.webauthn_credentials (user_id, credential_id, public_key) values (%L::uuid, gen_random_uuid()::text::bytea, ''key''::bytea)'),
+  ('linked identity', 'insert into auth.identities (user_id, provider_id, identity_data, provider) values (%L::uuid, gen_random_uuid()::text, ''{}'', ''github'')');
+select is(tests.error_of(format(statement, :'f'::jsonb->>'agent_user')), 'agent_credentials_frozen', 'an agent cannot add a ' || label)
+  from credential_inserts;
+select lives_ok(format(statement, :'f'::jsonb->>'owner'), 'a person can add a ' || label) from credential_inserts;
+
 select is(tests.error_of(format('update auth.users set %I = %L where id = %L::uuid', field, value, :'f'::jsonb->>'agent_user')),
           'agent_credentials_frozen', 'agent credentials reject changes to ' || field)
   from (values ('encrypted_password', 'new-agent-hash'), ('email', 'locked-agent@test.invalid'),

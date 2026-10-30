@@ -66,6 +66,23 @@ create trigger agents_freeze_credentials before update on auth.users for each ro
      or old.phone is distinct from new.phone or old.phone_change is distinct from new.phone_change)
   execute function private.freeze_agent_credentials();
 
+-- No agent login flow enrolls factors, passkeys or additional provider identities.
+create or replace function private.freeze_agent_credential_insert()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  if exists (select 1 from public.agents a where a.auth_user_id = new.user_id) then
+    raise exception 'agent_credentials_frozen';
+  end if;
+  return new;
+end $$;
+revoke all on function private.freeze_agent_credential_insert() from public, anon, authenticated;
+create trigger agents_freeze_new_credentials before insert on auth.mfa_factors
+  for each row execute function private.freeze_agent_credential_insert();
+create trigger agents_freeze_new_credentials before insert on auth.webauthn_credentials
+  for each row execute function private.freeze_agent_credential_insert();
+create trigger agents_freeze_new_credentials before insert on auth.identities
+  for each row execute function private.freeze_agent_credential_insert();
+
 -- Auth can omit client_id after MFA; OAuth AMR must never become a direct session.
 create or replace function private.jwt_client_id()
 returns text language sql stable set search_path = '' as $$
