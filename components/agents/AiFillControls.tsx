@@ -14,14 +14,19 @@ export function AiFillControls({ dbPageId, property, rowCount, readOnly }: {
   const requests = useAiRequests(dbPageId);
   const [busy, setBusy] = useState(false), [message, setMessage] = useState("");
   const [remaining, setRemaining] = useState(0);
+  const [nextRows, setNextRows] = useState<string[] | null>(null);
   const ops = buildDbOps(dbPageId);
   const running = requests.some((r) => r.kind === "fill" && !["done", "failed", "cancelled"].includes(r.state));
-  const fill = async (mode: "empty" | "all") => {
+  const fill = async (mode: "empty" | "all", rowIds?: string[]) => {
     setBusy(true); setMessage("");
     try {
-      const result = await requestAiFill(dbPageId, property.id, mode);
-      setRemaining(result.remaining);
-      setMessage(result.rows ? `Filling ${result.rows} rows.${result.remaining ? ` ${result.remaining} more after this one.` : ""}` : "No empty rows to fill.");
+      const available = new Set(database?.rows.map((r) => r.id));
+      const targets = mode === "all" ? (rowIds ?? [...available]).filter((id) => available.has(id)) : null;
+      // Explicit batches keep continuation correct even if another person reorders the database.
+      const result = await requestAiFill(dbPageId, property.id, mode, targets?.slice(0, 50));
+      const next = targets?.slice(50) ?? null, left = next?.length ?? result.remaining;
+      setNextRows(next); setRemaining(left);
+      setMessage(result.rows ? `Filling ${result.rows} rows.${left ? ` ${left} more after this one.` : ""}` : "No empty rows to fill.");
     } catch (error) { setMessage(aiRequestError(error)); }
     finally { setBusy(false); }
   };
@@ -41,6 +46,6 @@ export function AiFillControls({ dbPageId, property, rowCount, readOnly }: {
     <button disabled={readOnly || busy || running || !rowCount || !getSupabase()} onClick={() => void fill("empty")}>Fill empty</button>
     <button disabled={readOnly || busy || running || !rowCount || !getSupabase()} onClick={() => void fill("all")}>Regenerate all</button>
     {message && <p role="status">{message}</p>}
-    {remaining > 0 && <button disabled={busy || running || readOnly} onClick={() => void fill("empty")}>Fill the next 50</button>}
+    {remaining > 0 && <button disabled={busy || running || readOnly} onClick={() => void (nextRows ? fill("all", nextRows) : fill("empty"))}>Fill the next 50</button>}
   </div>;
 }

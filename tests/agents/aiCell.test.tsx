@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AiCell } from "@/components/agents/AiCell";
+import { AiFillControls } from "@/components/agents/AiFillControls";
 import Cell from "@/components/database/cells/Cell";
 import type { DbOps } from "@/lib/dbOps";
 import { useStore } from "@/lib/store";
@@ -82,4 +83,14 @@ it.each(["ai", "text"] as const)("a focused %s cell does not overwrite a remote 
   act(() => input.blur());
   expect(onChange).not.toHaveBeenCalled();
   expect(input.value).toBe("Remote value");
+});
+it("Regenerate all continues with the last ten populated rows without repeating the first fifty", async () => {
+  const rows = Array.from({ length: 60 }, (_, i) => ({ ...theRow, id: `r${i}`, cells: { summary: "Existing" } }));
+  useStore.setState({ pages: { "db-page": page({ id: "db-page", database: { ...database, rows } }) } });
+  mocked.fill.mockResolvedValueOnce({ taskId: "first", rows: 50, remaining: 10 }).mockResolvedValueOnce({ taskId: "second", rows: 10, remaining: 0 });
+  act(() => root.render(<AiFillControls dbPageId="db-page" property={property} rowCount={60} readOnly={false} />));
+  await act(async () => [...container.querySelectorAll("button")].find((b) => b.textContent === "Regenerate all")!.click());
+  expect(mocked.fill).toHaveBeenNthCalledWith(1, "db-page", "summary", "all", rows.slice(0, 50).map((r) => r.id));
+  await act(async () => [...container.querySelectorAll("button")].find((b) => b.textContent === "Fill the next 50")!.click());
+  expect(mocked.fill).toHaveBeenLastCalledWith("db-page", "summary", "all", rows.slice(50).map((r) => r.id));
 });
