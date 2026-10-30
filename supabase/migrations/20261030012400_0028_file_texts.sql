@@ -48,7 +48,12 @@ begin
   if p_status is null or p_status not in ('ready','partial','unsupported','failed')
      or jsonb_typeof(p_pages) is distinct from 'array' or jsonb_array_length(p_pages) > 500
      or exists (select 1 from jsonb_array_elements(p_pages) x
-                 where jsonb_typeof(x->'page') <> 'number' or jsonb_typeof(x->'text') <> 'string') then
+                 where jsonb_typeof(x) is distinct from 'object'
+                    or jsonb_typeof(x->'text') is distinct from 'string'
+                    or case when jsonb_typeof(x->'page') = 'number' then
+                         (x->>'page')::numeric < 1 or (x->>'page')::numeric > 2147483647
+                         or (x->>'page')::numeric <> trunc((x->>'page')::numeric)
+                       else true end) then
     raise exception using errcode = 'PT400', message = 'invalid_input',
       detail = 'status is ready, partial, unsupported or failed; pages is at most 500 items {page, text}';
   end if;

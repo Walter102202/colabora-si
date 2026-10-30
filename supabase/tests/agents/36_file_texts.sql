@@ -1,7 +1,7 @@
 -- read_file: only the platform agent saves the text of a file, from its own run and for a file on a page it can
 -- read; the text is readable by exactly those who can read a page that holds the file.
 begin;
-select plan(15);
+select plan(18);
 
 select tests.fixture() as f \gset
 insert into public.files (id, workspace_id, created_by, created_by_type) values ('file_1', (:'f'::jsonb->>'ws')::uuid, (:'f'::jsonb->>'owner')::uuid, 'human');
@@ -27,6 +27,12 @@ select is(tests.error_of(format($$select public.save_file_text(%L::uuid, 'page_A
           'not_found', 'only for a page that holds the file');
 select is(tests.error_of(format($$select public.save_file_text(%L::uuid, 'page_F', 'file_1', 'done', %L::jsonb)$$, :'run', :'pages')),
           'invalid_input', 'the status is one of four');
+select is(tests.error_of(format($$select public.save_file_text(%L::uuid, 'page_F', 'file_1', 'ready', '[{"page":1}]'::jsonb)$$, :'run')),
+          'invalid_input', 'an extracted page must contain text');
+select is(tests.error_of(format($$select public.save_file_text(%L::uuid, 'page_F', 'file_1', 'ready', '[{"text":"Missing number"}]'::jsonb)$$, :'run')),
+          'invalid_input', 'an extracted page must contain a page number');
+select is(tests.error_of(format($$select public.save_file_text(%L::uuid, 'page_F', 'file_1', 'ready', '[{"page":-1.5,"text":"Bad page"}]'::jsonb)$$, :'run')),
+          'invalid_input', 'page numbers must be positive integers');
 select public.save_file_text(:'run'::uuid, 'page_F', 'file_1', 'partial', '[{"page":1,"text":"Revenue grew 20%"},{"page":2,"text":"Costs"}]'::jsonb, 9);
 select tests.reset_role();
 select is((select status || ':' || total_pages from public.file_texts where file_id = 'file_1'), 'partial:9', 'a second save replaces the first');
