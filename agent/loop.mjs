@@ -541,10 +541,15 @@ export async function runAgent(opts) {
         let res = await call(name, args);
         if (name === "read_file" && !res.isError && res.data.status === "not_extracted" && res.data.download_url
           && ((modelVision && res.data.mime?.startsWith("image/")) || (modelPdf && res.data.mime === "application/pdf"))) {
-          const extracted = await extractFile({ call, model, runId, pageId: args.page_id, fileId: args.file_id,
-            url: res.data.download_url, mime: res.data.mime, prices, signal });
-          for (const key of ["input_tokens", "output_tokens"]) { total[key] += extracted.usage[key]; pending[key] += extracted.usage[key]; }
-          res = { isError: false, data: extracted.data, text: JSON.stringify(extracted.data) };
+          try {
+            const extracted = await extractFile({ call, model, runId, pageId: args.page_id, fileId: args.file_id,
+              url: res.data.download_url, mime: res.data.mime, prices, signal });
+            for (const key of ["input_tokens", "output_tokens"]) { total[key] += extracted.usage[key]; pending[key] += extracted.usage[key]; }
+            res = { isError: false, data: extracted.data, text: JSON.stringify(extracted.data) };
+          } catch (error) {
+            await handOverOrEnd(error instanceof Error ? error.message : String(error));
+            return done(signal?.aborted ? "aborted" : "error");
+          }
         }
         let maybe = unsure(res);
         // A repeat with the same key is answered by the receipt of the first call when it did happen.

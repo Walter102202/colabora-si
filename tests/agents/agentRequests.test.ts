@@ -162,6 +162,26 @@ it("without vision the loop passes not_extracted through", async () => {
   const result = h.model.requests[1].messages.filter((m) => m.role === "tool").at(-1);
   expect(JSON.parse(result.content).status).toBe("not_extracted");
 });
+it.each(["download", "model"])("releases the run when shutdown interrupts file %s", async (phase) => {
+  const h = fileLoop("image/png", true), controller = new AbortController();
+  const interrupted = () => { controller.abort(); throw new DOMException("Stopped", "AbortError"); };
+  if (phase === "download") vi.stubGlobal("fetch", vi.fn(async () => interrupted()));
+  else {
+    const chat = h.model.chat;
+    h.model.chat = async (request) => request.messages.some(m => Array.isArray(m.content)) ? interrupted() : chat(request);
+    const list = h.mcp.listTools, call = h.mcp.callTool;
+    h.mcp.listTools = async () => [...await list(), { name: "hand_over" }];
+    h.mcp.callTool = async (name, args) => {
+      if (name !== "hand_over") return call(name, args);
+      h.mcp.calls.push({ name, args });
+      return { isError: false, data: { task_state: "input_required" }, text: "Handed over" };
+    };
+  }
+  const result = await runAgent({ mcp: h.mcp, model: h.model, signal: controller.signal, maxTasks: 1, maxTurns: 4, modelVision: true });
+  expect(result.tasks[0].outcome).toBe("aborted");
+  expect(h.mcp.calls.filter(c => c.name === (phase === "model" ? "hand_over" : "end_run"))).toHaveLength(1);
+  expect(h.mcp.calls.some(c => c.name === "save_file_text" || c.name === "submit_for_review")).toBe(false);
+});
 it.each(["stop", "shutdown"] as const)("does not write a fill when %s arrives during model generation", async (kind) => {
   const h = harness([], 1), controller = new AbortController();
   let stopped = false, start!: () => void;
