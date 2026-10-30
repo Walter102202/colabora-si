@@ -67,6 +67,7 @@ export function activityLabel(a: ActivityRow): string {
     case "checkpoint": return `checkpoint: ${pick("next_step") ?? ""}`;
     case "handover": return handoverLabel(a);
     case "prompt": {
+      if (b.source === "lease") return "The session went silent; the task is back in the queue";
       const close = pick("close");
       if (close) return `closed as ${close}${pick("text") ? `: ${pick("text")}` : ""}`;
       return `${pick("signal") ?? "message"}: ${pick("text") ?? ""}`;

@@ -30,6 +30,10 @@ describe("task continuity", () => {
     expect(activityLabel(act(4, "handover", { from_harness: "claude_code", to_harness: "codex", summary: "1 approval pending." })))
       .toBe("handed over from claude_code to codex: 1 approval pending.");
   });
+  it("explains when a silent session loses its task", () => {
+    expect(activityLabel(act(5, "prompt", { source: "lease", signal: "continue", handover: true })))
+      .toBe("The session went silent; the task is back in the queue");
+  });
   it("lastCheckpointFor returns the newest checkpoint", () => {
     expect(lastCheckpointFor([act(1, "checkpoint", { v: 1, next_step: "a" }), act(2, "action", {}), act(5, "checkpoint", { v: 1, next_step: "b" })])?.seq).toBe(5);
     expect(lastCheckpointFor([])).toBeNull();
