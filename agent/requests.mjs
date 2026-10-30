@@ -172,6 +172,8 @@ export async function extractFile({ call, model, runId, pageId, fileId, url, mim
     data = { status: unsupported ? "unsupported" : "failed", mime, total_pages: 0, pages: [], truncated: false,
       reason: unsupported ? "the model does not read this file type" : reason.slice(0, 500) };
   }
+  // A provider/network error is not durable evidence about this file's contents or capabilities.
+  if (data.status !== "ready") return { data, usage };
   const saved = await call("save_file_text", { run_id: runId, page_id: pageId, file_id: fileId, status: data.status,
     pages: data.pages, total_pages: data.total_pages, mime, model: model.name, cost_usd: usage.cost_usd,
     ...(data.reason ? { error: data.reason } : {}) });

@@ -89,6 +89,14 @@ function fileHarness(opts: { blob?: Blob; name?: string; linked?: boolean; cache
   return { ...h, downloads: () => downloads };
 }
 const readFile = (h: ReturnType<typeof fileHarness>, range: Row = {}) => tool('read_file').handler({ page_id: 'p', file_id: 'f', ...range }, h.ctx);
+Deno.test('read_file retries a previously cached transient failure under the same permissions', async () => {
+  for (const platform of [false, true]) {
+    const h = fileHarness({ name: 'scan.png', platform, cached: { status: 'failed', mime: 'image/png', pages: [], error: 'HTTP 503' } });
+    const out = await readFile(h);
+    assert.equal(out.structured.status, 'not_extracted');
+    assert.equal(typeof out.structured.download_url, platform ? 'string' : 'undefined');
+  }
+});
 Deno.test('read_file returns the saved text', async () => {
   const out = await readFile(fileHarness({ cached: { status: 'ready', mime: 'application/pdf', total_pages: 3, pages: [1, 2, 3].map((page) => ({ page, text: String(page) })) } }), { from_page: 2 });
   assert.deepEqual(out.structured.pages, [{ page: 2, text: '2' }, { page: 3, text: '3' }]);

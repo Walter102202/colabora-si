@@ -1,9 +1,23 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { runRequest } from "../../agent/requests.mjs";
+import { extractFile, runRequest } from "../../agent/requests.mjs";
 import { runAgent } from "../../agent/loop.mjs";
 import { createStubMcp } from "../../agent/test/stub-mcp.mjs";
 import { createStubModel } from "../../agent/test/stub-model.mjs";
 afterEach(() => vi.unstubAllGlobals());
+
+it.each([400, 503])("does not persist a model HTTP %s as a permanent file failure", async (status) => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array([1]))));
+  const call = vi.fn(async () => ({ isError: false, data: {}, text: "" }));
+  const model = createStubModel([{ content: "Recovered text" }]);
+  const chat = model.chat;
+  model.chat = async () => { throw new Error(`model request failed: HTTP ${status}`); };
+  const options = { call, model, runId: "run", pageId: "p", fileId: "f", url: "https://files.test/signed", mime: "image/png" };
+  await extractFile(options);
+  expect(call).not.toHaveBeenCalled();
+  model.chat = chat;
+  expect((await extractFile(options)).data.status).toBe("ready");
+  expect(call).toHaveBeenCalledExactlyOnceWith("save_file_text", expect.objectContaining({ status: "ready" }));
+});
 
 const rows = (count = 2) => Array.from({ length: count }, (_, i) => ({ row_id: `r${i + 1}`, rev: i, title: `Row ${i + 1}`, inputs: { Notes: "Slow onboarding" } }));
 function harness(contents: string[], count = 2) {

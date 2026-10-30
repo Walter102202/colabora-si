@@ -120,7 +120,7 @@ const readFile: ToolDef = {
     if (!links?.length) throw new ToolError('not_found', 'The file is not attached to a page you can read.');
     const saved = await must(ctx.db.select<Row>({ table: 'file_texts', columns: 'status,mime,pages,total_pages,error', filters: [{ col: 'file_id', op: 'eq', value: args.file_id }], limit: 1 }));
     const answer = (data: Row) => ({ text: `File: ${String(data.status)}.`, structured: fileReply(data, from, to) });
-    if (saved?.[0]) return answer(saved[0]);
+    if (saved?.[0] && saved[0].status !== 'failed') return answer(saved[0]);
     const files = await must(ctx.db.select<Row>({ table: 'files', columns: 'id,workspace_id', filters: [{ col: 'id', op: 'eq', value: args.file_id }], limit: 1 }));
     if (!files?.[0]) throw new ToolError('not_found', 'The file was not found.');
     const { bundle } = await loadPage(ctx.db, String(args.page_id));
