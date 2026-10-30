@@ -160,7 +160,8 @@ update public.agents set delivery = private.delivery_for(connection) where deliv
 -- An input_required task without a run is therefore claimed only while a blocking question is pending: a handed-over
 -- task is still claimed and waits on its questions in the new run, while a blocked or escalated review waits for the
 -- person's message (send_agent_message requeues it). Answering the last blocking question requeues a task without a run
--- (decide_approval, 0020), so it is claimed as queued. Full copy of claim_task (0019); only the task lookup changes.
+-- (decide_approval, 0020), so it is claimed as queued; after a handover whose question expired, the person's Continue
+-- requeues it. Full copy of claim_task (0019); only the task lookup changes.
 create or replace function public.claim_task(p_task_id uuid default null, p_harness text default 'custom',
   p_external_session_id text default null, p_brief_version int default null, p_resume boolean default false)
 returns jsonb language plpgsql security definer set search_path = '' as $$
@@ -186,7 +187,7 @@ begin
     if p_task_id is null then return jsonb_build_object('task_id', null); end if;
     if exists (select 1 from public.agent_tasks t where t.id = p_task_id and t.delegate_agent_id = v_agent
                 and t.state = 'input_required' and t.active_run_id is null) then
-      raise exception using errcode='PT409', message='task_unavailable', detail='the task waits on a person: claim it after they answer';
+      raise exception using errcode='PT409', message='task_unavailable', detail='the task waits on a person: claim it after they answer or continue it';
     end if;
     raise exception using errcode='PT409', message='task_unavailable';
   end if;
