@@ -30,6 +30,8 @@
       "supabase/migrations/*_0026_*",
       "supabase/migrations/*_0027_*",
       "supabase/migrations/*_0028_*",
+      "supabase/migrations/*_0029_*",
+      "supabase/migrations/*_0030_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -165,6 +167,20 @@
       "supabase/seeds/01_workspace.sql",
       "tests/clone/dbCompute.test.ts",
       "tests/clone/dbFilter.test.ts"
+    ],
+    "a/p7": [
+      "README.md",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "app/main.tsx",
+      "app/oauth/consent/page.tsx",
+      "lib/routes.ts",
+      "lib/types.ts",
+      "components/AuthModal.tsx",
+      "public/llms.txt",
+      "vercel.json",
+      "supabase/config.toml",
+      "tests/infra/vercelHeaders.test.ts"
     ]
   }
 }
