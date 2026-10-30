@@ -1,3 +1,4 @@
+import { inflateSync } from 'node:zlib';
 // Bounded, iterative text extraction (ISO 32000-1 sections 7.5, 9.4 and 9.10).
 // Unsupported content filters produce an empty page; no PDF code or embedded action is executed.
 export interface PdfText {
@@ -45,7 +46,7 @@ function hexBytes(value: string): string {
 
 function* tokens(source: string, work: Work): Generator<Token> {
   spend(work, source.length);
-  let i = 0;
+  let i = 0, inlineImage = false;
   while (i < source.length) {
     const c = source[i];
     if (space(c)) { i++; continue; }
@@ -89,6 +90,13 @@ function* tokens(source: string, work: Work): Generator<Token> {
     if (i === start) throw new Error('Unexpected PDF delimiter');
     if (i - start > 64) throw new Error('PDF word limit exceeded');
     const word = source.slice(start, i);
+    if (word === 'BI') inlineImage = true;
+    if (word === 'ID' && inlineImage) {
+      const end = /[\x00\t\n\f\r ]EI(?=[\x00\t\n\f\r ])/g;
+      end.lastIndex = i;
+      if (!end.exec(source)) throw new Error('Unclosed PDF inline image');
+      i = end.lastIndex; inlineImage = false; continue;
+    }
     if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(word)) {
       const number = Number(word), ref = /^\s+\d+\s+R\b/.exec(source.slice(i));
       if (!Number.isFinite(number)) throw new Error('Invalid PDF number');
@@ -296,20 +304,15 @@ export async function extractPdfText(bytes: Uint8Array, opts: { maxPages?: numbe
       const rawFilters = resolve(dictionary(obj.value).Filter);
       const filters = rawFilters ? (Array.isArray(rawFilters) ? rawFilters : [rawFilters]).map(name) : [];
       if (filters.some((f) => f !== 'FlateDecode' && f !== 'Fl')) return obj.decoded = null;
-      let data = obj.stream;
+      const length = resolve(dictionary(obj.value).Length);
+      if (length !== undefined && (!Number.isInteger(length) || Number(length) < 0 || Number(length) > obj.stream.length)) throw new Error('Invalid PDF stream length');
+      let data = typeof length === 'number' ? obj.stream.subarray(0, length) : obj.stream;
       for (const _filter of filters) {
-        const reader = new Blob([new Uint8Array(data)]).stream().pipeThrough(new DecompressionStream('deflate')).getReader();
-        const chunks: Uint8Array[] = []; let length = 0;
-        try {
-          while (true) {
-            const next = await reader.read(); if (next.done) break;
-            length += next.value.length;
-            if (length > MAX_STREAM || inflated + length > MAX_RETAINED) throw new Error('PDF decompression limit exceeded');
-            chunks.push(next.value);
-          }
-        } finally { await reader.cancel().catch(() => {}); }
-        inflated += length; data = new Uint8Array(length);
-        let offset = 0; for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.length; }
+        const available = Math.min(MAX_STREAM, MAX_RETAINED - inflated);
+        if (available <= 0) throw new Error('PDF decompression limit exceeded');
+        // Native bounded inflate accepts a complete zlib member followed by PDF EOL/trailing bytes.
+        data = inflateSync(data, { maxOutputLength: available });
+        inflated += data.length;
       }
       if (data.length > MAX_STREAM) throw new Error('PDF stream limit exceeded');
       retained += data.length;

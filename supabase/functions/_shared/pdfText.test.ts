@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { hostilePdfCases } from './pdfHostileFixtures.ts';
 import { extractPdfText } from './pdfText.ts';
-import { deflate, pdfFixture, pdfStream, textPdf } from './pdfFixtures.ts';
+import { deflate, joinBytes, pdfFixture, pdfStream, textPdf } from './pdfFixtures.ts';
 const bytes = (s: string) => new TextEncoder().encode(s);
 
 Deno.test('extracts text page by page', async () => {
@@ -85,3 +85,24 @@ for (const [name, build] of Object.entries(hostilePdfCases)) {
     } finally { clearTimeout(timer); worker.terminate(); URL.revokeObjectURL(url); }
   });
 }
+
+for (const eol of ["\n", "\r\n"]) {
+  Deno.test(`reads Flate streams with indirect Length and ${JSON.stringify(eol)} before endstream`, async () => {
+    const data = await deflate(bytes('BT (Indirect length) Tj ET'));
+    const stream = joinBytes([bytes('<< /Length 21 0 R /Filter /FlateDecode >>\nstream\n'), data, bytes(`${eol}endstream`)]);
+    const result = await extractPdfText(textPdf([stream], { 21: String(data.length) }));
+    assert.equal(result.status, 'ok', result.error);
+    assert.equal(result.pages[0].text, 'Indirect length');
+  });
+}
+Deno.test('accepts trailing bytes after a complete Flate stream', async () => {
+  const data = joinBytes([await deflate(bytes('BT (Complete stream) Tj ET')), bytes('\r\nextra')]);
+  const result = await extractPdfText(textPdf([pdfStream(data, '/Filter /FlateDecode')]));
+  assert.equal(result.status, 'ok', result.error);
+  assert.equal(result.pages[0].text, 'Complete stream');
+});
+Deno.test('skips inline image bytes before reading subsequent text', async () => {
+  const result = await extractPdfText(textPdf(['q BI /W 2 /H 2 /CS /G /BPC 8 ID \x01)(\x02>>}{ EI Q BT (After image) Tj ET']));
+  assert.equal(result.status, 'ok', result.error);
+  assert.equal(result.pages[0].text, 'After image');
+});
