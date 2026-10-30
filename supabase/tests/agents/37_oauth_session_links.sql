@@ -1,5 +1,5 @@
 begin;
-select plan(50);
+select plan(57);
 create or replace function tests.set_oauth_agent(p_uid uuid, p_agent uuid, p_client text)
 returns void language sql as $$
   select tests.set_claims(jsonb_build_object('sub', p_uid, 'role', 'authenticated', 'aud', 'authenticated',
@@ -151,6 +151,16 @@ select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'client-other');
 select is(tests.error_of(format('select public.set_oauth_app(%L, null, %L, %L)', 'x', 'App', 'https://claude.ai/cb')), 'direct_session_required', 'a chat cannot register its own app link');
 select is(tests.error_of('select public.oauth_human_context(''authz'')'), 'direct_session_required', 'a chat cannot inspect human authorizations');
 select tests.reset_role();
+
+-- Freeze all credential fields, including pending email/phone changes, regardless of the caller.
+select is(tests.error_of(format('update auth.users set %I = %L where id = %L::uuid', field, value, :'f'::jsonb->>'agent_user')),
+          'agent_credentials_frozen', 'agent credentials reject changes to ' || field)
+  from (values ('encrypted_password', 'new-agent-hash'), ('email', 'locked-agent@test.invalid'),
+               ('email_change', 'pending-agent@test.invalid'), ('phone', '15555550100'), ('phone_change', '15555550101')) as changes(field, value);
+select lives_ok(format('update auth.users set banned_until = now() + interval ''1 hour'' where id = %L::uuid', :'f'::jsonb->>'agent_user'),
+                'credential freezing does not block agent bans');
+select lives_ok(format('update auth.users set encrypted_password = %L where id = %L::uuid', 'new-human-hash', :'f'::jsonb->>'owner'),
+                'a person can still change their password');
 
 -- Keep a tombstone when the agent's workspace is deleted; absence must never recover human reach.
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);

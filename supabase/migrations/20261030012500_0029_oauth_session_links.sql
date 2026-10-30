@@ -7,6 +7,22 @@
 -- PostgREST calls the hook as the request's role, and without usage on this schema every service-role call fails.
 grant usage on schema private to service_role;
 
+-- An agent token must never become credentials for an independent direct session.
+create or replace function private.freeze_agent_credentials()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  if exists (select 1 from public.agents a where a.auth_user_id = old.id) then
+    raise exception 'agent_credentials_frozen';
+  end if;
+  return new;
+end $$;
+revoke all on function private.freeze_agent_credentials() from public, anon, authenticated;
+create trigger agents_freeze_credentials before update on auth.users for each row
+  when (old.encrypted_password is distinct from new.encrypted_password
+     or old.email is distinct from new.email or old.email_change is distinct from new.email_change
+     or old.phone is distinct from new.phone or old.phone_change is distinct from new.phone_change)
+  execute function private.freeze_agent_credentials();
+
 -- Deletion preserves a tombstone. A missing association must never become human access.
 alter table public.agent_oauth_links
   add column if not exists as_human boolean not null default false,
