@@ -20,6 +20,7 @@ export function ghWebhookCommand(repo: string, url: string, secret: string): str
 export async function connectRepository(client: SupabaseClient, workspaceId: string, repo: string): Promise<NewCiConnection> {
   const { data, error } = await client.functions.invoke("agent-admin", { body: { action: "ci_connect", workspace_id: workspaceId, repo } });
   if (error) throw error;
+  await refreshLoadedChecks(workspaceId);
   return data as NewCiConnection;
 }
 export async function listConnections(client: SupabaseClient, workspaceId: string): Promise<CiConnection[]> {
@@ -31,6 +32,14 @@ export async function listConnections(client: SupabaseClient, workspaceId: strin
 export async function revokeConnection(client: SupabaseClient, id: string): Promise<void> {
   const { error } = await client.rpc("revoke_ci_connection", { p_id: id });
   if (error) throw error;
+  await refreshLoadedChecks();
+}
+
+// Loaded only for settings mutations: importing CI_LABEL in the pure chat card must not start a store or client.
+async function refreshLoadedChecks(workspaceId?: string): Promise<void> {
+  const { useAgentTasks } = await import("@/lib/agentTasks");
+  if (workspaceId) await useAgentTasks.getState().refreshCiChecks(workspaceId);
+  else await useAgentTasks.getState().refreshCiChecks();
 }
 
 /** Mirrors private.is_workspace_owner; the RPC remains the authorization boundary. */

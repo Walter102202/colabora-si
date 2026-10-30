@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { expect, it, vi } from "vitest";
 import { canManageConnections, connectRepository, ghWebhookCommand, listConnections, revokeConnection } from "@/lib/agentCi";
+const refreshCiChecks = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("@/lib/agentTasks", () => ({ useAgentTasks: { getState: () => ({ refreshCiChecks }) } }));
 
 it("builds the manual GitHub command for signed check_run deliveries", () => {
   const command = ghWebhookCommand("acme/app", "https://api.test/functions/v1/github-webhook/id", "abc123");
@@ -30,11 +32,13 @@ it("connects through agent-admin, lists only active workspace connections and re
   const from = vi.fn(() => query);
   const client = { functions: { invoke }, rpc, from } as unknown as SupabaseClient;
   expect(await connectRepository(client, "w", "acme/app")).toEqual(result);
+  expect(refreshCiChecks).toHaveBeenCalledWith("w");
   expect(invoke).toHaveBeenCalledWith("agent-admin", { body: { action: "ci_connect", workspace_id: "w", repo: "acme/app" } });
   expect(await listConnections(client, "w")).toHaveLength(1);
   expect(from).toHaveBeenCalledWith("ci_connections"); expect(query.eq).toHaveBeenCalledWith("workspace_id", "w");
   expect(query.is).toHaveBeenCalledWith("revoked_at", null);
   await revokeConnection(client, "id"); expect(rpc).toHaveBeenCalledWith("revoke_ci_connection", { p_id: "id" });
+  expect(refreshCiChecks).toHaveBeenCalledWith();
   invoke.mockResolvedValue({ data: null, error: new Error("forbidden") });
   await expect(connectRepository(client, "w", "acme/app")).rejects.toThrow("forbidden");
   rpc.mockResolvedValue({ error: new Error("offline") });

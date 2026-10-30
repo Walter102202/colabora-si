@@ -55,9 +55,27 @@ vi.mock("@/lib/agentClient", () => ({ getAgentClient: () => client, agentErrorMe
 const { useAgentTasks } = await import("@/lib/agentTasks");
 const { useAgentNotifications } = await import("@/lib/agentNotifications");
 
-beforeEach(() => { registry.clear(); created.length = 0; removed.length = 0; });
+beforeEach(() => { registry.clear(); created.length = 0; removed.length = 0; client.rpc.mockReset().mockResolvedValue({ data: [], error: null }); });
 
 describe("useAgentTasks.subscribe", () => {
+  it("does not let an older evidence read overwrite a newer commit's result", async () => {
+    const data = mockCard("1") as TaskCardData;
+    useAgentTasks.setState({ workspaceId: "race-ws", tasks: { [data.task.id]: data.task },
+      briefs: { [`${data.task.id}:${data.task.brief_version}`]: { ...data.brief!, done_when: [{ id: "ci", text: "CI", check: "ci", command: "check" }] } } });
+    let finishOlder!: (value: unknown) => void;
+    client.rpc.mockImplementationOnce(() => new Promise((resolve) => { finishOlder = resolve; }));
+    const older = useAgentTasks.getState().loadTaskDetail(data.task.id);
+    await vi.waitFor(() => expect(finishOlder).toBeTypeOf("function"));
+    const checks = [{ criterion_id: "ci", check: "check", state: "failed" }];
+    client.rpc.mockResolvedValueOnce({ data: checks, error: null });
+    await useAgentTasks.getState().loadTaskDetail(data.task.id);
+    finishOlder({ data: [{ ...checks[0], state: "passed" }], error: null });
+    await older;
+    expect(useAgentTasks.getState().ciChecks[data.task.id]).toEqual(checks);
+    client.rpc.mockClear();
+    await useAgentTasks.getState().refreshCiChecks(data.task.workspace_id);
+    expect(client.rpc).toHaveBeenCalledWith("task_ci_status", { p_task_id: data.task.id });
+  });
   it("loads CI only when requested by the brief and refreshes on CI activity", async () => {
     const release = useAgentTasks.getState().subscribe("ci-ws");
     await vi.waitFor(() => expect(useAgentTasks.getState().status).toBe("ready"));
@@ -75,6 +93,10 @@ describe("useAgentTasks.subscribe", () => {
     expect(useAgentTasks.getState().ciChecks[data.task.id]).toEqual(checks);
     client.rpc.mockClear();
     created.at(-1)!.handlers.get("agent_activities")!({ new: { id: "ci-event", task_id: data.task.id, body: { ci: { conclusion: "failure" } } } });
+    await vi.waitFor(() => expect(client.rpc).toHaveBeenCalledWith("task_ci_status", { p_task_id: data.task.id }));
+    client.rpc.mockClear();
+    created.at(-1)!.handlers.get("agent_artifacts")!({ new: { id: "new-commit", task_id: data.task.id, kind: "diff", ref: "acme/app@new" } });
+    expect(useAgentTasks.getState().ciChecks[data.task.id]).toEqual([]);
     await vi.waitFor(() => expect(client.rpc).toHaveBeenCalledWith("task_ci_status", { p_task_id: data.task.id }));
     release();
   });
