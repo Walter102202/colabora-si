@@ -6,15 +6,15 @@ import InlineToolbar from "@/components/InlineToolbar";
 import { AiRewritePanel } from "@/components/agents/AiRewritePanel";
 import { AiRequestToasts } from "@/components/agents/AiRequestToasts";
 
-const mocked = vi.hoisted(() => ({ backend: true, rewrite: vi.fn(), revert: vi.fn(), requests: [] as Record<string, unknown>[] }));
-vi.mock("@/lib/supabase", () => ({ getSupabase: () => mocked.backend ? {} : null }));
+const mocked = vi.hoisted(() => ({ backend: true, client: null as unknown, rewrite: vi.fn(), revert: vi.fn(), requests: [] as Record<string, unknown>[] }));
+vi.mock("@/lib/supabase", () => ({ getSupabase: () => mocked.backend ? mocked.client ?? {} : null }));
 vi.mock("@/lib/agentAiRequests", async (original) => ({ ...(await original<typeof import("@/lib/agentAiRequests")>()),
   requestAiRewrite: mocked.rewrite, useAiRequests: () => mocked.requests }));
 vi.mock("@/lib/agentActions", () => ({ revertRun: mocked.revert }));
 let container: HTMLDivElement, root: Root;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  mocked.backend = true; mocked.requests = []; mocked.rewrite.mockReset().mockResolvedValue({ taskId: "t" }); mocked.revert.mockReset().mockResolvedValue({ reverted: [] });
+  mocked.backend = true; mocked.client = null; mocked.requests = []; mocked.rewrite.mockReset().mockResolvedValue({ taskId: "t" }); mocked.revert.mockReset().mockResolvedValue({ reverted: [] });
   container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); });
@@ -55,4 +55,25 @@ it("errors are readable", async () => {
   mocked.rewrite.mockRejectedValue(new Error("block_has_mentions")); panel();
   await act(async () => [...container.querySelectorAll("button")].find((b) => b.textContent === "Shorter")!.click());
   expect(container.textContent).toContain("This block has mentions or equations, which AI rewrite keeps out of reach.");
+});
+it("loads a recently failed request even when end_run left closed_at null", async () => {
+  const row: Record<string, unknown> = { id: "failed", request_kind: "rewrite", state: "failed", request: { block_id: "b" }, closed_at: null, active_run_id: null, updated_at: new Date().toISOString() };
+  const channel = { on: () => channel, subscribe: () => channel };
+  mocked.client = {
+    channel: () => channel, removeChannel: async () => {},
+    from: (table: string) => {
+      const filters: ((r: Record<string, unknown>) => boolean)[] = [];
+      const query = {
+        select: () => query, eq: () => query, not: () => query, order: () => query, limit: () => query,
+        in: (key: string, values: unknown[]) => { filters.push((r) => values.includes(r[key])); return query; },
+        gte: (key: string, value: string) => { filters.push((r) => typeof r[key] === "string" && r[key] >= value); return query; },
+        then: (resolve: (value: unknown) => unknown) => Promise.resolve({ data: table === "agent_tasks" ? [row].filter((r) => filters.every((f) => f(r))) : [], error: null }).then(resolve),
+      };
+      return query;
+    },
+  };
+  const actual = await vi.importActual<typeof import("@/lib/agentAiRequests")>("@/lib/agentAiRequests");
+  function Probe() { return <span>{actual.useAiRequests("p").map((r) => r.state).join(",")}</span>; }
+  await act(async () => { root.render(<Probe />); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  expect(container.textContent).toBe("failed");
 });

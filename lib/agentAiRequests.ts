@@ -31,11 +31,11 @@ function retain(pageId: string) {
     try {
       do {
         again = false;
-        const columns = "id,request_kind,state,request,closed_at,active_run_id";
+        const columns = "id,request_kind,state,request,closed_at,updated_at,active_run_id";
         const base = () => client.from("agent_tasks").select(columns).eq("row_page_id", pageId).not("request_kind", "is", null);
         const [open, recent] = await Promise.all([
           base().in("state", ["queued", "working", "input_required", "ready_for_review"]),
-          base().in("state", CLOSED).gte("closed_at", new Date(Date.now() - 600_000).toISOString()).order("closed_at", { ascending: false }).limit(50),
+          base().in("state", CLOSED).gte("updated_at", new Date(Date.now() - 600_000).toISOString()).order("updated_at", { ascending: false }).limit(50),
         ]);
         if (open.error || recent.error) return;
         const rows = [...(open.data ?? []), ...(recent.data ?? [])];
@@ -47,7 +47,7 @@ function retain(pageId: string) {
         }
         if (subscriptions.get(pageId)?.channel !== channel) return;
         const requests = rows.map((r): AiRequest => ({ id: r.id, kind: r.request_kind, state: r.state, request: r.request ?? {},
-          closedAt: r.closed_at ?? undefined, runId: r.active_run_id ?? latest.get(r.id) }));
+          closedAt: r.closed_at ?? (CLOSED.includes(r.state) ? r.updated_at : undefined), runId: r.active_run_id ?? latest.get(r.id) }));
         useRequests.setState((s) => ({ pages: { ...s.pages, [pageId]: requests } }));
       } while (again);
     } finally { loading = false; }
