@@ -382,7 +382,6 @@ export async function handleRequest(req: Request): Promise<Response> {
   // The cron call gives up after 30 s: the pass stops starting sends after 15 s (plus at most one timeout),
   // so it always reaches the marking below; the rest waits for the next minute.
   const deadline = Date.now() + 15_000;
-  const deliveredIds: string[] = [];
   const reminderIds: string[] = [];
   // Agent notifications that leave the queue: delivered, nobody to push to, or refused for good.
   const notificationIds: string[] = [];
@@ -432,7 +431,6 @@ export async function handleRequest(req: Request): Promise<Response> {
       }
     });
     const outcome = pushOutcome(results);
-    if (outcome === "delivered") deliveredIds.push(reminder.id);
     // A reminder that was not delivered keeps `notified` false. An agent notification also leaves the queue
     // when every subscription refused it for good.
     if (reminder.notificationId) {
@@ -466,27 +464,25 @@ export async function handleRequest(req: Request): Promise<Response> {
     const { error } = await supabase.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", notificationIds);
     if (error) console.error("marking pushed failed", error);
   }
+  let notified = 0;
   if (reminderIds.length) {
-    const { error } = await supabase
-      .from("reminders")
-      .update({ notified: true })
-      .in("id", reminderIds);
+    const { data, error } = await supabase.rpc("mark_reminders_pushed", { p_ids: reminderIds });
     if (error) console.error("marking notified failed", error);
+    else notified = data ?? 0;
   }
 
+  let removed = 0;
   if (expired.size) {
-    const { error } = await supabase
-      .from("push_subscriptions")
-      .delete()
-      .in("endpoint", [...expired]);
+    const { data, error } = await supabase.rpc("prune_push_subscriptions", { p_endpoints: [...expired] });
     if (error) console.error("pruning subscriptions failed", error);
+    else removed = data ?? 0;
   }
 
   return Response.json({
     due: due.length,
     sent,
-    notified: deliveredIds.length,
-    removed: expired.size,
+    notified,
+    removed,
     statuses,
   });
 }

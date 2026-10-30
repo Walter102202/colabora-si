@@ -83,9 +83,11 @@ Deno.test("the handler prunes unsafe subscriptions without marking reminders not
     const url = new URL(String(input)), table = url.pathname.split("/").pop()!;
     assert.equal(url.origin, "http://127.0.0.1:60721", "no untrusted push endpoint reaches fetch");
     const method = init?.method ?? "GET";
-    if (["PATCH", "DELETE"].includes(method)) {
+    if (table === "prune_push_subscriptions") {
+      assert.equal(method, "POST");
+      assert.equal(url.search, "", "opaque endpoints stay out of the URL");
       writes.push({ table, method, body: init?.body ? JSON.parse(String(init.body)) : null });
-      return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.resolve(Response.json(1));
     }
     const rows: Record<string, unknown> = {
       push_config: [cfg], due_push_reminders: [{ id: "r1", user_id: "person", page_id: null, body: "Reminder" }],
@@ -101,6 +103,38 @@ Deno.test("the handler prunes unsafe subscriptions without marking reminders not
     }));
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { due: 1, sent: 0, notified: 0, removed: 1, statuses: { invalid: 1 } });
-    assert.deepEqual(writes, [{ table: "push_subscriptions", method: "DELETE", body: null }]);
+    assert.deepEqual(writes, [{ table: "prune_push_subscriptions", method: "POST", body: { p_endpoints: ["http://127.0.0.1:60727/untrusted"] } }]);
+  } finally { globalThis.fetch = originalFetch; restore(); }
+});
+
+Deno.test("the handler sends opaque ids in the RPC body and counts only marked reminders", async () => {
+  const restore = environment({ SUPABASE_URL: "http://127.0.0.1:60721" });
+  const originalFetch = globalThis.fetch;
+  const ids = ['p")q', 'zz","victim-1', ...Array.from({ length: 20 }, (_, i) => `${i}-${"x".repeat(2600)}`)];
+  let markResult: number | null = 7;
+  globalThis.fetch = (input, init) => {
+    const url = new URL(String(input)), table = url.pathname.split("/").pop()!;
+    if (url.origin === "https://fcm.googleapis.com") return Promise.resolve(new Response(null, { status: 201 }));
+    if (table === "mark_reminders_pushed") {
+      assert.equal(init?.method, "POST");
+      assert.equal(url.search, "");
+      assert.deepEqual(JSON.parse(String(init?.body)), { p_ids: ids });
+      return Promise.resolve(markResult === null
+        ? Response.json({ message: "write failed" }, { status: 500 }) : Response.json(markResult));
+    }
+    const rows: Record<string, unknown> = {
+      push_config: [cfg], due_push_reminders: ids.map((id) => ({ id, user_id: "person", page_id: null, body: "Reminder" })),
+      pending_push_notifications: [], push_subscriptions: [{ ...sub, endpoint: "https://fcm.googleapis.com/wp/token" }],
+    };
+    assert.ok(table in rows, table);
+    return Promise.resolve(Response.json(rows[table]));
+  };
+  try {
+    for (markResult of [7, 0, null]) {
+      const response = await handleRequest(new Request("http://localhost/send-reminders", {
+        method: "POST", headers: { "x-push-secret": cfg.cron_secret },
+      }));
+      assert.deepEqual(await response.json(), { due: ids.length, sent: ids.length, notified: markResult ?? 0, removed: 0, statuses: { 201: ids.length } });
+    }
   } finally { globalThis.fetch = originalFetch; restore(); }
 });

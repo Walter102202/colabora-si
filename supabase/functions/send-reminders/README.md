@@ -11,6 +11,11 @@ Only successful push delivery sets it to true. Agent notifications use their own
 `pushed_at`: the fair batch still includes expired and unsubscribed rows so the
 handler can settle them without affecting the inbox or its read state.
 
+Reminder marking and subscription pruning pass opaque text arrays in RPC bodies.
+The response's `notified` counts reminder rows changed to `notified = true`, and
+`removed` counts deleted subscriptions. Neither counts attempted writes or agent
+notifications (`pushed_at`); `sent` counts successful device deliveries.
+
 Before encryption or network access, delivery validates HTTPS, the default port,
 no credentials or fragment, and these browser push hosts:
 

@@ -61,3 +61,36 @@ as $$
 $$;
 revoke all on function public.pending_push_notifications() from public, anon, authenticated;
 grant execute on function public.pending_push_notifications() to service_role;
+
+-- Free-text identifiers travel in the RPC body, never in PostgREST URL filters.
+-- Count only state transitions, including when another pass already marked a row.
+create function public.mark_reminders_pushed(p_ids text[])
+returns integer
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  marked integer;
+begin
+  update public.reminders set notified = true
+  where id = any(p_ids) and not notified and deleted_at is null;
+  get diagnostics marked = row_count;
+  return marked;
+end;
+$$;
+revoke all on function public.mark_reminders_pushed(text[]) from public, anon, authenticated;
+grant execute on function public.mark_reminders_pushed(text[]) to service_role;
+
+create function public.prune_push_subscriptions(p_endpoints text[])
+returns integer
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  removed integer;
+begin
+  delete from public.push_subscriptions where endpoint = any(p_endpoints);
+  get diagnostics removed = row_count;
+  return removed;
+end;
+$$;
+revoke all on function public.prune_push_subscriptions(text[]) from public, anon, authenticated;
+grant execute on function public.prune_push_subscriptions(text[]) to service_role;

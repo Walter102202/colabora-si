@@ -75,11 +75,42 @@ reset role;
 set local role anon;
 select throws_ok($$select * from public.due_push_reminders()$$, '42501', null, 'anonymous callers cannot read the privileged reminder batch');
 select throws_ok($$select * from public.pending_push_notifications()$$, '42501', null, 'anonymous callers cannot read the privileged notification batch');
+select throws_ok($$select public.mark_reminders_pushed(array['push-2-1'])$$, '42501', null, 'anonymous callers cannot mark reminders');
+select throws_ok($$select public.prune_push_subscriptions(array['https://fcm.googleapis.com/wp/2'])$$, '42501', null, 'anonymous callers cannot prune subscriptions');
 reset role;
 select set_config('request.jwt.claims', '{"sub":"50000000-0000-4000-8000-000000000001","role":"authenticated"}', true);
 set local role authenticated;
 select throws_ok($$select * from public.due_push_reminders()$$, '42501', null, 'signed-in people cannot read other peoples reminders');
 select throws_ok($$select * from public.pending_push_notifications()$$, '42501', null, 'signed-in people cannot read other peoples notifications');
+select throws_ok($$select public.mark_reminders_pushed(array['push-2-1'])$$, '42501', null, 'signed-in people cannot mark reminders through the service RPC');
+select throws_ok($$select public.prune_push_subscriptions(array['https://fcm.googleapis.com/wp/2'])$$, '42501', null, 'signed-in people cannot prune through the service RPC');
+reset role;
+
+-- Punctuation stays literal, and twenty long identifiers cannot overflow a URL.
+create temp table opaque_push_values (value text);
+insert into opaque_push_values values ('p")q'), ('a,b'), ('(paren)'), ('zz","push-victim');
+insert into opaque_push_values select lpad(i::text, 4, '0') || repeat('x', 2596) from generate_series(1, 20) i;
+grant select on opaque_push_values to service_role;
+insert into public.reminders(id, workspace_id, user_id, remind_at)
+select value, '50000000-0000-4000-8000-000000000100', '50000000-0000-4000-8000-000000000002', now()
+from opaque_push_values;
+insert into public.reminders(id, workspace_id, user_id, remind_at)
+values ('push-victim', '50000000-0000-4000-8000-000000000100', '50000000-0000-4000-8000-000000000001', now() + interval '1 day');
+insert into public.push_subscriptions(endpoint, user_id, p256dh, auth)
+select 'https://fcm.googleapis.com/' || value, '50000000-0000-4000-8000-000000000002', 'key', 'auth'
+from opaque_push_values;
+insert into public.push_subscriptions(endpoint, user_id, p256dh, auth)
+values ('https://fcm.googleapis.com/push-victim', '50000000-0000-4000-8000-000000000001', 'key', 'auth');
+set local role service_role;
+select is(public.mark_reminders_pushed((select array_agg(value) from opaque_push_values)), 24, 'marks every literal id, including twenty 2600-character ids');
+select is((select count(*) from public.reminders where notified), 25::bigint, 'only the requested rows and the previously notified fixture are marked');
+select is((select notified from public.reminders where id = 'push-victim'), false, 'punctuation cannot mark another person''s reminder');
+select is(public.mark_reminders_pushed((select array_agg(value) from opaque_push_values)), 0, 'already marked rows are not counted again');
+select is(public.mark_reminders_pushed(array['push-deleted', 'missing']), 0, 'deleted and missing reminders are not counted');
+select is(public.prune_push_subscriptions((select array_agg('https://fcm.googleapis.com/' || value) from opaque_push_values)), 24, 'prunes only literal endpoints, including long values');
+select is((select count(*) from public.push_subscriptions), 14::bigint, 'all unrelated subscriptions remain');
+select ok(exists(select 1 from public.push_subscriptions where endpoint = 'https://fcm.googleapis.com/push-victim'), 'another person''s subscription survives');
+select is(public.prune_push_subscriptions((select array_agg('https://fcm.googleapis.com/' || value) from opaque_push_values)), 0, 'missing subscriptions are not counted');
 reset role;
 select * from finish();
 rollback;
