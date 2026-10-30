@@ -17,6 +17,7 @@ export function ConsentPage() {
   const authorizationId = params.get("authorization_id");
   const client = getSupabase();
   const { user, loading } = useAuth();
+  const userId = user?.id;
   const framed = window.top !== window.self;
   const [detail, setDetail] = useState<Extract<ConsentState, { kind: "ask" }> | null>(null);
   const [agents, setAgents] = useState<LinkableAgent[]>([]);
@@ -26,7 +27,7 @@ export function ConsentPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!authorizationId || !client || !user || framed) return;
+    if (!authorizationId || !client || !userId || framed) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -40,7 +41,7 @@ export function ConsentPage() {
       } catch { if (!cancelled) setError(EXPIRED); }
     })();
     return () => { cancelled = true; };
-  }, [authorizationId, client, user, framed]);
+  }, [authorizationId, client, userId, framed]);
 
   if (framed) return <main className="empty-state">Open this connection in its own browser tab.</main>;
   if (!authorizationId) return <main className="empty-state">This link is incomplete. Go back to the app and connect again.</main>;

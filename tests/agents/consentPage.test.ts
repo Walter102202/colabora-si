@@ -16,7 +16,7 @@ const detail = { kind: "ask", authorizationId: "a", clientId: "c", clientName: "
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   f.client = {}; f.user = { id: "u" }; vi.clearAllMocks();
-  f.loadConsent.mockResolvedValue(detail); f.linkableAgents.mockResolvedValue([{ id: "agent", name: "Worker" }]);
+  f.loadConsent.mockReset().mockResolvedValue(detail); f.linkableAgents.mockReset().mockResolvedValue([{ id: "agent", name: "Worker" }]);
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.restoreAllMocks(); });
@@ -72,4 +72,28 @@ it("reports expired requests and an unavailable backend", async () => {
 });
 it("reports an unavailable backend", async () => {
   f.client = null; await mount(); expect(container.textContent).toContain("Sign-in is not available here.");
+});
+
+it("keeps a remembered-consent redirect when Auth refreshes the same user during the read", async () => {
+  const navigate = vi.spyOn(window.location, "assign").mockImplementation(() => {});
+  let finish!: (value: unknown) => void;
+  f.loadConsent.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+    .mockRejectedValueOnce(new Error("authorization already consumed"));
+  await mount(); f.user = { id: "u" }; await mount();
+  await act(async () => finish({ kind: "redirect", url: "https://real.test/cb" }));
+  expect(f.loadConsent).toHaveBeenCalledTimes(1);
+  expect(navigate).toHaveBeenCalledExactlyOnceWith("https://real.test/cb");
+});
+it.each(["agent", "human"])("returning to the tab preserves the %s choice without rereading", async (mode) => {
+  f.linkableAgents.mockResolvedValue([{ id: "agent", name: "Worker" }, { id: "reviewer", name: "Reviewer" }]);
+  await mount();
+  act(() => {
+    const select = container.querySelector("select")!; select.value = "reviewer";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    container.querySelector<HTMLInputElement>(`input[value="${mode}"]`)!.click();
+  });
+  f.user = { id: "u" }; await mount();
+  expect(f.loadConsent).toHaveBeenCalledTimes(1);
+  expect(container.querySelector("select")?.value).toBe("reviewer");
+  expect(container.querySelector<HTMLInputElement>(`input[value="${mode}"]`)?.checked).toBe(true);
 });
