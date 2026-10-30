@@ -1,5 +1,5 @@
 begin;
-select plan(9);
+select plan(16);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['dep_a','dep_b','dep_c','dep_d']) p;
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
@@ -39,5 +39,26 @@ select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+outsider@agents.inval
 select tests.set_agent((:'other'::jsonb->>'user')::uuid, (:'other'::jsonb->>'agent')::uuid);
 select is(tests.error_of(format('select public.claim_task(%L::uuid, %L)', :'d', 'custom')), 'task_unavailable', 'another agent cannot discover the open dependencies of a task it cannot claim');
 select tests.reset_role();
+-- Different workers have no read grant on each other's dependency page.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.create_agent_task('page_B', '{"objective":"Cross-agent dependency"}', (:'other'::jsonb->>'agent')::uuid,
+  p_parent_task_id => :'parent'::uuid, p_depends_on_task_ids => array[:'c'::uuid]) ->> 'task_id' as cross_task \gset
+select tests.reset_role();
+select tests.set_agent((:'other'::jsonb->>'user')::uuid, (:'other'::jsonb->>'agent')::uuid);
+select is((select count(*) from public.agent_tasks where id = :'c'::uuid), 0::bigint, 'the dependency itself is hidden by RLS');
+select is(public.open_dependencies(array[:'cross_task'::uuid])->:'cross_task', jsonb_build_array(:'c'), 'the assigned worker sees an open hidden dependency');
+select is(public.open_dependencies(array[:'d'::uuid]), '{}'::jsonb, 'an unassigned worker cannot discover dependency ids');
+select tests.reset_role();
+update public.agent_tasks set state = 'done' where id = :'c'::uuid;
+select tests.set_agent((:'other'::jsonb->>'user')::uuid, (:'other'::jsonb->>'agent')::uuid);
+select is(public.open_dependencies(array[:'cross_task'::uuid])->:'cross_task', '[]'::jsonb, 'a completed hidden dependency no longer blocks');
+select is(public.claim_task(:'cross_task'::uuid)->>'task_id', :'cross_task', 'claim agrees with dependency lookup across agents');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('select public.open_dependencies(array[%L::uuid])', :'cross_task')), 'agent_disabled', 'humans cannot use the agent dependency lookup');
+select tests.reset_role();
+set local role anon;
+select throws_ok('select public.open_dependencies(array[]::uuid[])', '42501', 'permission denied for function open_dependencies', 'anonymous callers cannot look up dependencies');
+reset role;
 select * from finish();
 rollback;

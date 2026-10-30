@@ -269,3 +269,13 @@ Deno.test('request_approval answers approved at once when the autonomy allows th
   assert.match(out.text, /^Approved automatically \(preset, balanced\)/);
   assert.match(tool('request_approval').description, /status approved/);
 });
+
+Deno.test('list_my_tasks trusts the authorized lookup for a completed hidden dependency', async () => {
+  const h = harness({ agent_tasks: [task({ id: 'b', state: 'queued', depends_on_task_ids: ['hidden'] })] }, {
+    principal: { type: 'agent', userId: 'u-agent', agentId: 'agent-1', workspaceId: 'w1', clientId: null },
+    onRpc: ({ fn }) => fn === 'open_dependencies' ? { data: { b: [] } } : undefined,
+  });
+  const out = await tool('list_my_tasks').handler({}, h.ctx);
+  assert.deepEqual((out.structured.tasks as Row[])[0].blocked_by, []);
+  assert.match(out.text, /1 queued/);
+});

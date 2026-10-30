@@ -30,9 +30,12 @@ function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = (
   let sleeps = 0;
   const db: Db = {
     download: async () => ({ data: null, error: null }),
-    rpc: (fn, params) => {
+    rpc: <T>(fn: string, params: Record<string, unknown>) => {
       rpcs.push({ fn, params });
-      return Promise.resolve({ data: null, error: null });
+      const data = fn === 'open_dependencies' ? Object.fromEntries((tables.agent_tasks ?? [])
+        .filter(t => (params.p_task_ids as string[]).includes(String(t.id)))
+        .map(t => [t.id, ((t.depends_on_task_ids ?? []) as string[]).filter(id => !tables.agent_tasks.some(d => d.id === id && d.state === 'done'))])) : null;
+      return Promise.resolve({ data: data as T, error: null });
     },
     select: <T>(spec: SelectSpec) => {
       selects.push(spec.table);
@@ -555,4 +558,11 @@ Deno.test('wait_for_task without after_seq brings the answers given since the la
     { approval_id: 'q-open', question: 'Any image?', asked_at: '2026-10-27T08:40:00+00:00' },
   ]);
   assert.equal(h.selects.filter((t) => t === 'agent_events').length, 0, 'still no event mark on a call that does not wait');
+});
+
+Deno.test('a completed dependency hidden by RLS releases the assigned task', async () => {
+  const h = harness({ agent_tasks: [task({ id: 'b', state: 'queued', active_run_id: null, depends_on_task_ids: ['hidden'] })] });
+  h.ctx.db.rpc = <T>(fn: string) => Promise.resolve({ data: (fn === 'open_dependencies' ? { b: [] } : null) as T, error: null });
+  const out = await tool('wait_for_my_tasks').handler({ timeout_s: 0 }, h.ctx);
+  assert.deepEqual((out.structured.tasks as Row[]).map(t => t.task_id), ['b']);
 });

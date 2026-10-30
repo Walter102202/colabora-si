@@ -118,3 +118,19 @@ begin
                       join public.agent_tasks x on x.id = d where x.state <> 'done');
 end $$;
 revoke execute on function private.release_dependents(uuid) from public;
+
+-- Resolve only the calling agent's claimable assignments; dependencies may live behind another agent's RLS.
+create or replace function public.open_dependencies(p_task_ids uuid[])
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_agent uuid := private.task_actor_agent_id();
+begin
+  if v_agent is null then raise exception using errcode = 'PT403', message = 'agent_disabled'; end if;
+  return coalesce((select jsonb_object_agg(t.id::text, (
+    select coalesce(jsonb_agg(x.id order by x.id), '[]'::jsonb)
+      from unnest(t.depends_on_task_ids) d join public.agent_tasks x on x.id = d where x.state <> 'done'
+  )) from public.agent_tasks t
+    where t.id = any(p_task_ids) and (t.delegate_agent_id = v_agent
+      or (t.delegate_agent_id is null and private.agent_can(t.row_page_id, 'write')))), '{}'::jsonb);
+end $$;
+revoke all on function public.open_dependencies(uuid[]) from public, anon;
+grant execute on function public.open_dependencies(uuid[]) to authenticated;

@@ -302,8 +302,14 @@ export function decodeTaskCursor(raw: string): Cursor {
 
 const TASK_FIELDS = 'id,title,state,review_state,waiting_on,brief_version,brief_stale,active_run_id,updated_at,depends_on_task_ids,request_kind';
 
-/** A dependency not visible to the caller is still blocked: only a visible done task releases it. */
+/** Agents resolve dependencies under the same assignment boundary as claim_task, even across RLS-hidden pages. */
 export async function openDependencies(ctx: ToolContext, tasks: Row[]): Promise<Map<string, string[]>> {
+  if (ctx.principal.agentId) {
+    if (!tasks.some(t => Array.isArray(t.depends_on_task_ids) && t.depends_on_task_ids.length)) return new Map(tasks.map(t => [String(t.id), []]));
+    const result = await must(ctx.db.rpc<Record<string, string[]>>('open_dependencies', { p_task_ids: tasks.map(t => t.id) }));
+    return new Map(Object.entries(result ?? {}));
+  }
+  // Human task lists retain their own RLS visibility; this RPC is only for agent claims.
   const dependencies = new Map(tasks.map((t) => [String(t.id), (t.depends_on_task_ids ?? []) as string[]]));
   const ids = [...new Set([...dependencies.values()].flat())];
   if (!ids.length) return new Map(tasks.map((t) => [String(t.id), []]));
