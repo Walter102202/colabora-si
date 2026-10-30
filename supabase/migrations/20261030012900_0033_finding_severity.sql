@@ -145,3 +145,37 @@ begin
   perform private.audit(v_t.workspace_id, 'review.add', jsonb_build_object('task_id', v_t.id, 'review_id', v_id, 'verdict', p_verdict));
   return jsonb_build_object('review_id', v_id, 'task_state', v_state, 'rounds', v_rounds, 'minor_findings', v_minor);
 end $$;
+
+-- Full copy from 0030: minor notes are not evidence for deterministic or CI acceptance.
+create or replace function private.deterministic_checks_pass(p_task_id uuid)
+returns boolean language sql stable security definer set search_path = '' as $$
+  select exists (
+      select 1 from public.agent_tasks t join public.task_briefs b on b.task_id = t.id and b.version = t.brief_version,
+             jsonb_array_elements(b.done_when) c
+       where t.id = p_task_id and c->>'check' in ('deterministic','ci'))
+     and not exists (
+      select 1 from public.agent_tasks t join public.task_briefs b on b.task_id = t.id and b.version = t.brief_version,
+             jsonb_array_elements(b.done_when) c
+       where t.id = p_task_id and c->>'check' in ('deterministic','ci')
+         and not exists (
+           select 1 from public.agent_reviews r, jsonb_array_elements(r.findings) f
+            where r.task_id = t.id and r.outdated_by is null
+              and f->>'criterion_id' = c->>'id' and f->>'status' = 'verified'
+              and coalesce(f->>'severity', 'blocking') = 'blocking'
+              -- A new commit has a different ref, so it does not supersede the old artifact or its review.
+              and (c->>'check' <> 'ci' or (r.brief_version = t.brief_version
+                   and not exists (select 1 from public.agent_artifacts authored
+                     where authored.id = r.artifact_id and authored.author_type = r.reviewer_type and authored.author_id = r.reviewer_id)
+                   and (r.artifact_id, r.artifact_version) = (
+                     select a.id, a.version from public.agent_artifacts a, private.ci_commit(a.ref) k
+                      where a.task_id = t.id and a.kind = 'diff' and a.superseded_by is null
+                        and (c->>'id') = any(a.satisfies)
+                      order by a.created_at desc, a.id desc limit 1)))
+              and (c->>'check' = 'ci' or (jsonb_array_length(r.evidence) > 0
+                   and (c->>'command' is null or exists (
+                         select 1 from jsonb_array_elements(r.evidence) e where e->>'ref' = c->>'command'))))))
+     and not exists (
+      select 1 from public.agent_tasks t join public.task_briefs b on b.task_id = t.id and b.version = t.brief_version,
+             jsonb_array_elements(b.done_when) c
+       where t.id = p_task_id and c->>'check' = 'ci' and private.ci_criterion(t, c)->>'state' <> 'passed');
+$$;

@@ -1,5 +1,5 @@
 begin;
-select plan(12);
+select plan(14);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_S','page_R']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+sevlead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -60,6 +60,16 @@ select is((select review_state from public.agent_tasks where id = :'sub'::uuid),
 select is((select payload->'minor_findings'->0->>'note' from public.agent_events
             where task_id = :'parent'::uuid and type = 'task.updated' and payload ? 'verdict' order by created_at desc limit 1),
           'docs could say more', 'the Lead hears about the minor');
+
+-- Minor notes cannot substitute for acceptance evidence, even when they name a criterion.
+update public.task_briefs set done_when = '[{"id":"c1","text":"Works","check":"deterministic","command":"npm test"}]'::jsonb
+ where task_id = :'sub'::uuid;
+update public.agent_reviews set findings = '[{"criterion_id":"c1","status":"verified","severity":"minor","note":"Optional polish"}]'::jsonb,
+ evidence = '[{"kind":"test","ref":"npm test"}]'::jsonb where task_id = :'sub'::uuid;
+select is(private.deterministic_checks_pass(:'sub'::uuid), false, 'a verified minor finding does not prove an acceptance criterion');
+update public.agent_reviews set findings = '[{"criterion_id":"c1","status":"verified","severity":"blocking","note":"Test passed"}]'::jsonb
+ where task_id = :'sub'::uuid;
+select is(private.deterministic_checks_pass(:'sub'::uuid), true, 'verified blocking evidence still proves the criterion');
 
 select * from finish();
 rollback;
