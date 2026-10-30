@@ -226,7 +226,12 @@ export async function sendPush(
   payload: string,
   cfg: { vapid_public: string; vapid_private: string; vapid_subject: string },
 ): Promise<number | "invalid"> {
-  if (!isBrowserPushEndpoint(sub.endpoint) && !isLocalCaptureEndpoint(sub.endpoint)) return "invalid";
+  if (!isBrowserPushEndpoint(sub.endpoint) && !isLocalCaptureEndpoint(sub.endpoint)) {
+    let hostname = "(invalid URL)";
+    try { hostname = new URL(sub.endpoint).hostname; } catch { /* Never log the raw endpoint. */ }
+    console.warn("push endpoint rejected", hostname);
+    return "invalid";
+  }
   let body: Uint8Array<ArrayBuffer>;
   try {
     body = await encryptPayload(payload, sub.p256dh, sub.auth);

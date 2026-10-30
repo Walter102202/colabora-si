@@ -18,6 +18,7 @@ const rejected = [
   "https://fcm.googleapis.com:444/push", "https://fcm.googleapis.com:80/push", "https://evilnotify.windows.com/push",
   "https://web.push.apple.com.evil.com/push", "https://updates.push.services.mozilla.com.evil.com/push",
   "https://user:password@fcm.googleapis.com/push", "https://fcm.googleapis.com/push#fragment", "not a URL",
+  "https://new-provider.example/private-device-token?token=private-query-token",
 ];
 
 function environment(values: Record<string, string | undefined>): () => void {
@@ -31,6 +32,9 @@ Deno.test("only browser push providers reach the network, with redirects disable
   const restore = environment({ PUSH_LOCAL_CAPTURE_ORIGIN: undefined });
   const originalFetch = globalThis.fetch;
   const calls: RequestInit[] = [];
+  const originalWarn = console.warn;
+  const warnings: unknown[][] = [];
+  console.warn = (...args) => { warnings.push(args); };
   globalThis.fetch = (_input, init) => { calls.push(init!); return Promise.resolve(new Response(null, { status: 201 })); };
   try {
     for (const endpoint of rejected) {
@@ -38,6 +42,11 @@ Deno.test("only browser push providers reach the network, with redirects disable
       assert.equal(await sendPush({ ...sub, endpoint }, "payload", cfg), "invalid", endpoint);
     }
     assert.equal(calls.length, 0, "blocked endpoints never reach fetch, even with valid encryption keys");
+    assert.deepEqual(warnings, rejected.map((endpoint) => {
+      let hostname = "(invalid URL)";
+      try { hostname = new URL(endpoint).hostname; } catch { /* Malformed URLs have no hostname. */ }
+      return ["push endpoint rejected", hostname];
+    }), "rejected endpoints log only the hostname, never credentials, paths or tokens");
     const accepted = ["https://fcm.googleapis.com/wp/token", "https://fcm.googleapis.com:443/fcm/send/token",
       "https://updates.push.services.mozilla.com/wpush/v2/token", "https://wns2-db5p.notify.windows.com/?token=opaque",
       "https://web.push.apple.com/Qtoken", "https://a.b.push.apple.com/token"];
@@ -47,7 +56,7 @@ Deno.test("only browser push providers reach the network, with redirects disable
     }
     assert.equal(calls.length, accepted.length);
     assert.ok(calls.every((call) => call.method === "POST" && call.redirect === "manual" && call.body instanceof Uint8Array));
-  } finally { globalThis.fetch = originalFetch; restore(); }
+  } finally { globalThis.fetch = originalFetch; console.warn = originalWarn; restore(); }
 });
 
 Deno.test("local capture is explicit, cannot run hosted, and never follows redirects", async () => {
