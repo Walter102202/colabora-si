@@ -32,8 +32,10 @@ const getRequest: ToolDef = {
     if (task.request_kind === 'rewrite') {
       const block = blocksWithText(bundle.page).find((b) => b.block.id === request.block_id)?.block;
       if (!block) throw new ToolError('block_not_found', 'The block was not found.');
+      const markdown = htmlToMarkdown(block.html ?? '');
+      if (markdown.length > 5000) throw new ToolError('block_too_long', 'The complete block exceeds 5000 Markdown characters. Shorten or split it before rewriting.');
       return { text: 'Block ready to rewrite.', structured: { kind: 'rewrite', task_id: task.id,
-        block: { id: block.id, type: block.type, text: htmlToMarkdown(block.html ?? '').slice(0, 5000), rev: block.rev ?? 0 },
+        block: { id: block.id, type: block.type, text: markdown, rev: block.rev ?? 0 },
         instruction: request.instruction, selection: request.selection ?? null } };
     }
     const db = bundle.page.database;

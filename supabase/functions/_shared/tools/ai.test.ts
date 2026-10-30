@@ -151,3 +151,11 @@ Deno.test('query_database ignores AI requests when reading work task columns', a
   assert.deepEqual((out.structured.rows as { raw: Row }[])[0].raw.Status, 'ready_for_review');
   assert.deepEqual((out.structured.rows as { raw: Row }[])[0].raw.Worker, 'worker');
 });
+
+Deno.test('get_ai_request rejects oversized Markdown without dropping the end of a block', async () => {
+  const html = 'a'.repeat(4900) + '<a href="https://example.com/' + 'p'.repeat(200) + '">link</a> KEEP THE END';
+  const h = harness({ id: 'rewrite', request_kind: 'rewrite', request: { page_id: 'page', block_id: 'b1' } },
+    { id: 'page', blocks: [{ id: 'b1', type: 'paragraph', html, rev: 1 }] });
+  await assert.rejects(() => tool('get_ai_request').handler({ task_id: 'rewrite' }, h.ctx),
+    (e: unknown) => e instanceof ToolError && e.code === 'block_too_long');
+});

@@ -88,6 +88,11 @@ function rewriteHarness(contents: string[], conflict = false) {
   const opts = { call: mcp.callTool, model, task: { task_id: "t", request_kind: "rewrite" }, runId: "run", log: () => {} };
   return { mcp, model, opts };
 }
+it("rejects an oversized rewrite answer instead of applying a truncated block", async () => {
+  const h = rewriteHarness(["a".repeat(10001)]);
+  expect((await runRequest(h.opts)).status).toBe("failed");
+  expect(h.mcp.calls.some(c => c.name === "apply_ai_rewrite")).toBe(false);
+});
 it("rewrites the block and applies it with its rev", async () => {
   const h = rewriteHarness(['Here is the rewrite: "A short intro."']);
   expect((await runRequest(h.opts)).status).toBe("completed");
