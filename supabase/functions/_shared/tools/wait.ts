@@ -1,7 +1,7 @@
 // Waiting tools (§IV.9.7): hold the call until something changes or the timeout passes. An empty iteration costs one
 // select on agent_events (backoff 1.5 s up to 10 s); a full snapshot runs on a fresh event, at least every SLOW_POLL_MS
 // and at the deadline. Cursors are evaluated before sleeping, so nothing is lost between two calls.
-import { must, ToolError } from '../db.ts';
+import { type Filter, must, ToolError } from '../db.ts';
 import type { ToolContext, ToolDef } from '../mcp.ts';
 import { num, object, output, plural, READ, str } from './common.ts';
 import { markDelivered, myTasksFilter } from './tasks.ts';
@@ -327,6 +327,30 @@ export function reasonFor(task: Row, prompt: Row | undefined, waitsOnPerson = fa
   return null;
 }
 
+const LATEST_PAGE = 200;
+
+/**
+ * The newest `col` of `table` for each task id, exact: one page for every id, then, if the page came back full, one row
+ * for each id the page may have cut off (an id with a row in the page already has its newest one there).
+ */
+async function latestPerTask(ctx: ToolContext, table: string, col: string, ids: string[], filters: Filter[]): Promise<Map<string, string>> {
+  const select = (taskFilter: Filter, limit: number) => must(ctx.db.select<Row>({
+    table,
+    columns: `task_id,${col}`,
+    filters: [taskFilter, ...filters],
+    order: [{ column: col, ascending: false }],
+    limit,
+  }));
+  const rows = (await select({ col: 'task_id', op: 'in', value: ids }, LATEST_PAGE)) ?? [];
+  const out = new Map<string, string>();
+  for (const r of rows) if (!out.has(String(r.task_id))) out.set(String(r.task_id), normTs(String(r[col])));
+  if (rows.length < LATEST_PAGE) return out;
+  const missing = ids.filter((id) => !out.has(id));
+  const extra = await Promise.all(missing.map((id) => select({ col: 'task_id', op: 'eq', value: id }, 1)));
+  extra.forEach((r, i) => { if (r?.[0]) out.set(missing[i], normTs(String(r[0][col]))); });
+  return out;
+}
+
 /**
  * Of the tasks waiting without a run, those a blocked or escalated review left to a person: a review with that verdict
  * newer than the last run's start. A handover always follows a later claim, so its last run started after any review.
@@ -334,29 +358,10 @@ export function reasonFor(task: Row, prompt: Row | undefined, waitsOnPerson = fa
 async function waitingOnPerson(ctx: ToolContext, tasks: Row[]): Promise<Set<string>> {
   const ids = tasks.filter((t) => t.state === 'input_required' && !t.active_run_id).map((t) => String(t.id));
   if (!ids.length) return new Set();
-  const [reviews, runs] = await Promise.all([
-    must(ctx.db.select<Row>({
-      table: 'agent_reviews',
-      columns: 'task_id,created_at',
-      filters: [{ col: 'task_id', op: 'in', value: ids }, { col: 'verdict', op: 'in', value: ['blocked', 'changes_requested'] }],
-      order: [{ column: 'created_at', ascending: false }],
-      limit: 500,
-    })),
-    must(ctx.db.select<Row>({
-      table: 'agent_runs',
-      columns: 'task_id,started_at',
-      filters: [{ col: 'task_id', op: 'in', value: ids }],
-      order: [{ column: 'started_at', ascending: false }],
-      limit: 500,
-    })),
+  const [review, run] = await Promise.all([
+    latestPerTask(ctx, 'agent_reviews', 'created_at', ids, [{ col: 'verdict', op: 'in', value: ['blocked', 'changes_requested'] }]),
+    latestPerTask(ctx, 'agent_runs', 'started_at', ids, []),
   ]);
-  const latest = (rows: Row[] | null, col: string) => {
-    const out = new Map<string, string>();
-    for (const r of rows ?? []) if (!out.has(String(r.task_id))) out.set(String(r.task_id), normTs(String(r[col])));
-    return out;
-  };
-  const review = latest(reviews, 'created_at');
-  const run = latest(runs, 'started_at');
   return new Set(ids.filter((id) => review.has(id) && (!run.has(id) || review.get(id)! > run.get(id)!)));
 }
 

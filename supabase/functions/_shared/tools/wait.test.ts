@@ -391,6 +391,25 @@ Deno.test('wait_for_my_tasks tells a blocked or escalated review from a handover
     [['b1', 'feedback', 'human'], ['e1', 'feedback', 'human'], ['h1', 'handover', 'human']]);
 });
 
+Deno.test('wait_for_my_tasks reads the latest review and run of each idle task exactly, however many rows other tasks have', async () => {
+  const idle = (id: string, extra: Row = {}) => task({ id, state: 'input_required', waiting_on: 'human', active_run_id: null, ...extra });
+  // b2's 500 newer runs fill any single page: h3's latest run must still be found, or its handover reads as feedback.
+  const many = Array.from({ length: 500 }, (_, i) => ({
+    task_id: 'b2', started_at: `2026-10-27T10:${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}+00:00`,
+  }));
+  const h = harness({
+    agent_tasks: [idle('h3', { review_state: 'changes_requested', updated_at: '2026-10-27T09:00:00+00:00' }), idle('b2', { updated_at: '2026-10-27T09:30:00+00:00' })],
+    agent_activities: [],
+    agent_runs: [{ task_id: 'h3', started_at: '2026-10-27T09:10:00+00:00' }, ...many],
+    agent_reviews: [
+      { task_id: 'h3', verdict: 'changes_requested', created_at: '2026-10-27T09:05:00+00:00' },
+      { task_id: 'b2', verdict: 'blocked', created_at: '2026-10-27T11:00:00+00:00' },
+    ],
+  });
+  const out = await tool('wait_for_my_tasks').handler({ timeout_s: 120 }, h.ctx);
+  assert.deepEqual((out.structured.tasks as Row[]).map((t) => [t.task_id, t.reason]), [['h3', 'handover'], ['b2', 'feedback']]);
+});
+
 Deno.test('wait_for_my_tasks with after reports a task that a review just blocked as feedback that waits on a person', async () => {
   const tables = {
     agent_tasks: [task({ id: 't1', state: 'ready_for_review', active_run_id: null, updated_at: '2026-10-27T10:00:00+00:00' })],
