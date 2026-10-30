@@ -38,7 +38,7 @@ returns boolean language sql immutable set search_path = '' as $$
   select coalesce((jsonb_typeof(p_cell) = 'object' and p_cell->>'by' = 'human'
                    and coalesce(private.ai_cell_at(p_cell), 0) >= p_since), false)
     or (p_initial is not null and coalesce(p_cell, 'null'::jsonb) is distinct from p_initial
-        and (p_cell is null or jsonb_typeof(p_cell) in ('null', 'string')));
+        and (p_cell is null or jsonb_typeof(p_cell) in ('null', 'string') or p_cell->>'by' = 'human'));
 $$;
 
 -- Creates a request task delegated to p_agent, as the calling person: brief v1, delegate grants on the page,

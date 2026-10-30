@@ -2,7 +2,7 @@
 -- does not take the page's task slot; the run writes only requested rows, with server-stamped provenance and one
 -- revertable activity per row; a person's edit wins; the request closes itself once every row has a value.
 begin;
-select plan(43);
+select plan(46);
 
 select tests.fixture() as f \gset
 -- The fixture agent plays the workspace's platform agent and takes pushes.
@@ -122,6 +122,20 @@ select public.claim_task(:'clear_req'::uuid, 'custom') ->> 'run_id' as clear_run
 select is(public.set_ai_cells(:'clear_run'::uuid, '[{"row_id":"r3","text":"Overwrite"}]'::jsonb)->'skipped',
   '[{"row_id":"r3","reason":"edited_by_person"}]'::jsonb, 'clearing a cell after the request wins over the model');
 select is(public.complete_ai_request(:'clear_run'::uuid)->'counts'->>'by_person', '1', 'a cleared cell closes the request as a person edit');
+select tests.reset_role();
+
+-- A client's clock can lag the server: the snapshot, not its timestamp, proves a new human edit.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.apply_page_ops('db_L', '[{"op":"db_cell_set","rowId":"r3","propertyId":"p_ai","value":{"text":"Before","by":"human","id":"person","at":1}},{"op":"db_cell_set","rowId":"r1","propertyId":"p_ai","value":{"text":"Unchanged","by":"human","id":"person","at":1}}]'::jsonb);
+select public.request_ai_fill('db_L', 'p_ai', 'all', array['r1','r3']) ->> 'task_id' as clock_req \gset
+select public.apply_page_ops('db_L', '[{"op":"db_cell_set","rowId":"r3","propertyId":"p_ai","value":{"text":"Mine with a lagging clock","by":"human","id":"person","at":1}}]'::jsonb);
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'clock_req'::uuid, 'custom') ->> 'run_id' as clock_run \gset
+select public.set_ai_cells(:'clock_run'::uuid, '[{"row_id":"r1","text":"Regenerated"},{"row_id":"r3","text":"Overwrite"}]'::jsonb) as clock_write \gset
+select is(:'clock_write'::jsonb->'skipped', '[{"row_id":"r3","reason":"edited_by_person"}]'::jsonb, 'a new human edit wins even with a lagging clock');
+select is(:'clock_write'::jsonb->'written'->0->>'row_id', 'r1', 'an unchanged pre-request human value can still be regenerated');
+select is(public.complete_ai_request(:'clock_run'::uuid)->'counts'->>'by_person', '1', 'completion counts the human edit without trusting its clock');
 select tests.reset_role();
 
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
