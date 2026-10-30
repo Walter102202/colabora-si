@@ -73,6 +73,12 @@ export function canTransition(state: TaskState, event: TaskEvent): boolean {
   return TRANSITIONS[state]?.[event] !== undefined;
 }
 
+// Mirror of close_task (0014): a person accepts a deliverable in review, or one that waits on them after a blocked or
+// escalated review. Closing without accepting is allowed in both states with or without a deliverable.
+export function canAcceptAndClose(state: TaskState, hasDeliverable: boolean): boolean {
+  return state === "ready_for_review" || (state === "input_required" && hasDeliverable);
+}
+
 export function nextState(task: TaskLike, event: TaskEvent): TaskState | null {
   const target = TRANSITIONS[task.state]?.[event];
   if (target === undefined) return null;
