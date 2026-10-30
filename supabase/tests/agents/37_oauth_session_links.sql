@@ -1,5 +1,5 @@
 begin;
-select plan(29);
+select plan(36);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_G']) p;
 select tests.make_user('other-person@test.local') as other \gset
@@ -92,6 +92,29 @@ select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.set_oauth_link('client-1', null);
 select tests.reset_role();
 select is((select count(*)::int from public.agent_oauth_links where client_id = 'client-1'), 0, 'connecting as the person clears the link');
+
+-- The sponsor must still belong to the workspace, both when linking and on every request.
+select tests.reset_role();
+update public.agents set sponsor_user_id = (:'f'::jsonb->>'viewer')::uuid where id = (:'f'::jsonb->>'agent')::uuid;
+select tests.set_human((:'f'::jsonb->>'viewer')::uuid);
+select public.set_oauth_link('former-member', (:'f'::jsonb->>'agent')::uuid);
+select public.issue_agent_token((:'f'::jsonb->>'agent')::uuid)->>'token_id' as member_token \gset
+select tests.reset_role();
+delete from public.workspace_members where workspace_id = (:'f'::jsonb->>'ws')::uuid and user_id = (:'f'::jsonb->>'viewer')::uuid;
+select token_hash as member_hash from public.agent_tokens where id = :'member_token'::uuid \gset
+select tests.set_service();
+select is(public.lookup_agent_token(:'member_hash'), null::jsonb, 'a PAT issued by a former member cannot be exchanged');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'viewer')::uuid);
+select is((select count(*)::int from public.linkable_agents()), 0, 'a former-member sponsor has no linkable agents');
+select is(tests.error_of(format('select public.set_oauth_link(%L, %L::uuid)', 'new-link', :'f'::jsonb->>'agent')), 'forbidden', 'a former member cannot create a link');
+select is(tests.error_of(format('select public.issue_agent_token(%L::uuid)', :'f'::jsonb->>'agent')), 'forbidden', 'a former member cannot issue a PAT');
+select is(tests.error_of(format('select public.update_agent(%L::uuid, %L::jsonb)', :'f'::jsonb->>'agent', '{"name":"Hijacked"}')), 'forbidden', 'a former-member sponsor cannot manage the agent');
+select is(tests.error_of(format('select public.revoke_agent_token(%L::uuid)', :'member_token')), 'forbidden', 'a former-member sponsor cannot manage its tokens');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'viewer')::uuid, 'former-member');
+select ok(tests.error_of('select private.apply_session_link()') like '%link_revoked%', 'an existing link stops when its person leaves the workspace');
+select tests.reset_role();
 
 select * from finish();
 rollback;

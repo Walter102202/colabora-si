@@ -12,6 +12,14 @@
 -- PostgREST calls the hook as the request's role, and without usage on this schema every service-role call fails.
 grant usage on schema private to service_role;
 
+-- Explicit user form also works after a request has an agent principal.
+create or replace function private.is_workspace_member_user(p_ws uuid, p_user uuid)
+returns boolean language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from public.workspaces w where w.id = p_ws and w.owner_id = p_user)
+      or exists (select 1 from public.workspace_members m where m.workspace_id = p_ws and m.user_id = p_user);
+$$;
+revoke all on function private.is_workspace_member_user(uuid, uuid) from public, anon, authenticated;
+
 create or replace function private.apply_session_link()
 returns void language plpgsql security definer set search_path = '' as $$
 declare v_claims jsonb; v_user uuid; v_client text; v_l public.agent_oauth_links%rowtype; v_a public.agents%rowtype;
@@ -23,7 +31,7 @@ begin
   select * into v_l from public.agent_oauth_links where user_id = v_user and client_id = v_client;
   if not found then return; end if;
   -- A disconnected chat is refused at once, not when its token expires, and never falls back to the person.
-  if v_l.revoked_at is not null then
+  if v_l.revoked_at is not null or not private.is_workspace_member_user(v_l.workspace_id, v_l.user_id) then
     raise sqlstate 'PGRST' using
       message = json_build_object('code', 'link_revoked', 'message', 'link_revoked', 'details', null, 'hint', null)::text,
       detail = json_build_object('status', 401, 'headers', json_build_object())::text;
@@ -70,6 +78,7 @@ returns table (id uuid, name text, workspace_id uuid, role text) language sql st
   select a.id, a.name, a.workspace_id, a.role from public.agents a
    where private.principal_type() = 'human' and private.jwt_client_id() is null
      and a.status = 'enabled' and a.revoked_at is null and not a.is_platform
+     and private.is_workspace_member(a.workspace_id)
      and (a.sponsor_user_id = (select auth.uid()) or private.is_workspace_owner(a.workspace_id))
    order by a.name;
 $$;
@@ -95,7 +104,8 @@ begin
   if not found or v_a.revoked_at is not null or v_a.status <> 'enabled' or v_a.is_platform then
     raise exception using errcode = 'PT404', message = 'not_found';
   end if;
-  if v_a.sponsor_user_id <> v_uid and not private.is_workspace_owner(v_a.workspace_id) then
+  if not private.is_workspace_member(v_a.workspace_id)
+     or (v_a.sponsor_user_id <> v_uid and not private.is_workspace_owner(v_a.workspace_id)) then
     raise exception using errcode = 'PT403', message = 'forbidden';
   end if;
   insert into public.agent_oauth_links (workspace_id, agent_id, user_id, client_id)
@@ -390,6 +400,7 @@ begin
   if private.jwt_client_id() is not null then raise exception using errcode = 'PT403', message = 'direct_session_required'; end if;
   select * into v_a from public.agents where id = p_agent_id and revoked_at is null;
   if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+  if not private.is_workspace_member(v_a.workspace_id) then raise exception using errcode = 'PT403', message = 'forbidden'; end if;
   if not (v_a.sponsor_user_id = (select auth.uid()) or exists (select 1 from public.workspaces w where w.id = v_a.workspace_id and w.owner_id = (select auth.uid()))) then
     raise exception using errcode = 'PT403', message = 'forbidden';
   end if;
@@ -402,3 +413,67 @@ begin
 end $$;
 revoke all on function public.issue_agent_token(uuid, text, text[], timestamptz) from public, anon;
 grant execute on function public.issue_agent_token(uuid, text, text[], timestamptz) to authenticated;
+
+-- Replaces 0002: former membership cannot authorize an agent operation.
+create or replace function public.update_agent(p_agent_id uuid, p_patch jsonb)
+returns void language plpgsql security definer set search_path = '' as $$
+declare v_a public.agents%rowtype; v_bad text;
+begin
+  if private.principal_type() <> 'human' then raise exception using errcode = 'PT403', message = 'humans_only'; end if;
+  select * into v_a from public.agents where id = p_agent_id for update;
+  if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+  if not private.is_workspace_member(v_a.workspace_id) then raise exception using errcode = 'PT403', message = 'forbidden'; end if;
+  if not (v_a.sponsor_user_id = (select auth.uid()) or exists (select 1 from public.workspaces w where w.id = v_a.workspace_id and w.owner_id = (select auth.uid()))) then
+    raise exception using errcode = 'PT403', message = 'forbidden';
+  end if;
+  select key into v_bad from jsonb_each(p_patch)
+   where key not in ('name','capabilities','connection','monthly_budget_usd','rate_limit_per_min','status') limit 1;
+  if v_bad is not null then raise exception using errcode = 'PT422', message = 'field_not_allowed', detail = v_bad; end if;
+  if p_patch ? 'status' and (p_patch->>'status') not in ('enabled','paused') then
+    raise exception using errcode = 'PT422', message = 'invalid_state';
+  end if;
+  update public.agents set
+    name = coalesce(p_patch->>'name', name),
+    capabilities = coalesce(p_patch->'capabilities', capabilities),
+    connection = coalesce(p_patch->'connection', connection),
+    monthly_budget_usd = case when p_patch ? 'monthly_budget_usd' then (p_patch->>'monthly_budget_usd')::numeric else monthly_budget_usd end,
+    rate_limit_per_min = coalesce((p_patch->>'rate_limit_per_min')::int, rate_limit_per_min),
+    status = case when p_patch ? 'status' and status <> 'disabled' then p_patch->>'status' else status end,
+    updated_at = now()
+  where id = p_agent_id;
+  perform private.audit(v_a.workspace_id, 'agent.update', jsonb_build_object('agent_id', p_agent_id, 'patch', p_patch));
+end $$;
+
+-- Replaces 0002: former membership cannot authorize an agent operation.
+create or replace function public.revoke_agent_token(p_token_id uuid)
+returns void language plpgsql security definer set search_path = '' as $$
+declare v_t public.agent_tokens%rowtype; v_a public.agents%rowtype;
+begin
+  if private.principal_type() <> 'human' then raise exception using errcode = 'PT403', message = 'humans_only'; end if;
+  select * into v_t from public.agent_tokens where id = p_token_id for update;
+  if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+  select * into v_a from public.agents where id = v_t.agent_id;
+  if not private.is_workspace_member(v_a.workspace_id) then raise exception using errcode = 'PT403', message = 'forbidden'; end if;
+  if not (v_a.sponsor_user_id = (select auth.uid()) or exists (select 1 from public.workspaces w where w.id = v_a.workspace_id and w.owner_id = (select auth.uid()))) then
+    raise exception using errcode = 'PT403', message = 'forbidden';
+  end if;
+  update public.agent_tokens set revoked_at = now() where id = p_token_id;
+  perform private.audit(v_t.workspace_id, 'token.revoke', jsonb_build_object('token_id', p_token_id));
+end $$;
+
+-- Replaces 0002: former membership cannot authorize an agent operation.
+create or replace function public.lookup_agent_token(p_hash text)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_t public.agent_tokens%rowtype; v_a public.agents%rowtype;
+begin
+  select * into v_t from public.agent_tokens where token_hash = p_hash and revoked_at is null and (expires_at is null or expires_at > now());
+  if not found then return null; end if;
+  select * into v_a from public.agents where id = v_t.agent_id and revoked_at is null;
+  if not found then return null; end if;
+  if v_a.status <> 'enabled' or not coalesce((select (value)::boolean from private.app_flags where name = 'agents_enabled'), true) then
+    raise exception using errcode = 'PT403', message = 'agent_disabled';
+  end if;
+  if not private.is_workspace_member_user(v_t.workspace_id, v_t.created_by) then return null; end if;
+  update public.agent_tokens set last_used_at = now() where id = v_t.id;
+  return jsonb_build_object('agent_id', v_a.id, 'auth_user_id', v_a.auth_user_id, 'workspace_id', v_a.workspace_id, 'scopes', to_jsonb(v_t.scopes), 'token_id', v_t.id);
+end $$;
