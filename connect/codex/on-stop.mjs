@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Codex Stop hook: when Codex ends its turn, wait (outside the model) until
 // one of the agent's tasks needs it again, then continue the session with a
-// short prompt. It never continues because of the clock: without a real task
-// change it exits 0 with no output and Codex stops normally.
+// short prompt. It keeps waiting after a task closes or is stopped. Without
+// new work it exits 0 with no output at the deadline or after five consecutive
+// failures; it never continues because of the clock.
 //
 // Input (stdin): the Stop hook payload { session_id, cwd, turn_id, stop_hook_active, … }.
 // Output (stdout): {"decision":"block","reason":"…"} to continue, or nothing.
@@ -146,10 +147,6 @@ export async function runStopHook({ input, env, fetchImpl, now = Date.now, sleep
         catch (error) { log(`get_task failed: ${error instanceof Error ? error.message : String(error)}`); }
       }
       return { exitCode: 0, output: JSON.stringify({ decision: "block", reason: buildReason(next, excerpt) }) };
-    }
-    // The task finished or was stopped: let Codex stop.
-    if (tasks.some((/** @type {any} */ t) => FINISHED_STATES.has(t?.state) || t?.reason === "stop")) {
-      return { exitCode: 0 };
     }
   }
 }
