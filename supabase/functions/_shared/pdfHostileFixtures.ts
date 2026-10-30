@@ -9,6 +9,14 @@ async function font(cmap: string | Uint8Array, compress = true) {
 
 // Reproductions supplied by the independent P6 review; each runs in an isolated worker.
 export const hostilePdfCases: Record<string, () => Promise<Uint8Array>> = {
+  async glyph_decode_millions() {
+    // Unmapped soft hyphens produce no text, so the output cap cannot bound glyph lookup work.
+    const stream = pdfStream(await deflate(enc(`BT /F1 12 Tf <${'ad'.repeat(1_950_000)}> Tj ET`)), '/Filter /FlateDecode');
+    return textPdf([stream, stream], {
+      3: '<< /Type /Font /ToUnicode 20 0 R >>',
+      20: pdfStream('2 beginbfchar <01> <0041> <01020304> <0042> endbfchar'),
+    });
+  },
   async digits_100k() { return pdfFixture({ 1: '1'.repeat(100_000) + 'x' }); },
   async digits_400k() { return pdfFixture({ 1: '1'.repeat(400_000) + 'x' }); },
   async bfchar_unclosed_1MB() { return font('beginbfchar'.repeat(M / 11)); },

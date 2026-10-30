@@ -9,6 +9,15 @@ Deno.test('extracts text page by page', async () => {
   assert.equal(result.status, 'ok');
   assert.deepEqual(result.pages, [{ page: 1, text: 'Hello' }, { page: 2, text: 'Second page' }]);
 });
+Deno.test('preserves justified text across 200 pages within the file budget', async () => {
+  const stream = pdfStream(await deflate(bytes(`BT /F1 12 Tf [${'(word) -120 '.repeat(1500)}] TJ ET`)), '/Filter /FlateDecode');
+  const result = await extractPdfText(textPdf(Array.from({ length: 200 }, () => stream)));
+  assert.equal(result.status, 'ok', result.error);
+  assert.equal(result.totalPages, 200);
+  assert.equal(result.pages.length, 200);
+  const expected = Array.from({ length: 1500 }, () => 'word').join(' ');
+  for (const page of result.pages) assert.equal(page.text, expected);
+});
 Deno.test('inflates FlateDecode streams', async () => {
   const stream = pdfStream(await deflate(bytes('BT /F1 12 Tf (Compressed) Tj ET')), '/Filter /FlateDecode');
   assert.equal((await extractPdfText(textPdf([stream]))).pages[0].text, 'Compressed');

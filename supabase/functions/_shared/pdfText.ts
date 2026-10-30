@@ -13,8 +13,8 @@ type Value = number | boolean | null | Value[] | Atom
 type Token = Value | { kind: 'open' | 'close'; value: 'array' | 'dict' };
 interface PdfObject { value: Value; stream?: Uint8Array; decoded?: string | null }
 const MAX_STREAM = 20 * 1024 * 1024, MAX_FILE = 100 * 1024 * 1024, MAX_OBJECTS = 10_000;
-const MAX_TEXT = 2_000_000, MAX_TOKENS = 500_000, MAX_DEPTH = 128;
-const MAX_RETAINED = 24 * 1024 * 1024, MAX_WORK = 8_000_000;
+const MAX_TEXT = 2_000_000, MAX_TOKENS = 2_000_000, MAX_DEPTH = 128;
+const MAX_RETAINED = 24 * 1024 * 1024, MAX_WORK = 24_000_000;
 interface Work { tokens: number; units: number; mappings: number }
 function spend(work: Work, units: number) {
   work.units += units;
@@ -225,7 +225,11 @@ function fallback(value: string, winAnsi: boolean): string {
   }).join('');
 }
 interface Font { map: Map<string, string>; widths: number[]; winAnsi: boolean }
-function decodeText(value: string, font: Font | undefined, budget: number): string {
+function decodeText(value: string, font: Font | undefined, budget: number, work: Work): string {
+  // Reserve worst-case hex conversion and lookup work before iterating. Unmapped bytes
+  // can advance one byte at a time and produce no text, bypassing the output budget.
+  const cost = font?.map.size ? font.widths.reduce((sum, width) => sum + width + 4, 0) : 1;
+  spend(work, value.length * cost);
   if (!font?.map.size) {
     const text = fallback(value, font?.winAnsi ?? false);
     if (text.length > budget) throw new Error('PDF text limit exceeded');
@@ -255,7 +259,7 @@ function contentText(source: string, fonts: Map<string, Font>, budget: number, w
     out += text;
   };
   const line = () => { if (out && !out.endsWith('\n')) append('\n'); };
-  const show = (value: Value | undefined) => { if (tagged(value, 'bytes')) append(decodeText(value.value, font, budget - out.length)); };
+  const show = (value: Value | undefined) => { if (tagged(value, 'bytes')) append(decodeText(value.value, font, budget - out.length, work)); };
   for (const value of parse(source, work)) {
     if (!tagged(value, 'word')) { operands.push(value); continue; }
     const last = operands.at(-1);
