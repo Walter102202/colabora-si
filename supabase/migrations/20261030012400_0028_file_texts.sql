@@ -35,6 +35,7 @@ returns jsonb language plpgsql security definer set search_path = '' as $$
 declare v_r public.agent_runs%rowtype; v_ws uuid; v_chars int; v_name text;
 begin
   v_r := private.own_run(p_run_id);
+  if v_r.stop_requested_at is not null then raise exception using errcode = 'PT409', message = 'stop_requested'; end if;
   if v_r.status not in ('running','waiting') then raise exception using errcode = 'PT422', message = 'run_not_active'; end if;
   if not exists (select 1 from public.agents where id = v_r.agent_id and is_platform) then
     raise exception using errcode = 'PT403', message = 'platform_only';

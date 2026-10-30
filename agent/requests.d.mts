@@ -7,6 +7,7 @@ export interface RequestOptions {
   runId: string;
   log: (message: string) => void;
   prices?: { input: number; output: number };
+  signal?: AbortSignal;
 }
 export interface RequestOutcome {
   status: "completed" | "completed_with_errors" | "failed";
@@ -25,5 +26,6 @@ export interface ExtractOptions {
   url: string;
   mime: string;
   prices?: { input: number; output: number };
+  signal?: AbortSignal;
 }
 export function extractFile(opts: ExtractOptions): Promise<{ data: Record<string, any>; usage: RequestOutcome["usage"] }>;

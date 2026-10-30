@@ -2,7 +2,7 @@
 -- answer is text spans only, written with the run's attribution and an inverse; it closes the request; revert_run
 -- undoes it.
 begin;
-select plan(26);
+select plan(27);
 
 select tests.fixture() as f \gset
 update public.agents set is_platform = true, capabilities = '{"start":true}'::jsonb where id = (:'f'::jsonb->>'agent')::uuid;
@@ -55,6 +55,13 @@ select tests.reset_role();
 -- C. The answer.
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
 select public.claim_task(:'req'::uuid, 'custom') ->> 'run_id' as run \gset
+select tests.reset_role();
+update public.agent_runs set stop_requested_at = now() where id = :'run'::uuid;
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format($$select public.apply_ai_rewrite(%L::uuid, '["Too late"]'::jsonb)$$, :'run')), 'stop_requested', 'a stopped rewrite cannot replace the block');
+select tests.reset_role();
+update public.agent_runs set stop_requested_at = null where id = :'run'::uuid;
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
 select is(tests.error_of(format($$select public.apply_ai_rewrite(%L::uuid, '[{"mention":"page","pageId":"page_B"}]'::jsonb)$$, :'run')),
           'invalid_input', 'the answer holds text spans only');
 select is(tests.sqlstate_of(format($$select public.apply_ai_rewrite(%L::uuid, '["Greetings"]'::jsonb, 0)$$, :'run')), 'PT409',

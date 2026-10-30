@@ -178,6 +178,7 @@ declare v_r public.agent_runs%rowtype; v_t public.agent_tasks%rowtype; v_page pu
         v_written jsonb := '[]'; v_conflicts jsonb := '[]'; v_skipped jsonb := '[]';
 begin
   v_r := private.own_run(p_run_id);
+  if v_r.stop_requested_at is not null then raise exception using errcode = 'PT409', message = 'stop_requested'; end if;
   if v_r.status not in ('running','waiting') then raise exception using errcode = 'PT422', message = 'run_not_active'; end if;
   select * into v_t from public.agent_tasks where id = v_r.task_id;
   if v_t.request_kind is distinct from 'fill' or v_t.active_run_id is distinct from v_r.id or v_t.state <> 'working' then
@@ -264,6 +265,7 @@ declare v_r public.agent_runs%rowtype; v_t public.agent_tasks%rowtype; v_data js
         v_counts jsonb := '{}'; v_prop text;
 begin
   v_r := private.own_run(p_run_id);
+  if v_r.stop_requested_at is not null then raise exception using errcode = 'PT409', message = 'stop_requested'; end if;
   if v_r.status not in ('running','waiting') then raise exception using errcode = 'PT422', message = 'run_not_active'; end if;
   select * into v_t from public.agent_tasks where id = v_r.task_id for update;
   if v_t.request_kind is distinct from 'fill' or v_t.active_run_id is distinct from v_r.id or v_t.state <> 'working' then

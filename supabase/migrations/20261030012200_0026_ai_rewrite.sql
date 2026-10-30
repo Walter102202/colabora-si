@@ -61,6 +61,7 @@ declare v_r public.agent_runs%rowtype; v_t public.agent_tasks%rowtype; v_page pu
         v_receipt jsonb; v_path text[]; v_block jsonb; v_html text; v_res jsonb;
 begin
   v_r := private.own_run(p_run_id);
+  if v_r.stop_requested_at is not null then raise exception using errcode = 'PT409', message = 'stop_requested'; end if;
   if p_idempotency_key is not null then
     select result into v_receipt from private.write_receipts
      where scope = 'apply_ai_rewrite' and key = p_idempotency_key and actor_id = v_actor;

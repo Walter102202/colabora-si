@@ -2,7 +2,7 @@
 -- does not take the page's task slot; the run writes only requested rows, with server-stamped provenance and one
 -- revertable activity per row; a person's edit wins; the request closes itself once every row has a value.
 begin;
-select plan(46);
+select plan(48);
 
 select tests.fixture() as f \gset
 -- The fixture agent plays the workspace's platform agent and takes pushes.
@@ -58,6 +58,14 @@ select tests.reset_role();
 -- C. The fill run.
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
 select public.claim_task((:'req'::jsonb->>'task_id')::uuid, 'custom') ->> 'run_id' as run \gset
+select tests.reset_role();
+update public.agent_runs set stop_requested_at = now() where id = :'run'::uuid;
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format($$select public.set_ai_cells(%L::uuid, '[{"row_id":"r1","text":"Too late"}]'::jsonb)$$, :'run')), 'stop_requested', 'a stopped fill cannot write cells');
+select is(tests.error_of(format('select public.complete_ai_request(%L::uuid)', :'run')), 'stop_requested', 'a stopped fill cannot complete');
+select tests.reset_role();
+update public.agent_runs set stop_requested_at = null where id = :'run'::uuid;
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
 select is(tests.error_of(format($$select public.set_ai_cells(%L::uuid, '[{"row_id":"r3","text":"x"}]'::jsonb)$$, :'run')),
           'row_not_requested', 'a row outside the request is refused');
 select is(tests.error_of(format($$select public.set_ai_cells(%L::uuid, '[{"row_id":"r1"}]'::jsonb)$$, :'run')), 'invalid_input',

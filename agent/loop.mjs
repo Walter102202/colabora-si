@@ -174,11 +174,27 @@ export async function runAgent(opts) {
     const runId = String(claim.run_id);
     if (task.request_kind) {
       try {
-        const outcome = await runRequest({ call, model, task, runId, log, prices });
+        const outcome = await runRequest({ call, model, task, runId, log, prices, signal });
         await notify({ kind: outcome.status === "failed" ? "error" : "delivered", task_id: taskId, text: outcome.summary });
         return { task_id: taskId, run_id: runId, outcome: outcome.status === "failed" ? "error" : "submitted", usage: outcome.usage };
       } catch (error) {
         const text = error instanceof Error ? error.message : String(error);
+        const usage = error?.usage ?? { input_tokens: 0, output_tokens: 0, cost_usd: 0 };
+        if (error?.name === "RequestStopped") {
+          await notify({ kind: "stopped", task_id: taskId, text });
+          return { task_id: taskId, run_id: runId, outcome: "stopped", usage };
+        }
+        if (error?.name === "AbortError") {
+          if (usage.input_tokens || usage.output_tokens) await call("heartbeat", { run_id: runId, usage: { ...usage, model: model.name } });
+          const handover = await call("hand_over", { run_id: runId, idempotency_key: `${runId}:request-abort`,
+            checkpoint: buildCheckpoint({ ...checkpoint, nextStep: "Continue the AI request.", handoverNote: text }) });
+          if (handover.isError && handover.data.code === "stop_requested") {
+            await call("ack_stop", { run_id: runId });
+            return { task_id: taskId, run_id: runId, outcome: "stopped", usage };
+          }
+          if (handover.isError) await call("end_run", { run_id: runId, status: "error", error: text });
+          return { task_id: taskId, run_id: runId, outcome: "aborted", usage };
+        }
         await call("end_run", { run_id: runId, status: "error", terminal: true, error: text });
         await notify({ kind: "error", task_id: taskId, text });
         return { task_id: taskId, run_id: runId, outcome: "error", usage: { input_tokens: 0, output_tokens: 0, cost_usd: 0 } };
@@ -526,7 +542,7 @@ export async function runAgent(opts) {
         if (name === "read_file" && !res.isError && res.data.status === "not_extracted" && res.data.download_url
           && ((modelVision && res.data.mime?.startsWith("image/")) || (modelPdf && res.data.mime === "application/pdf"))) {
           const extracted = await extractFile({ call, model, runId, pageId: args.page_id, fileId: args.file_id,
-            url: res.data.download_url, mime: res.data.mime, prices });
+            url: res.data.download_url, mime: res.data.mime, prices, signal });
           for (const key of ["input_tokens", "output_tokens"]) { total[key] += extracted.usage[key]; pending[key] += extracted.usage[key]; }
           res = { isError: false, data: extracted.data, text: JSON.stringify(extracted.data) };
         }

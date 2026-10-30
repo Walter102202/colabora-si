@@ -1,7 +1,7 @@
 -- read_file: only the platform agent saves the text of a file, from its own run and for a file on a page it can
 -- read; the text is readable by exactly those who can read a page that holds the file.
 begin;
-select plan(18);
+select plan(19);
 
 select tests.fixture() as f \gset
 insert into public.files (id, workspace_id, created_by, created_by_type) values ('file_1', (:'f'::jsonb->>'ws')::uuid, (:'f'::jsonb->>'owner')::uuid, 'human');
@@ -20,6 +20,11 @@ select is(tests.error_of(format($$select public.save_file_text(%L::uuid, 'page_F
           'platform_only', 'an agent that is not the platform agent cannot save a file text');
 select tests.reset_role();
 update public.agents set is_platform = true where id = (:'f'::jsonb->>'agent')::uuid;
+update public.agent_runs set stop_requested_at = now() where id = :'run'::uuid;
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format($$select public.save_file_text(%L::uuid, 'page_F', 'file_1', 'ready', %L::jsonb)$$, :'run', :'pages')), 'stop_requested', 'a stopped run cannot save extracted file text');
+select tests.reset_role();
+update public.agent_runs set stop_requested_at = null where id = :'run'::uuid;
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
 select is(public.save_file_text(:'run'::uuid, 'page_F', 'file_1', 'ready', :'pages'::jsonb, 1, 'application/pdf', 'muse-spark-1.3', 0.002)
             ->> 'chars', '16', 'the platform agent saves it');

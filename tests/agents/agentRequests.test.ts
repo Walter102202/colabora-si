@@ -143,3 +143,24 @@ it("without vision the loop passes not_extracted through", async () => {
   const result = h.model.requests[1].messages.filter((m) => m.role === "tool").at(-1);
   expect(JSON.parse(result.content).status).toBe("not_extracted");
 });
+it.each(["stop", "shutdown"] as const)("does not write a fill when %s arrives during model generation", async (kind) => {
+  const h = harness([], 1), controller = new AbortController();
+  let stopped = false, start!: () => void;
+  const started = new Promise<void>((resolve) => { start = resolve; });
+  let finish!: (value: Awaited<ReturnType<typeof h.model.chat>>) => void;
+  h.model.chat = () => { start(); return new Promise((resolve) => { finish = resolve; }); };
+  const call = h.opts.call;
+  h.opts.call = async (name, args) => {
+    const result = await call(name, args);
+    if (name === "heartbeat") result.data.stop_requested = stopped;
+    return result;
+  };
+  const pending = runRequest({ ...h.opts, signal: controller.signal });
+  await started;
+  if (kind === "stop") stopped = true; else controller.abort();
+  finish({ message: { role: "assistant", content: answer([{ row_id: "r1", text: "Too late" }]) }, usage: { input_tokens: 10, output_tokens: 5 } });
+  await expect(pending).rejects.toMatchObject({ name: kind === "stop" ? "RequestStopped" : "AbortError" });
+  expect(h.values()).toEqual([]);
+  expect(h.mcp.calls.some((c) => c.name === "complete_ai_request")).toBe(false);
+  if (kind === "stop") expect(h.mcp.calls.at(-1)?.name).toBe("ack_stop");
+});

@@ -28,6 +28,16 @@ const names = (calls: { name: string }[]) => calls.map((c) => c.name).filter((n)
 const seed = (subtasks: object[] = []) => ({ changed: false, stop_requested: false, activities: [], next_seq: 1, task: { task_id: "task-1", state: "working", subtasks } });
 
 describe("reference agent loop", () => {
+  it("acknowledges a stopped AI request without writing or reporting a delivery", async () => {
+    const mcp = createStubMcp({ tasks: [{ ...queued[0], request_kind: "fill" }], heartbeats: [{ stop_requested: false }, { stop_requested: true }], handlers: {
+      get_ai_request: () => ({ kind: "fill", property: { prompt: "Summarize" }, rows: [{ row_id: "r1", rev: 0, inputs: {} }] }),
+    } });
+    const channel = memoryChannel();
+    const result = await runAgent({ mcp, model: createStubModel([{ content: '{"values":[{"row_id":"r1","text":"Late"}]}' }]), channel, clock: fakeClock(), maxTasks: 1 });
+    expect(result.tasks[0].outcome).toBe("stopped");
+    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "get_ai_request", "ack_stop"]);
+    expect(channel.events.map((e) => e.kind)).toEqual(["stopped"]);
+  });
   it("a request task goes to runRequest, not to the model loop", async () => {
     const mcp = createStubMcp({ tasks: [{ ...queued[0], request_kind: "fill" }], handlers: {
       get_ai_request: () => ({ kind: "fill", property: { prompt: "Summarize" }, rows: [{ row_id: "r1", rev: 0, inputs: { Notes: "Text" } }] }),
