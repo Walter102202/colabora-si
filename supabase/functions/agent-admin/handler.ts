@@ -170,7 +170,7 @@ async function agentOAuth(body: Record<string, unknown>, api: CallerApi, deps: A
       p_agent_id: body.agent_id, p_client_id: disconnect ? id : null, p_require_enabled: !disconnect,
     });
     if (!isRecord(context) || !isUuid(context.auth_user_id)) throw new Error('Invalid agent context');
-    // Block the Data API first, even if the chat rotated the agent's password and Auth login now fails.
+    // Block all RLS surfaces before revoking the Auth grant.
     if (disconnect && !context.link_revoked) await api.rpc('revoke_oauth_link', { p_client_id: id });
     const authorization = disconnect ? null : await deps.serviceRpc('oauth_authorization_context', {
       p_authorization_id: id, p_auth_user_id: context.auth_user_id,
@@ -194,7 +194,7 @@ async function agentOAuth(body: Record<string, unknown>, api: CallerApi, deps: A
         p_client_name: details.client_name ?? 'An app', p_redirect_uri: details.redirect_uri });
     }
     return ok(result);
-  } catch (e) { return dbFailure(e, 'Could not complete this connection. If the agent password changed, use Rotate login and connect again.'); }
+  } catch (e) { return dbFailure(e, 'Could not complete this connection. Try again or use Rotate login and reconnect.'); }
 }
 
 async function createAgent(
@@ -411,8 +411,10 @@ async function rotateLogin(body: Record<string, unknown>, api: CallerApi, deps: 
   }
 
   try {
+    const password = await agentLoginPassword(deps.loginPepper, agent.auth_user_id, nonce);
+    await deps.serviceRpc('prepare_agent_login_rotation', { p_auth_user_id: agent.auth_user_id, p_password: password });
     await deps.admin.updateUserById(agent.auth_user_id, {
-      password: await agentLoginPassword(deps.loginPepper, agent.auth_user_id, nonce),
+      password,
     });
   } catch {
     return error(500, 'server_error', 'The new login was recorded but not applied. Rotate again.');

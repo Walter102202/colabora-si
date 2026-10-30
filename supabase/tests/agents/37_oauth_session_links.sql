@@ -1,5 +1,5 @@
 begin;
-select plan(57);
+select plan(68);
 create or replace function tests.set_oauth_agent(p_uid uuid, p_agent uuid, p_client text)
 returns void language sql as $$
   select tests.set_claims(jsonb_build_object('sub', p_uid, 'role', 'authenticated', 'aud', 'authenticated',
@@ -161,6 +161,39 @@ select lives_ok(format('update auth.users set banned_until = now() + interval ''
                 'credential freezing does not block agent bans');
 select lives_ok(format('update auth.users set encrypted_password = %L where id = %L::uuid', 'new-human-hash', :'f'::jsonb->>'owner'),
                 'a person can still change their password');
+
+-- Only the service prepares a short, one-use exception for the exact derived password.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.sqlstate_of(format('select public.prepare_agent_login_rotation(%L::uuid, %L)', :'f'::jsonb->>'agent_user', repeat('a', 64))),
+          '42501', 'a person cannot prepare a credential rotation');
+select tests.reset_role();
+select tests.set_anon();
+select is(tests.sqlstate_of(format('select public.prepare_agent_login_rotation(%L::uuid, %L)', :'f'::jsonb->>'agent_user', repeat('a', 64))),
+          '42501', 'anon cannot prepare a credential rotation');
+select tests.reset_role();
+select tests.set_service();
+select lives_ok(format('select public.prepare_agent_login_rotation(%L::uuid, %L)', :'f'::jsonb->>'agent_user', repeat('a', 64)),
+                'service_role prepares a credential rotation');
+select tests.reset_role();
+select ok((select expires_at > clock_timestamp() and expires_at <= clock_timestamp() + interval '30 seconds'
+             from private.agent_login_rotation where auth_user_id = (:'f'::jsonb->>'agent_user')::uuid), 'the marker lasts at most thirty seconds');
+select is(tests.error_of(format('update auth.users set email_change = %L where id = %L::uuid', 'race@test.invalid', :'f'::jsonb->>'agent_user')),
+          'agent_credentials_frozen', 'the password marker never authorizes an email change');
+select is(tests.error_of(format('update auth.users set encrypted_password = null where id = %L::uuid', :'f'::jsonb->>'agent_user')),
+          'agent_credentials_frozen', 'the marker cannot clear the password');
+select is(tests.error_of(format('update auth.users set encrypted_password = extensions.crypt(%L, extensions.gen_salt(''bf'')) where id = %L::uuid',
+          'attacker-password', :'f'::jsonb->>'agent_user')), 'agent_credentials_frozen', 'a chat cannot race the marker with its own password');
+select lives_ok(format('update auth.users set encrypted_password = extensions.crypt(%L, extensions.gen_salt(''bf'')) where id = %L::uuid',
+                repeat('a', 64), :'f'::jsonb->>'agent_user'), 'the prepared password consumes the marker');
+select is((select count(*)::int from private.agent_login_rotation where auth_user_id = (:'f'::jsonb->>'agent_user')::uuid), 0, 'a consumed marker is removed');
+select is(tests.error_of(format('update auth.users set encrypted_password = extensions.crypt(%L, extensions.gen_salt(''bf'')) where id = %L::uuid',
+          repeat('a', 64), :'f'::jsonb->>'agent_user')), 'agent_credentials_frozen', 'the marker cannot be reused');
+select tests.set_service();
+select public.prepare_agent_login_rotation((:'f'::jsonb->>'agent_user')::uuid, repeat('b', 64));
+select tests.reset_role();
+update private.agent_login_rotation set expires_at = clock_timestamp() - interval '1 second';
+select is(tests.error_of(format('update auth.users set encrypted_password = extensions.crypt(%L, extensions.gen_salt(''bf'')) where id = %L::uuid',
+          repeat('b', 64), :'f'::jsonb->>'agent_user')), 'agent_credentials_frozen', 'an expired marker cannot change credentials');
 
 -- Keep a tombstone when the agent's workspace is deleted; absence must never recover human reach.
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);

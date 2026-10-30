@@ -182,6 +182,32 @@ function ciConnect(): Request {
     body: JSON.stringify({ action: 'ci_connect', workspace_id: WORKSPACE, repo: 'Acme/App' }),
   });
 }
+
+Deno.test('rotate_login prepares its exact password immediately before the Auth update and fails closed', async () => {
+  for (const markerFails of [false, true]) {
+    const { deps, calls } = makeDeps();
+    const api = deps.caller('human-jwt');
+    api.getAgent = async () => ({ id: AGENT_ID, workspace_id: WORKSPACE, auth_user_id: AUTH_USER, connection: { harness: 'codex' } });
+    deps.caller = () => api;
+    deps.serviceRpc = async (fn, args) => {
+      calls.push({ op: 'serviceRpc', args: [fn, args] });
+      if (markerFails) throw new Error('rotation unavailable');
+      return null;
+    };
+    const res = await handleAgentAdmin(new Request('http://localhost/functions/v1/agent-admin', {
+      method: 'POST', headers: { Authorization: 'Bearer human-jwt', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'rotate_login', agent_id: AGENT_ID }),
+    }), deps);
+    assert.equal(res.status, markerFails ? 500 : 200);
+    const password = await agentLoginPassword(PEPPER, AUTH_USER, 'temporary-secret');
+    assert.deepEqual(calls, [
+      { op: 'callerRpc', args: ['update_agent', { p_agent_id: AGENT_ID, p_patch: { connection: { harness: 'codex', login_nonce: 'temporary-secret' } } }] },
+      { op: 'serviceRpc', args: ['prepare_agent_login_rotation', { p_auth_user_id: AUTH_USER, p_password: password }] },
+      ...(markerFails ? [] : [{ op: 'updateUserById', args: [AUTH_USER, { password }] }]),
+    ]);
+  }
+});
+
 Deno.test('ci_connect authorizes as the caller and derives the connection secret without admin writes', async () => {
   const { deps, calls } = makeDeps();
   deps.loginPepper = '';

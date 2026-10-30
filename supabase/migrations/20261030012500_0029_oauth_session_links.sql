@@ -1,18 +1,61 @@
 -- 0029 · OAuth chats use the selected Auth principal, never a substituted human session.
 -- Agent authorizations are read/decided by agent-admin after direct-person and membership checks.
--- Auth and Storage therefore see the agent itself. The Data API hook validates a live explicit link,
--- refuses orphaned/revoked/second-client tokens, and adds only the server-owned via_user attribution.
+-- Auth sees the agent itself. The hook and RLS validate a live explicit link across Data API,
+-- Storage and Realtime; only the hook adds the server-owned via_user attribution.
 -- As-you mode remains a full human session, restricted in consent to trusted HTTPS hosts.
 
 -- PostgREST calls the hook as the request's role, and without usage on this schema every service-role call fails.
 grant usage on schema private to service_role;
 
+-- A rotation ticket is private, one-use and bound to the server's exact next password.
+-- Encrypt it at rest; a bare time window would let a chat race Rotate login with its own password.
+insert into private.app_secrets (name, value)
+values ('agent_login_rotation_key', encode(extensions.gen_random_bytes(32), 'hex')) on conflict (name) do nothing;
+create table private.agent_login_rotation (
+  auth_user_id uuid primary key references auth.users(id) on delete cascade,
+  expected_password bytea not null,
+  expires_at timestamptz not null
+);
+alter table private.agent_login_rotation enable row level security;
+revoke all on private.agent_login_rotation from public, anon, authenticated, service_role;
+
+create or replace function public.prepare_agent_login_rotation(p_auth_user_id uuid, p_password text)
+returns void language plpgsql security definer set search_path = '' as $$
+declare v_key text;
+begin
+  if auth.role() is distinct from 'service_role' then raise exception using errcode = 'PT403', message = 'forbidden'; end if;
+  if not exists (select 1 from public.agents where auth_user_id = p_auth_user_id) then
+    raise exception using errcode = 'PT404', message = 'not_found';
+  end if;
+  if p_password is null or p_password !~ '^[0-9a-f]{64}$' then
+    raise exception using errcode = 'PT400', message = 'invalid_input';
+  end if;
+  select value into strict v_key from private.app_secrets where name = 'agent_login_rotation_key';
+  insert into private.agent_login_rotation (auth_user_id, expected_password, expires_at)
+  values (p_auth_user_id, extensions.pgp_sym_encrypt(p_password, v_key, 'cipher-algo=aes256'), clock_timestamp() + interval '30 seconds')
+  on conflict (auth_user_id) do update set expected_password = excluded.expected_password, expires_at = excluded.expires_at;
+end $$;
+revoke all on function public.prepare_agent_login_rotation(uuid, text) from public, anon, authenticated;
+grant execute on function public.prepare_agent_login_rotation(uuid, text) to service_role;
+
 -- An agent token must never become credentials for an independent direct session.
 create or replace function private.freeze_agent_credentials()
 returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_ticket private.agent_login_rotation%rowtype; v_key text;
 begin
   if exists (select 1 from public.agents a where a.auth_user_id = old.id) then
-    raise exception 'agent_credentials_frozen';
+    select * into v_ticket from private.agent_login_rotation where auth_user_id = old.id for update;
+    if not found or v_ticket.expires_at <= clock_timestamp() or new.encrypted_password is null
+       or old.email is distinct from new.email or old.email_change is distinct from new.email_change
+       or old.phone is distinct from new.phone or old.phone_change is distinct from new.phone_change then
+      raise exception 'agent_credentials_frozen';
+    end if;
+    select value into strict v_key from private.app_secrets where name = 'agent_login_rotation_key';
+    if extensions.crypt(extensions.pgp_sym_decrypt(v_ticket.expected_password, v_key), new.encrypted_password)
+       is distinct from new.encrypted_password then
+      raise exception 'agent_credentials_frozen';
+    end if;
+    delete from private.agent_login_rotation where auth_user_id = old.id;
   end if;
   return new;
 end $$;
@@ -175,7 +218,7 @@ end $$;
 revoke all on function public.set_oauth_link(text, uuid) from public, anon;
 grant execute on function public.set_oauth_link(text, uuid) to authenticated;
 
--- Disconnects a linked chat now: its tokens are refused by the hook until the person connects it again.
+-- Disconnects a linked chat now: the hook and RLS refuse its tokens until the person connects it again.
 create or replace function public.revoke_oauth_link(p_client_id text)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare v_l public.agent_oauth_links%rowtype;
