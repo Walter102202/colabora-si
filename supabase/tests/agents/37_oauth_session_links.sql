@@ -1,5 +1,5 @@
 begin;
-select plan(68);
+select plan(74);
 create or replace function tests.set_oauth_agent(p_uid uuid, p_agent uuid, p_client text)
 returns void language sql as $$
   select tests.set_claims(jsonb_build_object('sub', p_uid, 'role', 'authenticated', 'aud', 'authenticated',
@@ -8,6 +8,17 @@ $$;
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_G']) p;
 select tests.make_user('other-person@test.local') as other \gset
+select tests.reset_role();
+
+-- Auth's MFA verification may omit client_id but retains the OAuth authentication method.
+select tests.set_claims('{"client_id":"real-client","amr":[{"method":"oauth_provider/authorization_code"}]}'::jsonb, 'authenticated');
+select is(private.jwt_client_id(), 'real-client', 'an explicit client id takes precedence');
+select tests.set_claims('{"amr":[{"method":"oauth_provider/authorization_code"},{"method":"totp"}]}'::jsonb, 'authenticated');
+select is(private.jwt_client_id(), 'oauth-session-without-client', 'OAuth origin survives a missing client id after MFA');
+select tests.set_claims('{}'::jsonb, 'authenticated');
+select is(private.jwt_client_id(), null::text, 'a direct session without AMR has no client');
+select tests.set_claims('{"amr":[{"method":"password"},{"method":"totp"}]}'::jsonb, 'authenticated');
+select is(private.jwt_client_id(), null::text, 'password plus TOTP remains a direct session');
 select tests.reset_role();
 
 -- 1. The hook is installed.
@@ -44,6 +55,17 @@ select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'client-other');
 select private.apply_session_link();
 select is(private.principal_type(), 'human', 'an explicit human link stays the person');
 select is((select auth.uid()), (:'f'::jsonb->>'owner')::uuid, 'and keeps the person''s id');
+select tests.reset_role();
+
+-- A known live link cannot be recovered from a claimless MFA token, even with a sentinel row.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.set_oauth_link('oauth-session-without-client', (:'f'::jsonb->>'agent')::uuid);
+select tests.reset_role();
+select tests.set_claims(jsonb_build_object('sub', :'f'::jsonb->>'agent_user', 'role', 'authenticated',
+  'amr', '[{"method":"oauth_provider/authorization_code"},{"method":"totp"}]'::jsonb,
+  'app_metadata', jsonb_build_object('principal_type', 'agent', 'agent_id', :'f'::jsonb->>'agent')), 'authenticated');
+select is(private.current_agent_id(), null::uuid, 'a claimless OAuth token has no agent identity despite existing live links');
+select ok(tests.error_of('select private.apply_session_link()') like '%link_revoked%', 'the fallback marker never resolves a link');
 select tests.reset_role();
 
 -- A legacy human-subject token must not be converted into an agent.

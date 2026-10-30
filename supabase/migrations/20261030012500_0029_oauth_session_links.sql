@@ -66,6 +66,14 @@ create trigger agents_freeze_credentials before update on auth.users for each ro
      or old.phone is distinct from new.phone or old.phone_change is distinct from new.phone_change)
   execute function private.freeze_agent_credentials();
 
+-- Auth can omit client_id after MFA; OAuth AMR must never become a direct session.
+create or replace function private.jwt_client_id()
+returns text language sql stable set search_path = '' as $$
+  select coalesce(nullif(auth.jwt() ->> 'client_id', ''),
+    case when auth.jwt() -> 'amr' @> '[{"method":"oauth_provider/authorization_code"}]'::jsonb
+      then 'oauth-session-without-client' end);
+$$;
+
 -- Deletion preserves a tombstone. A missing association must never become human access.
 alter table public.agent_oauth_links
   add column if not exists as_human boolean not null default false,
@@ -98,7 +106,7 @@ returns public.agent_oauth_links language plpgsql stable security definer set se
 declare v_l public.agent_oauth_links%rowtype; v_uid uuid := (select auth.uid()); v_client text := private.jwt_client_id();
 begin
   select l.* into v_l from public.agent_oauth_links l
-   where l.client_id = v_client and l.user_id is not null and (
+   where v_client <> 'oauth-session-without-client' and l.client_id = v_client and l.user_id is not null and (
      (l.as_human and private.principal_type() = 'human' and l.user_id = v_uid)
      or (not l.as_human and private.principal_type() = 'agent'
          and l.agent_id::text = auth.jwt()->'app_metadata'->>'agent_id'
