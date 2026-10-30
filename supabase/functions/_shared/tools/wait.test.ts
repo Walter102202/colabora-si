@@ -356,6 +356,66 @@ Deno.test('wait_for_my_tasks without after lists a handed-over task that waits o
   assert.deepEqual((out.structured.tasks as Row[]).map((t) => [t.task_id, t.reason, t.waiting_on]), [['h1', 'handover', 'human']]);
 });
 
+Deno.test('reasonFor: a blocked or escalated review without a run is feedback that waits on a person, not a handover', () => {
+  const idle = { state: 'input_required', waiting_on: 'human', active_run_id: null };
+  assert.equal(reasonFor(idle, undefined, true), 'feedback');
+  assert.equal(reasonFor(idle, { body: { signal: 'feedback', source: 'lead', text: 'Use 2025' } }, true), 'feedback');
+  assert.equal(reasonFor(idle, undefined, false), 'handover');
+});
+
+Deno.test('wait_for_my_tasks tells a blocked or escalated review from a handover by the review newer than the last run', async () => {
+  const h = harness({
+    agent_tasks: [
+      task({ id: 'b1', state: 'input_required', waiting_on: 'human', active_run_id: null, updated_at: '2026-10-27T09:10:00+00:00' }),
+      task({ id: 'e1', state: 'input_required', waiting_on: 'human', active_run_id: null, review_state: 'changes_requested', review_rounds: 3,
+             updated_at: '2026-10-27T09:20:00+00:00' }),
+      // Handed over during the round that followed a request for changes: review_state still says changes_requested.
+      task({ id: 'h1', state: 'input_required', waiting_on: 'human', active_run_id: null, review_state: 'changes_requested',
+             updated_at: '2026-10-27T09:30:00+00:00' }),
+    ],
+    agent_activities: [],
+    agent_runs: [
+      { task_id: 'b1', started_at: '2026-10-27T09:00:00+00:00' },
+      { task_id: 'e1', started_at: '2026-10-27T09:00:00+00:00' },
+      { task_id: 'h1', started_at: '2026-10-27T08:00:00+00:00' },
+      { task_id: 'h1', started_at: '2026-10-27T08:45:00+00:00' },
+    ],
+    agent_reviews: [
+      { task_id: 'b1', verdict: 'blocked', created_at: '2026-10-27T09:05:00+00:00' },
+      { task_id: 'e1', verdict: 'changes_requested', created_at: '2026-10-27T09:15:00+00:00' },
+      { task_id: 'h1', verdict: 'changes_requested', created_at: '2026-10-27T08:30:00+00:00' },
+    ],
+  });
+  const out = await tool('wait_for_my_tasks').handler({ timeout_s: 120 }, h.ctx);
+  assert.deepEqual((out.structured.tasks as Row[]).map((t) => [t.task_id, t.reason, t.waiting_on]),
+    [['b1', 'feedback', 'human'], ['e1', 'feedback', 'human'], ['h1', 'handover', 'human']]);
+});
+
+Deno.test('wait_for_my_tasks with after reports a task that a review just blocked as feedback that waits on a person', async () => {
+  const tables = {
+    agent_tasks: [task({ id: 't1', state: 'ready_for_review', active_run_id: null, updated_at: '2026-10-27T10:00:00+00:00' })],
+    agent_activities: [] as Row[],
+    agent_events: [] as Row[],
+    agent_runs: [{ task_id: 't1', started_at: '2026-10-27T09:00:00+00:00' }] as Row[],
+    agent_reviews: [] as Row[],
+  };
+  const after = encodeTaskCursor({ t: normTs('2026-10-27T10:00:00+00:00'), k: ['t:t1:' + normTs('2026-10-27T10:00:00+00:00')] });
+  const h = harness(tables, (n) => {
+    if (n === 1) {
+      tables.agent_reviews.push({ task_id: 't1', verdict: 'blocked', created_at: '2026-10-27T10:01:00+00:00' });
+      tables.agent_tasks[0] = task({ id: 't1', state: 'input_required', waiting_on: 'human', active_run_id: null, updated_at: '2026-10-27T10:01:00+00:00' });
+    }
+  });
+  const out = await tool('wait_for_my_tasks').handler({ after, timeout_s: 60 }, h.ctx);
+  assert.deepEqual((out.structured.tasks as Row[]).map((t) => [t.task_id, t.reason, t.waiting_on]), [['t1', 'feedback', 'human']]);
+});
+
+Deno.test('wait_for_my_tasks reads reviews and runs only for tasks waiting without a run', async () => {
+  const h = harness({ agent_tasks: [task({ id: 'q1', state: 'queued', active_run_id: null })], agent_activities: [] });
+  await tool('wait_for_my_tasks').handler({ timeout_s: 120 }, h.ctx);
+  assert.ok(!h.selects.includes('agent_reviews') && !h.selects.includes('agent_runs'), h.selects.join(', '));
+});
+
 Deno.test('wait_for_task hands over the approval_id and decision of an answer', async () => {
   const tables = { agent_tasks: [task()], agent_activities: [activity(1)], agent_events: [] as Row[] };
   const h = harness(tables, (n) => {

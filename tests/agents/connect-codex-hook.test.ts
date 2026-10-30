@@ -95,6 +95,15 @@ describe("Codex stop hook", () => {
     expect(await runStopHook({ input: {}, env: ENV, fetchImpl, now: clock(1000), sleep })).toEqual({ exitCode: 0 });
   });
 
+  it("lets Codex stop for a task a review blocked: wait_for_my_tasks reports it as feedback that waits on a person", async () => {
+    const blocked = { task_id: TASK, state: "input_required", waiting_on: "human", review_state: "none", reason: "feedback" };
+    const first = fakeRemote([{ tasks: [blocked], next_cursor: "c-1" }]);
+    expect(await runStopHook({ input: {}, env: ENV, fetchImpl: first.fetchImpl, now: clock(1000), sleep })).toEqual({ exitCode: 0 });
+    expect(first.calls.map((c) => c.name)).toEqual(["wait_for_my_tasks"]);
+    const later = fakeRemote([none, { tasks: [blocked], next_cursor: "c-1" }]);
+    expect(await runStopHook({ input: {}, env: ENV, fetchImpl: later.fetchImpl, now: clock(1000), sleep })).toEqual({ exitCode: 0 });
+  });
+
   it("exits 0 when HOOK_WAIT_MIN passes with no news", async () => {
     const { fetchImpl, calls } = fakeRemote([none]);
     const result = await runStopHook({ input: {}, env: ENV, fetchImpl, now: clock(60_000), sleep });

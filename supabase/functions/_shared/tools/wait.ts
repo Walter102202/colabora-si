@@ -302,7 +302,7 @@ export function decodeTaskCursor(raw: string): Cursor {
 
 const TASK_FIELDS = 'id,title,state,review_state,waiting_on,brief_version,brief_stale,active_run_id,updated_at';
 
-export function reasonFor(task: Row, prompt: Row | undefined): Reason | null {
+export function reasonFor(task: Row, prompt: Row | undefined, waitsOnPerson = false): Reason | null {
   if (task.state === 'done' || task.state === 'failed') return 'closed';
   if (task.state === 'cancelled') return 'stop';
   if (prompt) {
@@ -318,11 +318,46 @@ export function reasonFor(task: Row, prompt: Row | undefined): Reason | null {
     if (body.signal === 'feedback' || body.signal === 'continue') return 'feedback';
     if (body.signal === 'start' && task.state === 'queued') return 'queued';
   }
-  // Only a handover leaves a task waiting on a person without a run; the next session claims it and waits there.
-  if (task.state === 'input_required' && !task.active_run_id) return 'handover';
+  // A handover leaves a task waiting on a person without a run: the next session claims it and waits there. A blocked or
+  // escalated review leaves the same fields, but no session may take that task (claim_task refuses it): it is feedback
+  // that waits on a person (waiting_on human), which harnesses leave to the person.
+  if (task.state === 'input_required' && !task.active_run_id) return waitsOnPerson ? 'feedback' : 'handover';
   if (task.brief_stale === true) return 'brief';
   if (task.state === 'queued') return 'queued';
   return null;
+}
+
+/**
+ * Of the tasks waiting without a run, those a blocked or escalated review left to a person: a review with that verdict
+ * newer than the last run's start. A handover always follows a later claim, so its last run started after any review.
+ */
+async function waitingOnPerson(ctx: ToolContext, tasks: Row[]): Promise<Set<string>> {
+  const ids = tasks.filter((t) => t.state === 'input_required' && !t.active_run_id).map((t) => String(t.id));
+  if (!ids.length) return new Set();
+  const [reviews, runs] = await Promise.all([
+    must(ctx.db.select<Row>({
+      table: 'agent_reviews',
+      columns: 'task_id,created_at',
+      filters: [{ col: 'task_id', op: 'in', value: ids }, { col: 'verdict', op: 'in', value: ['blocked', 'changes_requested'] }],
+      order: [{ column: 'created_at', ascending: false }],
+      limit: 500,
+    })),
+    must(ctx.db.select<Row>({
+      table: 'agent_runs',
+      columns: 'task_id,started_at',
+      filters: [{ col: 'task_id', op: 'in', value: ids }],
+      order: [{ column: 'started_at', ascending: false }],
+      limit: 500,
+    })),
+  ]);
+  const latest = (rows: Row[] | null, col: string) => {
+    const out = new Map<string, string>();
+    for (const r of rows ?? []) if (!out.has(String(r.task_id))) out.set(String(r.task_id), normTs(String(r[col])));
+    return out;
+  };
+  const review = latest(reviews, 'created_at');
+  const run = latest(runs, 'started_at');
+  return new Set(ids.filter((id) => review.has(id) && (!run.has(id) || review.get(id)! > run.get(id)!)));
 }
 
 function myTaskView(task: Row, reason: Reason, prompts: number) {
@@ -365,8 +400,13 @@ async function initialState(ctx: ToolContext) {
       limit: 1,
     })),
   ]);
+  const waiting = await waitingOnPerson(ctx, open ?? []);
   const tasks = (open ?? []).flatMap((t) => {
-    const reason: Reason | null = t.review_state === 'changes_requested' ? 'feedback' : reasonFor(t, undefined);
+    // review_state outlives the round it describes: on a task waiting without a run, only the reviews and runs tell.
+    const idle = t.state === 'input_required' && !t.active_run_id;
+    const reason: Reason | null = t.review_state === 'changes_requested' && !idle
+      ? 'feedback'
+      : reasonFor(t, undefined, waiting.has(String(t.id)));
     return reason ? [myTaskView(t, reason, 0)] : [];
   });
   const marks = [
@@ -435,10 +475,11 @@ async function changesSince(ctx: ToolContext, cursor: Cursor): Promise<Delta> {
   }
 
   const out: ReturnType<typeof myTaskView>[] = [];
+  const waiting = await waitingOnPerson(ctx, [...tasks.values()]);
   for (const [id, task] of tasks) {
     const list = newPrompts.get(id) ?? [];
     const latest = list.length ? list.reduce((a, b) => (Number(b.seq) > Number(a.seq) ? b : a)) : undefined;
-    const reason = reasonFor(task, latest);
+    const reason = reasonFor(task, latest, waiting.has(id));
     if (reason) out.push(myTaskView(task, reason, list.length));
   }
 
