@@ -248,3 +248,95 @@ begin
 end $$;
 revoke all on function public.claim_task(uuid, text, text, int, boolean) from public, anon;
 grant execute on function public.claim_task(uuid, text, text, int, boolean) to authenticated;
+
+-- ============ a Lead's message does not resume a task that waits on a person ============
+-- send_agent_message (0013) requeued any input_required task without a run, so the Lead could undo its own blocked
+-- review or an escalation with one message and let the worker claim the task with no person involved. The Lead's
+-- message on such a task is now recorded for the next run (claim_task returns it in recent_activities) but neither
+-- requeues the task nor wakes the worker: delivery 'waiting_on_human'. A person's message still requeues it.
+-- Full copy of send_agent_message (0013); only the requeue branch and the delivery that follows it change.
+create or replace function public.send_agent_message(p_task_id uuid, p_body text, p_signal text default 'feedback',
+  p_block_ids text[] default '{}', p_comment_id text default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_t public.agent_tasks%rowtype; v_agent uuid; v_author uuid; v_author_type text; v_source text; v_delivery text;
+        v_run public.agent_runs%rowtype; v_activity uuid;
+begin
+  if p_signal is null or p_signal not in ('continue','feedback','stop') then
+    raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'signal';
+  end if;
+  select * into v_t from public.agent_tasks where id = p_task_id for update;
+  if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+
+  if private.is_agent() then
+    v_agent := private.current_agent_id();
+    if v_agent is null then raise exception using errcode = 'PT403', message = 'agent_disabled'; end if;
+    perform private.check_rate(v_agent);
+    if not exists (select 1 from public.agent_tasks p join public.agents a on a.id = p.delegate_agent_id
+                    where p.id = v_t.parent_task_id and p.delegate_agent_id = v_agent and a.role = 'lead') then
+      raise exception using errcode = 'PT403', message = 'forbidden';
+    end if;
+    v_author := v_agent; v_author_type := 'agent'; v_source := 'lead';
+  else
+    if not private.can_write_page(v_t.row_page_id, v_t.workspace_id) then
+      raise exception using errcode = 'PT403', message = 'forbidden';
+    end if;
+    v_author := (select auth.uid()); v_author_type := 'human';
+    v_source := case when p_comment_id is not null then 'comment' else 'row_panel' end;
+  end if;
+
+  -- Reopening a closed task is a decision of a person; a Lead writing to its closed subtask gets task_closed.
+  if private.is_agent() and v_t.state in ('done','failed','cancelled') then
+    raise exception using errcode = 'PT409', message = 'task_closed';
+  end if;
+
+  if v_t.state in ('cancelled','failed') and p_signal <> 'continue' then
+    raise exception using errcode = 'PT409', message = 'task_closed';
+  end if;
+  if v_t.state = 'done' and p_signal = 'stop' then
+    raise exception using errcode = 'PT409', message = 'task_closed';
+  end if;
+
+  if p_signal = 'stop' then
+    if v_t.active_run_id is null then
+      update public.agent_tasks set state='cancelled', active_run_id=null, waiting_on=null, updated_at=now() where id=v_t.id;
+      update public.agent_approvals set status='cancelled' where task_id=v_t.id and status='pending';
+      v_delivery := 'cancelled';
+    else
+      update public.agent_runs set stop_requested_at=coalesce(stop_requested_at, now()) where id=v_t.active_run_id
+        returning * into v_run;
+      insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
+      values (v_t.workspace_id, v_t.id, v_run.id, v_run.agent_id, 'task.stop',
+              jsonb_build_object('reason', 'stop', 'text', p_body), private.next_event_seq(v_t.id));
+      v_delivery := 'stop_requested';
+    end if;
+  else
+    if v_t.state in ('done','failed','cancelled') then
+      update public.agent_tasks set state='queued', acceptance='pending', review_state='none', waiting_on=null,
+             closed_at=null, closed_by=null, updated_at=now() where id=v_t.id;
+    elsif v_t.state = 'input_required' and v_t.active_run_id is null and not private.is_agent() then
+      update public.agent_tasks set state='queued', waiting_on=null, updated_at=now() where id=v_t.id;
+    end if;
+    if v_t.active_run_id is not null then
+      v_delivery := 'queued_for_run';
+    elsif v_t.state = 'input_required' and private.is_agent() then
+      v_delivery := 'waiting_on_human';
+    elsif exists (select 1 from public.agents a where a.id=v_t.delegate_agent_id and coalesce((a.capabilities->>'continue')::boolean, false)) then
+      insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
+      values (v_t.workspace_id, v_t.id, null, v_t.delegate_agent_id,
+              case p_signal when 'continue' then 'task.continue' else 'task.feedback' end,
+              jsonb_build_object('text', p_body, 'signal', p_signal, 'source', v_source), private.next_event_seq(v_t.id));
+      v_delivery := 'dispatched';
+    else
+      v_delivery := 'queued_for_next_session';
+    end if;
+  end if;
+
+  insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, author_type, author_id)
+  values (v_t.workspace_id, v_t.id, v_t.active_run_id, private.next_seq(v_t.id), 'prompt',
+          jsonb_build_object('text', coalesce(p_body, ''), 'signal', p_signal, 'source', v_source, 'comment_id', p_comment_id,
+                             'block_ids', to_jsonb(coalesce(p_block_ids, '{}'))), v_author_type, v_author)
+  returning id into v_activity;
+  return jsonb_build_object('activity_id', v_activity, 'delivery', v_delivery);
+end $$;
+revoke all on function public.send_agent_message(uuid, text, text, text[], text) from public, anon;
+grant execute on function public.send_agent_message(uuid, text, text, text[], text) to authenticated;

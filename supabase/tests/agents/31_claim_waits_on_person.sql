@@ -1,7 +1,7 @@
 begin;
-select plan(15);
+select plan(25);
 select tests.fixture() as f \gset
-select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_A2','page_A3','page_A4','page_A5','page_A6']) p;
+select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_A2','page_A3','page_A4','page_A5','page_A6','page_A7','page_A8','page_A9']) p;
 
 -- A blocked review and a handover leave the same fields: input_required, waiting_on human, no run. Only a pending
 -- blocking question (private.task_waits_on_human) tells the handover apart, so claim_task decides by it.
@@ -107,6 +107,56 @@ select public.claim_task(:'ho3'::uuid, 'codex');
 select tests.reset_role();
 select is((select state from public.agent_tasks where id = :'ho3'::uuid), 'working', 'a session claims it');
 select is((select status from public.agent_approvals where id = :'q6'::uuid), 'pending', 'the question that does not block is still open');
+
+-- 16-25. The Lead's message on a subtask that waits on a person is recorded for the next run but does not requeue it:
+-- only a person's message does. The Lead cannot reopen a closed subtask either.
+select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+lead@agents.invalid', 'lead', 'page_A') as lead \gset
+update public.agents set capabilities = '{"continue":true}'::jsonb where id = (:'f'::jsonb->>'agent')::uuid;
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.create_agent_task('page_A7', '{"objective":"Ship the report"}'::jsonb, (:'lead'::jsonb->>'agent')::uuid) ->> 'task_id' as parent \gset
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select public.claim_task(:'parent'::uuid, 'claude_code') ->> 'run_id' as lr \gset
+select public.create_subtask(:'parent'::uuid, 'page_A8', '{"objective":"Write the report"}'::jsonb, (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as s1 \gset
+select public.create_subtask(:'parent'::uuid, 'page_A9', '{"objective":"Draw the chart"}'::jsonb, (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as s2 \gset
+select tests.reset_role();
+update public.agent_tasks set max_review_rounds = 0 where id = :'s2'::uuid;
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'s1'::uuid, 'codex') ->> 'run_id' as w7 \gset
+select public.add_artifact(:'w7'::uuid, 'page', 'page_A8', 'Report', '{}') ->> 'artifact_id' as art7 \gset
+select public.submit_for_review(:'w7'::uuid, 'v1', array[:'art7'::uuid]);
+select public.claim_task(:'s2'::uuid, 'codex') ->> 'run_id' as w8 \gset
+select public.add_artifact(:'w8'::uuid, 'page', 'page_A9', 'Chart', '{}') ->> 'artifact_id' as art8 \gset
+select public.submit_for_review(:'w8'::uuid, 'v1', array[:'art8'::uuid]);
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select public.review_task(:'s1'::uuid, 'blocked', '[]'::jsonb, '[]'::jsonb, null, :'lr'::uuid);
+select public.review_task(:'s2'::uuid, 'changes_requested', '[]'::jsonb, '[]'::jsonb, null, :'lr'::uuid);
+select is(public.send_agent_message(:'s1'::uuid, 'Use the 2025 figures.', 'feedback') ->> 'delivery', 'waiting_on_human',
+          'the Lead''s message on a blocked subtask says that it waits on a person');
+select is(public.send_agent_message(:'s2'::uuid, 'Go on.', 'continue') ->> 'delivery', 'waiting_on_human',
+          'and so does its message on an escalated subtask');
+select tests.reset_role();
+select is((select string_agg(state || '/' || waiting_on, ',' order by title) from public.agent_tasks where id in (:'s1'::uuid, :'s2'::uuid)),
+          'input_required/human,input_required/human', 'the Lead''s messages leave both subtasks waiting on a person');
+select ok(not exists (select 1 from public.agent_events where task_id in (:'s1'::uuid, :'s2'::uuid) and type in ('task.feedback','task.continue')),
+          'the worker is not woken by them');
+select is((select count(*)::int from public.agent_activities where task_id in (:'s1'::uuid, :'s2'::uuid) and type = 'prompt' and author_type = 'agent'
+                    and body->>'text' in ('Use the 2025 figures.', 'Go on.')), 2,
+          'the messages are recorded for the next run');
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.claim_task(%L::uuid, %L)', :'s1', 'codex')), 'task_unavailable', 'the worker still cannot claim the blocked subtask');
+select is(tests.error_of(format('select public.claim_task(%L::uuid, %L)', :'s2', 'codex')), 'task_unavailable', 'nor the escalated one');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(public.send_agent_message(:'s1'::uuid, 'Use the 2025 figures.', 'feedback') ->> 'delivery', 'dispatched', 'a person''s message requeues and wakes the worker');
+select public.close_task(:'s2'::uuid, 'accepted');
+select tests.reset_role();
+select is((select state from public.agent_tasks where id = :'s1'::uuid), 'queued', 'the blocked subtask is queued again');
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.send_agent_message(%L::uuid, %L, %L)', :'s2', 'One more pass', 'continue')), 'task_closed',
+          'the Lead cannot reopen a subtask a person accepted');
+select tests.reset_role();
 
 select * from finish();
 rollback;

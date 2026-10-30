@@ -462,7 +462,9 @@ const ackStop: ToolDef = {
 const sendMessage: ToolDef = {
   name: 'send_message',
   title: 'Send a message to a task',
-  description: 'For the Lead of the parent task or a person connected through a chat app: continue, give feedback or stop. Workers get forbidden.',
+  description: 'For the Lead of the parent task or a person connected through a chat app: continue, give feedback or stop. Workers get forbidden. ' +
+    'On a task that waits on a person without a run (a blocked or escalated review), a message from the Lead is kept for the next run ' +
+    'but does not resume the task: delivery waiting_on_human.',
   inputSchema: object({
     task_id: { type: 'string', minLength: 1 },
     body: { type: 'string', minLength: 1, maxLength: 10_000 },
@@ -476,7 +478,10 @@ const sendMessage: ToolDef = {
       p_body: args.body,
       p_signal: str(args.signal),
     })) ?? {};
-    return { text: `Message sent (${String(data.delivery)}).`, structured: data };
+    const text = data.delivery === 'waiting_on_human'
+      ? 'Message recorded. The task waits on a person: the next run reads it once they answer.'
+      : `Message sent (${String(data.delivery)}).`;
+    return { text, structured: data };
   },
 };
 
