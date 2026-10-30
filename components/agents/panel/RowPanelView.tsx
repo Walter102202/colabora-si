@@ -21,6 +21,8 @@ import { FeedbackComposer } from "@/components/agents/panel/FeedbackComposer";
 import { MetricsList } from "@/components/agents/panel/MetricsList";
 import type { Metric } from "@/lib/agentMetrics";
 import type { CiCheckRow } from "@/lib/agentCi";
+import type { EnvironmentResource } from "@/lib/agentTasks";
+import { EnvironmentCard } from "@/components/agents/panel/EnvironmentCard";
 
 // The row panel as pure views: everything a person sees and does about one
 // task, driven by data and callbacks. No router, no stores, no network, so
@@ -50,6 +52,7 @@ export interface TaskViewProps {
   review: ReviewRow | null;
   brief: BriefRow | null;
   ciChecks?: CiCheckRow[];
+  environment?: EnvironmentResource[];
   activities: ActivityRow[];
   subtasks: SubtaskItem[];
   reviewerName: string | null;
@@ -136,7 +139,7 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ task, agent, run, approval, artifact, review, brief, ciChecks, activities, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ task, agent, run, approval, artifact, review, brief, ciChecks, environment = [], activities, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -210,6 +213,8 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
       </header>
 
       {error && <p role="alert" className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-700 dark:text-red-400">{error}</p>}
+
+      <EnvironmentCard environment={environment} />
 
       <section className="space-y-1">
         <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">What was asked and what changed</h4>

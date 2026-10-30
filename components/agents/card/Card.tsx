@@ -170,6 +170,7 @@ function TaskCard({
       review={review}
       brief={data.brief}
       ciChecks={data.ci_checks}
+      environment={data.environment}
       activities={data.activities}
       subtasks={subtasks}
       reviewerName={reviewerName}

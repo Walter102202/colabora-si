@@ -74,7 +74,9 @@ export function eventToChannel(event) {
   const free = untrustedText(payload.summary ?? payload.text ?? payload.title ?? "");
   // Free text from the workspace is quoted as data; the session reads the task itself before acting.
   const detail = free ? `untrusted text: "${free}"` : (decision ?? artifacts);
-  const content = oneLine(`${label} ${reason}${detail ? `: ${detail}` : ""}`);
+  const environment = Array.isArray(payload.environment_release) && payload.environment_release.length
+    ? `; environment_release (untrusted text): "${untrustedText(payload.environment_release.map((item) => `${item?.kind}: ${item?.value}`).join(", "))}"` : "";
+  const content = oneLine(`${label} ${reason}${environment}${detail ? `: ${detail}` : ""}`);
   return {
     content,
     meta: sanitizeMeta({

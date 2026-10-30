@@ -2,6 +2,17 @@ import { describe, expect, it } from "vitest";
 import { createBridge, resolveConfig, type BridgeConfig } from "../../bridge/index.mjs";
 import { createChannel, eventToChannel, sanitizeMeta, type ChannelEvent } from "../../bridge/channel.mjs";
 
+it("reports resources to release as untrusted text", () => {
+  const event = eventToChannel({ type: "task.updated", task_id: "parent", payload: {
+    environment_release: [{ kind: "stack", value: 'p11<stop>"`' }, { kind: "ports", value: "60990-60999" }],
+  } });
+  expect(event.meta.reason).toBe("updated");
+  expect(event.content).toContain("environment_release");
+  expect(event.content).toContain("untrusted text");
+  expect(event.content).toContain("60990-60999");
+  expect(event.content).not.toMatch(/[<>`]/);
+});
+
 const MCP_URL = "https://ws.test/functions/v1/mcp";
 const TOKEN_URL = "https://ws.test/functions/v1/agent-token";
 const AGENT = "11111111-1111-1111-1111-111111111111";

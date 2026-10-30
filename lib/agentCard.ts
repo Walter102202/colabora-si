@@ -2,7 +2,7 @@ import type { TaskAutonomy } from "@/lib/agentAutonomy";
 import type { CiCheckRow } from "@/lib/agentCi";
 import type { ContinuityInfo } from "@/lib/agentContinuity";
 import type { TaskDiff } from "@/lib/agentRunDiff";
-import type { ActivityRow, ApprovalRow, ArtifactRow, BriefRow, ReviewRow, RunRow, TaskRow } from "@/lib/agentTasks";
+import type { ActivityRow, ApprovalRow, ArtifactRow, BriefRow, EnvironmentResource, ReviewRow, RunRow, TaskRow } from "@/lib/agentTasks";
 import type { AgentRole } from "@/lib/agentsStore";
 import { pageUrl, taskUrl } from "@/lib/routes";
 
@@ -25,6 +25,7 @@ export interface CardSubtask {
 }
 
 export interface TaskCardData {
+  environment?: EnvironmentResource[];
   ci_checks?: CiCheckRow[];
   continuity?: ContinuityInfo | null;
   diff?: TaskDiff | null;

@@ -381,4 +381,46 @@ const listSubtasks: ToolDef = {
   },
 };
 
-export const leadTools: ToolDef[] = [createTask, createSubtask, updateSubtask, importPlan, reviewTask, closeSubtask, listSubtasks];
+const reserveEnvironment: ToolDef = {
+  name: 'reserve_environment', title: 'Reserve a task environment',
+  description: 'Lead or person: reserve ports, stack, worktree, branch or migration numbers for a task. Check list_environments first. resource_taken identifies the task holding a conflicting resource.',
+  inputSchema: object({
+    task_id: { type: 'string', minLength: 1 },
+    items: { type: 'array', minItems: 1, maxItems: 20, items: object({
+      kind: { type: 'string', enum: ['ports', 'stack', 'worktree', 'branch', 'migration'] },
+      value: { type: 'string', minLength: 1, maxLength: 300 },
+    }, ['kind', 'value']) },
+  }, ['task_id', 'items']),
+  outputSchema: output({ environment: { type: 'array', items: { type: 'object' } } }),
+  annotations: WRITE,
+  async handler(args, ctx) {
+    const environment = await must(ctx.db.rpc<Row[]>('reserve_environment', { p_task_id: args.task_id, p_items: args.items })) ?? [];
+    return { text: `${plural(environment.length, 'resource')} reserved.`, structured: { environment } };
+  },
+};
+
+const releaseEnvironment: ToolDef = {
+  name: 'release_environment', title: 'Confirm an environment was stopped',
+  description: 'Lead or person: after stopping the processes, confirm the task environment can be reserved again. This tool does not stop processes.',
+  inputSchema: object({ task_id: { type: 'string', minLength: 1 } }, ['task_id']),
+  outputSchema: output({ released: { type: 'integer' } }), annotations: WRITE,
+  async handler(args, ctx) {
+    const data = await must(ctx.db.rpc<Row>('release_environment', { p_task_id: args.task_id })) ?? {};
+    return { text: `${String(data.released)} resources released.`, structured: data };
+  },
+};
+
+const listEnvironments: ToolDef = {
+  name: 'list_environments', title: 'List environments in use',
+  description: 'Resources held or waiting for shutdown confirmation, visible to you. Check before reserving an environment.',
+  inputSchema: object({}), outputSchema: output({ environments: { type: 'array', items: { type: 'object' } } }),
+  annotations: READ, cacheTtlMs: 0,
+  async handler(_args, ctx) {
+    const environments = await must(ctx.db.select<Row>({ table: 'agent_resources', columns: 'kind,value,status,task_id',
+      filters: [{ col: 'status', op: 'neq', value: 'released' }], order: [{ column: 'created_at', ascending: true }] })) ?? [];
+    return { text: `${plural(environments.length, 'resource')} in use.`, structured: { environments } };
+  },
+};
+
+export const leadTools: ToolDef[] = [createTask, createSubtask, updateSubtask, importPlan, reviewTask, closeSubtask, listSubtasks,
+  reserveEnvironment, releaseEnvironment, listEnvironments];

@@ -118,6 +118,7 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
   const review = useAgentTasks((s) => latestReviewFor(s, task.id));
   const brief = useAgentTasks((s) => currentBriefFor(s, task));
   const ciChecks = useAgentTasks((s) => s.ciChecks[task.id]);
+  const environment = useAgentTasks((s) => s.environments[task.id]);
   const activities = useAgentTasks((s) => s.activities[task.id]);
   const tasks = useAgentTasks((s) => s.tasks);
   const runs = useAgentTasks((s) => s.runs);
@@ -198,6 +199,7 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
       review={review}
       brief={brief}
       ciChecks={ciChecks}
+      environment={environment}
       activities={activities ?? []}
       subtasks={subtasks}
       reviewerName={review ? (agents.find((a) => a.id === review.reviewer_id)?.name ?? null) : null}

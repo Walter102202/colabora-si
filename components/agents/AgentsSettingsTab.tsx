@@ -10,6 +10,7 @@ import { CiConnections } from "@/components/agents/settings/CiConnections";
 import { NewAgentWizard } from "@/components/agents/settings/NewAgentWizard";
 import { AgentDetail } from "@/components/agents/settings/AgentDetail";
 import { TokenReveal } from "@/components/agents/settings/TokenReveal";
+import { EnvironmentList } from "@/components/agents/settings/EnvironmentList";
 
 type View = { kind: "list" } | { kind: "new" } | { kind: "detail"; id: string };
 
@@ -106,6 +107,7 @@ export function AgentsSettingsTab() {
       <AgentList agents={agents} onOpen={(id) => setView({ kind: "detail", id })} />
       <ConnectedApps />
       <CiConnections key={syncWorkspaceId} workspaceId={syncWorkspaceId} />
+      <EnvironmentList key={`environment-${syncWorkspaceId}`} workspaceId={syncWorkspaceId} />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { briefBlocks, BRIEF_KEYS, leadTools } from './lead.ts';
-import { type Db, type DbResult, ToolError } from '../db.ts';
+import { type Db, type DbResult, type SelectSpec, ToolError } from '../db.ts';
 import type { ToolContext } from '../mcp.ts';
 
 type Row = Record<string, unknown>;
@@ -9,10 +9,10 @@ const tool = (name: string) => {
   assert.ok(found, `${name} is registered`);
   return found;
 };
-function context(rpc: (fn: string, args: Row) => DbResult<unknown>): ToolContext {
+function context(rpc: (fn: string, args: Row) => DbResult<unknown>, select?: (spec: SelectSpec) => Row[]): ToolContext {
   const db: Db = {
     rpc: <T>(fn: string, args: Row) => Promise.resolve(rpc(fn, args) as DbResult<T>),
-    select: <T>() => Promise.resolve({ data: [{ db_page_id: 'db1' }] as T[], error: null }),
+    select: <T>(spec: SelectSpec) => Promise.resolve({ data: (select?.(spec) ?? [{ db_page_id: 'db1' }]) as T[], error: null }),
     download: async () => ({ data: null, error: null }),
   };
   return { db, principal: { type: 'agent', userId: 'u1', agentId: 'lead1', workspaceId: 'w1', clientId: null },
@@ -37,6 +37,35 @@ Deno.test('update_subtask rejects an empty patch before writing', async () => {
 });
 
 const planBrief = { objective: 'Work', done_when: [{ id: 'c1', text: 'Delivered', check: 'lead' }] };
+
+Deno.test('environment tools reserve and release through RPCs, preserving conflict details', async () => {
+  const items = [{ kind: 'ports', value: '60990-60999' }];
+  const calls: Row[] = [];
+  const ctx = context((fn, args) => { calls.push({ fn, args }); return { data: fn === 'reserve_environment' ? items : { released: 1 }, error: null }; });
+  assert.deepEqual((await tool('reserve_environment').handler({ task_id: 't1', items }, ctx)).structured, { environment: items });
+  assert.deepEqual((await tool('release_environment').handler({ task_id: 't1' }, ctx)).structured, { released: 1 });
+  assert.deepEqual(calls, [
+    { fn: 'reserve_environment', args: { p_task_id: 't1', p_items: items } },
+    { fn: 'release_environment', args: { p_task_id: 't1' } },
+  ]);
+  const detail = { ...items[0], task_id: 'other', status: 'held' };
+  const conflict = context(() => ({ data: null, error: { code: 'PT409', message: 'resource_taken', details: JSON.stringify(detail) } }));
+  await assert.rejects(() => tool('reserve_environment').handler({ task_id: 't1', items }, conflict), (error: unknown) => {
+    assert.ok(error instanceof ToolError);
+    assert.equal(error.code, 'resource_taken'); assert.deepEqual(error.detail, detail); return true;
+  });
+});
+
+Deno.test('list_environments reads only unreleased resources through the caller database', async () => {
+  const rows = [{ task_id: 't1', kind: 'stack', value: 'p11', status: 'releasing' }];
+  const ctx = context(() => { assert.fail('no RPC'); }, (spec) => {
+    assert.equal(spec.table, 'agent_resources');
+    assert.deepEqual(spec.filters, [{ col: 'status', op: 'neq', value: 'released' }]);
+    assert.equal(spec.columns, 'kind,value,status,task_id');
+    return rows;
+  });
+  assert.deepEqual((await tool('list_environments').handler({}, ctx)).structured, { environments: rows });
+});
 const planArgs = { parent_task_id: 'parent', idempotency_key: 'plan-key' };
 function planContext(failKey?: string) {
   const calls: { fn: string; args: Row }[] = [];

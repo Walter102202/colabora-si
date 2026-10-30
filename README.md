@@ -60,6 +60,7 @@ Questions, choices and closing a task can be answered from a chat app too. Appro
 | Comment tasks | A person's @agent mention creates a task when the page has no open work task. `add_comment` accepts `parent_id` to reply in the same thread; an agent's mention never creates work. |
 | Files | `read_file` reads attached text (2 MB) and PDF text layers (5 MB) under page permissions, with at most 50,000 characters per reply. The platform loop can extract scans/images once with a compatible model and cache them through `save_file_text`. The built-in PDF reader supports content/object streams, FlateDecode and ToUnicode; other filters and Form XObjects are outside its supported subset. |
 | Lead | `create_task`, `create_subtask`, `import_plan`, `update_subtask`, `list_subtasks`, `review_task`, `close_subtask` |
+| Environment | `reserve_environment`, `release_environment`, `list_environments` |
 | Wait | `wait_for_task`, `wait_for_my_tasks` (the server holds the call up to 120 s and answers on the first change) |
 | People (chat hosts) | `list_waiting_on_me`, `decide_approval`, `close_task`; with `get_task`, each renders the task card in hosts that support MCP Apps |
 
