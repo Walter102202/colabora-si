@@ -58,6 +58,7 @@ Questions, choices and closing a task can be answered from a chat app too. Appro
 | AI requests | `get_ai_request`, `fill_ai_cells`, `complete_ai_request`: the platform agent's loop calls them; writes from other runs return `not_a_request_run`. |
 | AI rewrite | `apply_ai_rewrite`: the platform loop rewrites the selected block with attribution and an Undo action; other runs get `not_a_request_run`. |
 | Comment tasks | A person's @agent mention creates a task when the page has no open work task. `add_comment` accepts `parent_id` to reply in the same thread; an agent's mention never creates work. |
+| Files | `read_file` reads attached text (2 MB) and PDF text layers (5 MB) under page permissions, with at most 50,000 characters per reply. The platform loop can extract scans/images once with a compatible model and cache them through `save_file_text`. The built-in PDF reader supports content/object streams, FlateDecode and ToUnicode; other filters and Form XObjects are outside its supported subset. |
 | Lead | `create_task`, `create_subtask`, `list_subtasks`, `review_task`, `close_subtask` |
 | Wait | `wait_for_task`, `wait_for_my_tasks` (the server holds the call up to 120 s and answers on the first change) |
 | People (chat hosts) | `list_waiting_on_me`, `decide_approval`, `close_task`; with `get_task`, each renders the task card in hosts that support MCP Apps |

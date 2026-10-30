@@ -16,3 +16,14 @@ export interface RequestOutcome {
 export const FILL_BATCH: number;
 export const MAX_CELL_CHARS: number;
 export function runRequest(opts: RequestOptions): Promise<RequestOutcome>;
+export interface ExtractOptions {
+  call: RequestOptions["call"];
+  model: Model;
+  runId: string;
+  pageId: string;
+  fileId: string;
+  url: string;
+  mime: string;
+  prices?: { input: number; output: number };
+}
+export function extractFile(opts: ExtractOptions): Promise<{ data: Record<string, any>; usage: RequestOutcome["usage"] }>;

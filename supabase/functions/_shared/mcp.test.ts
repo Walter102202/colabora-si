@@ -17,6 +17,7 @@ const BEARER: VerifiedBearer = {
 };
 
 const fakeDb: Db = {
+    download: async () => ({ data: null, error: null }),
   rpc: () => Promise.resolve({ data: null, error: null }),
   select: () => Promise.resolve({ data: [], error: null }),
 };
@@ -214,6 +215,7 @@ Deno.test('every real tool has a title, hints and an output schema; $defs are al
 Deno.test('a denied agent call is recorded for the metrics, best effort; other errors and people are not', async () => {
   const calls: { fn: string; params: Record<string, unknown> }[] = [];
   const db: Db = {
+    download: async () => ({ data: null, error: null }),
     rpc: <T>(fn: string, params: Record<string, unknown>) => {
       calls.push({ fn, params });
       return Promise.resolve({ data: null as T, error: null });

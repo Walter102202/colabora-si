@@ -4,6 +4,7 @@ import type { ToolContext, ToolDef } from '../mcp.ts';
 import { aiTools } from './ai.ts';
 import { readTools } from './read.ts';
 import { inlineMarkdownToSpans } from '../lib/agentInput.ts';
+import { textPdf } from '../pdfFixtures.ts';
 
 type Row = Record<string, unknown>;
 const tool = (name: string) => aiTools.find((t) => t.name === name) as ToolDef;
@@ -19,6 +20,7 @@ const fill = { id: 't1', request_kind: 'fill', request: { page_id: 'db', propert
 function harness(task: Row = fill, page: Row = { id: 'db', title: 'Feedback', blocks: [], database }) {
   const calls: { name: string; args: Row }[] = [];
   const db: Db = {
+    download: async () => ({ data: null, error: null }),
     rpc: <T>(name: string, args: Row): Promise<DbResult<T>> => {
       calls.push({ name, args });
       return Promise.resolve({ data: (name === 'get_page_bundle' ? { page, pages: {} } : { task_state: 'done' }) as T, error: null });
@@ -68,4 +70,71 @@ Deno.test('apply_ai_rewrite turns Markdown into spans', async () => {
   await tool('apply_ai_rewrite').handler({ run_id: 'run', markdown: 'A **short** intro', rev: 3, idempotency_key: 'rewrite:t' }, h.ctx);
   assert.deepEqual(h.calls, [{ name: 'apply_ai_rewrite', args: { p_run_id: 'run', p_spans: inlineMarkdownToSpans('A **short** intro'),
     p_rev: 3, p_usage: undefined, p_idempotency_key: 'rewrite:t' } }]);
+});
+
+function fileHarness(opts: { blob?: Blob; name?: string; linked?: boolean; cached?: Row; size?: number; platform?: boolean } = {}) {
+  const blob = opts.blob ?? new Blob(['hello'], { type: 'text/plain' });
+  const h = harness(fill, { id: 'p', blocks: [{ id: 'b', type: 'file', fileId: 'f', fileName: opts.name ?? 'notes.md', fileSize: opts.size ?? blob.size }] });
+  let downloads = 0;
+  Object.assign(h.ctx.db, {
+    select: <T>(spec: { table: string }): Promise<DbResult<T[]>> => Promise.resolve({ data: ({
+      page_files: opts.linked === false ? [] : [{ page_id: 'p', file_id: 'f' }],
+      files: [{ id: 'f', workspace_id: 'w' }], file_texts: opts.cached ? [opts.cached] : [],
+      agents: [{ id: 'a', is_platform: opts.platform ?? false }], pages: [],
+    }[spec.table] ?? []) as T[], error: null }),
+    download: async () => { downloads++; return { data: blob, error: null }; },
+    fileInfo: async () => ({ data: { size: opts.size ?? blob.size, mime: blob.type }, error: null }),
+    signedUrl: async () => ({ data: 'https://files.test/signed', error: null }),
+  });
+  return { ...h, downloads: () => downloads };
+}
+const readFile = (h: ReturnType<typeof fileHarness>, range: Row = {}) => tool('read_file').handler({ page_id: 'p', file_id: 'f', ...range }, h.ctx);
+Deno.test('read_file returns the saved text', async () => {
+  const out = await readFile(fileHarness({ cached: { status: 'ready', mime: 'application/pdf', total_pages: 3, pages: [1, 2, 3].map((page) => ({ page, text: String(page) })) } }), { from_page: 2 });
+  assert.deepEqual(out.structured.pages, [{ page: 2, text: '2' }, { page: 3, text: '3' }]);
+  const withoutCount = await readFile(fileHarness({ cached: { status: 'partial', mime: null, total_pages: null, pages: [{ page: 3, text: 'Last page' }] } }));
+  assert.equal(withoutCount.structured.total_pages, 3);
+  assert.equal(withoutCount.structured.mime, 'application/octet-stream');
+});
+Deno.test('read_file reads a text file from storage', async () => {
+  const h = fileHarness({ blob: new Blob(['a,b\n1,2']), name: 'data.csv' });
+  const out = await readFile(h);
+  assert.equal(out.structured.status, 'ready');
+  assert.deepEqual(out.structured.pages, [{ page: 1, text: 'a,b\n1,2' }]);
+  assert.equal(h.calls.some((c) => c.name === 'save_file_text'), false);
+});
+Deno.test('read_file refuses a file that is not on the page', async () => {
+  await assert.rejects(() => readFile(fileHarness({ linked: false })), (e: unknown) => e instanceof ToolError && e.code === 'not_found');
+});
+Deno.test('read_file says not_extracted for an image without text', async () => {
+  for (const platform of [false, true]) {
+    const out = await readFile(fileHarness({ name: 'image.png', blob: new Blob(['image'], { type: 'image/png' }), platform }));
+    assert.equal(out.structured.status, 'not_extracted');
+    assert.equal(typeof out.structured.download_url === 'string', platform, 'only the platform agent receives a signed URL');
+  }
+});
+Deno.test('read_file reads a PDF\'s text layer', async () => {
+  const pdf = new Blob([new Uint8Array(textPdf(['BT (One) Tj ET', 'BT (Two) Tj ET']))], { type: 'application/pdf' });
+  const out = await readFile(fileHarness({ name: 'doc.pdf', blob: pdf }));
+  assert.equal(out.structured.status, 'ready');
+  assert.deepEqual(out.structured.pages, [{ page: 1, text: 'One' }, { page: 2, text: 'Two' }]);
+});
+Deno.test('a scanned PDF says not_extracted', async () => {
+  const out = await readFile(fileHarness({ name: 'scan.pdf', blob: new Blob([new Uint8Array(textPdf(['q /Image Do Q']))]) }));
+  assert.equal(out.structured.status, 'not_extracted');
+});
+Deno.test('a PDF over 5 MB says not_extracted without downloading it', async () => {
+  const h = fileHarness({ name: 'large.pdf', size: 6 * 1024 * 1024 });
+  assert.equal((await readFile(h)).structured.status, 'not_extracted'); assert.equal(h.downloads(), 0);
+});
+Deno.test('an encrypted PDF says unsupported', async () => {
+  const out = await readFile(fileHarness({ name: 'locked.pdf', blob: new Blob([new Uint8Array(textPdf([''], {}, '/Encrypt 40 0 R'))]) }));
+  assert.equal(out.structured.status, 'unsupported'); assert.equal(out.structured.reason, 'the PDF is encrypted');
+});
+Deno.test('read_file says unsupported for a zip', async () => {
+  assert.equal((await readFile(fileHarness({ name: 'data.zip', blob: new Blob(['zip'], { type: 'application/zip' }) }))).structured.status, 'unsupported');
+});
+Deno.test('a reply never passes 50000 characters', async () => {
+  const out = await readFile(fileHarness({ blob: new Blob(['x'.repeat(60000)]) }));
+  assert.equal((out.structured.pages as { text: string }[])[0].text.length, 50000); assert.equal(out.structured.truncated, true);
 });

@@ -21,6 +21,7 @@ export interface TaskOutcome {
   usage: { input_tokens: number; output_tokens: number; cost_usd: number };
 }
 export const RUNTIME_TOOLS: Set<string>;
+export const REQUEST_TOOLS: Set<string>;
 export const HEARTBEAT_INTERVAL_MS: number;
 export const realClock: Clock;
 export function costUsd(usage: { input_tokens: number; output_tokens: number }, prices: { input: number; output: number }): number;
@@ -34,6 +35,8 @@ export function runAgent(opts: {
   harness?: string;
   reviewerAgentId?: string;
   resume?: boolean;
+  modelVision?: boolean;
+  modelPdf?: boolean;
   prices?: { input: number; output: number };
   appUrl?: string;
   signal?: AbortSignal;

@@ -7,6 +7,7 @@ Deno.test('add_comment replies in a thread', async () => {
   for (const parentId of ['c1', undefined]) {
     const calls: { name: string; args: Record<string, unknown> }[] = [];
     const db: Db = {
+    download: async () => ({ data: null, error: null }),
       rpc: <T>(name: string, args: Record<string, unknown>): Promise<DbResult<T>> => {
         calls.push({ name, args: definedParams(args) });
         const page = { id: 'p', blocks: [], comments: [

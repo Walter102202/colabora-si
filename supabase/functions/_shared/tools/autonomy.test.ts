@@ -43,6 +43,7 @@ Deno.test('read-only tools never call an RPC that asks a person', async () => {
       for (const extra of [{}, { run_id: 'run-1', after_seq: 0 }]) {
         const called: string[] = [];
         const db: Db = {
+    download: async () => ({ data: null, error: null }),
           rpc: <T>(fn: string): Promise<DbResult<T>> => {
             called.push(fn);
             return Promise.resolve({ data: {} as T, error: null });

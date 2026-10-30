@@ -4,7 +4,7 @@
 import { argsHash, buildCheckpoint, guardFor, guardsFromResume, parseCheckpoint, WRITE_TOOLS } from "./checkpoint.mjs";
 import { McpError, toOpenAiTools } from "./mcpClient.mjs";
 import { buildSystemPrompt, buildTaskMessage } from "./prompt.mjs";
-import { runRequest } from "./requests.mjs";
+import { extractFile, runRequest } from "./requests.mjs";
 
 /**
  * @typedef {import("./mcpClient.mjs").McpClient} McpClient
@@ -17,7 +17,7 @@ import { runRequest } from "./requests.mjs";
 
 /** Tools the runtime drives itself; the model never sees them. */
 export const RUNTIME_TOOLS = new Set(["wait_for_my_tasks", "list_my_tasks", "claim_task", "heartbeat", "wait_for_task", "end_run", "ack_stop", "save_checkpoint", "hand_over", "await_questions"]);
-export const REQUEST_TOOLS = new Set(["get_ai_request", "fill_ai_cells", "complete_ai_request", "apply_ai_rewrite"]);
+export const REQUEST_TOOLS = new Set(["get_ai_request", "fill_ai_cells", "complete_ai_request", "apply_ai_rewrite", "save_file_text"]);
 /** wait_for_my_tasks reasons that mean "there is work to claim". */
 const CLAIM_REASONS = new Set(["queued", "feedback", "brief", "handover"]);
 /** Activity signals that answer a pending human decision. */
@@ -63,7 +63,7 @@ function answerText(p) {
  *   mcp: McpClient, model: Model, channel?: Channel, clock?: Clock,
  *   maxTurns?: number, maxTasks?: number, harness?: string, reviewerAgentId?: string, resume?: boolean,
  *   prices?: {input: number, output: number}, appUrl?: string,
- *   signal?: AbortSignal, waitTimeoutS?: number, log?: (msg: string) => void,
+ *   signal?: AbortSignal, waitTimeoutS?: number, log?: (msg: string) => void, modelVision?: boolean, modelPdf?: boolean,
  * }} opts
  * @returns {Promise<{tasks: TaskOutcome[]}>}
  */
@@ -82,6 +82,8 @@ export async function runAgent(opts) {
     appUrl = "",
     signal,
     waitTimeoutS = 120,
+    modelVision = false,
+    modelPdf = false,
     log = () => {},
   } = opts;
 
@@ -521,6 +523,13 @@ export async function runAgent(opts) {
           continue;
         }
         let res = await call(name, args);
+        if (name === "read_file" && !res.isError && res.data.status === "not_extracted" && res.data.download_url
+          && ((modelVision && res.data.mime?.startsWith("image/")) || (modelPdf && res.data.mime === "application/pdf"))) {
+          const extracted = await extractFile({ call, model, runId, pageId: args.page_id, fileId: args.file_id,
+            url: res.data.download_url, mime: res.data.mime, prices });
+          for (const key of ["input_tokens", "output_tokens"]) { total[key] += extracted.usage[key]; pending[key] += extracted.usage[key]; }
+          res = { isError: false, data: extracted.data, text: JSON.stringify(extracted.data) };
+        }
         let maybe = unsure(res);
         // A repeat with the same key is answered by the receipt of the first call when it did happen.
         if (WRITE_TOOLS.has(name) && args.idempotency_key && maybe) {

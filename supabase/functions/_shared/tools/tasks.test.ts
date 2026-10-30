@@ -8,7 +8,8 @@ type Row = Record<string, unknown>;
 const tool = (name: string) => taskTools.find((t) => t.name === name) as ToolDef;
 
 function ctxWith(rpc: (fn: string, args: Row) => Promise<DbResult<unknown>>): ToolContext {
-  const db: Db = { rpc: <T>(fn: string, args: Row) => rpc(fn, args) as Promise<DbResult<T>>, select: () => Promise.resolve({ data: [], error: null }) };
+  const db: Db = {
+    download: async () => ({ data: null, error: null }), rpc: <T>(fn: string, args: Row) => rpc(fn, args) as Promise<DbResult<T>>, select: () => Promise.resolve({ data: [], error: null }) };
   return {
     db,
     principal: { type: 'agent', userId: 'u-agent', agentId: 'agent-1', workspaceId: 'w1', clientId: null },
@@ -82,6 +83,7 @@ function harness(
 ) {
   const rpcs: RpcCall[] = [];
   const db: Db = {
+    download: async () => ({ data: null, error: null }),
     rpc: <T>(fn: string, params: Record<string, unknown>): Promise<DbResult<T>> => {
       const call = { fn, params };
       rpcs.push(call);

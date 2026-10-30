@@ -29,6 +29,7 @@ type RpcOutcome = { data: unknown; error: { message: string } | null };
 function setup(outcome: (id: string) => RpcOutcome = (id) => ({ data: id === 'launch-plan' ? BUNDLE : id === 'gone' ? DELETED : null, error: null }), appUrl = 'https://app.test') {
   const calls: { fn: string; params: Record<string, unknown> }[] = [];
   const db: Db = {
+    download: async () => ({ data: null, error: null }),
     rpc: (fn, params) => {
       calls.push({ fn, params });
       return Promise.resolve(outcome(String(params.p_page_id))) as Promise<DbResult<never>>;

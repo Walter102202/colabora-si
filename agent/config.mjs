@@ -14,6 +14,8 @@ import { readFile } from "node:fs/promises";
  * @property {string} tokenUrl          PAT -> JWT exchange endpoint
  * @property {string} harness           harness name reported on claim_task
  * @property {boolean} resume          resume from checkpoints when the server supports it
+ * @property {boolean} modelVision     the model accepts image input
+ * @property {boolean} modelPdf        the model accepts PDF input
  * @property {string} reviewerAgentId   reviewer instance delegated by the Lead ("" disables the review protocol)
  * @property {string} appUrl            public app URL for deep links ("" disables links)
  * @property {string} telegramBotToken  "" selects the console channel
@@ -83,6 +85,8 @@ export function readConfig(env) {
     tokenUrl: env.WORKSPACE_AGENT_TOKEN_URL || `${new URL(mcpUrl).origin}/functions/v1/agent-token`,
     harness: env.AGENT_HARNESS_NAME || "reference-agent",
     resume: env.AGENT_RESUME !== "0",
+    modelVision: env.WORKSPACE_MODEL_VISION === "1",
+    modelPdf: env.WORKSPACE_MODEL_PDF === "1",
     reviewerAgentId: env.AGENT_REVIEWER_AGENT_ID ?? "",
     appUrl: (env.WORKSPACE_APP_URL ?? "").replace(/\/+$/, ""),
     telegramBotToken: env.TELEGRAM_BOT_TOKEN ?? "",

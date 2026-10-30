@@ -36,6 +36,7 @@ function harness(
 ) {
   const rpcs: RpcCall[] = [];
   const db: Db = {
+    download: async () => ({ data: null, error: null }),
     rpc: <T>(fn: string, params: Record<string, unknown>): Promise<DbResult<T>> => {
       const call = { fn, params };
       rpcs.push(call);

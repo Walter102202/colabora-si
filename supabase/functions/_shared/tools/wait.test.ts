@@ -29,6 +29,7 @@ function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = (
   let clock = 1_000_000;
   let sleeps = 0;
   const db: Db = {
+    download: async () => ({ data: null, error: null }),
     rpc: (fn, params) => {
       rpcs.push({ fn, params });
       return Promise.resolve({ data: null, error: null });
