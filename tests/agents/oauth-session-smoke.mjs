@@ -1,6 +1,6 @@
 // Real local Auth, Data API, Storage, Realtime and Edge-runtime checks. Never run against a hosted project.
 // Needs API_URL, ANON_KEY, SERVICE_ROLE_KEY, SMOKE_PASSWORD; MCP_URL enables the served MCP assertion.
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { approveConsent, connectedApps, denyConsent, disconnectApp, loadConsent } from "../../lib/agentConsent.ts";
 
@@ -15,6 +15,7 @@ if (signInError) throw signInError;
 const owner = signedIn.session.access_token;
 const meta = await (await fetch(`${base}/auth/v1/.well-known/oauth-authorization-server`)).json();
 const claims = (token) => JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString());
+const isOAuth = (token) => claims(token).amr?.some((entry) => entry.method === "oauth_provider/authorization_code") === true;
 async function raw(method, path, token, body, key = anon, extra = {}) {
   const res = await fetch(`${base}${path}`, { method, headers: { apikey: key, Authorization: `Bearer ${token}`, "Content-Type": "application/json", Prefer: "count=exact", ...extra },
     body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body) });
@@ -22,6 +23,33 @@ async function raw(method, path, token, body, key = anon, extra = {}) {
   return { status: res.status, json, total: Number((res.headers.get("content-range") ?? "/0").split("/")[1]) };
 }
 const rpc = (token, name, args = {}) => raw("POST", `/rest/v1/rpc/${name}`, token, args);
+const enrollFactor = (token) => raw("POST", "/auth/v1/factors", token, { factor_type: "totp", friendly_name: `smoke-${randomUUID()}` });
+function totp(secret) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", bytes = [];
+  let bits = 0, value = 0;
+  for (const char of secret.toUpperCase().replace(/=+$/, "")) {
+    const digit = alphabet.indexOf(char);
+    if (digit < 0) throw new Error("Invalid TOTP secret encoding");
+    value = (value << 5) | digit; bits += 5;
+    if (bits >= 8) { bits -= 8; bytes.push((value >>> bits) & 255); }
+  }
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30000)));
+  const hash = createHmac("sha1", Buffer.from(bytes)).update(counter).digest(), offset = hash[19] & 15;
+  return String((hash.readUInt32BE(offset) & 0x7fffffff) % 1000000).padStart(6, "0");
+}
+async function verifyMfa(token, label) {
+  const factor = await enrollFactor(token);
+  check(`${label}: TOTP enrollment is enabled and succeeds`, factor.status === 200, { status: factor.status, code: factor.json?.error_code });
+  if (!factor.json?.totp?.secret) throw new Error(`${label}: real TOTP enrollment is required`);
+  const challenge = await raw("POST", `/auth/v1/factors/${factor.json.id}/challenge`, token, {});
+  if (challenge.status !== 200) throw new Error(`${label}: TOTP challenge failed (${challenge.status})`);
+  const verified = await raw("POST", `/auth/v1/factors/${factor.json.id}/verify`, token,
+    { challenge_id: challenge.json.id, code: totp(factor.json.totp.secret) });
+  check(`${label}: real TOTP verification succeeds`, verified.status === 200, { status: verified.status });
+  if (!verified.json?.access_token) throw new Error(`${label}: no MFA token returned`);
+  return verified.json.access_token;
+}
 async function authorize(name, redirect = "http://127.0.0.1:9/cb", clientId) {
   if (!clientId) {
     const registered = await fetch(meta.registration_endpoint, { method: "POST", headers: { "Content-Type": "application/json" },
@@ -40,6 +68,7 @@ async function exchange(flow, url) {
   const res = await fetch(meta.token_endpoint, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({
     grant_type: "authorization_code", code: new URL(url).searchParams.get("code"), redirect_uri: flow.redirect, client_id: flow.clientId, code_verifier: flow.verifier }) });
   const result = await res.json(); if (!result.access_token) throw new Error(`OAuth exchange failed: ${JSON.stringify(result)}`);
+  check("Auth contract: real chat tokens retain OAuth AMR", isOAuth(result.access_token));
   return result.access_token;
 }
 async function connect(name, agentId, redirect, clientId, client = person) {
@@ -63,6 +92,15 @@ async function watch(token, label) {
   });
   return { label, events, status, close: () => client.removeAllChannels() };
 }
+// A fresh person makes the parity check independent of any previously enrolled factors.
+const directEmail = `mfa-${randomUUID()}@test.invalid`, directPassword = `Mfa-${randomUUID()}`;
+const directUser = await raw("POST", "/auth/v1/admin/users", service, { email: directEmail, password: directPassword, email_confirm: true }, service);
+if (directUser.status !== 200) throw new Error(`MFA person setup failed (${directUser.status})`);
+const directLogin = await raw("POST", "/auth/v1/token?grant_type=password", anon, { email: directEmail, password: directPassword });
+if (!directLogin.json.access_token) throw new Error("MFA person login failed");
+const directMfa = await verifyMfa(directLogin.json.access_token, "Direct person");
+check("password and TOTP remain a direct session", !isOAuth(directMfa) && !claims(directMfa).client_id && claims(directMfa).aal === "aal2");
+check("a direct person with TOTP still uses the Data API", (await rpc(directMfa, "session_identity")).status === 200);
 check("service role reaches the Data API", (await raw("GET", "/rest/v1/agents?select=id&limit=1", service, undefined, service)).status < 300);
 check("anonymous reaches the Data API", (await raw("POST", "/rest/v1/rpc/session_identity", anon, {}, anon)).status !== 500);
 const agents = await rpc(owner, "linkable_agents");
@@ -96,6 +134,17 @@ for (const redirect of ["evilapp://claude.ai/cb", "http://localhost:3000/cb"]) {
 const plain = await connect("Smoke as you", null, "https://claude.ai/oauth/cb");
 const asPerson = await rpc(plain.token, "session_identity");
 check("an explicit trusted As-you chat is the person", asPerson.json?.principal_type === "human" && asPerson.json?.user_id === signedIn.user.id, asPerson);
+const humanMfa = await verifyMfa(plain.token, "As-you chat");
+check("Auth contract: MFA keeps OAuth AMR when it omits client_id", isOAuth(humanMfa) && !claims(humanMfa).client_id && claims(humanMfa).aal === "aal2");
+check("the As-you MFA token is refused by the Data API", (await rpc(humanMfa, "session_identity")).status === 401);
+check("the As-you MFA token cannot write a page", (await rpc(humanMfa, "append_page_blocks", { p_page_id: "market-research", p_blocks: [{ type: "paragraph", spans: ["forbidden MFA write"] }] })).status === 401);
+check("the As-you MFA token cannot mint a PAT", [401, 403].includes((await rpc(humanMfa, "issue_agent_token", { p_agent_id: agent.id })).status));
+check("the As-you MFA token cannot Rotate login", [401, 403].includes((await raw("POST", "/functions/v1/agent-admin", humanMfa, { action: "rotate_login", agent_id: agent.id })).status));
+if (mcpUrl) {
+  const denied = await fetch(mcpUrl, { method: "POST", headers: { Authorization: `Bearer ${humanMfa}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
+  check("MCP rejects the As-you MFA token before tool execution", [401, 403].includes(denied.status));
+}
 const pat = await rpc(plain.token, "issue_agent_token", { p_agent_id: agent.id });
 check("As-you chat cannot mint a PAT", pat.status === 403 && pat.json.message === "direct_session_required", pat);
 for (const action of ["create_agent", "rotate_login", "enable_platform_agent", "oauth_read"]) {
@@ -103,6 +152,8 @@ for (const action of ["create_agent", "rotate_login", "enable_platform_agent", "
   check(`As-you chat cannot ${action}`, result.status === 403 && result.json.error === "direct_session_required", result);
 }
 const linked = await connect("Smoke as agent", agent.id);
+const agentFactor = await enrollFactor(linked.token);
+check("an agent chat cannot enroll TOTP", agentFactor.status >= 400 && agentFactor.json?.error_code !== "mfa_totp_enroll_not_enabled", { status: agentFactor.status });
 check("the signed OAuth subject is the agent, never the person", claims(linked.token).sub === agentUser && claims(linked.token).app_metadata?.principal_type === "agent", { sub: claims(linked.token).sub });
 const me = await raw("GET", "/auth/v1/user", linked.token);
 check("Auth user is the agent", me.status === 200 && me.json.id === agentUser, { status: me.status, id: me.json.id });
@@ -174,6 +225,19 @@ const attach = await rpc(owner, "apply_page_ops", { p_page_id: "market-research"
 if (attach.status !== 200) throw new Error(`Attach failed: ${JSON.stringify(attach)}`);
 const readAttached = (token) => raw("GET", `/storage/v1/object/files/${attachedPath}`, token);
 check("a linked chat can read its granted attachment", (await readAttached(control.token)).status === 200);
+check("the As-you MFA token cannot read Storage", (await readAttached(humanMfa)).status >= 400);
+check("the As-you MFA token cannot upload to Storage", (await raw("POST", `/storage/v1/object/files/${agent.workspace_id}/${randomUUID()}`, humanMfa, "forbidden", anon, { "Content-Type": "text/plain" })).status >= 400);
+
+// Fresh platform creation exercises Auth identity creation before the agents row, with a direct MFA caller.
+const platformWorkspace = randomUUID();
+const workspace = await raw("POST", "/rest/v1/workspaces", directMfa, { id: platformWorkspace, name: "MFA platform smoke", owner_id: directUser.json.id });
+if (workspace.status !== 201) throw new Error(`Platform workspace setup failed (${workspace.status})`);
+const platform = await raw("POST", "/functions/v1/agent-admin", directMfa, { action: "enable_platform_agent", workspace_id: platformWorkspace });
+check("a direct MFA person can create a platform agent with its Auth identity", platform.status === 200 && platform.json.created === true, { status: platform.status });
+if (platform.status !== 200) throw new Error("Platform creation failed");
+const platformPat = await rpc(directMfa, "issue_agent_token", { p_agent_id: platform.json.agent_id });
+check("a direct MFA person can issue a platform PAT", platformPat.status === 200);
+check("the new platform agent login works", (await raw("POST", "/functions/v1/agent-token", anon, { token: platformPat.json.token })).status === 200);
 
 const memberPassword = `Member-${randomUUID()}`, memberEmail = `member-${randomUUID()}@test.invalid`;
 const memberUser = await raw("POST", "/auth/v1/admin/users", service, { email: memberEmail, password: memberPassword, email_confirm: true }, service);
@@ -190,7 +254,7 @@ const grant = await rpc(owner, "grant_agent_page", { p_agent_id: sponsored.data.
 if (grant.status !== 200) throw new Error(`Grant failed: ${JSON.stringify(grant)}`);
 const former = await connect("Member before removal", sponsored.data.agent_id, undefined, undefined, member);
 check("the current member chat can read its granted attachment", (await readAttached(former.token)).status === 200);
-const watchers = await Promise.all([["control", control.token], ["disconnected", linked.token], ["former-member", former.token],
+const watchers = await Promise.all([["control", control.token], ["disconnected", linked.token], ["former-member", former.token], ["as-you-mfa", humanMfa],
   ...(second ? [["hidden-client", second]] : [])].map(([label, token]) => watch(token, label)));
 try {
   for (const watcher of watchers) check(`Realtime ${watcher.label} subscription established`, watcher.status === "SUBSCRIBED", watcher.status);
@@ -199,7 +263,7 @@ try {
   const initialWrite = await rpc(control.token, "append_page_blocks", { p_page_id: "market-research", p_blocks: [{ type: "paragraph", spans: [before] }] });
   check("the linked control writes before revocation", initialWrite.status === 200);
   await wait(2000);
-  for (const watcher of watchers.filter((w) => w.label !== "hidden-client")) {
+  for (const watcher of watchers.filter((w) => !["hidden-client", "as-you-mfa"].includes(w.label))) {
     check(`Realtime ${watcher.label} receives content before revocation`, watcher.events.some((e) => JSON.stringify(e.new).includes(before)));
   }
   await disconnectApp(person, linked.clientId, true, agent.id);
@@ -210,6 +274,8 @@ try {
   check("Storage remains confined after Disconnect", (await raw("GET", `/storage/v1/object/files/${file}`, linked.token)).status >= 400);
   for (const [label, token] of [["disconnected", linked.token], ["former-member", former.token], ...(second ? [["hidden-client", second]] : [])]) {
     check(`${label} cannot read the previously granted attachment`, (await readAttached(token)).status >= 400);
+    const factor = await enrollFactor(token);
+    check(`${label} cannot enroll TOTP after revocation`, factor.status >= 400 && factor.json?.error_code !== "mfa_totp_enroll_not_enabled", { status: factor.status });
     const attempt = await raw("PUT", "/auth/v1/user", token, { password: changedPassword });
     check(`${label} cannot change credentials after revocation`, attempt.status >= 400, { status: attempt.status });
     const email = `agent+${label === "former-member" ? sponsored.data.agent_id : agent.id}@agents.invalid`;
