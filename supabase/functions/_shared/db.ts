@@ -92,6 +92,7 @@ const SQLSTATE_CODES: Record<string, string> = {
 };
 
 const MESSAGES: Record<string, string> = {
+  link_revoked: 'This connection was disconnected. Connect it again.',
   checkpoint_version_unsupported: 'This server reads checkpoint version 1 only. Send v: 1.',
   resume_unsupported: 'This agent does not declare the resume capability. Claim without resume, or ask a person to enable it.',
   delegate_not_found: 'That agent does not exist in this workspace or is not enabled.',

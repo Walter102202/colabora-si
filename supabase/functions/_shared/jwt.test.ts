@@ -1,11 +1,42 @@
 import assert from 'node:assert/strict';
 import { createClient } from '@supabase/supabase-js';
-import { AuthError, type ClaimsVerifier, verifyBearer } from './jwt.ts';
+import { AuthError, type ClaimsVerifier, resolveLinkedSession, type VerifiedBearer, verifyBearer } from './jwt.ts';
 
 const URL_BASE = 'http://project.test';
 const ENV = { SUPABASE_URL: URL_BASE, SUPABASE_ANON_KEY: 'anon' };
 const KID = 'test-key-1';
 const AGENT_ID = '11111111-1111-4111-8111-111111111111';
+
+const linkedBearer = (clientId: string | null = 'chat'): VerifiedBearer => ({ token: 'caller-token', claims: {},
+  principal: { type: 'human', userId: 'person', agentId: null, workspaceId: null, clientId } });
+
+Deno.test('direct sessions do not resolve a link', async () => {
+  const bearer = linkedBearer(null);
+  assert.equal(await resolveLinkedSession(bearer, () => { throw new Error('unexpected RPC'); }), bearer);
+});
+Deno.test('an unlinked OAuth session stays human', async () => {
+  const bearer = linkedBearer();
+  assert.equal(await resolveLinkedSession(bearer, async () => ({ data: { principal_type: 'human' }, error: null })), bearer);
+});
+Deno.test('a linked OAuth session uses the database agent identity and keeps the caller token', async () => {
+  const bearer = linkedBearer();
+  const result = await resolveLinkedSession(bearer, async () => ({ data: {
+    principal_type: 'agent', user_id: 'agent-user', agent_id: AGENT_ID, workspace_id: 'workspace', via_user: 'person',
+  }, error: null }));
+  assert.equal(result.token, bearer.token);
+  assert.deepEqual(result.principal, { type: 'agent', userId: 'agent-user', agentId: AGENT_ID,
+    workspaceId: 'workspace', viaUserId: 'person', clientId: 'chat' });
+});
+Deno.test('a revoked OAuth link is an invalid token', async () => {
+  await assert.rejects(resolveLinkedSession(linkedBearer(), async () => ({ data: null, error: { message: 'link_revoked' } })),
+    (e) => e instanceof AuthError && e.status === 401 && e.code === 'invalid_token');
+});
+Deno.test('unresolved OAuth sessions fail closed', async () => {
+  for (const error of [null, { message: 'session_link_not_applied' }, { message: 'offline' }]) {
+    await assert.rejects(resolveLinkedSession(linkedBearer(), async () => ({ data: null, error })),
+      (e) => e instanceof AuthError && e.status === 403 && e.code === 'wrong_principal');
+  }
+});
 
 const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const enc = (obj: unknown) => b64url(new TextEncoder().encode(JSON.stringify(obj)));

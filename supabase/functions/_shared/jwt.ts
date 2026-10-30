@@ -13,6 +13,8 @@ export interface Principal {
   workspaceId: string | null;
   /** OAuth client of a person's connection (chat apps); null for direct sessions and agents. */
   clientId: string | null;
+  /** Person who connected this chat, when it acts as an agent. */
+  viaUserId?: string | null;
 }
 
 export interface VerifiedBearer {
@@ -74,6 +76,30 @@ function audienceOk(aud: unknown): boolean {
 }
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+
+/** Uses the caller's token; PostgREST applies the session hook before resolving the identity. */
+export type SessionIdentity = () => Promise<{ data: Record<string, unknown> | null; error: { message?: string } | null }>;
+
+export async function resolveLinkedSession(bearer: VerifiedBearer, identity: SessionIdentity): Promise<VerifiedBearer> {
+  if (!bearer.principal.clientId) return bearer;
+  const { data, error } = await identity();
+  if (error?.message === 'link_revoked') throw new AuthError(401, 'invalid_token', 'This connection was disconnected. Connect it again.');
+  if (error || !data || !['human', 'agent'].includes(String(data.principal_type))) {
+    throw new AuthError(403, 'wrong_principal', 'The session could not be resolved.');
+  }
+  if (data.principal_type === 'human') return bearer;
+  return {
+    ...bearer,
+    principal: {
+      ...bearer.principal,
+      type: 'agent',
+      userId: str(data.user_id) ?? bearer.principal.userId,
+      agentId: str(data.agent_id),
+      workspaceId: str(data.workspace_id),
+      viaUserId: str(data.via_user),
+    },
+  };
+}
 
 /**
  * Validates `Authorization: Bearer <jwt>` (§IV.8.5). Throws AuthError:

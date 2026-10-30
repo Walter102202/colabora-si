@@ -26,7 +26,7 @@ export function AttributionMargin({ attr }: AttributionMarginProps) {
     <span
       contentEditable={false}
       aria-label={`Edited by ${name}`}
-      title={`${name}${runLabel}${status}${when}`}
+      title={`${name}${runLabel}${attr.via ? " · via chat" : ""}${status}${when}`}
       className="attribution-margin absolute -left-5 top-2 h-2 w-2 rounded-full bg-accent"
     />
   );

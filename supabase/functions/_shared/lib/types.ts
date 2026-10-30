@@ -19,6 +19,7 @@ export interface Actor {
 export interface BlockAttr {
   by: "human" | "agent";
   id: string;                  // actor id
+  via?: string;               // person who connected the chat acting as this agent
   runId?: string;              // agent: run id
   at: number;                  // epoch ms
 }
