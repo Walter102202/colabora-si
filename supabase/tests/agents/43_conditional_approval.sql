@@ -1,5 +1,5 @@
 begin;
-select plan(17);
+select plan(20);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_S','page_O','page_X']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+condlead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -75,6 +75,26 @@ select public.review_task(:'noci'::uuid, 'approved', '[{"criterion_id":"c1","sta
 select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'noci'), null, 'Merge?'))->>'status', 'pending', 'no ci criterion: ci_green is not proved');
 
 -- 12. A commit delivered after the approval: the check at the moment of acting sends it to a person.
+-- A different commit ref leaves the old artifact unsuperseded, as add_artifact does.
+select public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'try', 'freshness'), null, 'Merge?') as fresh_receipt \gset
+select tests.reset_role();
+insert into public.agent_artifacts (workspace_id, task_id, run_id, kind, ref, title, version, satisfies, author_type, author_id, created_at)
+select workspace_id, task_id, run_id, kind, 'acme/app@' || repeat('c', 40), title, 1, satisfies, author_type, author_id, now() + interval '2 seconds'
+ from public.agent_artifacts where id = :'art'::uuid returning id as fresh_art \gset
+select tests.set_service();
+select public.record_ci_check(:'conn'::uuid, 'acme/app', jsonb_build_object('id', 3, 'name', 'check', 'head_sha', repeat('c', 40), 'conclusion', 'success',
+  'html_url', 'https://github.com/acme/app/runs/3', 'head_branch', 'a/x', 'completed_at', now() + interval '2 seconds'));
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'try', 'unreviewed'), null, 'Merge?'))->>'status', 'pending', 'green CI on a new unsuperseded commit still needs a current review');
+select is((public.begin_external_op(:'lr'::uuid, 'github', 'git.merge', jsonb_build_object('subtask_id', :'sub', 'try', 'freshness'), (:'fresh_receipt'::jsonb->>'receipt')::uuid))->>'status', 'approval_required', 'a conditional receipt cannot authorize a newer unreviewed commit');
+select tests.reset_role();
+update public.agent_artifacts set superseded_by = :'art'::uuid where id = :'fresh_art'::uuid;
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.update_brief(:'sub'::uuid, '{"objective":"Changed acceptance context"}'::jsonb);
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'try', 'stale-brief'), null, 'Merge?'))->>'status', 'pending', 'a review of an older brief cannot approve a merge');
 select tests.reset_role();
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
 select tests.reset_role();

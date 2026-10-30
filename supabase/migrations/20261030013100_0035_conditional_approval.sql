@@ -40,7 +40,11 @@ begin
       if not exists (select 1 from public.agent_reviews r
                        join public.agent_artifacts a on a.id = r.artifact_id and a.superseded_by is null and a.version = r.artifact_version
                       where r.id = (select x.id from public.agent_reviews x where x.task_id = v_subject.id order by x.created_at desc, x.id desc limit 1)
-                        and r.verdict = 'approved') then
+                        and r.verdict = 'approved' and r.outdated_by is null and r.brief_version = v_subject.brief_version
+                        and a.task_id = v_subject.id and a.id = (
+                          select current_artifact.id from public.agent_artifacts current_artifact
+                           where current_artifact.task_id = v_subject.id and current_artifact.superseded_by is null
+                           order by current_artifact.created_at desc, current_artifact.id desc limit 1)) then
         return false;
       end if;
     elsif v_cond = 'ci_green' then
