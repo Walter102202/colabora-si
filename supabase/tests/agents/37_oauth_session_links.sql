@@ -1,5 +1,5 @@
 begin;
-select plan(86);
+select plan(96);
 create or replace function tests.set_oauth_agent(p_uid uuid, p_agent uuid, p_client text)
 returns void language sql as $$
   select tests.set_claims(jsonb_build_object('sub', p_uid, 'role', 'authenticated', 'aud', 'authenticated',
@@ -72,6 +72,21 @@ select is(private.is_workspace_member((:'f'::jsonb->>'ws')::uuid), false, 'claim
 select is(private.can_edit_workspace((:'f'::jsonb->>'ws')::uuid), false, 'claimless human OAuth has no editor access outside PostgREST');
 select is(private.has_page_share('page_G', array['edit']), false, 'claimless human OAuth cannot recover access through page shares');
 select is((select count(*)::int from public.notifications where id = :'notice'::uuid), 0, 'claimless human OAuth cannot read recipient-owned Realtime notifications');
+select is((select count(*)::int from public.workspaces where id = (:'f'::jsonb->>'ws')::uuid), 0, 'the owner marker cannot bypass workspace RLS');
+select tests.reset_role();
+
+select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'hidden-human');
+select is(private.is_workspace_member((:'f'::jsonb->>'ws')::uuid), false, 'an unlinked human client has no membership access');
+select is(private.can_edit_workspace((:'f'::jsonb->>'ws')::uuid), false, 'an unlinked human client has no editor access');
+select is(private.has_page_share('page_G', array['edit']), false, 'an unlinked human client has no shared-page access');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.set_oauth_link('revoked-human', null);
+select public.revoke_oauth_link('revoked-human');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'revoked-human');
+select is(private.is_workspace_member((:'f'::jsonb->>'ws')::uuid), false, 'a revoked human client loses membership access');
+select is((select count(*)::int from public.notifications where id = :'notice'::uuid), 0, 'a revoked human client cannot read notifications');
 select tests.reset_role();
 
 -- A known live link cannot be recovered from a claimless MFA token, even with a sentinel row.
@@ -242,6 +257,20 @@ select tests.reset_role();
 update private.agent_login_rotation set expires_at = clock_timestamp() - interval '1 second';
 select is(tests.error_of(format('update auth.users set encrypted_password = extensions.crypt(%L, extensions.gen_salt(''bf'')) where id = %L::uuid',
           repeat('b', 64), :'f'::jsonb->>'agent_user')), 'agent_credentials_frozen', 'an expired marker cannot change credentials');
+
+-- The common helper checks live, missing and revoked links and bypasses lookup for direct sessions.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'client-other');
+select is(private.oauth_session_live(), true, 'a live explicit human link is live');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'hidden-human');
+select is(private.oauth_session_live(), false, 'a human token without a link is not live');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'revoked-human');
+select is(private.oauth_session_live(), false, 'a revoked human link is not live');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(private.oauth_session_live(), true, 'a direct person needs no OAuth lookup');
+select tests.reset_role();
 
 -- Keep a tombstone when the agent's workspace is deleted; absence must never recover human reach.
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);

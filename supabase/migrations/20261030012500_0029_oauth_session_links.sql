@@ -91,37 +91,6 @@ returns text language sql stable set search_path = '' as $$
       then 'oauth-session-without-client' end);
 $$;
 
--- Full latest human permission helpers from 0001: RLS also rejects unresolved OAuth sessions.
-create or replace function private.is_workspace_member(ws uuid)
-returns boolean language sql security definer set search_path = '' stable as $$
-  select private.principal_type() = 'human'
-    and private.jwt_client_id() is distinct from 'oauth-session-without-client' and (
-    exists (select 1 from public.workspace_members m where m.workspace_id = ws and m.user_id = (select auth.uid()))
-    or exists (select 1 from public.workspaces w where w.id = ws and w.owner_id = (select auth.uid()))
-  );
-$$;
-create or replace function private.can_edit_workspace(ws uuid)
-returns boolean language sql security definer set search_path = '' stable as $$
-  select private.principal_type() = 'human'
-    and private.jwt_client_id() is distinct from 'oauth-session-without-client' and (
-    exists (select 1 from public.workspace_members m where m.workspace_id = ws and m.user_id = (select auth.uid()) and m.role in ('owner','editor'))
-    or exists (select 1 from public.workspaces w where w.id = ws and w.owner_id = (select auth.uid()))
-  );
-$$;
-create or replace function private.has_page_share(p_page_id text, p_levels text[])
-returns boolean language sql security definer set search_path = '' stable as $$
-  select private.principal_type() = 'human'
-    and private.jwt_client_id() is distinct from 'oauth-session-without-client' and exists (
-    select 1 from public.page_shares s where s.page_id = p_page_id and s.user_id = (select auth.uid()) and s.level = any(p_levels)
-  );
-$$;
-
--- Notifications are published to Realtime and authorize by recipient, not workspace/page access.
-create policy "oauth notifications require a client" on public.notifications as restrictive
-  for all to authenticated
-  using ((select private.jwt_client_id()) is distinct from 'oauth-session-without-client')
-  with check ((select private.jwt_client_id()) is distinct from 'oauth-session-without-client');
-
 -- Deletion preserves a tombstone. A missing association must never become human access.
 alter table public.agent_oauth_links
   add column if not exists as_human boolean not null default false,
@@ -182,6 +151,42 @@ exception when others then
   return false;
 end $$;
 revoke all on function private.oauth_session_ok() from public, anon, authenticated;
+
+-- Direct sessions never query OAuth links; all OAuth sessions must retain a live association.
+create or replace function private.oauth_session_live()
+returns boolean language sql stable security definer set search_path = '' as $$
+  select case when private.jwt_client_id() is null then true else private.oauth_session_ok() end;
+$$;
+revoke all on function private.oauth_session_live() from public;
+grant execute on function private.oauth_session_live() to anon, authenticated;
+
+-- Full latest human permission helpers from 0001: human RLS requires a live OAuth link.
+create or replace function private.is_workspace_member(ws uuid)
+returns boolean language sql security definer set search_path = '' stable as $$
+  select private.principal_type() = 'human' and private.oauth_session_live() and (
+    exists (select 1 from public.workspace_members m where m.workspace_id = ws and m.user_id = (select auth.uid()))
+    or exists (select 1 from public.workspaces w where w.id = ws and w.owner_id = (select auth.uid()))
+  );
+$$;
+create or replace function private.can_edit_workspace(ws uuid)
+returns boolean language sql security definer set search_path = '' stable as $$
+  select private.principal_type() = 'human' and private.oauth_session_live() and (
+    exists (select 1 from public.workspace_members m where m.workspace_id = ws and m.user_id = (select auth.uid()) and m.role in ('owner','editor'))
+    or exists (select 1 from public.workspaces w where w.id = ws and w.owner_id = (select auth.uid()))
+  );
+$$;
+create or replace function private.has_page_share(p_page_id text, p_levels text[])
+returns boolean language sql security definer set search_path = '' stable as $$
+  select private.principal_type() = 'human' and private.oauth_session_live() and exists (
+    select 1 from public.page_shares s where s.page_id = p_page_id and s.user_id = (select auth.uid()) and s.level = any(p_levels)
+  );
+$$;
+
+-- These policies also cover recipient/owner paths that bypass the permission helpers.
+create policy "oauth notifications require a live link" on public.notifications as restrictive for all to authenticated
+  using ((select private.oauth_session_live())) with check ((select private.oauth_session_live()));
+create policy "oauth workspaces require a live link" on public.workspaces as restrictive for all to authenticated
+  using ((select private.oauth_session_live())) with check ((select private.oauth_session_live()));
 
 -- Full latest definition from 0002. Direct agent tokens never evaluate the OAuth lookup.
 create or replace function private.current_agent_id()

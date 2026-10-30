@@ -2,6 +2,9 @@ begin;
 select plan(13);
 
 select tests.fixture() as f \gset
+-- Match the explicit As-you consent link required by the HTTP session hook.
+insert into public.agent_oauth_links (user_id, client_id, as_human)
+values ((:'f'::jsonb->>'owner')::uuid, 'mcp-client-1', true);
 
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.create_agent_task('page_A1', '{"objective":"Email the summary"}'::jsonb, (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as task \gset

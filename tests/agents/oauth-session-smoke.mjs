@@ -305,6 +305,75 @@ try {
   check("the direct person receives their Realtime notification", notificationWatchers[0].events.some((e) => e.new.id === noticeId));
   check("the As-you MFA token receives no Realtime notification", notificationWatchers[1].events.length === 0, { events: notificationWatchers[1].events.length });
 } finally { await Promise.all(notificationWatchers.map((watcher) => watcher.close())); }
+// Use a separate person without MFA so this tests live-link revocation independently of Auth's MFA grant handling.
+const humanEmail = `link-${randomUUID()}@test.invalid`, humanPassword = `Link-${randomUUID()}`;
+const humanUser = await raw("POST", "/auth/v1/admin/users", service, { email: humanEmail, password: humanPassword, email_confirm: true }, service);
+if (humanUser.status !== 200) throw new Error(`Human link setup failed (${humanUser.status})`);
+const humanPerson = createClient(base, anon, { auth: { persistSession: false, autoRefreshToken: false } });
+const humanLoginResult = await humanPerson.auth.signInWithPassword({ email: humanEmail, password: humanPassword });
+if (humanLoginResult.error) throw humanLoginResult.error;
+const humanDirect = humanLoginResult.data.session.access_token, humanWorkspace = randomUUID();
+const humanWorkspaceResult = await humanPerson.from("workspaces").insert({ id: humanWorkspace, name: "Human link smoke", owner_id: humanUser.json.id });
+if (humanWorkspaceResult.error) throw humanWorkspaceResult.error;
+const humanFile = `${humanWorkspace}/${randomUUID()}`;
+const humanUpload = await humanPerson.storage.from("files").upload(humanFile, "private human file", { contentType: "text/plain" });
+if (humanUpload.error) throw humanUpload.error;
+const humanVisible = await connect("Human visible chat", null, "https://claude.ai/oauth/cb", undefined, humanPerson);
+const humanControl = await connect("Human live control", null, "https://claude.ai/oauth/cb", undefined, humanPerson);
+const hiddenHumanFlow = await authorize("Hidden human client");
+const hiddenHumanRead = await raw("GET", `/auth/v1/oauth/authorizations/${hiddenHumanFlow.id}`, humanVisible.token);
+if (hiddenHumanRead.status !== 200) throw new Error(`Hidden human authorization read failed (${hiddenHumanRead.status})`);
+const hiddenHumanApproval = await raw("POST", `/auth/v1/oauth/authorizations/${hiddenHumanFlow.id}/consent`, humanVisible.token, { action: "approve" });
+if (hiddenHumanApproval.status !== 200) throw new Error(`Hidden human authorization failed (${hiddenHumanApproval.status})`);
+const hiddenHuman = await exchange(hiddenHumanFlow, hiddenHumanApproval.json.redirect_url);
+const humanDownload = (token) => raw("GET", `/storage/v1/object/files/${humanFile}`, token);
+const humanWriteFile = (token) => raw("POST", `/storage/v1/object/files/${humanWorkspace}/${randomUUID()}`, token, "file", anon, { "Content-Type": "text/plain" });
+for (const [label, token] of [["visible As-you", humanVisible.token], ["live As-you", humanControl.token], ["direct person", humanDirect]]) {
+  check(`${label} has Data API access before Disconnect`, (await rpc(token, "session_identity")).status === 200);
+  check(`${label} downloads from Storage before Disconnect`, (await humanDownload(token)).status === 200);
+  check(`${label} uploads to Storage before Disconnect`, (await humanWriteFile(token)).status < 300);
+}
+const humanWatchers = await Promise.all([
+  ["human-visible", humanVisible.token, humanWorkspace, true, false],
+  ["human-live", humanControl.token, humanWorkspace, true, true],
+  ["human-direct", humanDirect, humanWorkspace, true, true],
+  ["human-hidden", hiddenHuman, humanWorkspace, false, false],
+  ["owner-marker", humanMfa, agent.workspace_id, false, false],
+  ["owner-direct", owner, agent.workspace_id, true, true],
+].map(async ([label, token, workspaceId, beforeAllowed, afterAllowed]) => ({
+  ...await watch(token, label, "workspaces", `id=eq.${workspaceId}`), workspaceId, beforeAllowed, afterAllowed,
+})));
+try {
+  for (const watcher of humanWatchers) check(`Realtime ${watcher.label} workspace subscription established`, watcher.status === "SUBSCRIBED", watcher.status);
+  for (const phase of ["before", "after"]) {
+    if (phase === "after") {
+      await disconnectApp(humanPerson, humanVisible.clientId, true);
+      check("the disconnected As-you JWT has not expired", claims(humanVisible.token).exp * 1000 > Date.now());
+      for (const [label, token] of [["disconnected As-you", humanVisible.token], ["hidden human", hiddenHuman]]) {
+        check(`${label} is refused by the Data API`, (await rpc(token, "session_identity")).status === 401);
+        check(`${label} cannot download from Storage`, (await humanDownload(token)).status >= 400);
+        check(`${label} cannot upload to Storage`, (await humanWriteFile(token)).status >= 400);
+      }
+      for (const [label, token] of [["live As-you", humanControl.token], ["direct person", humanDirect]]) {
+        check(`${label} keeps Data API access`, (await rpc(token, "session_identity")).status === 200);
+        check(`${label} keeps Storage downloads`, (await humanDownload(token)).status === 200);
+        check(`${label} keeps Storage uploads`, (await humanWriteFile(token)).status < 300);
+      }
+    }
+    for (const watcher of humanWatchers) watcher.events.length = 0;
+    // Updating the timestamp emits the whole workspace row without changing its settings or content.
+    for (const [token, workspaceId] of [[humanDirect, humanWorkspace], [owner, agent.workspace_id]]) {
+      const update = await raw("PATCH", `/rest/v1/workspaces?id=eq.${workspaceId}`, token, { updated_at: new Date().toISOString() });
+      check(`the direct workspace control writes ${phase} Disconnect`, update.status < 300);
+    }
+    await wait(3000);
+    for (const watcher of humanWatchers) {
+      const allowed = phase === "before" ? watcher.beforeAllowed : watcher.afterAllowed;
+      check(`Realtime ${watcher.label} ${allowed ? "receives" : "receives no"} workspace content ${phase} Disconnect`,
+        allowed ? watcher.events.some((event) => event.new.id === watcher.workspaceId) : watcher.events.length === 0, { events: watcher.events.length });
+    }
+  }
+} finally { await Promise.all(humanWatchers.map((watcher) => watcher.close())); }
 const humanChange = await member.auth.updateUser({ password: changedPassword });
 check("a person can still change their own password", !humanChange.error);
 check("the person can log in with that new password", (await raw("POST", "/auth/v1/token?grant_type=password", anon, { email: memberEmail, password: changedPassword })).status === 200);
