@@ -209,7 +209,7 @@ Deno.test('every real tool has a title, hints and an output schema; $defs are al
   const fromChatGpt = await call(post({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, { 'User-Agent': 'openai-mcp/1.0' }), real);
   assert.deepEqual(fromChatGpt.body.result.tools, body.result.tools);
   const prompts = await call(post({ jsonrpc: '2.0', id: 3, method: 'prompts/list' }), real);
-  assert.deepEqual(prompts.body.result.prompts.map((p: { name: string }) => p.name), ['continue_task', 'review_as_lead']);
+  assert.deepEqual(prompts.body.result.prompts.map((p: { name: string }) => p.name), ['continue_task', 'review_as_lead', 'review_delivery']);
 });
 
 Deno.test('a denied agent call is recorded for the metrics, best effort; other errors and people are not', async () => {
