@@ -20,7 +20,7 @@ npx supabase test db supabase/tests/agents/07_approvals.sql                     
 - `npm run build` runs two Vite entries: `index.html` (the workspace) and `apps/card.html` (the MCP Apps card).
 - `npm run build:card` regenerates `supabase/functions/_shared/cardHtml.ts` from the card entry. Run it after any change under `components/agents/card/` or `components/agents/panel/` and commit the generated file; a deploy never builds it.
 - Card without a chat host: `http://127.0.0.1:3000/apps/card.html?mock=<scenario>` (scenarios in `components/agents/card/mock.ts`).
-- Two checks run only against a served local stack and are not part of `npm test`: `node tests/agents/mcp-smoke.mjs` (needs `MCP_URL`, `AGENT_PAT`, `SMOKE_PAGE_ID`) and `tests/agents/sql-concurrency.test.ts` (skips unless `A_DB_URL` is set). The seed plants two local-only agent tokens; they are listed in `supabase/functions/.env.example` and only work with the local pepper.
+- Two checks run only against a served local stack and are not part of `npm test`: `node tests/agents/mcp-smoke.mjs` (needs `MCP_URL`, `AGENT_PAT`, `SMOKE_PAGE_ID`) and `tests/agents/sql-concurrency.test.ts` (skips unless `A_DB_URL` is set). The seed plants four local-only agent tokens (Lead, Codex, Colabora, Reviewer); they are listed in `supabase/functions/.env.example` and only work with the local pepper.
 - `scripts/check-ownership.mjs` counts untracked files too, and skips (exit 0) on `main` or on any branch without an `a/`, `b/` or `infra/` prefix. CI runs it on every push with `--base origin/main`.
 - `main` deploys: the CI job pushes migrations and deploys Edge Functions from `main` only, and only when the Supabase secrets are configured.
 
