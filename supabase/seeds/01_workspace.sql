@@ -8,7 +8,7 @@ select id,id,id::text,jsonb_build_object('sub',id::text,'email',email,'email_ver
 from auth.users where id in ('00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002')
 on conflict(provider_id,provider) do nothing;
 insert into public.workspaces(id,name,owner_id,root_order,revision)
-values('00000000-0000-4000-8000-000000000010','Demo','00000000-0000-4000-8000-000000000001','["market-research","notes","wiki","private"]',1)
+values('00000000-0000-4000-8000-000000000010','Demo','00000000-0000-4000-8000-000000000001','["market-research","customer-feedback","notes","wiki","private"]',1)
 on conflict(id) do nothing;
 insert into public.workspace_members(workspace_id,user_id,role)
 values
@@ -573,4 +573,227 @@ insert into public.pages(id,workspace_id,parent_id,data,published,revision) valu
   "updatedAt": 1793059200000,
   "revision": 1
 }$page$::jsonb,false,1) on conflict(id) do nothing;
+
+-- Customer feedback: request-driven AI properties, initially empty.
+insert into public.pages(id,workspace_id,parent_id,data,published,revision) values('customer-feedback','00000000-0000-4000-8000-000000000010',null,$page$
+{
+  "icon": "💬",
+  "cover": null,
+  "blocks": [],
+  "isFavorite": false,
+  "isDeleted": false,
+  "fullWidth": false,
+  "smallText": false,
+  "createdAt": 1793059200000,
+  "updatedAt": 1793059200000,
+  "revision": 1,
+  "id": "customer-feedback",
+  "title": "Customer feedback",
+  "parentId": null,
+  "database": {
+    "id": "customer-feedback-db",
+    "properties": [
+      {
+        "id": "title",
+        "name": "Customer",
+        "type": "text"
+      },
+      {
+        "id": "feedback",
+        "name": "Feedback",
+        "type": "text"
+      },
+      {
+        "id": "p_summary",
+        "name": "Summary",
+        "type": "ai",
+        "aiPrompt": "Summarize the feedback in one short sentence."
+      },
+      {
+        "id": "p_sentiment",
+        "name": "Sentiment",
+        "type": "ai",
+        "aiPrompt": "Answer Positive, Neutral or Negative."
+      }
+    ],
+    "rows": [
+      {
+        "id": "feedback-row-1",
+        "pageId": "feedback-customer-1",
+        "cells": {
+          "title": "Acme Corp",
+          "feedback": "Onboarding took three weeks and the import tool failed twice, but support was quick to help.",
+          "p_summary": null,
+          "p_sentiment": null
+        },
+        "rev": 0
+      },
+      {
+        "id": "feedback-row-2",
+        "pageId": "feedback-customer-2",
+        "cells": {
+          "title": "Northwind",
+          "feedback": "We love the shared pages. Our agents and our team finally work in the same place.",
+          "p_summary": null,
+          "p_sentiment": null
+        },
+        "rev": 0
+      },
+      {
+        "id": "feedback-row-3",
+        "pageId": "feedback-customer-3",
+        "cells": {
+          "title": "Globex",
+          "feedback": "Pricing is unclear for teams over fifty people. We need a calculator before we can commit.",
+          "p_summary": null,
+          "p_sentiment": null
+        },
+        "rev": 0
+      },
+      {
+        "id": "feedback-row-4",
+        "pageId": "feedback-customer-4",
+        "cells": {
+          "title": "Initech",
+          "feedback": "The mobile app crashes when we open large databases. Desktop works fine.",
+          "p_summary": null,
+          "p_sentiment": null
+        },
+        "rev": 0
+      },
+      {
+        "id": "feedback-row-5",
+        "pageId": "feedback-customer-5",
+        "cells": {
+          "title": "Umbrella",
+          "feedback": "Search is fast and accurate. Please add filters by author.",
+          "p_summary": null,
+          "p_sentiment": null
+        },
+        "rev": 0
+      },
+      {
+        "id": "feedback-row-6",
+        "pageId": "feedback-customer-6",
+        "cells": {
+          "title": "Stark Labs",
+          "feedback": "Approvals from chat are great. Our managers approve without opening the app.",
+          "p_summary": null,
+          "p_sentiment": null
+        },
+        "rev": 0
+      }
+    ],
+    "views": [
+      {
+        "id": "feedback-table",
+        "name": "All feedback",
+        "type": "table"
+      }
+    ]
+  }
+}
+$page$::jsonb,false,1) on conflict(id) do nothing;
+insert into public.pages(id,workspace_id,parent_id,data,published,revision) values('feedback-customer-1','00000000-0000-4000-8000-000000000010','customer-feedback',$page$
+{
+  "icon": null,
+  "cover": null,
+  "blocks": [],
+  "isFavorite": false,
+  "isDeleted": false,
+  "fullWidth": false,
+  "smallText": false,
+  "createdAt": 1793059200000,
+  "updatedAt": 1793059200000,
+  "revision": 1,
+  "id": "feedback-customer-1",
+  "title": "Acme Corp",
+  "parentId": "customer-feedback"
+}
+$page$::jsonb,false,1) on conflict(id) do nothing;
+insert into public.pages(id,workspace_id,parent_id,data,published,revision) values('feedback-customer-2','00000000-0000-4000-8000-000000000010','customer-feedback',$page$
+{
+  "icon": null,
+  "cover": null,
+  "blocks": [],
+  "isFavorite": false,
+  "isDeleted": false,
+  "fullWidth": false,
+  "smallText": false,
+  "createdAt": 1793059200000,
+  "updatedAt": 1793059200000,
+  "revision": 1,
+  "id": "feedback-customer-2",
+  "title": "Northwind",
+  "parentId": "customer-feedback"
+}
+$page$::jsonb,false,1) on conflict(id) do nothing;
+insert into public.pages(id,workspace_id,parent_id,data,published,revision) values('feedback-customer-3','00000000-0000-4000-8000-000000000010','customer-feedback',$page$
+{
+  "icon": null,
+  "cover": null,
+  "blocks": [],
+  "isFavorite": false,
+  "isDeleted": false,
+  "fullWidth": false,
+  "smallText": false,
+  "createdAt": 1793059200000,
+  "updatedAt": 1793059200000,
+  "revision": 1,
+  "id": "feedback-customer-3",
+  "title": "Globex",
+  "parentId": "customer-feedback"
+}
+$page$::jsonb,false,1) on conflict(id) do nothing;
+insert into public.pages(id,workspace_id,parent_id,data,published,revision) values('feedback-customer-4','00000000-0000-4000-8000-000000000010','customer-feedback',$page$
+{
+  "icon": null,
+  "cover": null,
+  "blocks": [],
+  "isFavorite": false,
+  "isDeleted": false,
+  "fullWidth": false,
+  "smallText": false,
+  "createdAt": 1793059200000,
+  "updatedAt": 1793059200000,
+  "revision": 1,
+  "id": "feedback-customer-4",
+  "title": "Initech",
+  "parentId": "customer-feedback"
+}
+$page$::jsonb,false,1) on conflict(id) do nothing;
+insert into public.pages(id,workspace_id,parent_id,data,published,revision) values('feedback-customer-5','00000000-0000-4000-8000-000000000010','customer-feedback',$page$
+{
+  "icon": null,
+  "cover": null,
+  "blocks": [],
+  "isFavorite": false,
+  "isDeleted": false,
+  "fullWidth": false,
+  "smallText": false,
+  "createdAt": 1793059200000,
+  "updatedAt": 1793059200000,
+  "revision": 1,
+  "id": "feedback-customer-5",
+  "title": "Umbrella",
+  "parentId": "customer-feedback"
+}
+$page$::jsonb,false,1) on conflict(id) do nothing;
+insert into public.pages(id,workspace_id,parent_id,data,published,revision) values('feedback-customer-6','00000000-0000-4000-8000-000000000010','customer-feedback',$page$
+{
+  "icon": null,
+  "cover": null,
+  "blocks": [],
+  "isFavorite": false,
+  "isDeleted": false,
+  "fullWidth": false,
+  "smallText": false,
+  "createdAt": 1793059200000,
+  "updatedAt": 1793059200000,
+  "revision": 1,
+  "id": "feedback-customer-6",
+  "title": "Stark Labs",
+  "parentId": "customer-feedback"
+}
+$page$::jsonb,false,1) on conflict(id) do nothing;
 select set_config('request.jwt.claims','{}',false);

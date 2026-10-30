@@ -28,6 +28,39 @@ const names = (calls: { name: string }[]) => calls.map((c) => c.name).filter((n)
 const seed = (subtasks: object[] = []) => ({ changed: false, stop_requested: false, activities: [], next_seq: 1, task: { task_id: "task-1", state: "working", subtasks } });
 
 describe("reference agent loop", () => {
+  it.each(["get_ai_request", "fill_ai_cells", "complete_ai_request", "apply_ai_rewrite", "save_file_text"])("rejects a model attempt to call hidden request tool %s", async (name) => {
+    const mcp = createStubMcp({ tasks: queued, handlers: { [name]: () => ({ ok: true }) } });
+    const list = mcp.listTools;
+    mcp.listTools = async () => [...await list(), { name, inputSchema: { type: "object", properties: { run_id: { type: "string" } } } }];
+    const model = createStubModel([{ tool_calls: [toolCall(name, {})] }, { content: "Done" }]);
+    await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, maxTurns: 2 });
+    expect(mcp.calls.some(c => c.name === name)).toBe(false);
+    expect(model.requests[0].tools).toBeDefined();
+    expect(model.requests[0].tools!.some(t => t.function.name === name)).toBe(false);
+    expect(model.requests[1].messages.some(m => m.role === "tool" && m.content.includes("unknown_tool"))).toBe(true);
+  });
+  it("acknowledges a stopped AI request without writing or reporting a delivery", async () => {
+    const mcp = createStubMcp({ tasks: [{ ...queued[0], request_kind: "fill" }], heartbeats: [{ stop_requested: false }, { stop_requested: true }], handlers: {
+      get_ai_request: () => ({ kind: "fill", property: { prompt: "Summarize" }, rows: [{ row_id: "r1", rev: 0, inputs: {} }] }),
+    } });
+    const channel = memoryChannel();
+    const result = await runAgent({ mcp, model: createStubModel([{ content: '{"values":[{"row_id":"r1","text":"Late"}]}' }]), channel, clock: fakeClock(), maxTasks: 1 });
+    expect(result.tasks[0].outcome).toBe("stopped");
+    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "get_ai_request", "ack_stop"]);
+    expect(channel.events.map((e) => e.kind)).toEqual(["stopped"]);
+  });
+  it("a request task goes to runRequest, not to the model loop", async () => {
+    const mcp = createStubMcp({ tasks: [{ ...queued[0], request_kind: "fill" }], handlers: {
+      get_ai_request: () => ({ kind: "fill", property: { prompt: "Summarize" }, rows: [{ row_id: "r1", rev: 0, inputs: { Notes: "Text" } }] }),
+      fill_ai_cells: () => ({ written: [{ row_id: "r1" }], conflicts: [], skipped: [] }),
+      complete_ai_request: () => ({ task_state: "done" }),
+    } });
+    const model = createStubModel([{ content: '{"values":[{"row_id":"r1","text":"Short"}]}' }]);
+    const result = await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, maxTurns: 1 });
+    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "get_ai_request", "fill_ai_cells", "complete_ai_request"]);
+    expect(model.requests[0].tools).toBeUndefined();
+    expect(result.tasks[0].outcome).toBe("submitted");
+  });
   it("asks without blocking, keeps working, and hands the answer over when a heartbeat brings it", async () => {
     const answer = { seq: 12, text: "Casual", signal: "feedback", source: "row_panel", author_type: "human", approval_id: "input-1", decision: "respond" };
     const mcp = createStubMcp({

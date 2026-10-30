@@ -93,3 +93,11 @@ describe("row panel diff", () => {
     expect(container.querySelector('section[aria-label="Results"]')?.textContent).toContain("1 of 1");
   });
 });
+
+it("a task deep link still opens an AI request instead of the page's work task", async () => {
+  const request = { ...task, id: "rewrite-request", request_kind: "rewrite" as const };
+  useAgentTasks.setState({ tasks: { [task.id]: task, [request.id]: request }, activities: { [request.id]: [] } });
+  actions.loadTaskDiff.mockResolvedValue(diffOf([]));
+  await act(async () => root.render(createElement(MemoryRouter, { initialEntries: [`/p/${task.row_page_id}?task=${request.id}`] }, createElement(RowPanel, { pageId: task.row_page_id }))));
+  expect(actions.loadTaskDiff).toHaveBeenCalledWith(request.id);
+});

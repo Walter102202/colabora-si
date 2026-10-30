@@ -42,6 +42,17 @@ describe("backoff policy", () => {
 });
 
 describe("createModel retries", () => {
+  it("forwards shutdown cancellation to the request without retrying it", async () => {
+    const controller = new AbortController(), delays = recorder(); let calls = 0;
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      calls++; controller.abort();
+      if (init?.signal?.aborted) throw new DOMException("Stopped", "AbortError");
+      return ok();
+    };
+    const client = createModel({ baseUrl: "http://m.test/v1", model: "stub", fetchImpl, sleep: delays.sleep });
+    await expect(client.chat({ messages: [], signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+    expect(calls).toBe(1); expect(delays.delays).toEqual([]);
+  });
   it("retries a 429 after the Retry-After the server asked for", async () => {
     const f = fakeFetch([fail(429, { "Retry-After": "1" }), ok()]);
     const r = recorder();

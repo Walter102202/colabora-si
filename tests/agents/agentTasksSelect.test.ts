@@ -1,5 +1,9 @@
+import { mockCard } from "@/components/agents/card/mock";
+import type { TaskCardData } from "@/lib/agentCard";
+import { databaseTaskValues } from "@/lib/databaseTaskValues";
+import { db, prop, row } from "../clone/fixtures";
 import { describe, expect, it } from "vitest";
-import { pendingApprovalFor, type AgentTasksState, type ApprovalRow } from "@/lib/agentTasks";
+import { pendingApprovalFor, taskForPage, type AgentTasksState, type ApprovalRow } from "@/lib/agentTasks";
 import { openQuestionsFor } from "@/lib/agentCard";
 
 // Which pending approval the row panel shows for a task.
@@ -61,5 +65,20 @@ describe("questions that do not block", () => {
     const q1 = { ...side, id: "q1", blocking: true } as ApprovalRow;
     const q2 = { ...side, id: "q2", blocking: true, created_at: "2026-10-28T08:00:00Z" } as ApprovalRow;
     expect(openQuestionsFor([q2, gate, q1], "t9", "q1").map((q) => q.id)).toEqual(["q2"]);
+  });
+});
+
+describe("work tasks and AI requests on the same page", () => {
+  const work = { ...(mockCard("1") as TaskCardData).task, id: "work", state: "done" as const, updated_at: "2026-10-30T10:00:00Z" };
+  it.each(["working", "done"] as const)("ignores a newer %s rewrite when selecting the page's work", (status) => {
+    const request = { ...work, id: "request", request_kind: "rewrite" as const, state: status, updated_at: "2026-10-30T11:00:00Z" };
+    expect(taskForPage({ ...state, tasks: { work, request } }, work.row_page_id)?.id).toBe("work");
+    expect(taskForPage({ ...state, tasks: { request } }, work.row_page_id)).toBeNull();
+  });
+  it("keeps work status and delegate in query-only database values", () => {
+    const request = { ...work, id: "request", request_kind: "rewrite" as const, state: "working" as const, delegate_agent_id: "platform", updated_at: "2026-10-30T11:00:00Z" };
+    const database = db([prop({ id: "s", type: "agentStatus" }), prop({ id: "a", type: "agentDelegate" })], [row({}, work.row_page_id)]);
+    const result = databaseTaskValues(database, { work, request }, []);
+    expect(result.rows[0].cells).toMatchObject({ s: "done", a: work.delegate_agent_id });
   });
 });

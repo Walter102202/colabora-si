@@ -12,6 +12,8 @@ import Emoji from "@/components/Emoji";
 const DatabaseView = lazy(() => import("@/components/database/DatabaseView"));
 import RowProperties from "@/components/database/RowProperties";
 import { RowPanel } from "@/components/agents/RowPanel";
+import { AiRequestToasts } from "@/components/agents/AiRequestToasts";
+import { getSupabase } from "@/lib/supabase";
 import { buildDbOps } from "@/lib/dbOps";
 import { CommentThread } from "@/components/BlockCommentsPopover";
 import { COVER_GRADIENTS, coverBackground, safeCover } from "@/lib/cover";
@@ -47,6 +49,7 @@ export default function PageView({ pageId }: { pageId: string }) {
     </div>
     {parent && row && <RowProperties ops={buildDbOps(parent.id)} row={row} pages={pages} />}
     {(row || params.has("task")) && <RowPanel pageId={pageId} />}
+    {getSupabase() && <AiRequestToasts pageId={pageId} />}
     {!page.database && !page.locked && page.blocks.length <= 1 && (page.blocks[0]?.type ?? "paragraph") === "paragraph" && !page.blocks[0]?.html && <button className="mt-3 text-sm text-text-tertiary" onClick={() => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind: "template", pageId } }))}>Start with a template</button>}
     <div className="pt-2">{page.database ? <Suspense fallback={null}><DatabaseView pageId={pageId} locked={page.locked} /></Suspense> : <BlockEditor pageId={pageId} />}</div>
     {!!stats.backlinks.length && <section className="mt-10 border-t border-border pt-4"><h3 className="mb-2 text-xs uppercase text-text-tertiary">↳ {stats.backlinks.length} linked {stats.backlinks.length === 1 ? "reference" : "references"}</h3>{stats.backlinks.map((linked) => <button key={linked.id} className="page-link-block" onClick={() => withViewTransition(() => navigate(pageUrl(linked.id)))}><Emoji emoji={linked.icon ?? "📄"} /><span className="border-b border-border">{linked.title || "Untitled"}</span></button>)}</section>}

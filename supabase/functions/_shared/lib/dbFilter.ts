@@ -25,7 +25,8 @@ export function operatorsFor(type: PropertyType): FilterOperator[] {
       return ["isEmpty", "isNotEmpty"];
     case "id":
       return ["is", "isNot", "contains", "notContains", "gt", "lt"];
-    default: // text, url, email, phone, person, title
+    case "ai":
+    default: // text, ai, url, email, phone, person, title
       return ["is", "isNot", "contains", "notContains", "isEmpty", "isNotEmpty"];
   }
 }

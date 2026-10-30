@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Bell } from "lucide-react";
 import { createPortal } from "react-dom";
 import { AgentPropertyCell } from "@/components/agents/AgentPropertyCell";
+import { AiCell } from "@/components/agents/AiCell";
 import DatePickerCalendar from "@/components/DatePickerCalendar";
 import { formatIsoDate } from "@/lib/datePicker";
 import { computeCell, displayValue } from "@/lib/dbCompute";
@@ -19,11 +20,19 @@ import { requestNotifyPermission } from "@/lib/push";
 import { useStore } from "@/lib/store";
 function CellInput({ value, onSave, placeholder = "", type = "text", readOnly = false, label }: { value: string; onSave: (value: string) => void; placeholder?: string; type?: string; readOnly?: boolean; label: string }) {
   const element = useRef<HTMLInputElement>(null), latest = useRef({ value, onSave, readOnly });
+  const displayed = useRef(value);
   useEffect(() => { latest.current = { value, onSave, readOnly }; });
-  useEffect(() => { if (element.current && document.activeElement !== element.current) element.current.value = value; }, [value]);
+  useEffect(() => { if (element.current && document.activeElement !== element.current) { element.current.value = value; displayed.current = value; } }, [value]);
+  const save = () => {
+    const input = element.current, state = latest.current;
+    if (!input || state.readOnly) return;
+    if (input.value === displayed.current) { input.value = state.value; displayed.current = state.value; return; }
+    displayed.current = input.value;
+    if (input.value !== state.value) state.onSave(input.value);
+  };
   // A windowed table unmounts the rows that scroll away, and a removed input fires no blur: a pending edit is committed on unmount.
-  useLayoutEffect(() => () => { const input = element.current, { value, onSave, readOnly } = latest.current; if (input && !readOnly && input.value !== value) onSave(input.value); }, []);
-  return <Input label={label} ref={element} className="cell-input" type={type} defaultValue={value} aria-label={label} readOnly={readOnly} placeholder={placeholder} onBlur={(event) => { if (!readOnly && event.target.value !== value) onSave(event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { event.currentTarget.value = value; event.currentTarget.blur(); } }} />;
+  useLayoutEffect(() => () => save(), []);
+  return <Input label={label} ref={element} className="cell-input" type={type} defaultValue={value} aria-label={label} readOnly={readOnly} placeholder={placeholder} onBlur={save} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { event.currentTarget.value = value; displayed.current = value; event.currentTarget.blur(); } }} />;
 }
 export default function Cell({ ops, database, row, property, pages }: { ops: DbOps; database: Database; row: DbRow; property: DbProperty; pages: Record<string, Page> }) {
   const [anchor, setAnchor] = useState<DOMRect | null>(null), [query, setQuery] = useState("");
@@ -35,6 +44,7 @@ export default function Cell({ ops, database, row, property, pages }: { ops: DbO
   if (property.type === "button") return <button className="cell-button" disabled={ops.readOnly} onClick={() => { for (const action of property.buttonActions ?? []) ops.runButton(row.id, action); }}>{property.buttonLabel || "Run"}</button>;
   if (isAutoProperty(property, database)) return <span className={`cell-readonly ${text.startsWith("⚠") ? "danger" : ""}`} title={text.startsWith("⚠") ? text : property.type === "id" ? "Auto-generated ID (read-only)" : "Automatically updated"}>{text || "—"}</span>;
   if (property.type === "person") return <PersonCell value={value} onChange={set} readOnly={ops.readOnly} />;
+  if (property.type === "ai") return <AiCell row={row} property={property} database={database} readOnly={ops.readOnly} onChange={set} />;
   if (property.type === "files") return <FilesCell value={value} onChange={set} readOnly={ops.readOnly} />;
   if (property.type === "relation") return <RelationCell property={property} value={value} pages={pages} onChange={set} onOpen={(id) => ops.openRow(id)} readOnly={ops.readOnly} />;
   if (ops.readOnly && ["url", "email", "phone"].includes(property.type)) return text ? <a className="cell-readonly text-accent" href={safeHref(property.type === "email" ? `mailto:${text}` : property.type === "phone" ? `tel:${text}` : text)} target="_blank" rel="noopener noreferrer">{text}</a> : <span className="cell-readonly">—</span>;

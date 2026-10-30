@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Codex Stop hook: when Codex ends its turn, wait (outside the model) until
 // one of the agent's tasks needs it again, then continue the session with a
-// short prompt. It never continues because of the clock: without a real task
-// change it exits 0 with no output and Codex stops normally.
+// short prompt. It keeps waiting after a task closes or is stopped. Without
+// new work it exits 0 with no output at the deadline or after five consecutive
+// failures; it never continues because of the clock.
 //
 // Input (stdin): the Stop hook payload { session_id, cwd, turn_id, stop_hook_active, … }.
 // Output (stdout): {"decision":"block","reason":"…"} to continue, or nothing.
@@ -103,9 +104,8 @@ export async function runStopHook({ input, env, fetchImpl, now = Date.now, sleep
     clientInfo: { name: "colabora-codex-stop-hook", version: "0.1.0" },
   });
 
-  // In a continuation started by this hook (stop_hook_active), whatever is
-  // already pending is what the session just handled: only changes after this
-  // first snapshot count.
+  // In a continuation, old feedback/brief changes were already handled.
+  // Queued tasks and handovers in the first snapshot still need a session.
   let baseline = input?.stop_hook_active === true;
   /** @type {string | undefined} */ let cursor;
   let first = true;
@@ -132,13 +132,15 @@ export async function runStopHook({ input, env, fetchImpl, now = Date.now, sleep
     first = false;
     if (typeof result?.next_cursor === "string") cursor = result.next_cursor;
     const tasks = Array.isArray(result?.tasks) ? result.tasks : [];
-    if (baseline) { baseline = false; continue; }
+    const initial = baseline;
+    baseline = false;
 
     // A handover that waits on a person is still work for a session: it claims the task and waits in its run. Any other
     // task that waits on a person (a blocked or escalated review) is neither work nor a reason to stop: keep waiting for
     // the person's answer, which requeues it.
     const next = tasks.find((/** @type {any} */ t) =>
-      t?.task_id && CONTINUE_REASONS.has(t.reason) && !FINISHED_STATES.has(t.state) && (t.reason === "handover" || t.waiting_on !== "human"));
+      t?.task_id && !(initial && (t.reason === "feedback" || t.reason === "brief"))
+      && CONTINUE_REASONS.has(t.reason) && !FINISHED_STATES.has(t.state) && (t.reason === "handover" || t.waiting_on !== "human"));
     if (next) {
       let excerpt = "";
       if (next.reason === "feedback") {
@@ -146,10 +148,6 @@ export async function runStopHook({ input, env, fetchImpl, now = Date.now, sleep
         catch (error) { log(`get_task failed: ${error instanceof Error ? error.message : String(error)}`); }
       }
       return { exitCode: 0, output: JSON.stringify({ decision: "block", reason: buildReason(next, excerpt) }) };
-    }
-    // The task finished or was stopped: let Codex stop.
-    if (tasks.some((/** @type {any} */ t) => FINISHED_STATES.has(t?.state) || t?.reason === "stop")) {
-      return { exitCode: 0 };
     }
   }
 }

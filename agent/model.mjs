@@ -57,7 +57,7 @@ export function createModel({ baseUrl, apiKey = "", model, fetchImpl = globalThi
   const endpoint = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
   return {
     name: model,
-    async chat({ messages, tools }) {
+    async chat({ messages, tools, signal }) {
       /** @type {Record<string, unknown>} */
       const body = { model, messages };
       if (tools?.length) {
@@ -68,12 +68,15 @@ export function createModel({ baseUrl, apiKey = "", model, fetchImpl = globalThi
       const headers = { "Content-Type": "application/json" };
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
       for (let attempt = 1; ; attempt++) {
+        signal?.throwIfAborted();
         let res;
         let lastError;
         let retryAfter = null;
         try {
-          res = await fetchImpl(endpoint, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
+          const timeout = AbortSignal.timeout(timeoutMs);
+          res = await fetchImpl(endpoint, { method: "POST", headers, body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
         } catch (e) {
+          signal?.throwIfAborted();
           lastError = e;
         }
         if (res) {

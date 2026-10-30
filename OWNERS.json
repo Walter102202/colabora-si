@@ -157,6 +157,8 @@
       "lib/dbCompute.ts",
       "lib/dbFilter.ts",
       "lib/dbView.ts",
+      "lib/databaseTaskValues.ts",
+      "components/BlockCommentsPopover.tsx",
       "components/BlockEditor.tsx",
       "components/InlineToolbar.tsx",
       "components/PageView.tsx",
