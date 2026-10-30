@@ -3,6 +3,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AiCell } from "@/components/agents/AiCell";
+import Cell from "@/components/database/cells/Cell";
+import type { DbOps } from "@/lib/dbOps";
 import { useStore } from "@/lib/store";
 import { useAuthStore } from "@/lib/auth";
 import { useAgentsStore, type AgentRow } from "@/lib/agentsStore";
@@ -63,4 +65,21 @@ it("a second fill shows that one is already running", async () => {
   render();
   await act(async () => (container.querySelector("button") as HTMLButtonElement).click());
   expect(container.textContent).toContain("A fill is already running");
+});
+it.each(["ai", "text"] as const)("a focused %s cell does not overwrite a remote update without a person's edit", (type) => {
+  const onChange = vi.fn();
+  const changedProperty = { ...property, type };
+  const draw = (text: string) => {
+    const changedRow = { ...theRow, cells: { summary: type === "ai" ? { ...cell, text } : text } };
+    act(() => root.render(type === "ai"
+      ? <AiCell row={changedRow} property={changedProperty} database={database} readOnly={false} onChange={onChange} />
+      : <Cell ops={{ readOnly: false, updateCell: (_r, _p, value) => onChange(value) } as DbOps} row={changedRow} property={changedProperty} database={database} pages={{}} />));
+  };
+  draw("Before");
+  const input = container.querySelector("textarea,input") as HTMLInputElement;
+  act(() => input.focus());
+  draw("Remote value");
+  act(() => input.blur());
+  expect(onChange).not.toHaveBeenCalled();
+  expect(input.value).toBe("Remote value");
 });

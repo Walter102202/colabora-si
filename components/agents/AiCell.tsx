@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Database, DbProperty, DbRow } from "@/lib/types";
 import { aiCellText, isAiCellValue } from "@/lib/dbCompute";
 import { aiRequestError, requestAiFill, useAiRequests } from "@/lib/agentAiRequests";
@@ -22,23 +22,31 @@ export function AiCell({ row, property, database, readOnly, onChange }: {
     && r.request.property_id === property.id && r.request.row_ids?.includes(row.id));
   const name = agents.find((a) => a.id === signed?.agentId)?.name ?? "Agent";
   const input = useRef<HTMLTextAreaElement>(null);
-  const resize = () => {
+  const resize = useCallback(() => {
     if (!input.current) return;
     input.current.style.height = "auto";
     input.current.style.height = `${Math.min(input.current.scrollHeight, 160)}px`;
-  };
+  }, []);
   const latest = useRef({ text, readOnly, userId, onChange });
+  const displayed = useRef(text);
   useEffect(() => { latest.current = { text, readOnly, userId, onChange }; });
-  const save = () => {
+  const save = useCallback(() => {
     const current = input.current, state = latest.current;
-    if (!current || state.readOnly || current.value === state.text) return;
+    if (!current || state.readOnly) return;
+    if (current.value === displayed.current) {
+      current.value = state.text;
+      displayed.current = state.text;
+      resize();
+      return;
+    }
     const text = current.value.slice(0, 4000);
     state.onChange(text ? state.userId ? { text, by: "human", id: state.userId, at: Date.now() } : text : null);
     latest.current = { ...state, text };
-  };
-  useEffect(() => { if (input.current && document.activeElement !== input.current) input.current.value = text; resize(); }, [text]);
+    displayed.current = text;
+  }, [resize]);
+  useEffect(() => { if (input.current && document.activeElement !== input.current) { input.current.value = text; displayed.current = text; } resize(); }, [text, resize]);
   // Virtualized tables can unmount a focused row without firing blur.
-  useLayoutEffect(() => () => save(), []);
+  useLayoutEffect(() => () => save(), [save]);
   const generate = async () => {
     setPending(true); setError("");
     try { await requestAiFill(pageId, property.id, "empty", [row.id]); }
