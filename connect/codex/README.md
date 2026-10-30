@@ -15,7 +15,7 @@ The JWT lasts one hour. For longer sessions use the commented stdio block in `co
 **How it wakes up.** A Stop hook. Copy [`hooks.json`](hooks.json) to `<repo>/.codex/hooks.json` and set the path to `on-stop.mjs`. Hooks are on by default.
 
 - When Codex ends its turn, [`on-stop.mjs`](on-stop.mjs) exchanges `WORKSPACE_AGENT_PAT` (with `WORKSPACE_MCP_URL`) and waits on `wait_for_my_tasks` for up to `HOOK_WAIT_MIN` minutes (25 by default, below the hook timeout of 1800 s).
-- If a task of the agent gets feedback, is queued or its brief changes, the hook prints `{"decision":"block","reason":"…"}`. Codex continues with that reason as the next prompt, for example: `Task … has feedback from the Lead: …. Call claim_task("…"), resolve each finding and finish with submit_for_review.` The reason is at most 2,500 characters.
+- If a task of the agent gets feedback, is queued or its brief changes, the hook prints `{"decision":"block","reason":"…"}`. Codex continues with that reason as the next prompt, for example: `Task … has new feedback: …. Call claim_task("…"), resolve each finding and finish with submit_for_review.` The reason is at most 2,500 characters.
 - If the task is done or was stopped, or nothing happened before the limit, the hook exits 0 with no output and Codex stops normally.
 - A task that waits on a person after a blocked or escalated review keeps the hook waiting; the person's answer continues the session.
 - It never continues because of the clock. In a continuation it started (`stop_hook_active`), only changes after that point count.
