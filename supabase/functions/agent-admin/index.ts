@@ -63,6 +63,9 @@ Deno.serve((req) => {
 
   return handleAgentAdmin(req, {
     loginPepper: env.AGENT_LOGIN_PEPPER ?? '',
+    ciPepper: env.CI_WEBHOOK_PEPPER ?? '',
+    // The runtime's SUPABASE_URL may be an internal Docker hostname; prefer the configured public MCP origin.
+    functionsBaseUrl: `${new URL(env.MCP_RESOURCE_URL || env.SUPABASE_URL!).origin}/functions/v1`,
     async verifyCaller(token) {
       const { data, error } = await anon.auth.getClaims(token);
       const claims = data?.claims;

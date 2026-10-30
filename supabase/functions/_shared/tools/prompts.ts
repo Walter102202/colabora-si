@@ -26,6 +26,12 @@ function userMessage(text: string) {
   return { role: 'user', content: { type: 'text', text } };
 }
 
+function ciInstructions(brief: Row | null): string {
+  return doneWhen(brief).filter((c) => c.check === 'ci').map((c) =>
+    `[${c.id}] Deliver a diff artifact with ref owner/repo@<full sha> that satisfies this criterion. GitHub reports the result; do not state it yourself.`
+  ).join('\n');
+}
+
 const continueTask: PromptDef = {
   name: 'continue_task',
   title: 'Continue a task',
@@ -38,6 +44,7 @@ const continueTask: PromptDef = {
       `Continue the task "${String(t.task.title || t.task.id)}" (id ${String(t.task.id)}, state ${String(t.task.state)}, brief v${String(t.task.brief_version)}).`,
       `Goal: ${String(brief.objective ?? '')}`,
       `Done when:\n${bulletList(doneWhen(t.brief).map((d) => `[${d.id}] ${d.text}`))}`,
+      ciInstructions(t.brief),
       brief.constraints ? `Constraints: ${String(brief.constraints)}` : '',
       `Current deliverables:\n${bulletList(t.artifacts.map((a) => `${String(a.title || a.ref)} (${String(a.kind)} v${String(a.version)}, satisfies ${(a.satisfies as string[] ?? []).join(', ') || '-'})`))}`,
       `Recent activity (oldest first):\n${bulletList(t.activities.map((a) => `#${String(a.seq)} ${String(a.type)} by ${String(a.author_type)}: ${excerpt(a.body, 200)}`))}`,
@@ -59,6 +66,7 @@ const reviewAsLead: PromptDef = {
     const text = [
       `Review the subtask "${String(t.task.title || t.task.id)}" (id ${String(t.task.id)}).`,
       `Done when:\n${bulletList(doneWhen(t.brief).map((d) => `[${d.id}] ${d.text}${d.check ? ` (check: ${d.check}${d.command ? `, ${d.command}` : ''})` : ''}`))}`,
+      ciInstructions(t.brief),
       `Deliverables to check:\n${bulletList(t.artifacts.map((a) => `${String(a.id)}: ${String(a.title || a.ref)} (${String(a.kind)} ${String(a.ref)} v${String(a.version)})`))}`,
       'Evidence rule: judge only by what you can verify now in the deliverables (read_page, query_database, the artifact refs), ' +
       'not by what you remember from delegating. For each criterion record a finding with status verified, not_found, ' +

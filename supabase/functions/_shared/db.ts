@@ -92,6 +92,9 @@ const SQLSTATE_CODES: Record<string, string> = {
 };
 
 const MESSAGES: Record<string, string> = {
+  ci_commit_required: 'A ci criterion needs a diff artifact with ref owner/repo@<full sha>.',
+  repo_mismatch: 'This delivery does not match the connected repository.',
+  connection_revoked: 'This repository connection was disconnected. Connect it again.',
   link_revoked: 'This connection was disconnected. Connect it again.',
   checkpoint_version_unsupported: 'This server reads checkpoint version 1 only. Send v: 1.',
   resume_unsupported: 'This agent does not declare the resume capability. Claim without resume, or ask a person to enable it.',

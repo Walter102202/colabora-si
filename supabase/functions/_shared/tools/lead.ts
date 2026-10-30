@@ -9,7 +9,7 @@ import type { Row } from './taskData.ts';
 const doneWhenItem = object({
   id: { type: 'string', minLength: 1, maxLength: 60 },
   text: { type: 'string', minLength: 1, maxLength: 2000 },
-  check: { type: 'string', enum: ['human', 'deterministic', 'lead'] },
+  check: { type: 'string', enum: ['human', 'deterministic', 'lead', 'ci'] },
   command: { type: 'string' },
 }, ['id', 'text']);
 
@@ -238,7 +238,7 @@ const closeSubtask: ToolDef = {
   title: 'Close a reviewed subtask',
   description:
     'Lead, or the reviewer with an active run on its review task. Closes a subtask in ready_for_review when the parent brief allows it (policies.subtask_close = lead) or ' +
-    'every deterministic criterion is verified with evidence; otherwise policy_denied and a person decides.',
+    'every deterministic criterion is verified with evidence; CI criteria require a current verified review and a passing GitHub check on the delivered commit. Otherwise policy_denied and a person decides.',
   inputSchema: object({
     task_id: { type: 'string', minLength: 1 },
     verdict: { type: 'string', enum: ['accepted'], default: 'accepted' },

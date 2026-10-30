@@ -13,6 +13,8 @@ function makeDeps(opts: { member?: boolean; rpcFails?: boolean; owner?: boolean;
   const log = (op: string, ...args: unknown[]) => calls.push({ op, args });
   const deps: AgentAdminDeps = {
     loginPepper: PEPPER,
+    ciPepper: 'ci-pepper',
+    functionsBaseUrl: 'https://api.test/functions/v1',
     verifyCaller: (token) =>
       Promise.resolve(
         token === 'human-jwt' ? { userId: HUMAN, principalType: 'human' } : token === 'agent-jwt' ? { userId: AUTH_USER, principalType: 'agent' } : null,
@@ -33,7 +35,7 @@ function makeDeps(opts: { member?: boolean; rpcFails?: boolean; owner?: boolean;
       },
       rpc: (fn, args) => {
         log('callerRpc', fn, args);
-        return Promise.resolve(null);
+        return Promise.resolve(fn === 'create_ci_connection' ? { id: AGENT_ID, repo: 'acme/app' } : null);
       },
     }),
     admin: {
@@ -170,4 +172,32 @@ Deno.test('enable_platform_agent deletes the new user when the RPC reports the a
   assert.equal((await res.json()).created, false);
   assert.equal(calls.at(-1)?.op, 'deleteUser');
   assert.equal(calls.at(-1)?.args[0], AUTH_USER);
+});
+
+function ciConnect(): Request {
+  return new Request('http://localhost/functions/v1/agent-admin', {
+    method: 'POST', headers: { Authorization: 'Bearer human-jwt', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'ci_connect', workspace_id: WORKSPACE, repo: 'Acme/App' }),
+  });
+}
+Deno.test('ci_connect authorizes as the caller and derives the connection secret without admin writes', async () => {
+  const { deps, calls } = makeDeps();
+  deps.loginPepper = '';
+  const response = await handleAgentAdmin(ciConnect(), deps);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { id: AGENT_ID, repo: 'acme/app',
+    webhook_url: `https://api.test/functions/v1/github-webhook/${AGENT_ID}`,
+    secret: await hmacSha256Hex('ci-pepper', `github-webhook:${AGENT_ID}`) });
+  assert.deepEqual(calls, [{ op: 'callerRpc', args: ['create_ci_connection', { p_workspace_id: WORKSPACE, p_repo: 'Acme/App' }] }]);
+});
+Deno.test('ci_connect requires its pepper and propagates caller authorization failures', async () => {
+  const { deps, calls } = makeDeps();
+  deps.ciPepper = '';
+  assert.equal((await handleAgentAdmin(ciConnect(), deps)).status, 500);
+  assert.equal(calls.length, 0);
+  deps.ciPepper = 'ci-pepper';
+  const api = deps.caller('human-jwt');
+  api.rpc = () => Promise.reject({ code: 'PT403', message: 'forbidden' });
+  deps.caller = () => api;
+  assert.equal((await handleAgentAdmin(ciConnect(), deps)).status, 403);
 });

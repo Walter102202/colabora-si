@@ -2,6 +2,7 @@
 // The caller's own client (RLS) authorizes every action before the service key is used.
 // No Supabase imports here: index.ts wires the real clients through `deps`.
 import { agentEmail, agentLoginPassword } from '../_shared/agentLogin.ts';
+import { webhookSecret } from '../_shared/ciWebhook.ts';
 import { jsonResponse, oauthError } from '../_shared/errors.ts';
 
 export interface Caller {
@@ -42,6 +43,8 @@ export interface AdminUserAttributes {
 
 export interface AgentAdminDeps {
   loginPepper: string;
+  ciPepper: string;
+  functionsBaseUrl: string;
   /** Verifies the bearer JWT; null when it is not a valid session token of this project. */
   verifyCaller(token: string): Promise<Caller | null>;
   caller(token: string): CallerApi;
@@ -105,7 +108,6 @@ export async function handleAgentAdmin(req: Request, deps: AgentAdminDeps): Prom
   const caller = token ? await deps.verifyCaller(token).catch(() => null) : null;
   if (!token || !caller) return error(401, 'invalid_token', 'Sign in to manage agents.');
   if (caller.principalType !== 'human') return error(403, 'humans_only', 'Only people can manage agents.');
-  if (!deps.loginPepper) return error(500, 'misconfigured', 'AGENT_LOGIN_PEPPER is not set.');
 
   let body: unknown;
   try {
@@ -114,9 +116,20 @@ export async function handleAgentAdmin(req: Request, deps: AgentAdminDeps): Prom
     body = null;
   }
   if (!isRecord(body)) return error(400, 'invalid_request', 'Body must be a JSON object.');
+  if (body.action !== 'ci_connect' && !deps.loginPepper) return error(500, 'misconfigured', 'AGENT_LOGIN_PEPPER is not set.');
 
   const api = deps.caller(token);
   switch (body.action) {
+    case 'ci_connect': {
+      if (!deps.ciPepper || !deps.functionsBaseUrl) return error(500, 'misconfigured', 'CI_WEBHOOK_PEPPER and the functions URL must be set.');
+      if (!isUuid(body.workspace_id) || typeof body.repo !== 'string') return error(400, 'invalid_input', 'Use a workspace id and owner/name repository.');
+      try {
+        const connection = await api.rpc('create_ci_connection', { p_workspace_id: body.workspace_id, p_repo: body.repo });
+        if (!isRecord(connection) || !isUuid(connection.id) || typeof connection.repo !== 'string') throw new Error('Invalid connection');
+        return ok({ ...connection, webhook_url: `${deps.functionsBaseUrl.replace(/\/+$/, '')}/github-webhook/${connection.id}`,
+          secret: await webhookSecret(deps.ciPepper, connection.id) });
+      } catch (e) { return dbFailure(e, 'Could not connect the repository.'); }
+    }
     case 'create_agent':
       return createAgent(body, caller, api, deps);
     case 'enable_platform_agent':
@@ -126,7 +139,7 @@ export async function handleAgentAdmin(req: Request, deps: AgentAdminDeps): Prom
     case 'rotate_login':
       return rotateLogin(body, api, deps);
     default:
-      return error(400, 'invalid_request', 'action must be create_agent, enable_platform_agent, revoke_agent or rotate_login.');
+      return error(400, 'invalid_request', 'action must be create_agent, enable_platform_agent, revoke_agent, rotate_login or ci_connect.');
   }
 }
 

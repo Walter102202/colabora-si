@@ -78,7 +78,7 @@ interface RpcCall {
 /** In-memory tables; `onRpc` answers (or fails) the control RPCs and may mutate the tables like the database would. */
 function harness(
   tables: Record<string, Row[]>,
-  opts: { principal?: ToolContext['principal']; onRpc?: (call: RpcCall) => { data?: Row; error?: DbError } | void } = {},
+  opts: { principal?: ToolContext['principal']; onRpc?: (call: RpcCall) => { data?: unknown; error?: DbError } | void } = {},
 ) {
   const rpcs: RpcCall[] = [];
   const db: Db = {
@@ -254,4 +254,16 @@ Deno.test('request_approval answers approved at once when the autonomy allows th
   assert.equal(out.structured.receipt, 'r-9');
   assert.match(out.text, /^Approved automatically \(preset, balanced\)/);
   assert.match(tool('request_approval').description, /status approved/);
+});
+
+Deno.test('get_task loads CI status only for a CI criterion and returns it to the card', async () => {
+  for (const ci of [false, true]) {
+    const tables = world();
+    if (ci) tables.task_briefs[0].done_when = [{ id: 'c1', text: 'CI is green', check: 'ci', command: 'check' }];
+    const checks = [{ criterion_id: 'c1', check: 'check', state: 'passed' }];
+    const { ctx, rpcs } = harness(tables, { onRpc: ({ fn }) => fn === 'task_ci_status' ? { data: checks } : undefined });
+    const out = await tool('get_task').handler({ task_id: 't1' }, ctx);
+    assert.deepEqual(rpcs.filter((c) => c.fn === 'task_ci_status'), ci ? [{ fn: 'task_ci_status', params: { p_task_id: 't1' } }] : []);
+    assert.deepEqual(out.structured?.ci_checks, ci ? checks : undefined);
+  }
 });
