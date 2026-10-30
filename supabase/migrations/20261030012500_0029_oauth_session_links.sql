@@ -57,6 +57,28 @@ begin
 end $$;
 revoke all on function private.oauth_session_link() from public, anon, authenticated;
 
+-- Storage and Realtime evaluate RLS without PostgREST's pre-request hook.
+create or replace function private.oauth_session_ok()
+returns boolean language plpgsql stable security definer set search_path = '' as $$
+begin
+  perform private.oauth_session_link();
+  return true;
+exception when others then
+  return false;
+end $$;
+revoke all on function private.oauth_session_ok() from public, anon, authenticated;
+
+-- Full latest definition from 0002. Direct agent tokens never evaluate the OAuth lookup.
+create or replace function private.current_agent_id()
+returns uuid language sql stable security definer set search_path = '' as $$
+  select a.id from public.agents a
+  where a.auth_user_id = (select auth.uid())
+    and a.id = nullif(auth.jwt() -> 'app_metadata' ->> 'agent_id', '')::uuid
+    and a.status = 'enabled' and a.revoked_at is null
+    and coalesce((select (value)::boolean from private.app_flags where name = 'agents_enabled'), true)
+    and case when private.jwt_client_id() is null then true else private.oauth_session_ok() end;
+$$;
+
 create or replace function private.apply_session_link()
 returns void language plpgsql security definer set search_path = '' as $$
 declare v_l public.agent_oauth_links%rowtype; v_claims jsonb;

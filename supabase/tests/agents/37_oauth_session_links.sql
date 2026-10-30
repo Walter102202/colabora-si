@@ -1,5 +1,5 @@
 begin;
-select plan(45);
+select plan(50);
 create or replace function tests.set_oauth_agent(p_uid uuid, p_agent uuid, p_client text)
 returns void language sql as $$
   select tests.set_claims(jsonb_build_object('sub', p_uid, 'role', 'authenticated', 'aud', 'authenticated',
@@ -53,6 +53,7 @@ select tests.reset_role();
 
 -- A linked session already is the agent: the hook only validates and stamps it.
 select tests.set_oauth_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid, 'client-1');
+select is(private.current_agent_id(), (:'f'::jsonb->>'agent')::uuid, 'a live OAuth link resolves without the PostgREST hook');
 select private.apply_session_link();
 select is(private.principal_type(), 'agent', 'a linked chat is an agent');
 select is((select auth.uid()), (:'f'::jsonb->>'agent_user')::uuid, 'it carries the agent''s user id');
@@ -78,6 +79,12 @@ select is((select b->'attr'->>'via' from public.pages p, jsonb_array_elements(p.
 select tests.set_oauth_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid, 'client-1');
 select is(tests.error_of('select public.session_identity()'), 'session_link_not_applied', 'an unapplied link fails closed');
 select tests.reset_role();
+select tests.set_oauth_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid, 'hidden-client');
+select is(private.current_agent_id(), null::uuid, 'a second client without a link has no agent identity outside PostgREST');
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select is(private.current_agent_id(), (:'f'::jsonb->>'agent')::uuid, 'a direct agent token needs no OAuth link');
+select tests.reset_role();
 
 -- 21-22. A disabled agent stays the principal and every agent RPC refuses it.
 update public.agents set status = 'disabled' where id = (:'f'::jsonb->>'agent')::uuid;
@@ -96,6 +103,7 @@ select is(tests.error_of('select public.revoke_oauth_link(''client-1'')'), 'not_
 select tests.reset_role();
 -- 25. raise sqlstate PGRST carries the code inside the message JSON.
 select tests.set_oauth_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid, 'client-1');
+select is(private.current_agent_id(), null::uuid, 'Disconnect removes the agent identity outside PostgREST');
 select ok(tests.error_of('select public.session_identity()') like '%link_revoked%', 'a revoked link is refused even without the hook');
 select ok(tests.error_of('select private.apply_session_link()') like '%link_revoked%', 'a disconnected chat is refused by the hook');
 select tests.reset_role();
@@ -130,6 +138,7 @@ select is(tests.error_of(format('select public.update_agent(%L::uuid, %L::jsonb)
 select is(tests.error_of(format('select public.revoke_agent_token(%L::uuid)', :'member_token')), 'forbidden', 'a former-member sponsor cannot manage its tokens');
 select tests.reset_role();
 select tests.set_oauth_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid, 'former-member');
+select is(private.current_agent_id(), null::uuid, 'a former member has no agent identity outside PostgREST');
 select ok(tests.error_of('select private.apply_session_link()') like '%link_revoked%', 'an existing link stops when its person leaves the workspace');
 select tests.reset_role();
 
