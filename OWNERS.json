@@ -32,6 +32,11 @@
       "supabase/migrations/*_0028_*",
       "supabase/migrations/*_0029_*",
       "supabase/migrations/*_0030_*",
+      "supabase/migrations/*_0031_*",
+      "supabase/migrations/*_0032_*",
+      "supabase/migrations/*_0033_*",
+      "supabase/migrations/*_0034_*",
+      "supabase/migrations/*_0035_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -183,6 +188,12 @@
       "vercel.json",
       "supabase/config.toml",
       "tests/infra/vercelHeaders.test.ts"
+    ],
+    "a/p11": [
+      "README.md",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "public/llms.txt"
     ]
   }
 }
