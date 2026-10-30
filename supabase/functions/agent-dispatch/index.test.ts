@@ -78,6 +78,15 @@ Deno.test('pull agents are acked as delivered without any HTTP call', async () =
   assert.equal(posts.length, 0);
 });
 
+Deno.test('a webhook-kind agent without a webhook_url pulls: acked without any HTTP call', async () => {
+  // Settings creates the reference agent (it waits with wait_for_my_tasks) with kind webhook; 0022 derives its delivery: pull.
+  const { deps, acks, posts } = setup([[message(1, { kind: 'webhook', delivery: 'pull', connection: { harness: 'agent' } })]]);
+  const res = await handleAgentDispatch(req(SECRET), deps);
+  assert.deepEqual(await res.json(), { processed: 1, delivered: 1, retried: 0, failed: 0 });
+  assert.deepEqual(acks, [{ msgId: 1, eventId: 'ev-1', ok: true }]);
+  assert.equal(posts.length, 0);
+});
+
 Deno.test('webhook agents get a signed CloudEvent; 2xx acks ok', async () => {
   const agent = { kind: 'webhook', delivery: 'push' as const, connection: { webhook_url: 'https://hook.example/agent' } };
   const { deps, acks, posts } = setup([[message(7, agent, { webhook_secret: 'whsec' })]]);

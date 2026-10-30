@@ -126,3 +126,28 @@ begin
 end $$;
 revoke all on function public.review_task(uuid, text, jsonb, jsonb, uuid, uuid) from public, anon;
 grant execute on function public.review_task(uuid, text, jsonb, jsonb, uuid, uuid) to authenticated;
+
+-- ============ webhook agents are pushed to ============
+-- agents.delivery defaults to 'pull' (0002:13) and nothing set 'push', so agent-dispatch acked every event of a webhook
+-- agent as pulled and never posted it. Delivery now follows the connection: an agent with a webhook_url is pushed to,
+-- every other agent pulls. The kind does not decide it: Settings creates the reference agent, which pulls with
+-- wait_for_my_tasks, with kind 'webhook' and no webhook_url.
+create or replace function private.delivery_for(p_connection jsonb)
+returns text language sql immutable set search_path = '' as $$
+  select case when jsonb_typeof(p_connection->'webhook_url') = 'string' and p_connection->>'webhook_url' <> '' then 'push' else 'pull' end;
+$$;
+
+create or replace function private.agents_derive_delivery()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  new.delivery := private.delivery_for(new.connection);
+  return new;
+end $$;
+create trigger agents_10_delivery before insert or update of connection, delivery on public.agents
+  for each row execute function private.agents_derive_delivery();
+
+revoke execute on function private.delivery_for(jsonb) from public;
+revoke execute on function private.agents_derive_delivery() from public;
+
+-- Agents created before this migration with a webhook_url still say 'pull'.
+update public.agents set delivery = private.delivery_for(connection) where delivery <> private.delivery_for(connection);
