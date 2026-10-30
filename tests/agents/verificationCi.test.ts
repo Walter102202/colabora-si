@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
@@ -5,9 +6,26 @@ import { VerificationCard } from "@/components/agents/panel/VerificationCard";
 import { mockCard } from "@/components/agents/card/mock";
 import type { TaskCardData } from "@/lib/agentCard";
 import { CI_LABEL, type CiState } from "@/lib/agentCi";
+import type { ReviewRow } from "@/lib/agentTasks";
 
 const data = mockCard("1") as TaskCardData;
 const brief = { ...data.brief!, done_when: [{ id: "ci", text: "Build passes", check: "ci" as const, command: "check" }] };
+it("keeps minor findings in a neutral group without replacing criterion evidence", () => {
+  const review = { ...data.review!, findings: [
+    { criterion_id: "c1", status: "verified", note: "Test passed" },
+    { criterion_id: "c1", status: "contradicted", severity: "minor", note: "Name could be clearer" },
+    { status: "unverified", severity: "minor", note: "Improve the docs" },
+  ] } as ReviewRow;
+  const node = document.createElement("div");
+  node.innerHTML = renderToStaticMarkup(createElement(VerificationCard, { review,
+    brief: { ...brief, done_when: [{ id: "c1", text: "Works", check: "lead" }] } }));
+  const minors = node.querySelector('[aria-label="Minor, for later"]');
+  expect(minors?.textContent).toContain("Name could be clearer");
+  expect(minors?.textContent).toContain("Improve the docs");
+  expect(minors?.textContent).not.toMatch(/[✗?]/);
+  expect(node.querySelector("ul")?.textContent).toContain("Test passed");
+  expect(node.querySelector("ul")?.textContent).not.toContain("Name could be clearer");
+});
 it.each(Object.keys(CI_LABEL) as CiState[])("shows the CI state %s with and without a review", (state) => {
   for (const review of [null, data.review]) {
     const html = renderToStaticMarkup(createElement(VerificationCard, { brief, review,

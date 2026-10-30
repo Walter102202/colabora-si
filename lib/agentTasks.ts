@@ -92,7 +92,7 @@ export interface ReviewRow {
   artifact_version: number;
   brief_version: number;
   verdict: "approved" | "changes_requested" | "blocked";
-  findings: { criterion_id: string; status: "verified" | "not_found" | "contradicted" | "unverified"; note?: string; evidence_ref?: string }[];
+  findings: { criterion_id?: string; severity?: "blocking" | "minor"; status: "verified" | "not_found" | "contradicted" | "unverified"; note?: string; evidence_ref?: string }[];
   evidence: { kind: string; ref: string; hash?: string }[];
   outdated_by: "artifact" | "brief" | null;
   outdated_at: string | null;

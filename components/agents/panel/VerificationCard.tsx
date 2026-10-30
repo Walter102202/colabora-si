@@ -38,7 +38,9 @@ export function VerificationCard({ review, brief, reviewerName, ciChecks }: Veri
       </ul>
     );
   }
-  const byId = new Map(review.findings.map((f) => [f.criterion_id, f]));
+  const blocking = review.findings.filter((f) => f.severity !== "minor");
+  const minors = review.findings.filter((f) => f.severity === "minor");
+  const byId = new Map(blocking.filter((f) => f.criterion_id).map((f) => [f.criterion_id!, f]));
   return (
     <div className="space-y-1 text-xs">
       <p>
@@ -63,10 +65,14 @@ export function VerificationCard({ review, brief, reviewerName, ciChecks }: Veri
             </li>
           );
         })}
-        {review.findings.filter((f) => !criteria.some((c) => c.id === f.criterion_id)).map((f) => (
+        {blocking.filter((f) => f.criterion_id && !criteria.some((c) => c.id === f.criterion_id)).map((f) => (
           <li key={f.criterion_id} className="flex gap-2"><span className={STATUS[f.status].cls}>{STATUS[f.status].mark}</span><span>{f.criterion_id}{f.note ? ` · ${f.note}` : ""}</span></li>
         ))}
       </ul>
+      {minors.length > 0 && <section className="space-y-1 text-text-secondary" aria-label="Minor, for later">
+        <h5 className="font-medium">Minor, for later</h5>
+        <ul className="space-y-0.5">{minors.map((f, index) => <li key={index}>{f.note}{f.evidence_ref ? ` · ${f.evidence_ref}` : ""}</li>)}</ul>
+      </section>}
       {review.evidence.length > 0 && (
         <p className="text-text-tertiary">Evidence: {review.evidence.map((e) => `${e.kind} ${e.ref}`).join(" · ")}</p>
       )}

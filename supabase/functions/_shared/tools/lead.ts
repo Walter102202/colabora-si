@@ -259,7 +259,8 @@ const reviewTask: ToolDef = {
     'the worker; past the round limit it escalates to a person. blocked means a person must decide: the task waits on ' +
     'them and the worker resumes only after their answer. approved does not close the task: a person closes it ' +
     '(close_task), or the Lead with close_subtask when the policy allows.' +
-    ' As the reviewer agent, call it from your run on the review task delegated to you (its brief policy review_of names task_id); recording the review closes your review task.',
+    ' As the reviewer agent, call it from your run on the review task delegated to you (its brief policy review_of names task_id); recording the review closes your review task. ' +
+    'Minor findings never send work back and do not count a round; the Lead hears about them.',
   inputSchema: object({
     task_id: { type: 'string', minLength: 1 },
     run_id: { type: 'string', minLength: 1, description: 'Agents: your active run, on the parent task as Lead or on the review task as reviewer. People omit it.' },
@@ -269,10 +270,11 @@ const reviewTask: ToolDef = {
       type: 'array',
       items: object({
         criterion_id: { type: 'string', minLength: 1 },
+        severity: { type: 'string', enum: ['blocking', 'minor'] },
         status: { type: 'string', enum: ['verified', 'not_found', 'contradicted', 'unverified'] },
         note: { type: 'string', maxLength: 4000 },
         evidence_ref: { type: 'string' },
-      }, ['criterion_id', 'status']),
+      }, ['status']),
     },
     evidence: {
       type: 'array',

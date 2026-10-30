@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { briefBlocks, BRIEF_KEYS, leadTools } from './lead.ts';
 import { type Db, type DbResult, type SelectSpec, ToolError } from '../db.ts';
 import type { ToolContext } from '../mcp.ts';
+import { validate } from '../jsonSchema.ts';
 
 type Row = Record<string, unknown>;
 const tool = (name: string) => {
@@ -65,6 +66,17 @@ Deno.test('list_environments reads only unreleased resources through the caller 
     return rows;
   });
   assert.deepEqual((await tool('list_environments').handler({}, ctx)).structured, { environments: rows });
+});
+
+Deno.test('review_task accepts minor findings without a criterion and preserves RPC validation for blocking findings', async () => {
+  const findings = [{ severity: 'minor', status: 'unverified', note: 'Rename a helper' }];
+  const args = { task_id: 't1', verdict: 'approved', findings };
+  assert.deepEqual(validate(tool('review_task').inputSchema, args), []);
+  const ctx = context((_fn, params) => { assert.deepEqual(params.p_findings, findings); return { data: { review_id: 'r1' }, error: null }; });
+  await tool('review_task').handler(args, ctx);
+  const rejected = context(() => ({ data: null, error: { code: 'PT422', message: 'unknown_criterion' } }));
+  await assert.rejects(() => tool('review_task').handler({ ...args, findings: [{ status: 'verified' }] }, rejected),
+    (error: unknown) => error instanceof ToolError && error.code === 'unknown_criterion');
 });
 const planArgs = { parent_task_id: 'parent', idempotency_key: 'plan-key' };
 function planContext(failKey?: string) {

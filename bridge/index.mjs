@@ -37,6 +37,7 @@ const CHANNEL_INSTRUCTIONS =
   "finding; queued: claim_task and start; approval_decided or input: continue the run; updated: a subtask of this task closed, call get_task and decide the next step; stop: ack_stop. " +
   "handover: another session handed this task to you, claim_task with resume: true and follow the handover section; " +
   "updated with environment_release: stop those resources, then call release_environment. " +
+  "minor findings: open a follow-up subtask only if it is worth it. " +
   "Do not wait inside a tool: end your turn and the next event will wake you.";
 
 /** @param {{ channel: boolean, channelOnly: boolean }} opts */

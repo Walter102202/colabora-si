@@ -76,7 +76,8 @@ export function eventToChannel(event) {
   const detail = free ? `untrusted text: "${free}"` : (decision ?? artifacts);
   const environment = Array.isArray(payload.environment_release) && payload.environment_release.length
     ? `; environment_release (untrusted text): "${untrustedText(payload.environment_release.map((item) => `${item?.kind}: ${item?.value}`).join(", "))}"` : "";
-  const content = oneLine(`${label} ${reason}${environment}${detail ? `: ${detail}` : ""}`);
+  const minors = Array.isArray(payload.minor_findings) && payload.minor_findings.length ? `; ${payload.minor_findings.length} minor finding(s)` : "";
+  const content = oneLine(`${label} ${reason}${minors}${environment}${detail ? `: ${detail}` : ""}`);
   return {
     content,
     meta: sanitizeMeta({

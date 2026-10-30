@@ -13,6 +13,11 @@ it("reports resources to release as untrusted text", () => {
   expect(event.content).not.toMatch(/[<>`]/);
 });
 
+it("tells the Lead how many minor findings are available", () => {
+  const event = eventToChannel({ type: "task.updated", task_id: "parent", payload: { minor_findings: [{ note: "later" }, { note: "also later" }] } });
+  expect(event.content).toContain("2 minor finding(s)");
+});
+
 const MCP_URL = "https://ws.test/functions/v1/mcp";
 const TOKEN_URL = "https://ws.test/functions/v1/agent-token";
 const AGENT = "11111111-1111-1111-1111-111111111111";
