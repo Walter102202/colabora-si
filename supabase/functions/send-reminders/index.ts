@@ -377,7 +377,7 @@ export async function handleRequest(req: Request): Promise<Response> {
   }
 
   const expired = new Set<string>();
-  // Endpoints that threw (timeout, network) or answered 429/5xx: skipped for the rest of the pass.
+  // Endpoints that threw or rejected a push are skipped for the rest of the pass.
   const unreachable = new Set<string>();
   // The cron call gives up after 30 s: the pass stops starting sends after 15 s (plus at most one timeout),
   // so it always reaches the marking below; the rest waits for the next minute.
@@ -426,8 +426,8 @@ export async function handleRequest(req: Request): Promise<Response> {
         sent++;
       } else {
         console.error("push rejected", status, sub.endpoint);
-        // A service that is overloaded or failing now is tried again next pass, not for every row of this one.
-        if (status === 429 || (typeof status === "number" && status >= 500)) unreachable.add(sub.endpoint);
+        // Redirects and rejections wait until next pass; only expired/invalid subscriptions are pruned.
+        if (typeof status === "number" && status >= 300) unreachable.add(sub.endpoint);
       }
     });
     const outcome = pushOutcome(results);

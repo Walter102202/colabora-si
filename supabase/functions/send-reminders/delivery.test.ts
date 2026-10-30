@@ -138,3 +138,35 @@ Deno.test("the handler sends opaque ids in the RPC body and counts only marked r
     }
   } finally { globalThis.fetch = originalFetch; restore(); }
 });
+
+Deno.test("redirects and rejections skip only that device until the next pass", async () => {
+  const restore = environment({ SUPABASE_URL: "http://127.0.0.1:60721" });
+  const originalFetch = globalThis.fetch;
+  let rejectedStatus = 307;
+  globalThis.fetch = (input) => {
+    const url = new URL(String(input)), table = url.pathname.split("/").pop()!;
+    if (url.origin === "https://fcm.googleapis.com") {
+      return Promise.resolve(new Response(null, { status: table === "rejected" ? rejectedStatus : 201 }));
+    }
+    const rows: Record<string, unknown> = {
+      push_config: [cfg], pending_push_notifications: [],
+      due_push_reminders: [1, 2, 3].map((i) => ({ id: `r${i}`, user_id: "person", page_id: null, body: "Reminder" })),
+      push_subscriptions: ["rejected", "working"].map((name) => ({ ...sub, endpoint: `https://fcm.googleapis.com/wp/${name}` })),
+      mark_reminders_pushed: 3,
+    };
+    assert.ok(table in rows, `unexpected request (subscriptions must not be pruned): ${table}`);
+    return Promise.resolve(Response.json(rows[table]));
+  };
+  try {
+    for (rejectedStatus of [301, 307, 400, 401, 403, 413, 429, 500, 503]) {
+      for (let pass = 0; pass < 2; pass++) {
+        const response = await handleRequest(new Request("http://localhost/send-reminders", {
+          method: "POST", headers: { "x-push-secret": cfg.cron_secret },
+        }));
+        assert.deepEqual(await response.json(), {
+          due: 3, sent: 3, notified: 3, removed: 0, statuses: { 201: 3, [rejectedStatus]: 1 },
+        }, `status ${rejectedStatus}, pass ${pass}: the healthy device still receives every reminder`);
+      }
+    }
+  } finally { globalThis.fetch = originalFetch; restore(); }
+});
