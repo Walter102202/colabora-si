@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canTransition, continuationPlan, nextState, whatWillHappen, type TaskState } from "@/lib/agentState";
+import { canAcceptAndClose, canTransition, continuationPlan, nextState, whatWillHappen, type TaskState } from "@/lib/agentState";
 
 const task = (state: TaskState, active_run_id: string | null = null) => ({ state, active_run_id, brief_version: 2 });
 
@@ -69,5 +69,14 @@ describe("whatWillHappen", () => {
     expect(whatWillHappen(task("input_required"), null, "approve", { action: "send_email", params: { to: "ana@example.com" }, artifactVersion: 2, expiresIn: "14 min" })).toBe(
       "Send an email to ana@example.com for deliverable v2. The email leaves the workspace and cannot be recalled. Expires in 14 min.",
     );
+  });
+});
+
+describe("accept and close", () => {
+  it("mirrors close_task: a deliverable in review, or one waiting on a person after a blocked or escalated review", () => {
+    expect(canAcceptAndClose("ready_for_review", true)).toBe(true);
+    expect(canAcceptAndClose("input_required", true)).toBe(true);
+    expect(canAcceptAndClose("input_required", false)).toBe(false);
+    for (const state of ["queued", "working", "done", "failed", "cancelled"] as TaskState[]) expect(canAcceptAndClose(state, true)).toBe(false);
   });
 });

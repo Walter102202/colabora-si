@@ -7,7 +7,7 @@ import { useQueuedChoice } from "@/components/agents/panel/useQueuedChoice";
 import type { ActivityRow, ApprovalRow, ArtifactRow, BriefRow, ReviewRow, RunRow, TaskRow } from "@/lib/agentTasks";
 import type { ApprovalDecision, MessageSignal } from "@/lib/agentActions";
 import type { AgentRole } from "@/lib/agentsStore";
-import { RUN_STATUS_LABEL, acceptanceLabel, isTerminal, whatWillHappen } from "@/lib/agentState";
+import { RUN_STATUS_LABEL, acceptanceLabel, canAcceptAndClose, isTerminal, whatWillHappen } from "@/lib/agentState";
 import { formatRelative } from "@/lib/utils";
 import { pageUrl } from "@/lib/routes";
 import { StatusBadge } from "@/components/agents/panel/StatusBadge";
@@ -324,7 +324,7 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
         )}
         {(task.state === "ready_for_review" || task.state === "input_required") && !closing && (
           <>
-            <button type="button" className="rounded border border-green-600/50 px-3 py-1 text-xs text-green-700 hover:bg-bg-secondary dark:text-green-400" disabled={busy !== null || task.state !== "ready_for_review"} onClick={() => setClosing("accepted")}>
+            <button type="button" className="rounded border border-green-600/50 px-3 py-1 text-xs text-green-700 hover:bg-bg-secondary dark:text-green-400" disabled={busy !== null || !canAcceptAndClose(task.state, !!artifact)} onClick={() => setClosing("accepted")}>
               Accept and close
             </button>
             <button type="button" className="rounded border border-border px-3 py-1 text-xs text-text-secondary hover:bg-bg-secondary" disabled={busy !== null} onClick={() => setClosing("rejected")}>

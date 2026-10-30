@@ -134,7 +134,9 @@ export async function runStopHook({ input, env, fetchImpl, now = Date.now, sleep
     const tasks = Array.isArray(result?.tasks) ? result.tasks : [];
     if (baseline) { baseline = false; continue; }
 
-    // A handover that waits on a person is still work for a session: it claims the task and waits in its run.
+    // A handover that waits on a person is still work for a session: it claims the task and waits in its run. Any other
+    // task that waits on a person (a blocked or escalated review) is neither work nor a reason to stop: keep waiting for
+    // the person's answer, which requeues it.
     const next = tasks.find((/** @type {any} */ t) =>
       t?.task_id && CONTINUE_REASONS.has(t.reason) && !FINISHED_STATES.has(t.state) && (t.reason === "handover" || t.waiting_on !== "human"));
     if (next) {
@@ -145,8 +147,8 @@ export async function runStopHook({ input, env, fetchImpl, now = Date.now, sleep
       }
       return { exitCode: 0, output: JSON.stringify({ decision: "block", reason: buildReason(next, excerpt) }) };
     }
-    // The task finished, was escalated to a person or was stopped: let Codex stop.
-    if (tasks.some((/** @type {any} */ t) => FINISHED_STATES.has(t?.state) || (t?.waiting_on === "human" && t?.reason !== "handover") || t?.reason === "stop")) {
+    // The task finished or was stopped: let Codex stop.
+    if (tasks.some((/** @type {any} */ t) => FINISHED_STATES.has(t?.state) || t?.reason === "stop")) {
       return { exitCode: 0 };
     }
   }

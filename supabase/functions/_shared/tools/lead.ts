@@ -192,7 +192,8 @@ const reviewTask: ToolDef = {
   description:
     'Review of a task in ready_for_review: as Lead from your own run on the parent task (run_id), or as a person ' +
     '(no run_id). One finding per "done when" criterion, judged by evidence. changes_requested sends the findings to ' +
-    'the worker; past the round limit it escalates to a person. approved does not close the task: a person closes it ' +
+    'the worker; past the round limit it escalates to a person. blocked means a person must decide: the task waits on ' +
+    'them and the worker resumes only after their answer. approved does not close the task: a person closes it ' +
     '(close_task), or the Lead with close_subtask when the policy allows.' +
     ' As the reviewer agent, call it from your run on the review task delegated to you (its brief policy review_of names task_id); recording the review closes your review task.',
   inputSchema: object({

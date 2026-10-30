@@ -157,7 +157,8 @@ async function deliverWebhook(m: DispatchMessage, deps: DispatchDeps): Promise<A
 export async function deliver(m: DispatchMessage, deps: DispatchDeps): Promise<AckInput> {
   const base = { msgId: m.msg_id, eventId: m.event.event_id };
   if (m.agent.status !== 'enabled') return { ...base, ok: false, error: `agent_${m.agent.status}`, retryable: true };
-  if (m.agent.delivery === 'pull') return { ...base, ok: true }; // the agent fetches its own work
+  // delivery is 'push' exactly when the connection has a webhook_url (0022); every other agent fetches its own work.
+  if (m.agent.delivery === 'pull') return { ...base, ok: true };
   if (m.agent.kind === 'webhook' || typeof m.agent.connection?.webhook_url === 'string') return await deliverWebhook(m, deps);
   return { ...base, ok: false, error: `adapter_not_supported:${m.agent.kind}`, retryable: false };
 }

@@ -34,6 +34,14 @@ Deno.test('claim_task surfaces task_unavailable as a ToolError the model can act
   );
 });
 
+Deno.test('send_message says that a Lead message on a task waiting on a person is kept for the next run', async () => {
+  assert.match(tool('send_message').description, /waiting_on_human/);
+  const ctx = ctxWith(() => Promise.resolve({ data: { activity_id: 'a1', delivery: 'waiting_on_human' }, error: null }));
+  const out = await tool('send_message').handler({ task_id: 't1', body: 'Use the 2025 figures.' }, ctx);
+  assert.equal(out.text, 'Message recorded. The task waits on a person: the next run reads it once they answer.');
+  assert.deepEqual(out.structured, { activity_id: 'a1', delivery: 'waiting_on_human' });
+});
+
 Deno.test('submit_for_review says that a delivery waits for the last blocking answer, and which requests block', async () => {
   const ctx = ctxWith(() => Promise.resolve({ data: null, error: { code: 'PT409', message: 'waiting_on_human', details: '{"approval_ids":["q2"]}' } }));
   await assert.rejects(

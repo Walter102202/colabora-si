@@ -90,9 +90,25 @@ describe("Codex stop hook", () => {
     expect(await runStopHook({ input: {}, env: ENV, fetchImpl, now: clock(1000), sleep })).toEqual({ exitCode: 0 });
   });
 
-  it("exits 0 without output when the task was escalated to a person", async () => {
-    const { fetchImpl } = fakeRemote([none, { tasks: [{ task_id: TASK, state: "input_required", waiting_on: "human", reason: "feedback" }], next_cursor: "c-1" }]);
-    expect(await runStopHook({ input: {}, env: ENV, fetchImpl, now: clock(1000), sleep })).toEqual({ exitCode: 0 });
+  it("keeps waiting while a review blocked the task, and continues when the person answers", async () => {
+    // wait_for_my_tasks reports a blocked or escalated review as feedback that waits on a person: not work, no reason to stop.
+    const blocked = { task_id: TASK, state: "input_required", waiting_on: "human", review_state: "none", reason: "feedback" };
+    const answered = { task_id: TASK, state: "queued", waiting_on: null, review_state: "none", reason: "feedback" };
+    const { fetchImpl, calls } = fakeRemote([{ tasks: [blocked], next_cursor: "c-1" }, none, { tasks: [answered], next_cursor: "c-2" }],
+      { activities: [{ seq: 9, type: "prompt", body: { signal: "feedback", source: "row_panel", text: "Use fiscal year 2025." } }] });
+    const result = await runStopHook({ input: {}, env: ENV, fetchImpl, now: clock(1000), sleep });
+    const output = JSON.parse(result.output ?? "{}");
+    expect(output.decision).toBe("block");
+    expect(output.reason).toContain(`claim_task("${TASK}")`);
+    expect(output.reason).toContain("Use fiscal year 2025.");
+    expect(calls.map((c) => c.name)).toEqual(["wait_for_my_tasks", "wait_for_my_tasks", "wait_for_my_tasks", "get_task"]);
+  });
+  it("keeps waiting while an escalated task waits on a person, and exits 0 only at the limit", async () => {
+    const escalated = { task_id: TASK, state: "input_required", waiting_on: "human", review_state: "changes_requested", reason: "feedback" };
+    const { fetchImpl, calls } = fakeRemote([none, { tasks: [escalated], next_cursor: "c-1" }]);
+    expect(await runStopHook({ input: {}, env: ENV, fetchImpl, now: clock(60_000), sleep })).toEqual({ exitCode: 0 });
+    expect(calls.length).toBeGreaterThan(2);
+    expect(calls.every((c) => c.name === "wait_for_my_tasks")).toBe(true);
   });
 
   it("exits 0 when HOOK_WAIT_MIN passes with no news", async () => {
