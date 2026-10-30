@@ -112,6 +112,9 @@ const diff: TaskDiff = { task_id: "t", hidden_items: 0, runs: [{ run_id: "run-1"
 
 export function mockCard(scenario: string): CardData {
   switch (scenario) {
+    case "ci":
+      return { ...base, brief: { ...brief, done_when: [{ id: "ci", text: "CI is green", check: "ci", command: "check" }] },
+        ci_checks: [{ criterion_id: "ci", check: "check", state: "passed", repo: "acme/app", sha: "a".repeat(40), url: "https://github.com/acme/app/actions/runs/1" }] };
     case "diff":
       return { ...base, diff: { ...diff, task_id: task.id } };
     case "handover":

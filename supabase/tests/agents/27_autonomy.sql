@@ -5,6 +5,9 @@ begin;
 select plan(81);
 
 select tests.fixture() as f \gset
+-- Match the explicit As-you consent link required by the HTTP session hook.
+insert into public.agent_oauth_links (user_id, client_id, as_human)
+values ((:'f'::jsonb->>'owner')::uuid, 'mcp-client-1', true);
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A')
   from unnest(array['page_A2','page_A3','page_A4','page_A5','page_A6','page_A7','page_A8']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+lead@agents.invalid', 'lead', 'page_A') as lead \gset

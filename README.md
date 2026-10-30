@@ -77,10 +77,26 @@ Create an agent in **Settings → Agents**. Its token (`agt_…`) is shown once 
 |---|---|---|
 | Claude Code | local stdio bridge (`bridge/`) | yes, through a channel event |
 | Codex | remote MCP over HTTP, or the bridge | yes, through a Stop hook |
-| Claude, ChatGPT (chat apps) | OAuth, as a person linked to an agent | ask it to check its tasks |
+| Claude, ChatGPT (chat apps) | OAuth, as you or as an agent you choose | ask it to check its tasks |
 | Cursor, Antigravity, Gemini CLI, Muse Code | the bridge | `wait_for_task` |
 | Grok | agent JWT | no |
 | Reference agent (`agent/`) | direct | yes, its main loop is `wait_for_my_tasks` |
+
+## Connect a chat
+
+Add the MCP endpoint as a connector in Claude or ChatGPT and sign in. At `/oauth/consent`, first choose the identity, then review the app and its full destination: the app chooses its own display name. **As an agent** issues the agent's own Auth token and uses its page grants, with edits attributed to the agent, via chat. Only a current member who sponsors the agent or owns the workspace can connect it; the system platform agent cannot be linked. **As you** grants your full account session and is limited to exact HTTPS return hosts `claude.ai` and `chatgpt.com` in `TRUSTED_HUMAN_HOSTS`.
+
+In **Settings → Agents → Connected apps**, **Disconnect** immediately blocks the OAuth link in the Data API, MCP, Storage and Realtime, and revokes its Auth grant. Disconnect cuts access, but does not undo changes an **As you** session already made to the account, such as changing its password. Missing, deleted-workspace, hidden-client and former-member links fail closed. Auth sees the native agent subject; the hook does not substitute identities. An OAuth session remains OAuth after MFA: if Auth omits its client id, its authentication history identifies it and access is denied, including in **As you** mode. Agent credentials are frozen: a chat cannot change the password, email or phone, or add MFA factors, passkeys or provider identities. **Rotate login** is the service-authorized password exception: a private, single-use ticket expires after 30 seconds and permits only the prepared password. Existing direct harness JWTs still last until expiry after Rotate login; chat tokens remain subject to their live link on every RLS check. Local Auth enables TOTP so the smoke exercises this boundary and verifies that direct human MFA still works.
+
+For a hosted setup, enable the Supabase OAuth server with `/oauth/consent` and dynamic registration, set Auth's Site URL to the app's public origin, and allow that consent URL as a sign-in redirect.
+
+## CI evidence
+
+A workspace owner connects `owner/name` in **Settings → Agents → Continuous integration** and runs the displayed `gh` command with their GitHub access. The app only prepares the command. Set `CI_WEBHOOK_PEPPER` to a long random secret on the backend before connecting a repository; the webhook verifies GitHub's signature before reading a delivery.
+
+Use a criterion such as `{"id":"ci","text":"CI is green","check":"ci","command":"check"}`. The check name is exact. Deliver a `diff` artifact whose `ref` is `owner/repo@<40-character sha>` or `https://github.com/owner/repo/commit/<40-character sha>`, and include the criterion id in `satisfies`.
+
+`get_task.ci_checks`, the task panel and the chat card show GitHub's result and its link. Only `success` passes; the newest run of the named check on the latest delivered commit decides, and it must finish after the task was created. CI still needs a current `verified` review by someone other than the artifact author before an agent can close the subtask, including when the parent permits Lead closure: a branch can change its own workflow. An agent cannot remove a CI criterion or change its id, check type or GitHub check name; a person can. Disconnecting the repository invalidates its evidence. Check runs currently have no scheduled retention cleanup.
 
 ## Reference agent
 

@@ -1,11 +1,50 @@
 import assert from 'node:assert/strict';
 import { createClient } from '@supabase/supabase-js';
-import { AuthError, type ClaimsVerifier, verifyBearer } from './jwt.ts';
+import { AuthError, type ClaimsVerifier, resolveLinkedSession, type VerifiedBearer, verifyBearer } from './jwt.ts';
 
 const URL_BASE = 'http://project.test';
 const ENV = { SUPABASE_URL: URL_BASE, SUPABASE_ANON_KEY: 'anon' };
 const KID = 'test-key-1';
 const AGENT_ID = '11111111-1111-4111-8111-111111111111';
+
+const linkedBearer = (clientId: string | null = 'chat'): VerifiedBearer => ({ token: 'caller-token', claims: {},
+  principal: { type: 'human', userId: 'person', agentId: null, workspaceId: null, clientId } });
+
+Deno.test('direct sessions do not resolve a link', async () => {
+  const bearer = linkedBearer(null);
+  assert.equal(await resolveLinkedSession(bearer, () => { throw new Error('unexpected RPC'); }), bearer);
+});
+Deno.test('an explicitly linked human OAuth session keeps its native identity', async () => {
+  const bearer = linkedBearer();
+  assert.equal(await resolveLinkedSession(bearer, async () => ({ data: { principal_type: 'human', user_id: 'person' }, error: null })), bearer);
+});
+Deno.test('a linked OAuth session already has the agent identity and keeps the caller token', async () => {
+  const bearer = linkedBearer();
+  bearer.principal = { ...bearer.principal, type: 'agent', userId: 'agent-user', agentId: AGENT_ID, workspaceId: 'workspace' };
+  const result = await resolveLinkedSession(bearer, async () => ({ data: {
+    principal_type: 'agent', user_id: 'agent-user', agent_id: AGENT_ID, workspace_id: 'workspace', via_user: 'person',
+  }, error: null }));
+  assert.equal(result.token, bearer.token);
+  assert.deepEqual(result.principal, { type: 'agent', userId: 'agent-user', agentId: AGENT_ID,
+    workspaceId: 'workspace', viaUserId: 'person', clientId: 'chat' });
+});
+Deno.test('session resolution cannot substitute another principal or subject', async () => {
+  for (const data of [{ principal_type: 'agent', user_id: 'agent-user', agent_id: AGENT_ID, via_user: 'person' },
+    { principal_type: 'human', user_id: 'another-person' }]) {
+    await assert.rejects(resolveLinkedSession(linkedBearer(), async () => ({ data, error: null })),
+      (e) => e instanceof AuthError && e.status === 403 && e.code === 'wrong_principal');
+  }
+});
+Deno.test('a revoked OAuth link is an invalid token', async () => {
+  await assert.rejects(resolveLinkedSession(linkedBearer(), async () => ({ data: null, error: { message: 'link_revoked' } })),
+    (e) => e instanceof AuthError && e.status === 401 && e.code === 'invalid_token');
+});
+Deno.test('unresolved OAuth sessions fail closed', async () => {
+  for (const error of [null, { message: 'session_link_not_applied' }, { message: 'offline' }]) {
+    await assert.rejects(resolveLinkedSession(linkedBearer(), async () => ({ data: null, error })),
+      (e) => e instanceof AuthError && e.status === 403 && e.code === 'wrong_principal');
+  }
+});
 
 const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const enc = (obj: unknown) => b64url(new TextEncoder().encode(JSON.stringify(obj)));
@@ -73,6 +112,23 @@ Deno.test('valid ES256 agent token verified against the JWKS', async () => {
   assert.equal(out.principal.type, 'agent');
   assert.equal(out.principal.agentId, AGENT_ID);
   assert.equal(out.principal.clientId, null);
+});
+
+Deno.test('OAuth origin survives MFA without client_id for people and agents', async () => {
+  for (const app_metadata of [{}, { principal_type: 'agent', agent_id: AGENT_ID }]) {
+    const out = await verifyBearer(req(await sign(claims({ app_metadata,
+      amr: [{ method: 'oauth_provider/authorization_code', timestamp: 1 }, { method: 'totp', timestamp: 2 }],
+    }))), ENV, verify);
+    assert.equal(out.principal.clientId, 'oauth-session-without-client');
+    await assert.rejects(resolveLinkedSession(out, async () => ({ data: null, error: { message: 'link_revoked' } })),
+      (e) => e instanceof AuthError && e.status === 401);
+  }
+});
+
+Deno.test('password plus TOTP stays a direct session', async () => {
+  const out = await verifyBearer(req(await sign(claims({ amr: [{ method: 'password' }, { method: 'totp' }] }))), ENV, verify);
+  assert.equal(out.principal.clientId, null);
+  assert.equal(await resolveLinkedSession(out, () => { throw new Error('unexpected link lookup'); }), out);
 });
 
 Deno.test('signature from another key is rejected', async () => {

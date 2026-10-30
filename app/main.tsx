@@ -18,6 +18,7 @@ const router = createBrowserRouter([{ element: <AppNavigation />, HydrateFallbac
     { path: "*", element: <div className="empty-state"><title>Page not found · colabora.si</title>Page not found.</div> },
   ] },
   { path: "pub/:id", lazy: async () => ({ Component: (await import("./(public)/pub/[id]/page")).default }) },
+  { path: "oauth/consent", lazy: async () => ({ Component: (await import("./oauth/consent/page")).default }) },
 ] }]);
 
 createRoot(document.getElementById("root")!).render(<RouterProvider router={router} />);

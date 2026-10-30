@@ -114,6 +114,7 @@ const getTask: ToolDef = {
   outputSchema: output({
     task: { type: 'object' },
     brief: { type: ['object', 'null'] },
+    ci_checks: { type: 'array', items: { type: 'object' }, description: 'GitHub CI evidence for each ci criterion, when present.' },
     artifacts: { type: 'array', items: { type: 'object' } },
     approvals_pending: { type: 'array', items: { type: 'object' } },
     activities: { type: 'array', items: { type: 'object' } },

@@ -6,6 +6,7 @@ export type Row = Record<string, unknown>;
 export interface TaskBundle {
   task: Row;
   brief: Row | null;
+  ci_checks?: Row[];
   artifacts: Row[];
   approvals_pending: Row[];
   activities: Row[];
@@ -83,6 +84,9 @@ export async function loadTaskBundle(
   return {
     task,
     brief,
+    ...(doneWhen(brief).some((c) => c.check === 'ci')
+      ? { ci_checks: (await must(db.rpc<Row[]>('task_ci_status', { p_task_id: taskId }))) ?? [] }
+      : {}),
     artifacts: artifacts ?? [],
     approvals_pending: approvals ?? [],
     activities: ordered,

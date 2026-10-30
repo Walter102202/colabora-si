@@ -17,6 +17,11 @@ sql_paths = ["./seeds/01_workspace.sql", "./seeds/02_agents.sql"]
 # Also bounds agent tokens.
 jwt_expiry = 3600
 
+[auth.mfa.totp]
+# Match hosted Auth so the OAuth/MFA security boundary is exercised locally.
+enroll_enabled = true
+verify_enabled = true
+
 [auth.oauth_server]
 # Supabase Auth as OAuth 2.1 authorization server for chat clients.
 enabled = true
@@ -53,4 +58,8 @@ verify_jwt = false
 
 [functions.pub-html]
 # Public pages for crawlers and agents: no caller token; get_page_bundle decides what is public.
+verify_jwt = false
+
+[functions.github-webhook]
+# GitHub signs each delivery; the function checks the signature.
 verify_jwt = false

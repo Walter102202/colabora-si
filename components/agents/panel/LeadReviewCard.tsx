@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import type { ArtifactRow, BriefRow, ReviewRow, TaskRow } from "@/lib/agentTasks";
+import type { CiCheckRow } from "@/lib/agentCi";
 import { VerificationCard } from "@/components/agents/panel/VerificationCard";
 
 export type FindingStatus = "verified" | "not_found" | "contradicted" | "unverified";
@@ -23,6 +24,7 @@ export function LeadReviewCard({
   task,
   review,
   brief,
+  ciChecks,
   artifact,
   reviewerName,
   onReview,
@@ -30,6 +32,7 @@ export function LeadReviewCard({
   task: TaskRow;
   review: ReviewRow | null;
   brief: BriefRow | null;
+  ciChecks?: CiCheckRow[];
   artifact: ArtifactRow | null;
   reviewerName?: string | null;
   onReview: (verdict: ReviewVerdict, findings: ReviewFinding[], artifactId: string | null) => Promise<void>;
@@ -73,7 +76,7 @@ export function LeadReviewCard({
   return (
     <div className="space-y-2">
       {roundLine && <p className="text-xs text-text-secondary">{roundLine}</p>}
-      <VerificationCard review={review} brief={brief} reviewerName={reviewerName ?? (byLead ? "the Lead" : null)} />
+      <VerificationCard review={review} brief={brief} ciChecks={ciChecks} reviewerName={reviewerName ?? (byLead ? "the Lead" : null)} />
       {canReview && !taking && (
         <button type="button" className="rounded border border-border px-2 py-1 text-xs hover:bg-bg-secondary" onClick={() => setTaking(true)}>
           {review ? "Take the review" : "Review it yourself"}

@@ -1,6 +1,8 @@
 "use client";
 
 import type { BriefRow, ReviewRow } from "@/lib/agentTasks";
+import { CI_LABEL, type CiCheckRow } from "@/lib/agentCi";
+import { safeHref } from "@/lib/utils";
 
 const STATUS: Record<ReviewRow["findings"][number]["status"], { mark: string; label: string; cls: string }> = {
   verified: { mark: "✓", label: "verified", cls: "text-green-700 dark:text-green-400" },
@@ -11,13 +13,26 @@ const STATUS: Record<ReviewRow["findings"][number]["status"], { mark: string; la
 
 const VERDICT: Record<ReviewRow["verdict"], string> = { approved: "Approved", changes_requested: "Changes requested", blocked: "Blocked: needs a decision" };
 
-export function VerificationCard({ review, brief, reviewerName }: { review: ReviewRow | null; brief: BriefRow | null; reviewerName?: string | null }) {
+export interface VerificationCardProps { review: ReviewRow | null; brief: BriefRow | null; reviewerName?: string | null; ciChecks?: CiCheckRow[] }
+
+function CiCriterion({ text, check, finding }: { text: string; check?: CiCheckRow; finding?: ReviewRow["findings"][number] }) {
+  const state = check?.state ?? "pending";
+  const status = STATUS[state === "passed" ? "verified" : state === "failed" ? "contradicted" : "unverified"];
+  const url = check?.url ? safeHref(check.url) : null;
+  return <li className="flex flex-wrap gap-2">
+    <span className={status.cls}>{status.mark}</span><span className="min-w-0 flex-1">{text}</span>
+    {url ? <a href={url} target="_blank" rel="noopener noreferrer" className={status.cls}>{CI_LABEL[state]}</a> : <span className={status.cls}>{CI_LABEL[state]}</span>}
+    <span className="text-text-secondary">· Review: {STATUS[finding?.status ?? "unverified"].label}{finding?.note ? ` · ${finding.note}` : ""}</span>
+  </li>;
+}
+
+export function VerificationCard({ review, brief, reviewerName, ciChecks }: VerificationCardProps) {
   const criteria = brief?.done_when ?? [];
   if (!review) {
     if (criteria.length === 0) return <p className="text-xs text-text-tertiary">No acceptance criteria were written.</p>;
     return (
       <ul className="space-y-0.5 text-xs">
-        {criteria.map((c) => (
+        {criteria.map((c) => c.check === "ci" ? <CiCriterion key={c.id} text={c.text} check={ciChecks?.find((r) => r.criterion_id === c.id)} /> : (
           <li key={c.id} className="flex gap-2"><span className="text-text-tertiary">–</span><span>{c.text}</span><span className="text-text-tertiary">· not verified yet</span></li>
         ))}
       </ul>
@@ -38,6 +53,7 @@ export function VerificationCard({ review, brief, reviewerName }: { review: Revi
       <ul className="space-y-0.5">
         {criteria.map((c) => {
           const f = byId.get(c.id);
+          if (c.check === "ci") return <CiCriterion key={c.id} text={c.text} check={ciChecks?.find((r) => r.criterion_id === c.id)} finding={f} />;
           const s = STATUS[f?.status ?? "unverified"];
           return (
             <li key={c.id} className="flex gap-2">

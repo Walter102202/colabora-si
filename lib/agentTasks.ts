@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { agentErrorMessage, getAgentClient } from "@/lib/agentClient";
+import type { CiCheckRow } from "@/lib/agentCi";
 import type { Acceptance, RunStatus, TaskState } from "@/lib/agentState";
 
 // Non-persisted store of the agent task model for one workspace: tasks, runs,
@@ -119,7 +120,7 @@ export interface BriefRow {
   version: number;
   objective: string;
   constraints: string;
-  done_when: { id: string; text: string; check: "human" | "deterministic" | "lead"; command?: string }[];
+  done_when: { id: string; text: string; check: "human" | "deterministic" | "lead" | "ci"; command?: string }[];
   decisions: { at: string; by: string; text: string }[];
   sources: { kind: "page" | "url" | "artifact"; ref: string; trust: "internal" | "external" }[];
   open_questions: string[];
@@ -156,6 +157,7 @@ export interface AgentTasksState {
   reviews: ById<ReviewRow>; // per task, loaded with the detail
   artifacts: ById<ArtifactRow>; // per task, loaded with the detail
   briefs: ById<BriefRow>; // key `${task_id}:${version}`
+  ciChecks: ById<CiCheckRow[]>;
   activities: ById<ActivityRow[]>; // by task id, ordered by seq (loaded on demand)
   closedCursor: ClosedCursor | null; // keyset of the oldest closed task loaded
   closedExhausted: boolean;
@@ -163,6 +165,7 @@ export interface AgentTasksState {
   loadMoreClosed: () => Promise<void>;
   loadTask: (taskId: string) => Promise<void>;
   loadTaskDetail: (taskId: string) => Promise<void>;
+  refreshCiChecks: (workspaceId?: string) => Promise<void>;
   subscribe: (workspaceId: string) => () => void;
   loadActivities: (taskId: string) => Promise<void>;
   loadBriefs: (taskId: string) => Promise<void>;
@@ -188,6 +191,8 @@ export const ACTIVITIES_PAGE_SIZE = 200;
 const OPEN_LIMIT = 500;
 const RUNS_LIMIT = 500;
 const REVIEWS_LIMIT = 20;
+let detailRequestSequence = 0;
+const detailRequests = new Map<string, number>();
 
 /** Merges a page of rows into a map by id: rows outside the page stay, rows inside it are replaced. */
 export function mergeRows<T extends { id: string }>(current: ById<T>, rows: T[] | null | undefined): ById<T> {
@@ -242,6 +247,7 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
   reviews: {},
   artifacts: {},
   briefs: {},
+  ciChecks: {},
   activities: {},
   closedCursor: null,
   closedExhausted: false,
@@ -253,7 +259,7 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
     if (!client) return;
     const reset = get().workspaceId === workspaceId
       ? {}
-      : { tasks: {}, runs: {}, approvals: {}, reviews: {}, artifacts: {}, closedCursor: null, closedExhausted: false };
+      : { tasks: {}, runs: {}, approvals: {}, reviews: {}, artifacts: {}, ciChecks: {}, closedCursor: null, closedExhausted: false };
     set({ status: "loading", error: null, workspaceId, ...reset });
     try {
       const [open, closed, runs, approvals] = await Promise.all([
@@ -324,16 +330,33 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
   async loadTaskDetail(taskId) {
     const client = getAgentClient();
     if (!client) return;
+    const request = ++detailRequestSequence;
+    detailRequests.set(taskId, request);
+    const workspaceId = get().workspaceId;
     const [, artifacts, reviews] = await Promise.all([
       get().loadBriefs(taskId),
       client.from("agent_artifacts").select("*").eq("task_id", taskId),
       client.from("agent_reviews").select("*").eq("task_id", taskId).order("created_at", { ascending: false }).limit(REVIEWS_LIMIT),
     ]);
+    const task = get().tasks[taskId];
+    const brief = task ? get().briefs[`${taskId}:${task.brief_version}`] : undefined;
+    const ci = brief?.done_when.some((c) => c.check === "ci")
+      ? await client.rpc("task_ci_status", { p_task_id: taskId }) : null;
     const s = get();
+    if (s.workspaceId !== workspaceId || detailRequests.get(taskId) !== request) return;
+    detailRequests.delete(taskId);
     set({
+      ciChecks: { ...s.ciChecks, [taskId]: ci && !ci.error ? (ci.data ?? []) as CiCheckRow[] : [] },
       ...(artifacts.error ? {} : { artifacts: mergeRows(s.artifacts, artifacts.data as ArtifactRow[]) }),
       ...(reviews.error ? {} : { reviews: mergeRows(s.reviews, reviews.data as ReviewRow[]) }),
     });
+  },
+
+  async refreshCiChecks(workspaceId) {
+    const s = get();
+    const ids = Object.keys(s.ciChecks).filter((id) => !workspaceId || s.tasks[id]?.workspace_id === workspaceId);
+    set({ ciChecks: { ...s.ciChecks, ...Object.fromEntries(ids.map((id) => [id, []])) } });
+    await Promise.all(ids.map((id) => get().loadTaskDetail(id).catch(() => {})));
   },
 
   // Reference counted: the first caller for a workspace opens the channel and loads the
@@ -380,6 +403,13 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
             const row = payload.new;
             set({ [key]: { ...current, [row.id]: row } } as Partial<AgentTasksState>);
           }
+          if (table === "agent_artifacts") {
+            const artifact = (payload.eventType === "DELETE" ? current[payload.old.id ?? ""] : payload.new) as ArtifactRow | undefined;
+            if (artifact?.task_id && Object.hasOwn(get().ciChecks, artifact.task_id)) {
+              set({ ciChecks: { ...get().ciChecks, [artifact.task_id]: [] } });
+              void get().loadTaskDetail(artifact.task_id).catch(() => {});
+            }
+          }
         },
       );
     }
@@ -389,6 +419,10 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
       (payload: RealtimePostgresChangesPayload<ActivityRow>) => {
         const row = payload.new as ActivityRow;
         if (!row?.task_id) return;
+        if (row.body?.ci) {
+          set({ ciChecks: { ...get().ciChecks, [row.task_id]: [] } });
+          void get().loadTaskDetail(row.task_id).catch(() => {});
+        }
         const list = get().activities[row.task_id];
         if (!list) return; // not loaded for this task; loadActivities fetches on demand
         if (list.some((a) => a.id === row.id)) return;

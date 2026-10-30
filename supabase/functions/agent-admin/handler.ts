@@ -2,11 +2,13 @@
 // The caller's own client (RLS) authorizes every action before the service key is used.
 // No Supabase imports here: index.ts wires the real clients through `deps`.
 import { agentEmail, agentLoginPassword } from '../_shared/agentLogin.ts';
+import { webhookSecret } from '../_shared/ciWebhook.ts';
 import { jsonResponse, oauthError } from '../_shared/errors.ts';
 
 export interface Caller {
   userId: string;
   principalType: string;
+  clientId: string | null;
 }
 
 export interface AgentRecord {
@@ -42,6 +44,8 @@ export interface AdminUserAttributes {
 
 export interface AgentAdminDeps {
   loginPepper: string;
+  ciPepper: string;
+  functionsBaseUrl: string;
   /** Verifies the bearer JWT; null when it is not a valid session token of this project. */
   verifyCaller(token: string): Promise<Caller | null>;
   caller(token: string): CallerApi;
@@ -51,8 +55,17 @@ export interface AgentAdminDeps {
     deleteUser(id: string): Promise<void>;
   };
   serviceRpc(fn: string, args: Record<string, unknown>): Promise<unknown>;
+  /** Fresh server-only login as the selected agent; its credentials never leave this handler. */
+  signInAgent(email: string, password: string): Promise<AgentOAuthApi>;
   newId(): string;
   randomSecret(): string;
+}
+
+export interface AgentOAuthApi {
+  read(id: string): Promise<Record<string, unknown>>;
+  approve(id: string): Promise<Record<string, unknown>>;
+  deny(id: string): Promise<Record<string, unknown>>;
+  disconnect(clientId: string): Promise<void>;
 }
 
 export const CORS_HEADERS = {
@@ -104,8 +117,8 @@ export async function handleAgentAdmin(req: Request, deps: AgentAdminDeps): Prom
   const token = bearer(req);
   const caller = token ? await deps.verifyCaller(token).catch(() => null) : null;
   if (!token || !caller) return error(401, 'invalid_token', 'Sign in to manage agents.');
+  if (caller.clientId) return error(403, 'direct_session_required', 'Open the app directly to manage agents.');
   if (caller.principalType !== 'human') return error(403, 'humans_only', 'Only people can manage agents.');
-  if (!deps.loginPepper) return error(500, 'misconfigured', 'AGENT_LOGIN_PEPPER is not set.');
 
   let body: unknown;
   try {
@@ -114,9 +127,25 @@ export async function handleAgentAdmin(req: Request, deps: AgentAdminDeps): Prom
     body = null;
   }
   if (!isRecord(body)) return error(400, 'invalid_request', 'Body must be a JSON object.');
+  if (body.action !== 'ci_connect' && !deps.loginPepper) return error(500, 'misconfigured', 'AGENT_LOGIN_PEPPER is not set.');
 
   const api = deps.caller(token);
   switch (body.action) {
+    case 'oauth_read':
+    case 'oauth_approve':
+    case 'oauth_deny':
+    case 'oauth_disconnect':
+      return agentOAuth(body, api, deps);
+    case 'ci_connect': {
+      if (!deps.ciPepper || !deps.functionsBaseUrl) return error(500, 'misconfigured', 'CI_WEBHOOK_PEPPER and the functions URL must be set.');
+      if (!isUuid(body.workspace_id) || typeof body.repo !== 'string') return error(400, 'invalid_input', 'Use a workspace id and owner/name repository.');
+      try {
+        const connection = await api.rpc('create_ci_connection', { p_workspace_id: body.workspace_id, p_repo: body.repo });
+        if (!isRecord(connection) || !isUuid(connection.id) || typeof connection.repo !== 'string') throw new Error('Invalid connection');
+        return ok({ ...connection, webhook_url: `${deps.functionsBaseUrl.replace(/\/+$/, '')}/github-webhook/${connection.id}`,
+          secret: await webhookSecret(deps.ciPepper, connection.id) });
+      } catch (e) { return dbFailure(e, 'Could not connect the repository.'); }
+    }
     case 'create_agent':
       return createAgent(body, caller, api, deps);
     case 'enable_platform_agent':
@@ -126,8 +155,46 @@ export async function handleAgentAdmin(req: Request, deps: AgentAdminDeps): Prom
     case 'rotate_login':
       return rotateLogin(body, api, deps);
     default:
-      return error(400, 'invalid_request', 'action must be create_agent, enable_platform_agent, revoke_agent or rotate_login.');
+      return error(400, 'invalid_request', 'action must be create_agent, enable_platform_agent, revoke_agent, rotate_login, ci_connect, oauth_read, oauth_approve, oauth_deny or oauth_disconnect.');
   }
+}
+
+async function agentOAuth(body: Record<string, unknown>, api: CallerApi, deps: AgentAdminDeps): Promise<Response> {
+  if (!isUuid(body.agent_id)) return error(400, 'invalid_input', 'agent_id must be a uuid.');
+  const disconnect = body.action === 'oauth_disconnect';
+  const id = disconnect ? body.client_id : body.authorization_id;
+  if (typeof id !== 'string' || !id) return error(400, 'invalid_input', 'An authorization or client id is required.');
+  try {
+    // This caller-token RPC enforces direct human, current membership and sponsor/owner on every action.
+    const context = await api.rpc('oauth_agent_context', {
+      p_agent_id: body.agent_id, p_client_id: disconnect ? id : null, p_require_enabled: !disconnect,
+    });
+    if (!isRecord(context) || !isUuid(context.auth_user_id)) throw new Error('Invalid agent context');
+    // Block all RLS surfaces before revoking the Auth grant.
+    if (disconnect && !context.link_revoked) await api.rpc('revoke_oauth_link', { p_client_id: id });
+    const authorization = disconnect ? null : await deps.serviceRpc('oauth_authorization_context', {
+      p_authorization_id: id, p_auth_user_id: context.auth_user_id,
+    });
+    if (!disconnect && (!isRecord(authorization) || typeof authorization.client_id !== 'string' || typeof authorization.redirect_uri !== 'string')) {
+      throw new Error('Invalid authorization');
+    }
+    if (!disconnect && body.action !== 'oauth_read' && (authorization as Record<string, unknown>).user_id !== context.auth_user_id) {
+      return error(404, 'not_found', 'Read this authorization as the selected agent first.');
+    }
+    const agent = await deps.signInAgent(agentEmail(body.agent_id), await agentLoginPassword(
+      deps.loginPepper, context.auth_user_id, typeof context.login_nonce === 'string' ? context.login_nonce : null,
+    ));
+    if (disconnect) { await agent.disconnect(id); return ok({ disconnected: true }); }
+    const details = authorization as Record<string, unknown>;
+    const result = body.action === 'oauth_read' ? await agent.read(id)
+      : body.action === 'oauth_approve' ? await agent.approve(id) : await agent.deny(id);
+    if (body.action === 'oauth_approve' || (body.action === 'oauth_read' && typeof result.redirect_url === 'string')) {
+      // Withhold the authorization code unless the current person can still establish the link.
+      await api.rpc('set_oauth_app', { p_client_id: details.client_id, p_agent_id: body.agent_id,
+        p_client_name: details.client_name ?? 'An app', p_redirect_uri: details.redirect_uri });
+    }
+    return ok(result);
+  } catch (e) { return dbFailure(e, 'Could not complete this connection. Try again or use Rotate login and reconnect.'); }
 }
 
 async function createAgent(
@@ -344,8 +411,10 @@ async function rotateLogin(body: Record<string, unknown>, api: CallerApi, deps: 
   }
 
   try {
+    const password = await agentLoginPassword(deps.loginPepper, agent.auth_user_id, nonce);
+    await deps.serviceRpc('prepare_agent_login_rotation', { p_auth_user_id: agent.auth_user_id, p_password: password });
     await deps.admin.updateUserById(agent.auth_user_id, {
-      password: await agentLoginPassword(deps.loginPepper, agent.auth_user_id, nonce),
+      password,
     });
   } catch {
     return error(500, 'server_error', 'The new login was recorded but not applied. Rotate again.');

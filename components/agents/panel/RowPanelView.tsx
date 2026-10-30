@@ -20,6 +20,7 @@ import { activityLabel } from "@/lib/agentTaskText";
 import { FeedbackComposer } from "@/components/agents/panel/FeedbackComposer";
 import { MetricsList } from "@/components/agents/panel/MetricsList";
 import type { Metric } from "@/lib/agentMetrics";
+import type { CiCheckRow } from "@/lib/agentCi";
 
 // The row panel as pure views: everything a person sees and does about one
 // task, driven by data and callbacks. No router, no stores, no network, so
@@ -48,6 +49,7 @@ export interface TaskViewProps {
   artifact: ArtifactRow | null;
   review: ReviewRow | null;
   brief: BriefRow | null;
+  ciChecks?: CiCheckRow[];
   activities: ActivityRow[];
   subtasks: SubtaskItem[];
   reviewerName: string | null;
@@ -134,7 +136,7 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ task, agent, run, approval, artifact, review, brief, activities, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ task, agent, run, approval, artifact, review, brief, ciChecks, activities, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -270,7 +272,7 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
 
       <section className="space-y-1">
         <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Verification</h4>
-        <LeadReviewCard task={task} review={review} brief={brief} artifact={artifact} reviewerName={reviewerName} onReview={onReview} />
+        <LeadReviewCard task={task} review={review} brief={brief} ciChecks={ciChecks} artifact={artifact} reviewerName={reviewerName} onReview={onReview} />
       </section>
 
       <SubtaskList subtasks={subtasks} onOpenTask={onOpenTask} />

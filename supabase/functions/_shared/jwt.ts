@@ -11,8 +11,10 @@ export interface Principal {
   /** Agent id from app_metadata; null for people. */
   agentId: string | null;
   workspaceId: string | null;
-  /** OAuth client of a person's connection (chat apps); null for direct sessions and agents. */
+  /** OAuth client or an unresolved-OAuth marker; null only for direct sessions. */
   clientId: string | null;
+  /** Person who connected this chat, when it acts as an agent. */
+  viaUserId?: string | null;
 }
 
 export interface VerifiedBearer {
@@ -74,6 +76,39 @@ function audienceOk(aud: unknown): boolean {
 }
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+
+const OAUTH_WITHOUT_CLIENT = 'oauth-session-without-client';
+
+/** Auth's MFA tokens can omit client_id while retaining the session's OAuth AMR. */
+export function oauthClientId(claims: Record<string, unknown>): string | null {
+  const oauth = Array.isArray(claims.amr) && claims.amr.some((entry: unknown) =>
+    typeof entry === 'object' && entry !== null && 'method' in entry && entry.method === 'oauth_provider/authorization_code');
+  return str(claims.client_id) ?? (oauth ? OAUTH_WITHOUT_CLIENT : null);
+}
+
+/** Uses the caller's token; PostgREST applies the session hook before resolving the identity. */
+export type SessionIdentity = () => Promise<{ data: Record<string, unknown> | null; error: { message?: string } | null }>;
+
+export async function resolveLinkedSession(bearer: VerifiedBearer, identity: SessionIdentity): Promise<VerifiedBearer> {
+  if (!bearer.principal.clientId) return bearer;
+  if (bearer.principal.clientId === OAUTH_WITHOUT_CLIENT) {
+    throw new AuthError(401, 'invalid_token', 'The OAuth token has no client identity. Connect again.');
+  }
+  const { data, error } = await identity();
+  if (error?.message === 'link_revoked') throw new AuthError(401, 'invalid_token', 'This connection was disconnected. Connect it again.');
+  if (error || !data || data.principal_type !== bearer.principal.type || data.user_id !== bearer.principal.userId
+    || (bearer.principal.type === 'agent' && (data.agent_id !== bearer.principal.agentId || !str(data.via_user)))) {
+    throw new AuthError(403, 'wrong_principal', 'The session could not be resolved.');
+  }
+  if (data.principal_type === 'human') return bearer;
+  return {
+    ...bearer,
+    principal: {
+      ...bearer.principal,
+      viaUserId: str(data.via_user),
+    },
+  };
+}
 
 /**
  * Validates `Authorization: Bearer <jwt>` (§IV.8.5). Throws AuthError:
@@ -139,7 +174,7 @@ export async function verifyBearer(req: Request, env: Env, verify?: ClaimsVerifi
       userId: sub,
       agentId: rawType === 'agent' ? agentId : null,
       workspaceId: str(meta.workspace_id),
-      clientId: str(claims.client_id),
+      clientId: oauthClientId(claims),
     },
   };
 }

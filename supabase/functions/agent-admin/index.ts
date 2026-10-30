@@ -2,6 +2,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { randomHex } from '../_shared/agentLogin.ts';
 import { oauthError } from '../_shared/errors.ts';
+import { oauthClientId } from '../_shared/jwt.ts';
 import { anonClient, callerClient, denoEnv, serviceClient } from '../_shared/supabase.ts';
 import { type AgentRecord, type CallerApi, CORS_HEADERS, handleAgentAdmin } from './handler.ts';
 
@@ -63,12 +64,15 @@ Deno.serve((req) => {
 
   return handleAgentAdmin(req, {
     loginPepper: env.AGENT_LOGIN_PEPPER ?? '',
+    ciPepper: env.CI_WEBHOOK_PEPPER ?? '',
+    // The runtime's SUPABASE_URL may be an internal Docker hostname; prefer the configured public MCP origin.
+    functionsBaseUrl: `${new URL(env.MCP_RESOURCE_URL || env.SUPABASE_URL!).origin}/functions/v1`,
     async verifyCaller(token) {
       const { data, error } = await anon.auth.getClaims(token);
       const claims = data?.claims;
       if (error || !claims?.sub || claims.role !== 'authenticated') return null;
       const appMetadata = (claims.app_metadata ?? {}) as { principal_type?: string };
-      return { userId: claims.sub, principalType: appMetadata.principal_type ?? 'human' };
+      return { userId: claims.sub, principalType: appMetadata.principal_type ?? 'human', clientId: oauthClientId(claims) };
     },
     caller: (token) => callerApi(callerClient(env, token)),
     admin: {
@@ -88,6 +92,16 @@ Deno.serve((req) => {
     },
     async serviceRpc(fn, args) {
       return unwrap(await service.rpc(fn, args));
+    },
+    async signInAgent(email, password) {
+      const agent = anonClient(env);
+      unwrap(await agent.auth.signInWithPassword({ email, password }));
+      return {
+        read: async (id) => unwrap(await agent.auth.oauth.getAuthorizationDetails(id)) as unknown as Record<string, unknown>,
+        approve: async (id) => unwrap(await agent.auth.oauth.approveAuthorization(id, { skipBrowserRedirect: true })) as unknown as Record<string, unknown>,
+        deny: async (id) => unwrap(await agent.auth.oauth.denyAuthorization(id, { skipBrowserRedirect: true })) as unknown as Record<string, unknown>,
+        disconnect: async (clientId) => { unwrap(await agent.auth.oauth.revokeGrant({ clientId })); },
+      };
     },
     newId: () => crypto.randomUUID(),
     randomSecret: () => randomHex(32),
