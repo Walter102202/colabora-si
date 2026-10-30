@@ -375,3 +375,100 @@ begin
   perform private.audit(v_t.workspace_id, 'task.close_subtask', jsonb_build_object('task_id', v_t.id));
   return jsonb_build_object('task_state', 'done');
 end $$;
+
+-- Replaces 0020 in full: only a person may remove or change an existing CI criterion.
+create or replace function public.update_brief(p_task_id uuid, p_patch jsonb)
+returns int language plpgsql security definer set search_path = '' as $$
+declare v_t public.agent_tasks%rowtype; v_b public.task_briefs%rowtype; v_agent uuid; v_full boolean := false;
+        v_author uuid; v_author_type text; v_bad text; v_new jsonb; v_ver int; v_d public.agents%rowtype; v_trusted boolean;
+begin
+  if jsonb_typeof(p_patch) is distinct from 'object' then raise exception using errcode = 'PT400', message = 'invalid_input'; end if;
+  select * into v_t from public.agent_tasks where id = p_task_id for update;
+  if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+
+  if private.is_agent() then
+    v_agent := private.current_agent_id();
+    if v_agent is null then raise exception using errcode = 'PT403', message = 'agent_disabled'; end if;
+    perform private.check_rate(v_agent);
+    if exists (select 1 from public.agent_tasks p join public.agents a on a.id = p.delegate_agent_id
+                where p.id = v_t.parent_task_id and p.delegate_agent_id = v_agent and a.role = 'lead') then
+      v_full := true;
+    elsif v_t.delegate_agent_id = v_agent then
+      v_full := false;
+    else
+      raise exception using errcode = 'PT403', message = 'forbidden';
+    end if;
+    v_author := v_agent; v_author_type := 'agent';
+  else
+    if not private.can_write_page(v_t.row_page_id, v_t.workspace_id) then
+      raise exception using errcode = 'PT403', message = 'forbidden';
+    end if;
+    v_full := true; v_author := (select auth.uid()); v_author_type := 'human';
+  end if;
+
+  select key into v_bad from jsonb_object_keys(p_patch) key
+   where not key = any (case when v_full
+                     then array['objective','constraints','done_when','decisions','sources','open_questions','next_step','policies',
+                                'delegate_agent_id','depends_on_task_ids']
+                     else array['decisions','open_questions','next_step'] end) limit 1;
+  if v_bad is not null then raise exception using errcode = 'PT422', message = 'field_not_allowed', detail = v_bad; end if;
+
+  select * into v_b from public.task_briefs where task_id = v_t.id and version = v_t.brief_version;
+  -- A chat session acts for a person but never unlocks an action: what the brief allows or asks for is set from the app.
+  if v_author_type = 'human' and private.jwt_client_id() is not null and p_patch ? 'policies'
+     and (p_patch -> 'policies') is distinct from v_b.policies then
+    raise exception using errcode = 'PT403', message = 'direct_session_required';
+  end if;
+  v_new := (to_jsonb(v_b) - 'task_id' - 'version' - 'workspace_id' - 'author_id' - 'author_type' - 'created_at' - 'preapproved_trusted')
+           || (p_patch - 'delegate_agent_id' - 'depends_on_task_ids');
+  perform private.validate_brief(v_new);
+  if v_author_type = 'agent' and exists (
+    select 1 from jsonb_array_elements(v_b.done_when) old_criterion
+     where old_criterion->>'check' = 'ci' and not exists (
+       select 1 from jsonb_array_elements(v_new->'done_when') new_criterion
+        where new_criterion->>'id' = old_criterion->>'id'
+          and new_criterion->>'check' = 'ci'
+          and new_criterion->>'command' is not distinct from old_criterion->>'command')) then
+    raise exception using errcode = 'PT403', message = 'ci_criteria_locked';
+  end if;
+
+  if p_patch ? 'delegate_agent_id' and (p_patch->>'delegate_agent_id') is not null then
+    select * into v_d from public.agents
+     where id = (p_patch->>'delegate_agent_id')::uuid and workspace_id = v_t.workspace_id and status = 'enabled' and revoked_at is null;
+    if not found then raise exception using errcode = 'PT404', message = 'delegate_not_found'; end if;
+  end if;
+  if p_patch ? 'depends_on_task_ids' and exists (
+       select 1 from jsonb_array_elements_text(p_patch->'depends_on_task_ids') d
+        where not exists (select 1 from public.agent_tasks x where x.id = d::uuid and x.context_id = v_t.context_id and x.id <> v_t.id)) then
+    raise exception using errcode = 'PT422', message = 'invalid_dependency';
+  end if;
+
+  v_ver := v_t.brief_version + 1;
+  -- The preapproved list keeps its trust while it does not change; a new list is trusted only when a person writes it
+  -- from the app itself.
+  v_trusted := case
+    when (coalesce(v_new->'policies', '{}'::jsonb) -> 'preapproved') is not distinct from (v_b.policies -> 'preapproved')
+      then v_b.preapproved_trusted
+    else v_author_type = 'human' and private.jwt_client_id() is null end;
+  insert into public.task_briefs (task_id, version, workspace_id, objective, constraints, done_when, decisions, sources,
+                                  open_questions, next_step, policies, author_id, author_type, preapproved_trusted)
+  values (v_t.id, v_ver, v_t.workspace_id, v_new->>'objective', coalesce(v_new->>'constraints', ''),
+          coalesce(v_new->'done_when', '[]'), coalesce(v_new->'decisions', '[]'), coalesce(v_new->'sources', '[]'),
+          coalesce(v_new->'open_questions', '[]'), coalesce(v_new->>'next_step', ''), coalesce(v_new->'policies', '{}'),
+          v_author, v_author_type, v_trusted);
+
+  update public.agent_tasks
+     set brief_version = v_ver,
+         delegate_agent_id = case when p_patch ? 'delegate_agent_id' then (p_patch->>'delegate_agent_id')::uuid else delegate_agent_id end,
+         depends_on_task_ids = case when p_patch ? 'depends_on_task_ids'
+                                    then array(select d::uuid from jsonb_array_elements_text(p_patch->'depends_on_task_ids') d)
+                                    else depends_on_task_ids end,
+         updated_at = now()
+   where id = v_t.id;
+
+  if p_patch ? 'delegate_agent_id' and v_d.id is not null then
+    perform private.ensure_delegate_grants(v_d.id, v_t.workspace_id, v_t.row_page_id, v_new->'sources');
+  end if;
+  perform private.audit(v_t.workspace_id, 'brief.update', jsonb_build_object('task_id', v_t.id, 'version', v_ver));
+  return v_ver;
+end $$;

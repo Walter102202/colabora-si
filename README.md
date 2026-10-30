@@ -89,7 +89,7 @@ A workspace owner connects `owner/name` in **Settings → Agents → Continuous 
 
 Use a criterion such as `{"id":"ci","text":"CI is green","check":"ci","command":"check"}`. The check name is exact. Deliver a `diff` artifact whose `ref` is `owner/repo@<40-character sha>` or `https://github.com/owner/repo/commit/<40-character sha>`, and include the criterion id in `satisfies`.
 
-`get_task.ci_checks`, the task panel and the chat card show GitHub's result and its link. Only `success` passes; the newest run of the named check on the latest delivered commit decides, and it must finish after the task was created. CI still needs a current `verified` review before an agent can close the subtask, including when the parent permits Lead closure: a branch can change its own workflow. Disconnecting the repository invalidates its evidence. Check runs currently have no scheduled retention cleanup.
+`get_task.ci_checks`, the task panel and the chat card show GitHub's result and its link. Only `success` passes; the newest run of the named check on the latest delivered commit decides, and it must finish after the task was created. CI still needs a current `verified` review by someone other than the artifact author before an agent can close the subtask, including when the parent permits Lead closure: a branch can change its own workflow. An agent cannot remove a CI criterion or change its id, check type or GitHub check name; a person can. Disconnecting the repository invalidates its evidence. Check runs currently have no scheduled retention cleanup.
 
 ## Reference agent
 

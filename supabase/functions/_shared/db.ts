@@ -93,6 +93,7 @@ const SQLSTATE_CODES: Record<string, string> = {
 
 const MESSAGES: Record<string, string> = {
   ci_commit_required: 'A ci criterion needs a diff artifact with ref owner/repo@<full sha>.',
+  ci_criteria_locked: 'Only a person can remove a CI criterion or change its id, check type or GitHub check name.',
   repo_mismatch: 'This delivery does not match the connected repository.',
   connection_revoked: 'This repository connection was disconnected. Connect it again.',
   link_revoked: 'This connection was disconnected. Connect it again.',

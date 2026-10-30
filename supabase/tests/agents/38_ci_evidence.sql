@@ -1,5 +1,5 @@
 begin;
-select plan(43);
+select plan(50);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_S','page_F','page_O']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+cilead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -197,6 +197,32 @@ select public.claim_task(:'self_review_task'::uuid, 'reviewer')->>'run_id' as se
 select public.review_task(:'worker_self_task'::uuid, 'approved', '[{"criterion_id":"c1","status":"verified"}]'::jsonb, '[]'::jsonb, :'worker_self_art'::uuid, :'self_review_run'::uuid);
 select is(tests.error_of(format('do $b$ begin perform public.close_subtask(%L::uuid); raise exception ''unexpected_success''; end $b$', :'worker_self_task')),
           'policy_denied', 'a review task cannot let the artifact author supply the CI review key');
+select tests.reset_role();
+
+-- An agent cannot downgrade a failing CI criterion, including under a Lead closure policy.
+select tests.set_service();
+select public.record_ci_check(:'conn2'::uuid, 'acme/other', jsonb_build_object('id', 11, 'name', 'check', 'head_sha', repeat('d', 40),
+  'conclusion', 'failure', 'html_url', 'https://github.com/acme/other/runs/11', 'completed_at', now() + interval '5 seconds'));
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.update_brief(:'parent'::uuid, '{"policies":{"subtask_close":"lead"}}');
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('do $b$ begin perform public.update_brief(%L::uuid, %L::jsonb); raise exception ''unexpected_success''; end $b$', :'self_task', patch)),
+          'ci_criteria_locked', label)
+from (values
+  ('{"done_when":[{"id":"c1","text":"CI","check":"deterministic","command":"check"}]}', 'the Lead cannot replace CI with deterministic evidence'),
+  ('{"done_when":[{"id":"renamed","text":"CI","check":"ci","command":"check"}]}', 'the Lead cannot rename a CI criterion'),
+  ('{"done_when":[{"id":"c1","text":"CI","check":"ci","command":"other"}]}', 'the Lead cannot change the required GitHub check'),
+  ('{"done_when":[]}', 'the Lead cannot clear CI criteria under subtask_close lead')
+) v(patch, label);
+select ok(public.update_brief(:'self_task'::uuid, '{"done_when":[{"id":"c1","text":"Updated description","check":"ci","command":"check"}]}') > 1,
+          'the Lead can update descriptive text while retaining the CI contract');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select ok(public.update_brief(:'self_task'::uuid, '{"done_when":[{"id":"human-choice","text":"CI","check":"ci","command":"other"}]}') > 1,
+          'a person can change the CI contract');
+select ok(public.update_brief(:'self_task'::uuid, '{"done_when":[]}') > 1, 'a person can remove a CI criterion');
 select tests.reset_role();
 
 select * from finish();
