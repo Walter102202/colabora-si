@@ -38,6 +38,7 @@
       "supabase/migrations/*_0003_*",
       "supabase/migrations/*_0015_*",
       "supabase/migrations/*_0016_*",
+      "supabase/migrations/*_0023_*",
       "supabase/functions/send-reminders/",
       "supabase/functions/send-email/",
       "supabase/seeds/01_workspace.sql",
