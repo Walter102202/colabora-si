@@ -142,6 +142,11 @@ describe("Codex stop hook", () => {
     expect(result).toEqual({ exitCode: 0 });
     expect(calls.every((c) => c.name === "wait_for_my_tasks")).toBe(true);
   });
+  it.each(["queued", "handover"])("keeps an existing %s task in the first continuation snapshot", async (reason) => {
+    const { fetchImpl } = fakeRemote([{ tasks: [{ task_id: "next-task", state: "queued", reason }], next_cursor: "c-1" }, none]);
+    const result = await runStopHook({ input: { stop_hook_active: true }, env: ENV, fetchImpl, now: clock(5 * 60_000), sleep });
+    expect(JSON.parse(result.output ?? "{}").reason).toContain('claim_task("next-task")');
+  });
 
   it("never blocks without a real task change", async () => {
     const { fetchImpl } = fakeRemote([

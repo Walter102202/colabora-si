@@ -18,7 +18,7 @@ The JWT lasts one hour. For longer sessions use the commented stdio block in `co
 - If a task of the agent gets feedback, is queued or its brief changes, the hook prints `{"decision":"block","reason":"…"}`. Codex continues with that reason as the next prompt, for example: `Task … has new feedback: …. Call claim_task("…"), resolve each finding and finish with submit_for_review.` The reason is at most 2,500 characters.
 - The hook keeps waiting after a task closes or is stopped, so the session takes the next task that becomes ready; it ends without output after `HOOK_WAIT_MIN` minutes (25) with nothing to do.
 - A task that waits on a person after a blocked or escalated review keeps the hook waiting; the person's answer continues the session.
-- It never continues because of the clock. In a continuation it started (`stop_hook_active`), only changes after that point count.
+- It never continues because of the clock. In a continuation it started (`stop_hook_active`), the first snapshot ignores old feedback and brief changes; queued tasks and handovers still count.
 
 The hook runs with Codex's environment, so `WORKSPACE_MCP_URL` and `WORKSPACE_AGENT_PAT` must be set there. The hook never answers approvals: irreversible actions go through `request_approval` and the card in the app.
 
