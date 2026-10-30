@@ -43,9 +43,12 @@ export function LeadReviewCard({
 
   const canReview = task.state === "ready_for_review" && !!artifact;
   const byLead = review?.reviewer_type === "agent";
+  // review_state stays 'pending' after a close (close_task leaves it), so only a task in review is being reviewed:
+  // a subtask by the Lead of its parent, a top-level task by the person.
+  const inReview = task.state === "ready_for_review" && task.review_state === "pending";
   const roundLine =
-    task.review_state === "pending"
-      ? `Lead reviewing · round ${task.review_rounds + 1} of ${task.max_review_rounds}`
+    inReview
+      ? task.parent_task_id ? `Lead reviewing · round ${task.review_rounds + 1} of ${task.max_review_rounds}` : "Waiting for your review"
       : task.review_rounds > 0
         ? `Round ${task.review_rounds} of ${task.max_review_rounds}${task.review_rounds >= task.max_review_rounds ? " · escalated to you" : ""}`
         : null;
