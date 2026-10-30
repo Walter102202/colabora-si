@@ -35,7 +35,8 @@ describe("reference agent loop", () => {
     const model = createStubModel([{ tool_calls: [toolCall(name, {})] }, { content: "Done" }]);
     await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, maxTurns: 2 });
     expect(mcp.calls.some(c => c.name === name)).toBe(false);
-    expect(model.requests[0].tools.some(t => t.function.name === name)).toBe(false);
+    expect(model.requests[0].tools).toBeDefined();
+    expect(model.requests[0].tools!.some(t => t.function.name === name)).toBe(false);
     expect(model.requests[1].messages.some(m => m.role === "tool" && m.content.includes("unknown_tool"))).toBe(true);
   });
   it("acknowledges a stopped AI request without writing or reporting a delivery", async () => {

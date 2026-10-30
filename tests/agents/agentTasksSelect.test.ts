@@ -1,4 +1,5 @@
 import { mockCard } from "@/components/agents/card/mock";
+import type { TaskCardData } from "@/lib/agentCard";
 import { databaseTaskValues } from "@/lib/databaseTaskValues";
 import { db, prop, row } from "../clone/fixtures";
 import { describe, expect, it } from "vitest";
@@ -68,7 +69,7 @@ describe("questions that do not block", () => {
 });
 
 describe("work tasks and AI requests on the same page", () => {
-  const work = { ...mockCard("1").task, id: "work", state: "done" as const, updated_at: "2026-10-30T10:00:00Z" };
+  const work = { ...(mockCard("1") as TaskCardData).task, id: "work", state: "done" as const, updated_at: "2026-10-30T10:00:00Z" };
   it.each(["working", "done"] as const)("ignores a newer %s rewrite when selecting the page's work", (status) => {
     const request = { ...work, id: "request", request_kind: "rewrite" as const, state: status, updated_at: "2026-10-30T11:00:00Z" };
     expect(taskForPage({ ...state, tasks: { work, request } }, work.row_page_id)?.id).toBe("work");

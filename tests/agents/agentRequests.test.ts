@@ -168,7 +168,7 @@ it.each(["download", "model"])("releases the run when shutdown interrupts file %
   if (phase === "download") vi.stubGlobal("fetch", vi.fn(async () => interrupted()));
   else {
     const chat = h.model.chat;
-    h.model.chat = async (request) => request.messages.some(m => Array.isArray(m.content)) ? interrupted() : chat(request);
+    h.model.chat = async (request) => request.messages.some(m => "content" in m && Array.isArray(m.content)) ? interrupted() : chat(request);
     const list = h.mcp.listTools, call = h.mcp.callTool;
     h.mcp.listTools = async () => [...await list(), { name: "hand_over" }];
     h.mcp.callTool = async (name, args) => {
