@@ -296,22 +296,15 @@ Deno.serve(async (req) => {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const { data: dueRows, error: dueErr } = await supabase
-    .from("reminders")
-    .select("id, user_id, page_id, body")
-    .lte("remind_at", new Date().toISOString())
-    .eq("notified", false)
-    .is("deleted_at", null)
-    .order("remind_at", { ascending: true })
-    .limit(200);
+  const { data: dueRows, error: dueErr } = await supabase.rpc("due_push_reminders");
   if (dueErr) {
     console.error("due query failed", dueErr);
     return new Response("Query failed", { status: 500 });
   }
 
   const due = (dueRows ?? []) as DueReminder[];
-  const pending = await supabase.from("notifications").select("id,user_id,page_id,task_id,approval_id,block_id,kind,payload,created_at").is("pushed_at", null).in("kind", ["input_required", "ready_for_review", "task_failed", "approval_requested"]).order("created_at", { ascending: true }).limit(200);
-  if (pending.error && pending.error.code !== "42P01" && pending.error.code !== "PGRST205") return new Response("Query failed", { status: 500 });
+  const pending = await supabase.rpc("pending_push_notifications");
+  if (pending.error) return new Response("Query failed", { status: 500 });
   const agentRows = (pending.data ?? []) as (AgentNotification & { user_id: string; created_at: string })[];
   const approvalIds = [...new Set(agentRows.map((r) => r.approval_id).filter((id): id is string => !!id))];
   const taskIds = [...new Set(agentRows.map((r) => r.task_id).filter((id): id is string => !!id))];
