@@ -13,6 +13,12 @@ type Token = Value | { kind: 'open' | 'close'; value: 'array' | 'dict' };
 interface PdfObject { value: Value; stream?: Uint8Array; decoded?: string | null }
 const MAX_STREAM = 20 * 1024 * 1024, MAX_FILE = 100 * 1024 * 1024, MAX_OBJECTS = 10_000;
 const MAX_TEXT = 2_000_000, MAX_TOKENS = 500_000, MAX_DEPTH = 128;
+const MAX_RETAINED = 24 * 1024 * 1024, MAX_WORK = 8_000_000;
+interface Work { tokens: number; units: number; mappings: number }
+function spend(work: Work, units: number) {
+  work.units += units;
+  if (work.units > MAX_WORK) throw new Error('PDF work limit exceeded');
+}
 const space = (c: string) => /[\x00\t\n\f\r ]/.test(c);
 const delimiter = (c: string) => !c || space(c) || '()<>[]{}/%'.includes(c);
 const tagged = <K extends 'name' | 'bytes' | 'word' | 'ref' | 'dict'>(v: Value | undefined, kind: K): v is Extract<Value, { kind: K }> =>
@@ -37,13 +43,14 @@ function hexBytes(value: string): string {
   return out;
 }
 
-function* tokens(source: string): Generator<Token> {
-  let i = 0, count = 0;
+function* tokens(source: string, work: Work): Generator<Token> {
+  spend(work, source.length);
+  let i = 0;
   while (i < source.length) {
     const c = source[i];
     if (space(c)) { i++; continue; }
     if (c === '%') { while (i < source.length && !'\r\n'.includes(source[i])) i++; continue; }
-    if (++count > MAX_TOKENS) throw new Error('PDF token limit exceeded');
+    if (++work.tokens > MAX_TOKENS) throw new Error('PDF token limit exceeded');
     if (source.startsWith('<<', i) || source.startsWith('>>', i)) {
       yield { kind: c === '<' ? 'open' : 'close', value: 'dict' }; i += 2; continue;
     }
@@ -80,8 +87,9 @@ function* tokens(source: string): Generator<Token> {
     const start = i;
     while (!delimiter(source[i])) i++;
     if (i === start) throw new Error('Unexpected PDF delimiter');
+    if (i - start > 64) throw new Error('PDF word limit exceeded');
     const word = source.slice(start, i);
-    if (/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(word)) {
+    if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(word)) {
       const number = Number(word), ref = /^\s+\d+\s+R\b/.exec(source.slice(i));
       if (!Number.isFinite(number)) throw new Error('Invalid PDF number');
       if (ref && Number.isInteger(number) && number > 0) { i += ref[0].length; yield { kind: 'ref', id: number }; }
@@ -91,7 +99,7 @@ function* tokens(source: string): Generator<Token> {
     else yield { kind: 'word', value: word };
   }
 }
-function parse(source: string, firstOnly = false): Value[] {
+function parse(source: string, work: Work, firstOnly = false): Value[] {
   const root: Value[] = [];
   const stack: { type: 'root' | 'array' | 'dict'; values: Value[]; dict: Record<string, Value>; key?: string }[] = [
     { type: 'root', values: root, dict: Object.create(null) },
@@ -104,7 +112,7 @@ function parse(source: string, firstOnly = false): Value[] {
       frame.key = value.value;
     } else { frame.dict[frame.key] = value; frame.key = undefined; }
   };
-  for (const token of tokens(source)) {
+  for (const token of tokens(source, work)) {
     if (token && typeof token === 'object' && !Array.isArray(token) && (token.kind === 'open' || token.kind === 'close')) {
       if (token.kind === 'open') {
         if (stack.length >= MAX_DEPTH) throw new Error('PDF nesting limit exceeded');
@@ -121,7 +129,7 @@ function parse(source: string, firstOnly = false): Value[] {
   return root;
 }
 
-function readObjects(bytes: Uint8Array) {
+function readObjects(bytes: Uint8Array, work: Work) {
   const source = binary(bytes), objects = new Map<number, PdfObject>(), ranges: [number, number][] = [];
   const header = /\b(\d+)\s+\d+\s+obj\b/g;
   let hit: RegExpExecArray | null;
@@ -131,7 +139,7 @@ function readObjects(bytes: Uint8Array) {
     let end = source.indexOf('endobj', start);
     if (end < 0) throw new Error('Unclosed PDF object');
     const stream = /\bstream(?:\r\n|\n|\r)/.exec(source.slice(start, end));
-    const object: PdfObject = { value: parse(source.slice(start, stream ? start + stream.index : end), true)[0] ?? null };
+    const object: PdfObject = { value: parse(source.slice(start, stream ? start + stream.index : end), work, true)[0] ?? null };
     if (stream) {
       const length = dictionary(object.value).Length;
       const dataStart = start + stream.index + stream[0].length;
@@ -148,7 +156,7 @@ function readObjects(bytes: Uint8Array) {
   while ((hit = trailer.exec(source))) {
     while (ranges[rangeIndex]?.[1] <= hit.index) rangeIndex++;
     if (ranges[rangeIndex] && ranges[rangeIndex][0] <= hit.index) continue;
-    const dict = dictionary(parse(source.slice(trailer.lastIndex), true)[0]);
+    const dict = dictionary(parse(source.slice(trailer.lastIndex), work, true)[0]);
     root = dict.Root ?? root; encrypted ||= dict.Encrypt !== undefined;
   }
   for (const obj of objects.values()) if (name(dictionary(obj.value).Type) === 'XRef') {
@@ -158,28 +166,40 @@ function readObjects(bytes: Uint8Array) {
 }
 
 function unicode(value: string): string { return new TextDecoder('utf-16be').decode(byteArray(value)); }
-function cmap(source: string): Map<string, string> {
+function cmap(source: string, work: Work): Map<string, string> {
+  spend(work, source.length);
   const result = new Map<string, string>();
+  const hex = (value: string) => Array.from(value, c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('').toUpperCase();
   let mappedChars = 0;
   const put = (key: string, value: string) => {
-    if (result.size >= 100_000 || key.length > 8) throw new Error('PDF character map limit exceeded');
-    const previous = result.get(key.toUpperCase())?.length ?? 0;
-    if (Math.ceil(value.length / 4) > MAX_TEXT - mappedChars + previous) throw new Error('PDF character map text limit exceeded');
-    const text = unicode(hexBytes(value));
-    mappedChars += text.length - previous;
-    result.set(key.toUpperCase(), text);
+    if (++work.mappings > 100_000 || key.length > 8) throw new Error('PDF character map limit exceeded');
+    // Overwritten mappings also consume CPU and allocations.
+    if (Math.ceil(value.length / 2) > MAX_TEXT - mappedChars) throw new Error('PDF character map text limit exceeded');
+    const text = unicode(value); mappedChars += text.length; result.set(key, text);
   };
-  for (const section of source.matchAll(/beginbfchar([\s\S]*?)endbfchar/g)) {
-    for (const m of section[1].matchAll(/<([\da-f]+)>\s*<([\da-f]+)>/gi)) put(m[1], m[2]);
-  }
-  for (const section of source.matchAll(/beginbfrange([\s\S]*?)endbfrange/g)) {
-    for (const m of section[1].matchAll(/<([\da-f]+)>\s*<([\da-f]+)>\s*(?:<([\da-f]+)>|\[([^\]]*)\])/gi)) {
-      const start = parseInt(m[1], 16), end = parseInt(m[2], 16);
-      if (m[1].length > 8 || end < start || end - start > 65535 || (m[3]?.length ?? 0) > 32) throw new Error('Invalid PDF character range');
-      const values = m[4] ? [...m[4].matchAll(/<([\da-f]+)>/gi)].map((v) => v[1]) : null;
-      for (let code = start; code <= end; code++) {
-        const value = values ? values[code - start] : (BigInt(`0x${m[3]}`) + BigInt(code - start)).toString(16).padStart(m[3].length, '0');
-        if (value) put(code.toString(16).padStart(m[1].length, '0'), value);
+  for (const kind of ['bfchar', 'bfrange']) {
+    let at = 0;
+    while ((at = source.indexOf(`begin${kind}`, at)) !== -1) {
+      const start = at + kind.length + 5, end = source.indexOf(`end${kind}`, start);
+      if (end < 0) throw new Error('Unclosed PDF character map');
+      const values = parse(source.slice(start, end), work); at = end + kind.length + 3;
+      const step = kind === 'bfchar' ? 2 : 3;
+      for (let i = 0; i < values.length; i += step) {
+        const from = values[i], to = values[i + 1], target = values[i + 2];
+        if (!tagged(from, 'bytes') || !tagged(to, 'bytes')) throw new Error('Invalid PDF character map');
+        const key = hex(from.value);
+        if (kind === 'bfchar') { put(key, to.value); continue; }
+        const first = parseInt(key, 16), last = parseInt(hex(to.value), 16);
+        if (!key.length || key.length > 8 || to.value.length > 4 || last < first || last - first > 65535) throw new Error('Invalid PDF character range');
+        const initial = tagged(target, 'bytes') ? hex(target.value) : '';
+        if ((!Array.isArray(target) && !initial) || initial.length > 32) throw new Error('Invalid PDF character range');
+        for (let code = first; code <= last; code++) {
+          const item = Array.isArray(target) ? target[code - first] : undefined;
+          const value = Array.isArray(target) ? (tagged(item, 'bytes') ? item.value : null)
+            : hexBytes((BigInt(`0x${initial}`) + BigInt(code - first)).toString(16).padStart(initial.length, '0'));
+          if (value !== null) put(code.toString(16).padStart(key.length, '0').toUpperCase(), value);
+          else spend(work, 1);
+        }
       }
     }
   }
@@ -219,7 +239,7 @@ function decodeText(value: string, font: Font | undefined, budget: number): stri
   }
   return out;
 }
-function contentText(source: string, fonts: Map<string, Font>, budget: number): string {
+function contentText(source: string, fonts: Map<string, Font>, budget: number, work: Work): string {
   let active = false, font: Font | undefined, out = '', y: number | undefined;
   const operands: Value[] = [];
   const append = (text: string) => {
@@ -228,7 +248,7 @@ function contentText(source: string, fonts: Map<string, Font>, budget: number): 
   };
   const line = () => { if (out && !out.endsWith('\n')) append('\n'); };
   const show = (value: Value | undefined) => { if (tagged(value, 'bytes')) append(decodeText(value.value, font, budget - out.length)); };
-  for (const value of parse(source)) {
+  for (const value of parse(source, work)) {
     if (!tagged(value, 'word')) { operands.push(value); continue; }
     const last = operands.at(-1);
     if (value.value === 'BT') active = true;
@@ -258,9 +278,10 @@ function contentText(source: string, fonts: Map<string, Font>, budget: number): 
 export async function extractPdfText(bytes: Uint8Array, opts: { maxPages?: number } = {}): Promise<PdfText> {
   try {
     if (bytes.length > MAX_FILE || !binary(bytes.subarray(0, 1024)).includes('%PDF-')) throw new Error('Invalid PDF header or size');
-    const parsed = readObjects(bytes), objects = parsed.objects;
+    const work: Work = { tokens: 0, units: 0, mappings: 0 };
+    const parsed = readObjects(bytes, work), objects = parsed.objects;
     if (parsed.encrypted) return { status: 'encrypted', pages: [], totalPages: 0 };
-    let inflated = 0;
+    let inflated = 0, retained = 0;
     const resolve = (value: Value | undefined): Value | undefined => {
       const seen = new Set<number>();
       while (tagged(value, 'ref')) {
@@ -283,7 +304,7 @@ export async function extractPdfText(bytes: Uint8Array, opts: { maxPages?: numbe
           while (true) {
             const next = await reader.read(); if (next.done) break;
             length += next.value.length;
-            if (length > MAX_STREAM || inflated + length > MAX_FILE) throw new Error('PDF decompression limit exceeded');
+            if (length > MAX_STREAM || inflated + length > MAX_RETAINED) throw new Error('PDF decompression limit exceeded');
             chunks.push(next.value);
           }
         } finally { await reader.cancel().catch(() => {}); }
@@ -291,18 +312,21 @@ export async function extractPdfText(bytes: Uint8Array, opts: { maxPages?: numbe
         let offset = 0; for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.length; }
       }
       if (data.length > MAX_STREAM) throw new Error('PDF stream limit exceeded');
+      retained += data.length;
+      if (retained > MAX_RETAINED) throw new Error('PDF retained stream limit exceeded');
       return obj.decoded = binary(data);
     };
     for (const obj of [...objects.values()]) if (name(dictionary(obj.value).Type) === 'ObjStm') {
       const text = await decode(obj), dict = dictionary(obj.value), count = Number(dict.N), first = Number(dict.First);
       if (text === null || !Number.isInteger(count) || count < 0 || count > MAX_OBJECTS || !Number.isInteger(first) || first < 0 || first > text.length) throw new Error('Invalid PDF object stream');
-      const index = text.slice(0, first).trim().split(/\s+/).map(Number);
+      if (first > count * 128) throw new Error('PDF object index limit exceeded');
+      const index = parse(text.slice(0, first), work).map(v => typeof v === 'number' ? v : NaN);
       if (index.length < count * 2) throw new Error('Invalid PDF object index');
       for (let i = 0; i < count; i++) {
         if (objects.size >= MAX_OBJECTS) throw new Error('PDF object limit exceeded');
         const id = index[i * 2], start = first + index[i * 2 + 1], end = i + 1 < count ? first + index[i * 2 + 3] : text.length;
         if (!Number.isInteger(id) || id <= 0 || start < first || end < start || end > text.length) throw new Error('Invalid compressed PDF object');
-        objects.set(id, { value: parse(text.slice(start, end), true)[0] ?? null });
+        objects.set(id, { value: parse(text.slice(start, end), work, true)[0] ?? null });
       }
     }
     const catalog = resolve(parsed.root) ?? [...objects.values()].find((o) => name(dictionary(o.value).Type) === 'Catalog')?.value;
@@ -318,6 +342,7 @@ export async function extractPdfText(bytes: Uint8Array, opts: { maxPages?: numbe
     const result: { page: number; text: string }[] = [];
     const maxPages = Math.max(0, Math.min(500, opts.maxPages ?? 500));
     let textSize = 0, consumedContent = 0;
+    const fontCache = new Map<Value, Font>(), mapCache = new Map<PdfObject, Map<string, string>>();
     for (const [pageIndex, page] of pages.slice(0, maxPages).entries()) {
       let resources = page.Resources, parent = page.Parent; const parents = new Set<Value>();
       while (!resources && parent) {
@@ -326,9 +351,21 @@ export async function extractPdfText(bytes: Uint8Array, opts: { maxPages?: numbe
       }
       const fonts = new Map<string, Font>();
       for (const [key, value] of Object.entries(dictionary(resolve(dictionary(resolve(resources)).Font)))) {
-        const dict = dictionary(resolve(value)), mapObject = tagged(dict.ToUnicode, 'ref') ? objects.get(dict.ToUnicode.id) : undefined;
-        const mapping = mapObject ? cmap(await decode(mapObject) ?? '') : new Map<string, string>();
-        fonts.set(key, { map: mapping, widths: [...new Set([...mapping.keys()].map((k) => k.length / 2))].sort((a, b) => b - a), winAnsi: name(resolve(dict.Encoding)) === 'WinAnsiEncoding' });
+        spend(work, 1);
+        const resolved = resolve(value);
+        if (!resolved) continue;
+        let font = fontCache.get(resolved);
+        if (!font) {
+          const dict = dictionary(resolved), mapObject = tagged(dict.ToUnicode, 'ref') ? objects.get(dict.ToUnicode.id) : undefined;
+          let mapping = mapObject ? mapCache.get(mapObject) : undefined;
+          if (!mapping) {
+            mapping = mapObject ? cmap(await decode(mapObject) ?? '', work) : new Map<string, string>();
+            if (mapObject) mapCache.set(mapObject, mapping);
+          }
+          font = { map: mapping, widths: [...new Set([...mapping.keys()].map(k => k.length / 2))].sort((a, b) => b - a), winAnsi: name(resolve(dict.Encoding)) === 'WinAnsiEncoding' };
+          fontCache.set(resolved, font);
+        }
+        fonts.set(key, font);
       }
       const resolvedContents = resolve(page.Contents);
       const contents = Array.isArray(resolvedContents) ? resolvedContents : [page.Contents];
@@ -344,7 +381,7 @@ export async function extractPdfText(bytes: Uint8Array, opts: { maxPages?: numbe
           }
         }
       }
-      const text = contentText(streams.join('\n'), fonts, MAX_TEXT - textSize); textSize += text.length;
+      const text = contentText(streams.join('\n'), fonts, MAX_TEXT - textSize, work); textSize += text.length;
       if (textSize > MAX_TEXT) throw new Error('PDF text limit exceeded');
       result.push({ page: pageIndex + 1, text });
     }

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { hostilePdfCases } from './pdfHostileFixtures.ts';
 import { extractPdfText } from './pdfText.ts';
 import { deflate, pdfFixture, pdfStream, textPdf } from './pdfFixtures.ts';
 const bytes = (s: string) => new TextEncoder().encode(s);
@@ -64,3 +65,23 @@ Deno.test('stops Unicode expansion before exceeding the text budget', async () =
     } finally { Map.prototype.get = original; }
   }
 });
+
+for (const [name, build] of Object.entries(hostilePdfCases)) {
+  Deno.test(`bounds review PDF work: ${name}`, async () => {
+    const input = new Uint8Array(await build());
+    const moduleUrl = new URL('./pdfText.ts', import.meta.url).href;
+    const url = URL.createObjectURL(new Blob([`import { extractPdfText } from ${JSON.stringify(moduleUrl)};
+      self.onmessage = async ({ data }) => self.postMessage(await extractPdfText(data));`], { type: 'text/javascript' }));
+    const worker = new Worker(url, { type: 'module' });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await new Promise<{ status: string; error?: string }>((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${name}: parser exceeded its 3 second work deadline`)), 3000);
+        worker.onmessage = ({ data }) => resolve(data);
+        worker.onerror = event => { event.preventDefault(); reject(new Error(event.message)); };
+        worker.postMessage(input, [input.buffer]);
+      });
+      assert.equal(result.status, name === 'fonts_many_same_cmap' ? 'ok' : 'failed', result.error);
+    } finally { clearTimeout(timer); worker.terminate(); URL.revokeObjectURL(url); }
+  });
+}
