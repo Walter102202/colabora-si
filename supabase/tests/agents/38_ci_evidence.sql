@@ -1,5 +1,5 @@
 begin;
-select plan(38);
+select plan(39);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_S','page_F','page_O']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+cilead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -140,6 +140,8 @@ select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.revoke_ci_connection(:'conn'::uuid);
 select is((public.task_ci_status(:'bad'::uuid))->0->>'state', 'not_connected', 'a revoked repository proves nothing');
+select public.create_ci_connection((:'f'::jsonb->>'ws')::uuid, 'acme/app');
+select is((public.task_ci_status(:'bad'::uuid))->0->>'state', 'pending', 'reconnecting cannot reuse evidence from the revoked connection');
 select tests.reset_role();
 select tests.set_service();
 select is(tests.error_of(format('select public.record_ci_check(%L::uuid, %L, %L::jsonb)', :'conn', 'acme/app', '{}')), 'connection_revoked', 'a revoked connection refuses deliveries');

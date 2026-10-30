@@ -71,6 +71,7 @@ begin
   end if;
   select * into v_run from public.ci_check_runs r
    where r.workspace_id = p_task.workspace_id and r.repo = v_repo and r.head_sha = v_sha and r.name = p_c->>'command'
+     and exists (select 1 from public.ci_connections c where c.id = r.connection_id and c.revoked_at is null)
      and r.completed_at >= p_task.created_at
    order by r.completed_at desc, r.check_run_id desc limit 1;
   if not found then return v_base || jsonb_build_object('state', 'pending'); end if;
