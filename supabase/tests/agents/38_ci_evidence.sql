@@ -1,5 +1,5 @@
 begin;
-select plan(41);
+select plan(43);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_S','page_F','page_O']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+cilead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -162,6 +162,41 @@ select is(tests.error_of(format('select public.record_ci_check(%L::uuid, %L, %L:
   '{"id":9,"name":"check","head_sha":"short","conclusion":"success","html_url":"https://github.com/x","completed_at":"2026-10-30T00:00:00Z"}')), 'invalid_input', 'a malformed sha is refused');
 select is(tests.error_of(format('select public.record_ci_check(%L::uuid, %L, %L::jsonb)', :'conn2', 'acme/other',
   '{"id":9,"name":"check","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","conclusion":"success","html_url":"javascript:alert(1)","completed_at":"2026-10-30T00:00:00Z"}')), 'invalid_input', 'a link outside GitHub is refused');
+select tests.reset_role();
+
+-- A Lead cannot supply both the artifact and its CI review, even through a delegated review task.
+select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_ci_self','page_ci_worker','page_ci_self_review']) p;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select public.create_subtask(:'parent'::uuid, 'page_ci_self',
+  '{"objective":"Self-authored CI","done_when":[{"id":"c1","text":"CI","check":"ci","command":"check"}]}'::jsonb,
+  (:'lead'::jsonb->>'agent')::uuid)->>'task_id' as self_task \gset
+select public.claim_task(:'self_task'::uuid, 'lead')->>'run_id' as self_run \gset
+select public.add_artifact(:'self_run'::uuid, 'diff', 'acme/other@dddddddddddddddddddddddddddddddddddddddd', 'Self commit', array['c1'])->>'artifact_id' as self_art \gset
+select public.submit_for_review(:'self_run'::uuid, 'done', array[:'self_art'::uuid]);
+select tests.reset_role();
+select tests.set_service();
+select public.record_ci_check(:'conn2'::uuid, 'acme/other', jsonb_build_object('id', 10, 'name', 'check', 'head_sha', repeat('d', 40),
+  'conclusion', 'success', 'html_url', 'https://github.com/acme/other/runs/10', 'completed_at', now()));
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select public.review_task(:'self_task'::uuid, 'approved', '[{"criterion_id":"c1","status":"verified"}]'::jsonb, '[]'::jsonb, :'self_art'::uuid, :'lr'::uuid);
+select is(tests.error_of(format('do $b$ begin perform public.close_subtask(%L::uuid); raise exception ''unexpected_success''; end $b$', :'self_task')),
+          'policy_denied', 'the artifact author cannot supply the CI review key as Lead');
+select public.create_subtask(:'parent'::uuid, 'page_ci_worker',
+  '{"objective":"Worker-authored CI","done_when":[{"id":"c1","text":"CI","check":"ci","command":"check"}]}'::jsonb,
+  (:'f'::jsonb->>'agent')::uuid)->>'task_id' as worker_self_task \gset
+select public.create_subtask(:'parent'::uuid, 'page_ci_self_review',
+  jsonb_build_object('objective', 'Review own commit', 'policies', jsonb_build_object('review_of', :'worker_self_task')),
+  (:'f'::jsonb->>'agent')::uuid)->>'task_id' as self_review_task \gset
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'worker_self_task'::uuid, 'worker')->>'run_id' as worker_self_run \gset
+select public.add_artifact(:'worker_self_run'::uuid, 'diff', 'acme/other@dddddddddddddddddddddddddddddddddddddddd', 'Worker commit', array['c1'])->>'artifact_id' as worker_self_art \gset
+select public.submit_for_review(:'worker_self_run'::uuid, 'done', array[:'worker_self_art'::uuid]);
+select public.claim_task(:'self_review_task'::uuid, 'reviewer')->>'run_id' as self_review_run \gset
+select public.review_task(:'worker_self_task'::uuid, 'approved', '[{"criterion_id":"c1","status":"verified"}]'::jsonb, '[]'::jsonb, :'worker_self_art'::uuid, :'self_review_run'::uuid);
+select is(tests.error_of(format('do $b$ begin perform public.close_subtask(%L::uuid); raise exception ''unexpected_success''; end $b$', :'worker_self_task')),
+          'policy_denied', 'a review task cannot let the artifact author supply the CI review key');
 select tests.reset_role();
 
 select * from finish();

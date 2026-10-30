@@ -112,6 +112,8 @@ returns boolean language sql stable security definer set search_path = '' as $$
               and f->>'criterion_id' = c->>'id' and f->>'status' = 'verified'
               -- A new commit has a different ref, so it does not supersede the old artifact or its review.
               and (c->>'check' <> 'ci' or (r.brief_version = t.brief_version
+                   and not exists (select 1 from public.agent_artifacts authored
+                     where authored.id = r.artifact_id and authored.author_type = r.reviewer_type and authored.author_id = r.reviewer_id)
                    and (r.artifact_id, r.artifact_version) = (
                      select a.id, a.version from public.agent_artifacts a, private.ci_commit(a.ref) k
                       where a.task_id = t.id and a.kind = 'diff' and a.superseded_by is null
