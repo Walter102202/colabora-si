@@ -3,6 +3,7 @@ import { type Db, type DbResult, ToolError } from '../db.ts';
 import type { ToolContext, ToolDef } from '../mcp.ts';
 import { aiTools } from './ai.ts';
 import { readTools } from './read.ts';
+import { inlineMarkdownToSpans } from '../lib/agentInput.ts';
 
 type Row = Record<string, unknown>;
 const tool = (name: string) => aiTools.find((t) => t.name === name) as ToolDef;
@@ -55,4 +56,16 @@ Deno.test('read tools show an ai cell as its text', async () => {
   const read = readTools.find((t) => t.name === 'query_database')!;
   const out = await read.handler({ database_id: 'db' }, harness().ctx);
   assert.equal(((out.structured.rows as Row[])[0].cells as Row).Summary, 'Short');
+});
+Deno.test('get_ai_request returns the block as inline Markdown', async () => {
+  const h = harness({ id: 'rewrite', request_kind: 'rewrite', request: { page_id: 'page', block_id: 'b1', instruction: 'Shorter', selection: 'long' } },
+    { id: 'page', blocks: [{ id: 'b1', type: 'paragraph', html: 'Our <b>long</b> intro', rev: 3 }] });
+  const out = await tool('get_ai_request').handler({ task_id: 'rewrite' }, h.ctx);
+  assert.deepEqual(out.structured.block, { id: 'b1', type: 'paragraph', text: 'Our **long** intro', rev: 3 });
+});
+Deno.test('apply_ai_rewrite turns Markdown into spans', async () => {
+  const h = harness();
+  await tool('apply_ai_rewrite').handler({ run_id: 'run', markdown: 'A **short** intro', rev: 3, idempotency_key: 'rewrite:t' }, h.ctx);
+  assert.deepEqual(h.calls, [{ name: 'apply_ai_rewrite', args: { p_run_id: 'run', p_spans: inlineMarkdownToSpans('A **short** intro'),
+    p_rev: 3, p_usage: undefined, p_idempotency_key: 'rewrite:t' } }]);
 });

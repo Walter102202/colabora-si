@@ -84,6 +84,8 @@ export function aiRequestError(error: unknown): string {
     not_ai_property: "This property is no longer an AI property.", delegate_not_found: "Enable Colabora or choose an available agent.",
     budget_exceeded: "This agent has reached its budget.", forbidden: "You cannot edit this page.",
     humans_only: "Only a person can request this.", page_locked: "Unlock the page first.",
+    block_has_mentions: "This block has mentions or equations, which AI rewrite keeps out of reach.",
+    not_text_block: "Choose a text block to rewrite.", block_too_long: "Choose a block with at most 5000 characters.",
   };
   return messages[code] ?? code;
 }
@@ -112,4 +114,15 @@ export async function requestAiFill(dbPageId: string, propertyId: string, mode: 
   if (error) throw new Error(error.message);
   await subscriptions.get(dbPageId)?.refresh();
   return { taskId: data.task_id as string | null, rows: data.rows as number, remaining: data.remaining as number };
+}
+
+export async function requestAiRewrite(pageId: string, blockId: string, instruction: string, selection?: string): Promise<{ taskId: string }> {
+  const client = getSupabase();
+  if (!client) return { taskId: "" };
+  await syncBeforeRequest();
+  const { data, error } = await client.rpc("request_ai_rewrite", { p_page_id: pageId, p_block_id: blockId,
+    p_instruction: instruction, ...(selection ? { p_selection: selection } : {}) });
+  if (error) throw new Error(error.message);
+  await subscriptions.get(pageId)?.refresh();
+  return { taskId: data.task_id };
 }

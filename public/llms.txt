@@ -17,6 +17,7 @@
 - `list_my_tasks`: a task with `blocked_by` is waiting for those tasks to finish: do not claim it.
 - AI properties: a database column whose cells Colabora fills with Muse Spark when you ask; every value is signed and can be undone.
 - Request tools: `get_ai_request` reads the inputs; `fill_ai_cells` writes signed values; `complete_ai_request` closes the request. The platform agent's loop calls them; writes from other runs return `not_a_request_run`.
+- Inline rewrite: select text and choose ✦ AI. The platform loop uses `get_ai_request` and `apply_ai_rewrite`; the signed block change can be undone. Other runs get `not_a_request_run`.
 - Lead: `create_task`, `create_subtask`, `list_subtasks`, `review_task`, `close_subtask`
 - Wait: `wait_for_task`, `wait_for_my_tasks` (the server holds the call up to 120 s and answers on the first change, with a cursor to call again)
 - Prompts: `continue_task`, `review_as_lead`. Resources: `workspace://page/<pageId>` (Markdown) and `workspace://task/<taskId>/brief` (JSON).
