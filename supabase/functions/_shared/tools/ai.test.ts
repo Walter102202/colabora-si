@@ -138,3 +138,16 @@ Deno.test('a reply never passes 50000 characters', async () => {
   const out = await readFile(fileHarness({ blob: new Blob(['x'.repeat(60000)]) }));
   assert.equal((out.structured.pages as { text: string }[])[0].text.length, 50000); assert.equal(out.structured.truncated, true);
 });
+
+Deno.test('query_database ignores AI requests when reading work task columns', async () => {
+  const page = { id: 'db', database: { ...database, properties: [...database.properties,
+    { id: 'status', name: 'Status', type: 'agentStatus' }, { id: 'worker', name: 'Worker', type: 'agentDelegate' }] } };
+  const h = harness(fill, page);
+  const rows = [{ row_page_id: 'row1', state: 'ready_for_review', delegate_agent_id: 'worker', request_kind: null },
+    { row_page_id: 'row1', state: 'done', delegate_agent_id: 'platform', request_kind: 'rewrite' }];
+  h.ctx.db.select = <T>(spec: import('../db.ts').SelectSpec) => Promise.resolve({ data: (spec.table === 'agent_tasks'
+    ? rows.filter(r => (spec.filters ?? []).every(f => f.col !== 'request_kind' || r.request_kind === f.value)) : []) as T[], error: null });
+  const out = await readTools.find(t => t.name === 'query_database')!.handler({ database_id: 'db' }, h.ctx);
+  assert.deepEqual((out.structured.rows as { raw: Row }[])[0].raw.Status, 'ready_for_review');
+  assert.deepEqual((out.structured.rows as { raw: Row }[])[0].raw.Worker, 'worker');
+});

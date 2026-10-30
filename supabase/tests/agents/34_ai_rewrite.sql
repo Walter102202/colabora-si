@@ -2,7 +2,7 @@
 -- answer is text spans only, written with the run's attribution and an inverse; it closes the request; revert_run
 -- undoes it.
 begin;
-select plan(27);
+select plan(30);
 
 select tests.fixture() as f \gset
 update public.agents set is_platform = true, capabilities = '{"start":true}'::jsonb where id = (:'f'::jsonb->>'agent')::uuid;
@@ -87,6 +87,20 @@ select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent
 select is(tests.error_of(format($$select public.apply_ai_rewrite(%L::uuid, '["Again"]'::jsonb)$$, :'run')), 'run_not_active',
           'a second answer is refused');
 select tests.reset_role();
+
+update public.agent_tasks set state = 'done' where id = :'req'::uuid;
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('select public.send_agent_message(%L::uuid, %L, %L)', :'req', 'Continue', 'continue')), 'task_closed', 'a done AI request cannot reopen');
+select tests.reset_role();
+update public.agent_tasks set state = 'failed' where id = :'req'::uuid;
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('select public.send_agent_message(%L::uuid, %L, %L)', :'req', 'Continue', 'continue')), 'task_closed', 'a failed AI request cannot reopen');
+select tests.reset_role();
+update public.agent_tasks set state = 'cancelled' where id = :'req'::uuid;
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('select public.send_agent_message(%L::uuid, %L, %L)', :'req', 'Continue', 'continue')), 'task_closed', 'a cancelled AI request cannot reopen');
+select tests.reset_role();
+update public.agent_tasks set state = 'done' where id = :'req'::uuid;
 
 -- D. Undo, and runs that are not rewrites.
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
