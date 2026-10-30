@@ -1,5 +1,5 @@
 begin;
-select plan(84);
+select plan(86);
 create or replace function tests.set_oauth_agent(p_uid uuid, p_agent uuid, p_client text)
 returns void language sql as $$
   select tests.set_claims(jsonb_build_object('sub', p_uid, 'role', 'authenticated', 'aud', 'authenticated',
@@ -59,15 +59,19 @@ select tests.reset_role();
 
 -- Human RLS must not restore membership or sharing when OAuth loses its client claim.
 insert into public.page_shares (page_id, user_id, level) values ('page_G', (:'f'::jsonb->>'owner')::uuid, 'edit');
+insert into public.notifications (workspace_id, user_id, kind, payload)
+  values ((:'f'::jsonb->>'ws')::uuid, (:'f'::jsonb->>'owner')::uuid, 'mention', '{"text":"private notification"}') returning id as notice \gset
 select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'client-other');
 select ok(private.is_workspace_member((:'f'::jsonb->>'ws')::uuid) and private.can_edit_workspace((:'f'::jsonb->>'ws')::uuid)
           and private.has_page_share('page_G', array['edit']), 'a live As-you client keeps its human permissions');
+select is((select count(*)::int from public.notifications where id = :'notice'::uuid), 1, 'a live As-you client can read its own notifications');
 select tests.reset_role();
 select tests.set_claims(jsonb_build_object('sub', :'f'::jsonb->>'owner', 'role', 'authenticated',
   'amr', '[{"method":"oauth_provider/authorization_code"},{"method":"totp"}]'::jsonb), 'authenticated');
 select is(private.is_workspace_member((:'f'::jsonb->>'ws')::uuid), false, 'claimless human OAuth has no membership access outside PostgREST');
 select is(private.can_edit_workspace((:'f'::jsonb->>'ws')::uuid), false, 'claimless human OAuth has no editor access outside PostgREST');
 select is(private.has_page_share('page_G', array['edit']), false, 'claimless human OAuth cannot recover access through page shares');
+select is((select count(*)::int from public.notifications where id = :'notice'::uuid), 0, 'claimless human OAuth cannot read recipient-owned Realtime notifications');
 select tests.reset_role();
 
 -- A known live link cannot be recovered from a claimless MFA token, even with a sentinel row.

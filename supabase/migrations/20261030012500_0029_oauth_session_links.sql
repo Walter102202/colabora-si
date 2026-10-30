@@ -116,6 +116,12 @@ returns boolean language sql security definer set search_path = '' stable as $$
   );
 $$;
 
+-- Notifications are published to Realtime and authorize by recipient, not workspace/page access.
+create policy "oauth notifications require a client" on public.notifications as restrictive
+  for all to authenticated
+  using ((select private.jwt_client_id()) is distinct from 'oauth-session-without-client')
+  with check ((select private.jwt_client_id()) is distinct from 'oauth-session-without-client');
+
 -- Deletion preserves a tombstone. A missing association must never become human access.
 alter table public.agent_oauth_links
   add column if not exists as_human boolean not null default false,

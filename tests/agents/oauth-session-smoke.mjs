@@ -78,14 +78,14 @@ async function connect(name, agentId, redirect, clientId, client = person) {
   return { ...flow, token: await exchange(flow, url), remembered: detail.kind === "redirect" };
 }
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-async function watch(token, label) {
+async function watch(token, label, table = "pages", filter = "id=eq.market-research", event = "UPDATE") {
   const client = createClient(base, anon, { auth: { persistSession: false, autoRefreshToken: false } });
   await client.realtime.setAuth(token);
   const events = [];
   const status = await new Promise((resolve) => {
     const timer = setTimeout(() => resolve("TIMED_OUT"), 15000);
     client.channel(`smoke-${label}-${randomUUID()}`)
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "pages", filter: "id=eq.market-research" }, (event) => events.push(event))
+      .on("postgres_changes", { event, schema: "public", table, filter }, (payload) => events.push(payload))
       .subscribe((state) => {
         if (["SUBSCRIBED", "CHANNEL_ERROR", "TIMED_OUT"].includes(state)) { clearTimeout(timer); resolve(state); }
       });
@@ -292,6 +292,19 @@ try {
   }
   check("the control attachment remains accessible", (await readAttached(control.token)).status === 200);
 } finally { await Promise.all(watchers.map((watcher) => watcher.close())); }
+// Recipient-owned notifications have a separate RLS path and are also published to Realtime.
+const noticeId = randomUUID();
+const notificationWatchers = await Promise.all([[owner, "notification-control"], [humanMfa, "notification-mfa"]]
+  .map(([token, label]) => watch(token, label, "notifications", `id=eq.${noticeId}`, "INSERT")));
+try {
+  for (const watcher of notificationWatchers) check(`Realtime ${watcher.label} subscription established`, watcher.status === "SUBSCRIBED", watcher.status);
+  const notice = await raw("POST", "/rest/v1/notifications", service, { id: noticeId, workspace_id: agent.workspace_id,
+    user_id: signedIn.user.id, kind: "mention", payload: { text: "Private MFA notification" } }, service);
+  check("the private notification is created", notice.status === 201, { status: notice.status });
+  await wait(3000);
+  check("the direct person receives their Realtime notification", notificationWatchers[0].events.some((e) => e.new.id === noticeId));
+  check("the As-you MFA token receives no Realtime notification", notificationWatchers[1].events.length === 0, { events: notificationWatchers[1].events.length });
+} finally { await Promise.all(notificationWatchers.map((watcher) => watcher.close())); }
 const humanChange = await member.auth.updateUser({ password: changedPassword });
 check("a person can still change their own password", !humanChange.error);
 check("the person can log in with that new password", (await raw("POST", "/auth/v1/token?grant_type=password", anon, { email: memberEmail, password: changedPassword })).status === 200);
