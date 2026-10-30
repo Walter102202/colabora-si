@@ -67,8 +67,16 @@ values
   ('50000000-0000-4000-8000-000000000100', '50000000-0000-4000-8000-000000000003', 'ready_for_review', now(), null),
   ('50000000-0000-4000-8000-000000000100', '50000000-0000-4000-8000-000000000003', 'mention', now(), null),
   ('50000000-0000-4000-8000-000000000100', '50000000-0000-4000-8000-000000000003', 'task_failed', now(), now());
+insert into public.notifications(workspace_id, user_id, kind, created_at)
+values
+  ('50000000-0000-4000-8000-000000000100', '50000000-0000-4000-8000-000000000001', 'ready_for_review', now()),
+  ('50000000-0000-4000-8000-000000000100', '50000000-0000-4000-8000-000000000003', 'input_required', now() - interval '24 hours'),
+  ('50000000-0000-4000-8000-000000000100', '50000000-0000-4000-8000-000000000003', 'mention', now() - interval '2 days');
 set local role service_role;
-select is((select count(*) from public.pending_push_notifications()), 21::bigint, 'agent cleanup also has a per-person cap and ignores other kinds or pushed rows');
+select is((select count(*) from public.pending_push_notifications()), 3::bigint, 'only fresh agent rows qualify, including the exact 24-hour boundary');
+select is((select count(*) from public.notifications where kind = 'input_required' and pushed_at is not null), 200::bigint, 'all expired agent rows are settled in the first pass');
+select ok(exists(select 1 from public.pending_push_notifications() where user_id = '50000000-0000-4000-8000-000000000001' and kind = 'ready_for_review'), 'fresh row is selected on the first pass despite 200 old rows for the same person');
+select is((select count(*) from public.notifications where kind = 'mention' and pushed_at is not null), 0::bigint, 'bulk expiry leaves unrelated notification kinds alone');
 select ok(exists(select 1 from public.pending_push_notifications() where kind = 'ready_for_review'), 'an unsubscribed agent-notification backlog cannot crowd out another person');
 reset role;
 

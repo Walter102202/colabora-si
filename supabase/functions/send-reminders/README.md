@@ -8,8 +8,9 @@ people permanently at the back. Multiple devices do not multiply a person's quot
 Reminders need a subscription and must be due by at most 24 hours. Older or
 unsubscribed reminders retain `notified = false` for the in-app reminder checker.
 Only successful push delivery sets it to true. Agent notifications use their own
-`pushed_at`: the fair batch still includes expired and unsubscribed rows so the
-handler can settle them without affecting the inbox or its read state.
+`pushed_at`: the batch RPC expires rows older than 24 hours in one update before
+selecting fresh rows. The handler still settles decided approvals and rows without
+subscriptions, without affecting the inbox or its read state.
 
 Reminder marking and subscription pruning pass opaque text arrays in RPC bodies.
 The response's `notified` counts reminder rows changed to `notified = true`, and
