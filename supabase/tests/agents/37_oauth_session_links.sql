@@ -1,5 +1,5 @@
 begin;
-select plan(28);
+select plan(29);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_G']) p;
 select tests.make_user('other-person@test.local') as other \gset
@@ -14,6 +14,8 @@ select ok(has_function_privilege('anon', 'private.apply_session_link()', 'execut
 
 -- 4-6. set_oauth_link refuses a chat session, a stranger and the platform agent.
 select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'client-1');
+select is(tests.error_of(format('select public.issue_agent_token(%L::uuid)', :'f'::jsonb->>'agent')), 'direct_session_required',
+          'a human OAuth chat cannot mint a persistent agent token');
 select is(tests.error_of(format('select public.set_oauth_link(%L, %L::uuid)', 'client-1', :'f'::jsonb->>'agent')), 'direct_session_required',
           'a chat cannot link itself to an agent');
 select tests.reset_role();

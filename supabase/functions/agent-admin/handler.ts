@@ -8,6 +8,7 @@ import { jsonResponse, oauthError } from '../_shared/errors.ts';
 export interface Caller {
   userId: string;
   principalType: string;
+  clientId: string | null;
 }
 
 export interface AgentRecord {
@@ -107,6 +108,7 @@ export async function handleAgentAdmin(req: Request, deps: AgentAdminDeps): Prom
   const token = bearer(req);
   const caller = token ? await deps.verifyCaller(token).catch(() => null) : null;
   if (!token || !caller) return error(401, 'invalid_token', 'Sign in to manage agents.');
+  if (caller.clientId) return error(403, 'direct_session_required', 'Open the app directly to manage agents.');
   if (caller.principalType !== 'human') return error(403, 'humans_only', 'Only people can manage agents.');
 
   let body: unknown;

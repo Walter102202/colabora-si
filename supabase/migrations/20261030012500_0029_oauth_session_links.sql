@@ -380,3 +380,25 @@ revoke all on function private.apply_page_ops_core(text,jsonb,text) from public,
 -- Last, once the function exists: registered earlier, every Data API request would fail in between.
 alter role authenticator set pgrst.db_pre_request = 'private.apply_session_link';
 notify pgrst, 'reload config';
+
+-- Replaces 0002: only a direct human session may issue a persistent agent credential.
+create or replace function public.issue_agent_token(p_agent_id uuid, p_name text default 'default', p_scopes text[] default array['mcp']::text[], p_expires_at timestamptz default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_a public.agents%rowtype; v_token text; v_id uuid;
+begin
+  if private.principal_type() <> 'human' then raise exception using errcode = 'PT403', message = 'humans_only'; end if;
+  if private.jwt_client_id() is not null then raise exception using errcode = 'PT403', message = 'direct_session_required'; end if;
+  select * into v_a from public.agents where id = p_agent_id and revoked_at is null;
+  if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+  if not (v_a.sponsor_user_id = (select auth.uid()) or exists (select 1 from public.workspaces w where w.id = v_a.workspace_id and w.owner_id = (select auth.uid()))) then
+    raise exception using errcode = 'PT403', message = 'forbidden';
+  end if;
+  v_token := 'agt_' || private.random_base62(40);
+  insert into public.agent_tokens (workspace_id, agent_id, name, token_hash, token_prefix, scopes, expires_at, created_by)
+  values (v_a.workspace_id, p_agent_id, coalesce(p_name, 'default'), private.hash_agent_token(v_token), left(v_token, 8), coalesce(p_scopes, array['mcp']::text[]), p_expires_at, (select auth.uid()))
+  returning id into v_id;
+  perform private.audit(v_a.workspace_id, 'token.issue', jsonb_build_object('token_id', v_id, 'agent_id', p_agent_id));
+  return jsonb_build_object('token_id', v_id, 'token', v_token, 'token_prefix', left(v_token, 8));
+end $$;
+revoke all on function public.issue_agent_token(uuid, text, text[], timestamptz) from public, anon;
+grant execute on function public.issue_agent_token(uuid, text, text[], timestamptz) to authenticated;

@@ -71,7 +71,7 @@ Deno.serve((req) => {
       const claims = data?.claims;
       if (error || !claims?.sub || claims.role !== 'authenticated') return null;
       const appMetadata = (claims.app_metadata ?? {}) as { principal_type?: string };
-      return { userId: claims.sub, principalType: appMetadata.principal_type ?? 'human' };
+      return { userId: claims.sub, principalType: appMetadata.principal_type ?? 'human', clientId: typeof claims.client_id === 'string' ? claims.client_id : null };
     },
     caller: (token) => callerApi(callerClient(env, token)),
     admin: {

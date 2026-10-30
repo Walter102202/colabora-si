@@ -17,7 +17,7 @@ function makeDeps(opts: { member?: boolean; rpcFails?: boolean; owner?: boolean;
     functionsBaseUrl: 'https://api.test/functions/v1',
     verifyCaller: (token) =>
       Promise.resolve(
-        token === 'human-jwt' ? { userId: HUMAN, principalType: 'human' } : token === 'agent-jwt' ? { userId: AUTH_USER, principalType: 'agent' } : null,
+        token === 'human-jwt' ? { userId: HUMAN, principalType: 'human', clientId: null } : token === 'agent-jwt' ? { userId: AUTH_USER, principalType: 'agent', clientId: null } : null,
       ),
     caller: () => ({
       canManageWorkspace: (ws, uid) => {
@@ -200,4 +200,18 @@ Deno.test('ci_connect requires its pepper and propagates caller authorization fa
   api.rpc = () => Promise.reject({ code: 'PT403', message: 'forbidden' });
   deps.caller = () => api;
   assert.equal((await handleAgentAdmin(ciConnect(), deps)).status, 403);
+});
+
+Deno.test('every admin action rejects an OAuth chat before any privileged operation', async () => {
+  for (const action of ['create_agent', 'rotate_login', 'revoke_agent', 'enable_platform_agent', 'ci_connect', 'oauth_read', 'oauth_approve', 'oauth_deny', 'oauth_disconnect']) {
+    const { deps, calls } = makeDeps();
+    deps.verifyCaller = async () => ({ userId: HUMAN, principalType: 'human', clientId: 'chat-client' });
+    const res = await handleAgentAdmin(new Request('http://localhost/functions/v1/agent-admin', {
+      method: 'POST', headers: { Authorization: 'Bearer chat-jwt', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, workspace_id: WORKSPACE, agent_id: AGENT_ID, name: 'Chat-created', kind: 'mcp_client', repo: 'acme/app' }),
+    }), deps);
+    assert.equal(res.status, 403, action);
+    assert.equal((await res.json()).error, 'direct_session_required', action);
+    assert.deepEqual(calls, [], action);
+  }
 });
