@@ -42,10 +42,20 @@ grant execute on function private.apply_session_link() to anon, authenticated, s
 -- Who the caller is after the hook. The mcp function reads it once per request for an OAuth token.
 create or replace function public.session_identity()
 returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare v_link public.agent_oauth_links%rowtype;
 begin
-  -- Still human with a live link means the hook is not installed: refuse rather than act with the person's reach.
-  if private.linked_agent_id() is not null then
-    raise exception using errcode = 'PT500', message = 'session_link_not_applied';
+  -- Check every link, including disabled/revoked ones. linked_agent_id intentionally filters those out.
+  if private.principal_type() = 'human' and private.jwt_client_id() is not null then
+    select * into v_link from public.agent_oauth_links
+     where user_id = (select auth.uid()) and client_id = private.jwt_client_id();
+    if found then
+      if v_link.revoked_at is not null then
+        raise sqlstate 'PGRST' using
+          message = json_build_object('code', 'link_revoked', 'message', 'link_revoked', 'details', null, 'hint', null)::text,
+          detail = json_build_object('status', 401, 'headers', json_build_object())::text;
+      end if;
+      raise exception using errcode = 'PT500', message = 'session_link_not_applied';
+    end if;
   end if;
   return jsonb_build_object('principal_type', private.principal_type(), 'user_id', (select auth.uid()),
     'agent_id', auth.jwt() -> 'app_metadata' ->> 'agent_id', 'workspace_id', auth.jwt() -> 'app_metadata' ->> 'workspace_id',

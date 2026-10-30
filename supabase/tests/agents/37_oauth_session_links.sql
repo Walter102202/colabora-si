@@ -1,5 +1,5 @@
 begin;
-select plan(26);
+select plan(28);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_G']) p;
 select tests.make_user('other-person@test.local') as other \gset
@@ -67,6 +67,7 @@ select tests.reset_role();
 -- 21-22. A disabled agent stays the principal and every agent RPC refuses it.
 update public.agents set status = 'disabled' where id = (:'f'::jsonb->>'agent')::uuid;
 select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'client-1');
+select is(tests.error_of('select public.session_identity()'), 'session_link_not_applied', 'a disabled link also fails closed without the hook');
 select private.apply_session_link();
 select is(private.principal_type(), 'agent', 'a disabled agent does not fall back to the person');
 select is(private.current_agent_id(), null, 'and it has no agent identity');
@@ -80,6 +81,7 @@ select is(tests.error_of('select public.revoke_oauth_link(''client-1'')'), 'not_
 select tests.reset_role();
 -- 25. raise sqlstate PGRST carries the code inside the message JSON.
 select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'client-1');
+select ok(tests.error_of('select public.session_identity()') like '%link_revoked%', 'a revoked link is refused even without the hook');
 select ok(tests.error_of('select private.apply_session_link()') like '%link_revoked%', 'a disconnected chat is refused by the hook');
 select tests.reset_role();
 
