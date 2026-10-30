@@ -30,6 +30,8 @@ Redirects are never followed. Disallowed endpoints and malformed keys are pruned
 like expired subscriptions; failed reminders remain available in the app. The
 browser uses the same validator before registration, but delivery is the security
 boundary because authenticated users can write subscriptions through the API.
+The validator source is `lib/pushEndpoint.ts`; `endpoint.ts` is its byte-for-byte
+deployment copy, guarded by `tests/clone/functionsSharedSync.test.ts`.
 
 ## Local capture
 

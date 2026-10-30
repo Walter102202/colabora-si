@@ -1,5 +1,5 @@
 import { getSupabase } from "@/lib/supabase";
-import { isBrowserPushEndpoint } from "@/supabase/functions/send-reminders/endpoint";
+import { isBrowserPushEndpoint } from "@/lib/pushEndpoint";
 export type PushState = "unsupported" | "denied" | "signed-out" | "off" | "on";
 const SW_PATH = "/sw.js", VAPID_PUBLIC = import.meta.env.VITE_VAPID_PUBLIC_KEY;
 export function isPushSupported(): boolean { return typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window && !!VAPID_PUBLIC; }
