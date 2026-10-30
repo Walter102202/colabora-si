@@ -8,7 +8,7 @@
 // VAPID (RFC 8292) and aes128gcm payload encryption (RFC 8291/8188) are
 // implemented directly on WebCrypto — no third-party push library.
 
-import { createClient } from "npm:@supabase/supabase-js@2.112.3";
+import { createClient } from "@supabase/supabase-js";
 import { agentPush, pushOutcome, shouldPush, tooOldToPush, type AgentNotification, type PushApproval, type PushPayload, type PushResult } from "./payload.ts";
 import { isBrowserPushEndpoint } from "./endpoint.ts";
 
