@@ -1,5 +1,40 @@
 import assert from 'node:assert/strict';
 import { briefBlocks, BRIEF_KEYS, leadTools } from './lead.ts';
+import { type Db, type DbResult, ToolError } from '../db.ts';
+import type { ToolContext } from '../mcp.ts';
+
+type Row = Record<string, unknown>;
+const tool = (name: string) => {
+  const found = leadTools.find((t) => t.name === name);
+  assert.ok(found, `${name} is registered`);
+  return found;
+};
+function context(rpc: (fn: string, args: Row) => DbResult<unknown>): ToolContext {
+  const db: Db = {
+    rpc: <T>(fn: string, args: Row) => Promise.resolve(rpc(fn, args) as DbResult<T>),
+    select: <T>() => Promise.resolve({ data: [{ db_page_id: 'db1' }] as T[], error: null }),
+    download: async () => ({ data: null, error: null }),
+  };
+  return { db, principal: { type: 'agent', userId: 'u1', agentId: 'lead1', workspaceId: 'w1', clientId: null },
+    signal: new AbortController().signal, appUrl: '', now: () => 0, sleep: async () => {}, progress: () => {} };
+}
+
+Deno.test('update_subtask sends only supplied fields and returns the new version', async () => {
+  const patches = [{ objective: 'Revised goal' }, { delegate_agent_id: 'worker2', depends_on_task_ids: ['t2', 't3'] }];
+  for (const patch of patches) {
+    const calls: Row[] = [];
+    const ctx = context((fn, args) => { calls.push({ fn, args }); return { data: 4, error: null }; });
+    const result = await tool('update_subtask').handler({ task_id: 't1', ...patch }, ctx);
+    assert.deepEqual(calls, [{ fn: 'update_brief', args: { p_task_id: 't1', p_patch: patch } }]);
+    assert.deepEqual(result.structured, { brief_version: 4 });
+  }
+});
+
+Deno.test('update_subtask rejects an empty patch before writing', async () => {
+  const ctx = context(() => { assert.fail('must not write'); });
+  await assert.rejects(() => tool('update_subtask').handler({ task_id: 't1' }, ctx),
+    (error: unknown) => error instanceof ToolError && error.code === 'invalid_input');
+});
 
 // The app's briefFromRow reads brief sections by block key, so create_task must write the same keys as the row template.
 Deno.test('briefBlocks keys its section headings like the Task brief template', () => {

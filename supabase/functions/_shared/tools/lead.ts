@@ -256,6 +256,35 @@ const closeSubtask: ToolDef = {
   },
 };
 
+const updateSubtask: ToolDef = {
+  name: 'update_subtask',
+  title: 'Correct or reassign a subtask',
+  description:
+    'Lead: change the goal, criteria, constraints, sources, next step, policies, delegate or dependencies of a subtask of your task. ' +
+    'Delegate: record decisions, open questions and the next step on your own task. A worker on the task is told the brief changed.',
+  inputSchema: object({
+    task_id: { type: 'string', minLength: 1 },
+    objective: { type: 'string', minLength: 1, maxLength: 10_000 },
+    constraints: { type: 'string', maxLength: 10_000 },
+    done_when: { type: 'array', items: doneWhenItem, minItems: 1, maxItems: 30 },
+    sources: { type: 'array', items: sourceItem, maxItems: 30 },
+    next_step: { type: 'string', maxLength: 2000 },
+    decisions: { type: 'array', items: { type: 'object' } },
+    open_questions: { type: 'array', items: { type: 'object' } },
+    policies: { type: 'object' },
+    delegate_agent_id: { type: 'string' },
+    depends_on_task_ids: { type: 'array', items: { type: 'string' } },
+  }, ['task_id']),
+  outputSchema: output({ brief_version: { type: 'integer' } }),
+  annotations: WRITE,
+  async handler(args, ctx) {
+    const { task_id, ...patch } = args;
+    if (Object.keys(patch).length === 0) throw new ToolError('invalid_input', 'Pass at least one field to change.');
+    const version = await must(ctx.db.rpc<number>('update_brief', { p_task_id: task_id, p_patch: patch }));
+    return { text: `Brief of ${String(task_id)} is now v${String(version)}.`, structured: { brief_version: version } };
+  },
+};
+
 const listSubtasks: ToolDef = {
   name: 'list_subtasks',
   title: 'List subtasks',
@@ -288,4 +317,4 @@ const listSubtasks: ToolDef = {
   },
 };
 
-export const leadTools: ToolDef[] = [createTask, createSubtask, reviewTask, closeSubtask, listSubtasks];
+export const leadTools: ToolDef[] = [createTask, createSubtask, updateSubtask, reviewTask, closeSubtask, listSubtasks];
