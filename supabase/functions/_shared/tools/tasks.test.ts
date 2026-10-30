@@ -8,7 +8,8 @@ type Row = Record<string, unknown>;
 const tool = (name: string) => taskTools.find((t) => t.name === name) as ToolDef;
 
 function ctxWith(rpc: (fn: string, args: Row) => Promise<DbResult<unknown>>): ToolContext {
-  const db: Db = { rpc: <T>(fn: string, args: Row) => rpc(fn, args) as Promise<DbResult<T>>, select: () => Promise.resolve({ data: [], error: null }) };
+  const db: Db = {
+    download: async () => ({ data: null, error: null }), rpc: <T>(fn: string, args: Row) => rpc(fn, args) as Promise<DbResult<T>>, select: () => Promise.resolve({ data: [], error: null }) };
   return {
     db,
     principal: { type: 'agent', userId: 'u-agent', agentId: 'agent-1', workspaceId: 'w1', clientId: null },
@@ -82,6 +83,7 @@ function harness(
 ) {
   const rpcs: RpcCall[] = [];
   const db: Db = {
+    download: async () => ({ data: null, error: null }),
     rpc: <T>(fn: string, params: Record<string, unknown>): Promise<DbResult<T>> => {
       const call = { fn, params };
       rpcs.push(call);
@@ -124,6 +126,18 @@ function task(overrides: Row = {}): Row {
     ...overrides,
   };
 }
+
+Deno.test('list_my_tasks shows blocked_by', async () => {
+  const h = harness({ agent_tasks: [
+    task({ id: 'a', state: 'working' }),
+    task({ id: 'b', state: 'queued', depends_on_task_ids: ['a'] }),
+  ] });
+  const out = await tool('list_my_tasks').handler({}, h.ctx);
+  const tasks = out.structured.tasks as Row[];
+  assert.deepEqual(tasks.map((t) => [t.task_id, t.blocked_by, t.request_kind]), [['a', [], null], ['b', ['a'], null]]);
+  assert.match(out.text, /1 blocked/);
+  assert.match(out.text, /0 queued/);
+});
 
 function approval(overrides: Row = {}): Row {
   return {
@@ -266,4 +280,14 @@ Deno.test('get_task loads CI status only for a CI criterion and returns it to th
     assert.deepEqual(rpcs.filter((c) => c.fn === 'task_ci_status'), ci ? [{ fn: 'task_ci_status', params: { p_task_id: 't1' } }] : []);
     assert.deepEqual(out.structured?.ci_checks, ci ? checks : undefined);
   }
+});
+
+Deno.test('list_my_tasks trusts the authorized lookup for a completed hidden dependency', async () => {
+  const h = harness({ agent_tasks: [task({ id: 'b', state: 'queued', depends_on_task_ids: ['hidden'] })] }, {
+    principal: { type: 'agent', userId: 'u-agent', agentId: 'agent-1', workspaceId: 'w1', clientId: null },
+    onRpc: ({ fn }) => fn === 'open_dependencies' ? { data: { b: [] } } : undefined,
+  });
+  const out = await tool('list_my_tasks').handler({}, h.ctx);
+  assert.deepEqual((out.structured.tasks as Row[])[0].blocked_by, []);
+  assert.match(out.text, /1 queued/);
 });

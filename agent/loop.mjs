@@ -4,6 +4,7 @@
 import { argsHash, buildCheckpoint, guardFor, guardsFromResume, parseCheckpoint, WRITE_TOOLS } from "./checkpoint.mjs";
 import { McpError, toOpenAiTools } from "./mcpClient.mjs";
 import { buildSystemPrompt, buildTaskMessage } from "./prompt.mjs";
+import { extractFile, runRequest } from "./requests.mjs";
 
 /**
  * @typedef {import("./mcpClient.mjs").McpClient} McpClient
@@ -16,6 +17,7 @@ import { buildSystemPrompt, buildTaskMessage } from "./prompt.mjs";
 
 /** Tools the runtime drives itself; the model never sees them. */
 export const RUNTIME_TOOLS = new Set(["wait_for_my_tasks", "list_my_tasks", "claim_task", "heartbeat", "wait_for_task", "end_run", "ack_stop", "save_checkpoint", "hand_over", "await_questions"]);
+export const REQUEST_TOOLS = new Set(["get_ai_request", "fill_ai_cells", "complete_ai_request", "apply_ai_rewrite", "save_file_text"]);
 /** wait_for_my_tasks reasons that mean "there is work to claim". */
 const CLAIM_REASONS = new Set(["queued", "feedback", "brief", "handover"]);
 /** Activity signals that answer a pending human decision. */
@@ -61,7 +63,7 @@ function answerText(p) {
  *   mcp: McpClient, model: Model, channel?: Channel, clock?: Clock,
  *   maxTurns?: number, maxTasks?: number, harness?: string, reviewerAgentId?: string, resume?: boolean,
  *   prices?: {input: number, output: number}, appUrl?: string,
- *   signal?: AbortSignal, waitTimeoutS?: number, log?: (msg: string) => void,
+ *   signal?: AbortSignal, waitTimeoutS?: number, log?: (msg: string) => void, modelVision?: boolean, modelPdf?: boolean,
  * }} opts
  * @returns {Promise<{tasks: TaskOutcome[]}>}
  */
@@ -80,13 +82,15 @@ export async function runAgent(opts) {
     appUrl = "",
     signal,
     waitTimeoutS = 120,
+    modelVision = false,
+    modelPdf = false,
     log = () => {},
   } = opts;
 
   await mcp.initialize();
   const allTools = await mcp.listTools();
   const toolSchemas = new Map(allTools.map((t) => [t.name, t.inputSchema ?? {}]));
-  const tools = toOpenAiTools(allTools.filter((t) => !RUNTIME_TOOLS.has(t.name)));
+  const tools = toOpenAiTools(allTools.filter((t) => !RUNTIME_TOOLS.has(t.name) && !REQUEST_TOOLS.has(t.name)));
   const system = buildSystemPrompt({ harness, serverInstructions: mcp.instructions, reviewerAgentId });
 
   /** @param {ChannelEvent} event */
@@ -168,6 +172,34 @@ export async function runAgent(opts) {
     };
     const taskId = String(claim.task_id ?? task.task_id);
     const runId = String(claim.run_id);
+    if (task.request_kind) {
+      try {
+        const outcome = await runRequest({ call, model, task, runId, log, prices, signal });
+        await notify({ kind: outcome.status === "failed" ? "error" : "delivered", task_id: taskId, text: outcome.summary });
+        return { task_id: taskId, run_id: runId, outcome: outcome.status === "failed" ? "error" : "submitted", usage: outcome.usage };
+      } catch (error) {
+        const text = error instanceof Error ? error.message : String(error);
+        const usage = error?.usage ?? { input_tokens: 0, output_tokens: 0, cost_usd: 0 };
+        if (error?.name === "RequestStopped") {
+          await notify({ kind: "stopped", task_id: taskId, text });
+          return { task_id: taskId, run_id: runId, outcome: "stopped", usage };
+        }
+        if (error?.name === "AbortError") {
+          if (usage.input_tokens || usage.output_tokens) await call("heartbeat", { run_id: runId, usage: { ...usage, model: model.name } });
+          const handover = await call("hand_over", { run_id: runId, idempotency_key: `${runId}:request-abort`,
+            checkpoint: buildCheckpoint({ ...checkpoint, nextStep: "Continue the AI request.", handoverNote: text }) });
+          if (handover.isError && handover.data.code === "stop_requested") {
+            await call("ack_stop", { run_id: runId });
+            return { task_id: taskId, run_id: runId, outcome: "stopped", usage };
+          }
+          if (handover.isError) await call("end_run", { run_id: runId, status: "error", error: text });
+          return { task_id: taskId, run_id: runId, outcome: "aborted", usage };
+        }
+        await call("end_run", { run_id: runId, status: "error", terminal: true, error: text });
+        await notify({ kind: "error", task_id: taskId, text });
+        return { task_id: taskId, run_id: runId, outcome: "error", usage: { input_tokens: 0, output_tokens: 0, cost_usd: 0 } };
+      }
+    }
     const link = appUrl && claim.row_page_id ? `${appUrl}/p/${claim.row_page_id}?task=${taskId}` : undefined;
     const label = task.title ?? claim.title ?? taskId;
     let seenSeq = maxSeq(claim.recent_activities);
@@ -494,7 +526,7 @@ export async function runAgent(opts) {
           messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "deferred", message: "not executed: a decision was pending in this turn; call it again now that you have the answer" }) });
           continue;
         }
-        if (RUNTIME_TOOLS.has(name) || !toolSchemas.has(name)) {
+        if (RUNTIME_TOOLS.has(name) || REQUEST_TOOLS.has(name) || !toolSchemas.has(name)) {
           messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "unknown_tool", message: `${name} is not available to you` }) });
           continue;
         }
@@ -507,6 +539,18 @@ export async function runAgent(opts) {
           continue;
         }
         let res = await call(name, args);
+        if (name === "read_file" && !res.isError && res.data.status === "not_extracted" && res.data.download_url
+          && ((modelVision && res.data.mime?.startsWith("image/")) || (modelPdf && res.data.mime === "application/pdf"))) {
+          try {
+            const extracted = await extractFile({ call, model, runId, pageId: args.page_id, fileId: args.file_id,
+              url: res.data.download_url, mime: res.data.mime, prices, signal });
+            for (const key of ["input_tokens", "output_tokens"]) { total[key] += extracted.usage[key]; pending[key] += extracted.usage[key]; }
+            res = { isError: false, data: extracted.data, text: JSON.stringify(extracted.data) };
+          } catch (error) {
+            await handOverOrEnd(error instanceof Error ? error.message : String(error));
+            return done(signal?.aborted ? "aborted" : "error");
+          }
+        }
         let maybe = unsure(res);
         // A repeat with the same key is answered by the receipt of the first call when it did happen.
         if (WRITE_TOOLS.has(name) && args.idempotency_key && maybe) {

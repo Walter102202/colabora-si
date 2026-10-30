@@ -4,10 +4,10 @@ import { computeCell, displayValue } from "@/lib/dbCompute";
 import type { DbOps } from "@/lib/dbOps";
 export interface ViewProps { ops: DbOps; database: Database; queryDatabase?: Database; view: DbView; rows: DbRow[]; pages: Record<string, Page>; canOpenRow?: (row: DbRow) => boolean }
 export const TYPE_LABELS: Record<PropertyType, string> = {
-  text: "Text", number: "Number", select: "Select", multiSelect: "Multi-select", status: "Status", date: "Date", checkbox: "Checkbox", url: "URL", email: "Email", phone: "Phone", person: "Person", files: "Files & media", createdTime: "Created time", lastEditedTime: "Last edited time", relation: "Relation", rollup: "Rollup", formula: "Formula", id: "ID", createdBy: "Created by", lastEditedBy: "Last edited by", agentStatus: "Agent status", agentDelegate: "Agent delegate", button: "Button",
+  text: "Text", number: "Number", select: "Select", multiSelect: "Multi-select", status: "Status", date: "Date", checkbox: "Checkbox", url: "URL", email: "Email", phone: "Phone", person: "Person", files: "Files & media", createdTime: "Created time", lastEditedTime: "Last edited time", relation: "Relation", rollup: "Rollup", formula: "Formula", id: "ID", createdBy: "Created by", lastEditedBy: "Last edited by", agentStatus: "Agent status", agentDelegate: "Agent delegate", button: "Button", ai: "AI",
 };
 export const TYPE_ICONS: Record<PropertyType, string> = {
-  text: "T", number: "#", select: "▾", multiSelect: "▤", status: "◉", date: "▦", checkbox: "☑", url: "↗", email: "@", phone: "☎", person: "♙", files: "⊞", createdTime: "◷", lastEditedTime: "◷", relation: "↔", rollup: "Σ", formula: "∑", id: "#", createdBy: "♙", lastEditedBy: "♙", agentStatus: "◉", agentDelegate: "🤖", button: "▶",
+  text: "T", number: "#", select: "▾", multiSelect: "▤", status: "◉", date: "▦", checkbox: "☑", url: "↗", email: "@", phone: "☎", person: "♙", files: "⊞", createdTime: "◷", lastEditedTime: "◷", relation: "↔", rollup: "Σ", formula: "∑", id: "#", createdBy: "♙", lastEditedBy: "♙", agentStatus: "◉", agentDelegate: "🤖", button: "▶", ai: "✦",
 };
 export const VIEW_ICONS = { table: "▦", board: "▥", list: "☰", gallery: "▧", calendar: "▦", timeline: "▬" };
 export const visibleProperties = (database: Database, view: DbView) => {

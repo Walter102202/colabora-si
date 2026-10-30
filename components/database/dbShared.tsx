@@ -1,7 +1,9 @@
 import type { DbRow, DbProperty, Database, Page } from "@/lib/types";
 import { computeCell, displayValue } from "@/lib/dbCompute";
 import { AgentPropertyCell } from "@/components/agents/AgentPropertyCell";
+import { AiCell } from "@/components/agents/AiCell";
 export function CellPreview({ row, property, database, pages }: { row: DbRow; property: DbProperty; database: Database; pages: Record<string, Page> }) {
+  if (property.type === "ai") return <AiCell row={row} property={property} database={database} readOnly onChange={() => {}} />;
   if (property.type === "agentStatus" || property.type === "agentDelegate") return <AgentPropertyCell pageId={row.pageId} propertyId={property.id} kind={property.type} />;
   const value = computeCell(row, property, database, pages), text = displayValue(value, property, database, pages);
   if (["select", "status", "multiSelect"].includes(property.type)) return <OptionPills property={property} value={value} />;

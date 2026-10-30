@@ -16,6 +16,7 @@ function setup(rpcResult: (fn: string) => DbResult<unknown> = () => ({ data: {},
   const deps: WebhookDeps = {
     verify: () => Promise.resolve(bearer),
     makeDb: (token): Db => ({
+      download: async () => ({ data: null, error: null }),
       rpc: (fn, params) => {
         calls.push({ fn, params, token });
         return Promise.resolve(rpcResult(fn)) as Promise<DbResult<never>>;

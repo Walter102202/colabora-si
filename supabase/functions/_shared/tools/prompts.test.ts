@@ -8,7 +8,7 @@ Deno.test('review_as_lead keeps its name and addresses the reviewer agent too', 
 
 Deno.test('continue_task asks to claim with resume', async () => {
   const ctx: import('../mcp.ts').ToolContext = {
-    db: { rpc: () => Promise.resolve({ data: null, error: null }), select: <T>(spec: import('../db.ts').SelectSpec) => Promise.resolve({ data: (spec.table === 'agent_tasks' ? [{ id: 't1', row_page_id: 'p1', brief_version: 1 }] : []) as T[], error: null }) },
+    db: { download: async () => ({ data: null, error: null }), rpc: () => Promise.resolve({ data: null, error: null }), select: <T>(spec: import('../db.ts').SelectSpec) => Promise.resolve({ data: (spec.table === 'agent_tasks' ? [{ id: 't1', row_page_id: 'p1', brief_version: 1 }] : []) as T[], error: null }) },
     principal: { type: 'agent', userId: 'u', agentId: 'a', workspaceId: 'w', clientId: null },
     signal: new AbortController().signal, appUrl: '', now: () => 0, sleep: () => Promise.resolve(), progress: () => {},
   };
@@ -19,7 +19,7 @@ Deno.test('continue_task asks to claim with resume', async () => {
 
 Deno.test('CI prompts ask for a commit and leave the result to GitHub', async () => {
   const ctx: import('../mcp.ts').ToolContext = {
-    db: { rpc: () => Promise.resolve({ data: null, error: null }), select: <T>(spec: import('../db.ts').SelectSpec) => Promise.resolve({
+    db: { download: async () => ({ data: null, error: null }), rpc: () => Promise.resolve({ data: null, error: null }), select: <T>(spec: import('../db.ts').SelectSpec) => Promise.resolve({
       data: (spec.table === 'agent_tasks' ? [{ id: 't1', row_page_id: 'p1', brief_version: 1 }] : spec.table === 'task_briefs'
         ? [{ done_when: [{ id: 'c1', text: 'CI', check: 'ci', command: 'check' }] }] : []) as T[], error: null }) },
     principal: { type: 'agent', userId: 'u', agentId: 'a', workspaceId: 'w', clientId: null },

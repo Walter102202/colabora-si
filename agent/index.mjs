@@ -55,6 +55,8 @@ await runAgent({
   harness: config.harness,
   reviewerAgentId: config.reviewerAgentId,
   resume: config.resume,
+  modelVision: config.modelVision,
+  modelPdf: config.modelPdf,
   prices: config.prices,
   appUrl: config.appUrl,
   maxTurns: config.maxTurns,

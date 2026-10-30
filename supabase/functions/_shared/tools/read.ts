@@ -196,7 +196,7 @@ async function agentColumns(ctx: ToolContext, db: Database): Promise<Map<string,
   const data = await must(ctx.db.select<TaskCell>({
     table: 'agent_tasks',
     columns: 'row_page_id,state,delegate_agent_id,created_at',
-    filters: [{ col: 'row_page_id', op: 'in', value: db.rows.map((r) => r.pageId) }],
+    filters: [{ col: 'row_page_id', op: 'in', value: db.rows.map((r) => r.pageId) }, { col: 'request_kind', op: 'is', value: null }],
     order: [{ column: 'created_at', ascending: true }],
   }));
   for (const t of data ?? []) out.set(t.row_page_id, t); // the newest task of each row wins

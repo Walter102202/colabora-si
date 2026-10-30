@@ -157,6 +157,7 @@ export type PropertyType =
   | "id"              // unique auto-incrementing id per row, optional prefix (TASK-1)
   | "agentStatus"     // computed from the agent layer; never stored in cells
   | "agentDelegate"   // computed from the agent layer; never stored in cells
+  | "ai"              // a value an agent writes on request; a person may overwrite it
   | "button";         // per-row button that runs a ButtonAction
 
 export interface SelectOption {
@@ -190,6 +191,20 @@ export interface DbProperty {
   nextId?: number;            // id: next counter to assign
   buttonLabel?: string;       // button: label
   buttonActions?: ButtonAction[]; // button: actions in execution order
+  aiPrompt?: string;         // ai: instruction, at most 4000 characters
+  aiInputs?: string[];       // ai: input property ids; absent means all non-AI properties
+  aiAgentId?: string;        // ai: agent id; absent means the workspace's platform agent
+}
+
+export interface AiCellValue {
+  text: string;
+  error?: string;            // at most 300 characters; a new fill retries the row
+  by: "agent" | "human";
+  id: string;               // auth user id of the writer
+  agentId?: string;
+  runId?: string;
+  taskId?: string;
+  at: number;               // epoch milliseconds
 }
 
 export interface DbRow {

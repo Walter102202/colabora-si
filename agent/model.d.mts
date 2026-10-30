@@ -19,7 +19,7 @@ export interface ChatResult {
 }
 export interface Model {
   name: string;
-  chat(req: { messages: object[]; tools?: object[] }): Promise<ChatResult>;
+  chat(req: { messages: object[]; tools?: object[]; signal?: AbortSignal }): Promise<ChatResult>;
 }
 export function normalizeMessage(message: unknown): AssistantMessage;
 export function createModel(opts: {

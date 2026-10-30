@@ -40,7 +40,7 @@ export const ALLOWED_BLOCK_TYPES: readonly AgentBlockInput["type"][] = [
 /** Property types whose value is computed; agents can never write them. */
 export const COMPUTED_PROPERTY_TYPES: readonly PropertyType[] = [
   "formula", "rollup", "createdTime", "lastEditedTime", "createdBy", "lastEditedBy",
-  "id", "agentStatus", "agentDelegate", "button",
+  "id", "agentStatus", "agentDelegate", "button", "ai",
 ];
 
 export const MAX_INDENT = 6;

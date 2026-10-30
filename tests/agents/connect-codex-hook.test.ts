@@ -85,9 +85,25 @@ describe("Codex stop hook", () => {
     expect(calls.slice(1).every((c) => Number(c.args.timeout_s) <= 120)).toBe(true);
   });
 
-  it("exits 0 without output when the task is done", async () => {
-    const { fetchImpl } = fakeRemote([none, { tasks: [{ task_id: TASK, state: "done", reason: "feedback" }], next_cursor: "c-1" }]);
-    expect(await runStopHook({ input: {}, env: ENV, fetchImpl, now: clock(1000), sleep })).toEqual({ exitCode: 0 });
+  it("keeps waiting after a done task until the deadline", async () => {
+    const { fetchImpl, calls } = fakeRemote([none, { tasks: [{ task_id: TASK, state: "done", reason: "feedback" }], next_cursor: "c-1" }]);
+    expect(await runStopHook({ input: {}, env: ENV, fetchImpl, now: clock(60_000), sleep })).toEqual({ exitCode: 0 });
+    expect(calls.length).toBeGreaterThan(2);
+  });
+
+  it.each([
+    ["closed", "done"],
+    ["stop", "cancelled"],
+  ])("a %s task does not end the wait: the next queued task continues the session", async (reason, state) => {
+    const { fetchImpl, calls } = fakeRemote([
+      { tasks: [{ task_id: "t1", reason, state }], next_cursor: "c-1" },
+      { tasks: [{ task_id: "t2", reason: "queued", state: "queued" }], next_cursor: "c-2" },
+    ]);
+    const result = await runStopHook({ input: {}, env: ENV, fetchImpl, now: clock(1000), sleep });
+    const output = JSON.parse(result.output ?? "{}");
+    expect(output.decision).toBe("block");
+    expect(output.reason).toContain('claim_task("t2")');
+    expect(calls[1].args.after).toBe("c-1");
   });
 
   it("keeps waiting while a review blocked the task, and continues when the person answers", async () => {
@@ -125,6 +141,13 @@ describe("Codex stop hook", () => {
     const result = await runStopHook({ input: { stop_hook_active: true }, env: ENV, fetchImpl, now: clock(5 * 60_000), sleep });
     expect(result).toEqual({ exitCode: 0 });
     expect(calls.every((c) => c.name === "wait_for_my_tasks")).toBe(true);
+  });
+  it.each(["queued", "handover"])("keeps an existing %s task in the first continuation snapshot", async (reason) => {
+    const { fetchImpl } = fakeRemote([{ tasks: [{ task_id: "next-task", state: "queued", reason }], next_cursor: "c-1" }, none]);
+    const result = await runStopHook({ input: { stop_hook_active: true }, env: ENV, fetchImpl, now: clock(5 * 60_000), sleep });
+    const output = JSON.parse(result.output ?? "{}");
+    expect(output.decision).toBe("block");
+    expect(output.reason).toContain(reason === "handover" ? 'claim_task("next-task", resume: true)' : 'claim_task("next-task")');
   });
 
   it("never blocks without a real task change", async () => {

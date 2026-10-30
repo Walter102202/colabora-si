@@ -34,6 +34,9 @@ export interface SelectSpec {
 export interface Db {
   rpc<T = unknown>(fn: string, params: Record<string, unknown>): Promise<DbResult<T>>;
   select<T = Record<string, unknown>>(spec: SelectSpec): Promise<DbResult<T[]>>;
+  download(bucket: string, path: string): Promise<DbResult<Blob>>;
+  fileInfo?(bucket: string, path: string): Promise<DbResult<{ size: number; mime?: string }>>;
+  signedUrl?(bucket: string, path: string, seconds: number): Promise<DbResult<string>>;
 }
 
 /** Drops undefined values so PostgREST applies the SQL defaults of omitted parameters. */
@@ -46,6 +49,20 @@ type Query = any;
 
 export function supabaseDb(client: SupabaseClient, signal?: AbortSignal): Db {
   return {
+    async download(bucket, path) {
+      const { data, error } = await client.storage.from(bucket).download(path);
+      return { data, error };
+    },
+    async fileInfo(bucket, path) {
+      const split = path.lastIndexOf('/'), filename = path.slice(split + 1);
+      const { data, error } = await client.storage.from(bucket).list(path.slice(0, split), { search: filename, limit: 100 });
+      const file = data?.find((f) => f.name === filename);
+      return { data: file ? { size: Number(file.metadata?.size ?? 0), mime: file.metadata?.mimetype } : null, error };
+    },
+    async signedUrl(bucket, path, seconds) {
+      const { data, error } = await client.storage.from(bucket).createSignedUrl(path, seconds);
+      return { data: data?.signedUrl ?? null, error };
+    },
     async rpc<T>(fn: string, params: Record<string, unknown>) {
       let q: Query = client.rpc(fn, definedParams(params));
       if (signal) q = q.abortSignal(signal);

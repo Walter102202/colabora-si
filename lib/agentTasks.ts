@@ -9,6 +9,7 @@ import type { Acceptance, RunStatus, TaskState } from "@/lib/agentState";
 // Writes go through the control RPCs in lib/agentActions.ts.
 
 export interface TaskRow {
+  request_kind?: "fill" | "rewrite" | null;
   id: string;
   workspace_id: string;
   context_id: string;
@@ -474,7 +475,7 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
 // Selectors.
 
 export function taskForPage(state: AgentTasksState, pageId: string): TaskRow | null {
-  const rows = Object.values(state.tasks).filter((t) => t.row_page_id === pageId);
+  const rows = Object.values(state.tasks).filter((t) => t.row_page_id === pageId && t.request_kind == null);
   if (rows.length === 0) return null;
   const open = rows.find((t) => OPEN.includes(t.state));
   return open ?? rows.sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0];

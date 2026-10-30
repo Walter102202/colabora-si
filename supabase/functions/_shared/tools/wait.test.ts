@@ -29,9 +29,13 @@ function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = (
   let clock = 1_000_000;
   let sleeps = 0;
   const db: Db = {
-    rpc: (fn, params) => {
+    download: async () => ({ data: null, error: null }),
+    rpc: <T>(fn: string, params: Record<string, unknown>) => {
       rpcs.push({ fn, params });
-      return Promise.resolve({ data: null, error: null });
+      const data = fn === 'open_dependencies' ? Object.fromEntries((tables.agent_tasks ?? [])
+        .filter(t => (params.p_task_ids as string[]).includes(String(t.id)))
+        .map(t => [t.id, ((t.depends_on_task_ids ?? []) as string[]).filter(id => !tables.agent_tasks.some(d => d.id === id && d.state === 'done'))])) : null;
+      return Promise.resolve({ data: data as T, error: null });
     },
     select: <T>(spec: SelectSpec) => {
       selects.push(spec.table);
@@ -79,6 +83,34 @@ function activity(seq: number, overrides: Row = {}): Row {
     body: { op: 'append_blocks', summary: `step ${seq}` }, created_at: `2026-10-27T10:00:0${seq}+00:00`, ...overrides,
   };
 }
+
+Deno.test('a queued task with an open dependency is not offered', async () => {
+  const h = harness({ agent_tasks: [
+    task({ id: 'a', state: 'queued', active_run_id: null }),
+    task({ id: 'b', state: 'queued', active_run_id: null, depends_on_task_ids: ['a'] }),
+  ] });
+  const out = await tool('wait_for_my_tasks').handler({ timeout_s: 0 }, h.ctx);
+  const tasks = out.structured.tasks as Row[];
+  assert.deepEqual(tasks.map((t) => t.task_id), ['a']);
+  assert.deepEqual(tasks[0].blocked_by, []);
+  assert.equal(tasks[0].request_kind, null);
+});
+
+Deno.test('the dependent is offered once its dependency is done', async () => {
+  const tables = { agent_tasks: [
+    task({ id: 'a', state: 'working' }),
+    task({ id: 'b', state: 'queued', active_run_id: null, depends_on_task_ids: ['a'] }),
+  ] };
+  const h = harness(tables);
+  const initial = await tool('wait_for_my_tasks').handler({ timeout_s: 0 }, h.ctx);
+  assert.deepEqual(initial.structured.tasks, []);
+  tables.agent_tasks[0].state = 'done';
+  for (const t of tables.agent_tasks) t.updated_at = '2026-10-27T10:00:01+00:00';
+  const out = await tool('wait_for_my_tasks').handler({ after: initial.structured.next_cursor, timeout_s: 0 }, h.ctx);
+  const dependent = (out.structured.tasks as Row[]).find((t) => t.task_id === 'b');
+  assert.equal(dependent?.reason, 'queued');
+  assert.deepEqual(dependent?.blocked_by, []);
+});
 
 function event(id: string, createdAt: string, overrides: Row = {}): Row {
   return { event_id: id, agent_id: 'agent-1', task_id: 't1', run_id: null, type: 'task.feedback', payload: {}, seq: 1, created_at: createdAt, ...overrides };
@@ -526,4 +558,11 @@ Deno.test('wait_for_task without after_seq brings the answers given since the la
     { approval_id: 'q-open', question: 'Any image?', asked_at: '2026-10-27T08:40:00+00:00' },
   ]);
   assert.equal(h.selects.filter((t) => t === 'agent_events').length, 0, 'still no event mark on a call that does not wait');
+});
+
+Deno.test('a completed dependency hidden by RLS releases the assigned task', async () => {
+  const h = harness({ agent_tasks: [task({ id: 'b', state: 'queued', active_run_id: null, depends_on_task_ids: ['hidden'] })] });
+  h.ctx.db.rpc = <T>(fn: string) => Promise.resolve({ data: (fn === 'open_dependencies' ? { b: [] } : null) as T, error: null });
+  const out = await tool('wait_for_my_tasks').handler({ timeout_s: 0 }, h.ctx);
+  assert.deepEqual((out.structured.tasks as Row[]).map(t => t.task_id), ['b']);
 });
