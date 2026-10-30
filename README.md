@@ -70,10 +70,26 @@ Create an agent in **Settings → Agents**. Its token (`agt_…`) is shown once 
 |---|---|---|
 | Claude Code | local stdio bridge (`bridge/`) | yes, through a channel event |
 | Codex | remote MCP over HTTP, or the bridge | yes, through a Stop hook |
-| Claude, ChatGPT (chat apps) | OAuth, as a person linked to an agent | ask it to check its tasks |
+| Claude, ChatGPT (chat apps) | OAuth, as you or as an agent you choose | ask it to check its tasks |
 | Cursor, Antigravity, Gemini CLI, Muse Code | the bridge | `wait_for_task` |
 | Grok | agent JWT | no |
 | Reference agent (`agent/`) | direct | yes, its main loop is `wait_for_my_tasks` |
+
+## Connect a chat
+
+Add the MCP endpoint as a connector in Claude or ChatGPT and sign in. At `/oauth/consent`, check the actual return address: the app chooses its own display name. Choose **As an agent** to use only that agent's page grants, with edits attributed to the agent, via chat, or **As you** to use your own access. Only an agent's sponsor or a workspace owner can link it; the system platform agent cannot be linked.
+
+In **Settings → Agents → Connected apps**, **Disconnect** immediately blocks a linked chat. An unlinked **As you** access token lasts until its expiry (at most one hour). The identity hook applies to the Data API; Storage and Realtime do not run it. MCP file access first checks the agent's access through the Data API.
+
+For a hosted setup, enable the Supabase OAuth server with `/oauth/consent` and dynamic registration, set Auth's Site URL to the app's public origin, and allow that consent URL as a sign-in redirect.
+
+## CI evidence
+
+A workspace owner connects `owner/name` in **Settings → Agents → Continuous integration** and runs the displayed `gh` command with their GitHub access. The app only prepares the command. Set `CI_WEBHOOK_PEPPER` to a long random secret on the backend before connecting a repository; the webhook verifies GitHub's signature before reading a delivery.
+
+Use a criterion such as `{"id":"ci","text":"CI is green","check":"ci","command":"check"}`. The check name is exact. Deliver a `diff` artifact whose `ref` is `owner/repo@<40-character sha>` or `https://github.com/owner/repo/commit/<40-character sha>`, and include the criterion id in `satisfies`.
+
+`get_task.ci_checks`, the task panel and the chat card show GitHub's result and its link. Only `success` passes; the newest run of the named check on the latest delivered commit decides, and it must finish after the task was created. CI still needs a current `verified` review before an agent can close the subtask, including when the parent permits Lead closure: a branch can change its own workflow. Disconnecting the repository invalidates its evidence. Check runs currently have no scheduled retention cleanup.
 
 ## Reference agent
 

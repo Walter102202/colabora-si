@@ -13,6 +13,8 @@ export { SubtaskList } from "@/components/agents/panel/SubtaskList";
 export type { SubtaskItem } from "@/components/agents/panel/SubtaskList";
 export { StatusBadge } from "@/components/agents/panel/StatusBadge";
 export { VerificationCard } from "@/components/agents/panel/VerificationCard";
+export type { VerificationCardProps } from "@/components/agents/panel/VerificationCard";
+export type { CiCheckRow } from "@/lib/agentCi";
 export { ActivityTimeline } from "@/components/agents/panel/ActivityTimeline";
 export { FeedbackComposer } from "@/components/agents/panel/FeedbackComposer";
 export { MetricsList } from "@/components/agents/panel/MetricsList";

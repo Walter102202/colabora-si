@@ -1,4 +1,5 @@
 import type { TaskAutonomy } from "@/lib/agentAutonomy";
+import type { CiCheckRow } from "@/lib/agentCi";
 import type { ContinuityInfo } from "@/lib/agentContinuity";
 import type { TaskDiff } from "@/lib/agentRunDiff";
 import type { ActivityRow, ApprovalRow, ArtifactRow, BriefRow, ReviewRow, RunRow, TaskRow } from "@/lib/agentTasks";
@@ -24,6 +25,7 @@ export interface CardSubtask {
 }
 
 export interface TaskCardData {
+  ci_checks?: CiCheckRow[];
   continuity?: ContinuityInfo | null;
   diff?: TaskDiff | null;
   kind: "task";

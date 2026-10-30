@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { agentErrorMessage, getAgentClient } from "@/lib/agentClient";
+import type { CiCheckRow } from "@/lib/agentCi";
 import type { Acceptance, RunStatus, TaskState } from "@/lib/agentState";
 
 // Non-persisted store of the agent task model for one workspace: tasks, runs,
@@ -155,6 +156,7 @@ export interface AgentTasksState {
   reviews: ById<ReviewRow>; // per task, loaded with the detail
   artifacts: ById<ArtifactRow>; // per task, loaded with the detail
   briefs: ById<BriefRow>; // key `${task_id}:${version}`
+  ciChecks: ById<CiCheckRow[]>;
   activities: ById<ActivityRow[]>; // by task id, ordered by seq (loaded on demand)
   closedCursor: ClosedCursor | null; // keyset of the oldest closed task loaded
   closedExhausted: boolean;
@@ -241,6 +243,7 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
   reviews: {},
   artifacts: {},
   briefs: {},
+  ciChecks: {},
   activities: {},
   closedCursor: null,
   closedExhausted: false,
@@ -252,7 +255,7 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
     if (!client) return;
     const reset = get().workspaceId === workspaceId
       ? {}
-      : { tasks: {}, runs: {}, approvals: {}, reviews: {}, artifacts: {}, closedCursor: null, closedExhausted: false };
+      : { tasks: {}, runs: {}, approvals: {}, reviews: {}, artifacts: {}, ciChecks: {}, closedCursor: null, closedExhausted: false };
     set({ status: "loading", error: null, workspaceId, ...reset });
     try {
       const [open, closed, runs, approvals] = await Promise.all([
@@ -328,8 +331,13 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
       client.from("agent_artifacts").select("*").eq("task_id", taskId),
       client.from("agent_reviews").select("*").eq("task_id", taskId).order("created_at", { ascending: false }).limit(REVIEWS_LIMIT),
     ]);
+    const task = get().tasks[taskId];
+    const brief = task ? get().briefs[`${taskId}:${task.brief_version}`] : undefined;
+    const ci = brief?.done_when.some((c) => c.check === "ci")
+      ? await client.rpc("task_ci_status", { p_task_id: taskId }) : null;
     const s = get();
     set({
+      ciChecks: { ...s.ciChecks, [taskId]: ci && !ci.error ? (ci.data ?? []) as CiCheckRow[] : [] },
       ...(artifacts.error ? {} : { artifacts: mergeRows(s.artifacts, artifacts.data as ArtifactRow[]) }),
       ...(reviews.error ? {} : { reviews: mergeRows(s.reviews, reviews.data as ReviewRow[]) }),
     });
@@ -388,6 +396,7 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
       (payload: RealtimePostgresChangesPayload<ActivityRow>) => {
         const row = payload.new as ActivityRow;
         if (!row?.task_id) return;
+        if (row.body?.ci) void get().loadTaskDetail(row.task_id);
         const list = get().activities[row.task_id];
         if (!list) return; // not loaded for this task; loadActivities fetches on demand
         if (list.some((a) => a.id === row.id)) return;

@@ -42,7 +42,7 @@ function anonKey(env: Env): string {
   return env.SUPABASE_ANON_KEY || firstKey(env.SUPABASE_PUBLISHABLE_KEYS) || required(env, 'SUPABASE_ANON_KEY');
 }
 
-/** Bypasses RLS. Only agent-token, agent-admin and the dispatch functions may use it. */
+/** Bypasses RLS. Used by token/admin/dispatch, send functions and signature-verified GitHub deliveries. */
 export function serviceClient(env: Env): SupabaseClient {
   return createClient(required(env, 'SUPABASE_URL'), serviceKey(env), { auth: AUTH });
 }

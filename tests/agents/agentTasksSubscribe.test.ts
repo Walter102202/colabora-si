@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockCard } from "@/components/agents/card/mock";
+import type { TaskCardData } from "@/lib/agentCard";
 
 // Many cells and one row panel subscribe to the same workspace: they must share
 // one realtime channel, which closes only when the last subscriber releases.
 // The fake client mirrors supabase-js: `channel(topic)` hands back the channel
 // registered under that topic until `removeChannel` has run, and a subscribed
 // channel refuses new `on` callbacks.
-type Chan = { topic: string; subscribed: boolean; on(): Chan; subscribe(): Chan };
+type ChangeHandler = (payload: { new: Record<string, unknown> }) => void;
+type Chan = { topic: string; subscribed: boolean; handlers: Map<string, ChangeHandler>; on(event?: string, filter?: { table: string }, callback?: ChangeHandler): Chan; subscribe(): Chan };
 const registry = new Map<string, Chan>();
 const created: Chan[] = [];
 const removed: Chan[] = [];
@@ -17,8 +20,10 @@ const client = {
     const ch: Chan = {
       topic,
       subscribed: false,
-      on() {
+      handlers: new Map(),
+      on(_event, filter, callback) {
         if (ch.subscribed) throw new Error(`cannot add callbacks for ${topic} after subscribe()`);
+        if (filter && callback) ch.handlers.set(filter.table, callback);
         return ch;
       },
       subscribe() { ch.subscribed = true; return ch; },
@@ -36,6 +41,7 @@ const client = {
     return Promise.resolve().then(() => { registry.delete(ch.topic); return "ok"; });
   },
   // Any filter chain resolves to an empty page, like a PostgREST builder that is awaited.
+  rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
   from() {
     const chain: Record<string, unknown> = {};
     const resolved = Promise.resolve({ data: [], error: null });
@@ -52,6 +58,26 @@ const { useAgentNotifications } = await import("@/lib/agentNotifications");
 beforeEach(() => { registry.clear(); created.length = 0; removed.length = 0; });
 
 describe("useAgentTasks.subscribe", () => {
+  it("loads CI only when requested by the brief and refreshes on CI activity", async () => {
+    const release = useAgentTasks.getState().subscribe("ci-ws");
+    await vi.waitFor(() => expect(useAgentTasks.getState().status).toBe("ready"));
+    const data = mockCard("1") as TaskCardData;
+    const key = `${data.task.id}:${data.task.brief_version}`;
+    useAgentTasks.setState({ tasks: { [data.task.id]: data.task }, briefs: { [key]: data.brief! } });
+    client.rpc.mockClear();
+    await useAgentTasks.getState().loadTaskDetail(data.task.id);
+    expect(client.rpc).not.toHaveBeenCalled();
+    useAgentTasks.setState({ briefs: { [key]: { ...data.brief!, done_when: [{ id: "ci", text: "CI", check: "ci", command: "check" }] } } });
+    const checks = [{ criterion_id: "ci", check: "check", state: "passed" }];
+    client.rpc.mockResolvedValue({ data: checks, error: null });
+    await useAgentTasks.getState().loadTaskDetail(data.task.id);
+    expect(client.rpc).toHaveBeenCalledWith("task_ci_status", { p_task_id: data.task.id });
+    expect(useAgentTasks.getState().ciChecks[data.task.id]).toEqual(checks);
+    client.rpc.mockClear();
+    created.at(-1)!.handlers.get("agent_activities")!({ new: { id: "ci-event", task_id: data.task.id, body: { ci: { conclusion: "failure" } } } });
+    await vi.waitFor(() => expect(client.rpc).toHaveBeenCalledWith("task_ci_status", { p_task_id: data.task.id }));
+    release();
+  });
   it("shares one channel per workspace and closes it with the last release", () => {
     const { subscribe } = useAgentTasks.getState();
     const releaseA = subscribe("ws-1");

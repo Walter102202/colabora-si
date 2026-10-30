@@ -169,6 +169,7 @@ function TaskCard({
       artifact={data.artifact}
       review={review}
       brief={data.brief}
+      ciChecks={data.ci_checks}
       activities={data.activities}
       subtasks={subtasks}
       reviewerName={reviewerName}
