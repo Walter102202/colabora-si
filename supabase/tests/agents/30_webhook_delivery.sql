@@ -1,5 +1,5 @@
 begin;
-select plan(9);
+select plan(11);
 select tests.fixture() as f \gset
 select tests.make_user('agent+hook@agents.invalid') as uh \gset
 select tests.make_user('agent+ref@agents.invalid') as ur \gset
@@ -15,7 +15,7 @@ select tests.reset_role();
 select is((select delivery from public.agents where id = :'hook'::uuid), 'push', 'an agent created with a webhook_url is pushed to');
 select is((select delivery from public.agents where id = :'ref'::uuid), 'pull', 'an agent created without a webhook_url pulls, whatever its kind');
 
--- 3-5. update_agent replaces the connection: delivery follows it.
+-- 3-7. update_agent replaces the connection: delivery follows it.
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.update_agent(:'ref'::uuid, '{"connection":{"harness":"custom","webhook_url":"https://hook.example/ref"}}'::jsonb);
 select tests.reset_role();
@@ -25,17 +25,26 @@ select public.update_agent(:'ref'::uuid, '{"connection":{"harness":"custom","web
 select tests.reset_role();
 select is((select delivery from public.agents where id = :'ref'::uuid), 'pull', 'an empty webhook_url is no webhook');
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.update_agent(:'ref'::uuid, '{"connection":{"harness":"custom","webhook_url":"https://hook.example/ref"}}'::jsonb);
+select public.update_agent(:'ref'::uuid, '{"connection":{"harness":"custom","webhook_url":"   "}}'::jsonb);
+select tests.reset_role();
+select is((select delivery from public.agents where id = :'ref'::uuid), 'pull', 'a blank webhook_url is no webhook');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.update_agent(:'ref'::uuid, jsonb_build_object('connection', jsonb_build_object('webhook_url', E'\t\n ')));
+select tests.reset_role();
+select is((select delivery from public.agents where id = :'ref'::uuid), 'pull', 'nor is one made of tabs and newlines');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.update_agent(:'hook'::uuid, '{"name":"Hook renamed"}'::jsonb);
 select tests.reset_role();
 select is((select delivery from public.agents where id = :'hook'::uuid), 'push', 'a patch that keeps the connection keeps push');
 
--- 6-7. delivery cannot disagree with the connection, which is also how the migration fixed older rows.
+-- 8-9. delivery cannot disagree with the connection, which is also how the migration fixed older rows.
 update public.agents set delivery = 'push' where id = (:'f'::jsonb->>'agent')::uuid;
 select is((select delivery from public.agents where id = (:'f'::jsonb->>'agent')::uuid), 'pull', 'push without a webhook_url is not kept');
 update public.agents set delivery = 'pull' where id = :'hook'::uuid;
 select is((select delivery from public.agents where id = :'hook'::uuid), 'push', 'pull with a webhook_url is not kept');
 
--- 8-9. agent-dispatch reads delivery from dispatch_dequeue: the webhook agent's event comes out as push, the others as pull.
+-- 10-11. agent-dispatch reads delivery from dispatch_dequeue: the webhook agent's event comes out as push, the others as pull.
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.create_agent_task('page_A1', '{"objective":"Hooked"}'::jsonb) ->> 'task_id' as task \gset
 select tests.reset_role();

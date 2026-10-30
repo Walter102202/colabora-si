@@ -130,11 +130,12 @@ grant execute on function public.review_task(uuid, text, jsonb, jsonb, uuid, uui
 -- ============ webhook agents are pushed to ============
 -- agents.delivery defaults to 'pull' (0002:13) and nothing set 'push', so agent-dispatch acked every event of a webhook
 -- agent as pulled and never posted it. Delivery now follows the connection: an agent with a webhook_url is pushed to,
--- every other agent pulls. The kind does not decide it: Settings creates the reference agent, which pulls with
--- wait_for_my_tasks, with kind 'webhook' and no webhook_url.
+-- every other agent pulls (a blank webhook_url is none). The kind does not decide it: Settings creates the reference
+-- agent, which pulls with wait_for_my_tasks, with kind 'webhook' and no webhook_url.
 create or replace function private.delivery_for(p_connection jsonb)
 returns text language sql immutable set search_path = '' as $$
-  select case when jsonb_typeof(p_connection->'webhook_url') = 'string' and p_connection->>'webhook_url' <> '' then 'push' else 'pull' end;
+  select case when jsonb_typeof(p_connection->'webhook_url') = 'string'
+                    and btrim(p_connection->>'webhook_url', E' \t\r\n') <> '' then 'push' else 'pull' end;
 $$;
 
 create or replace function private.agents_derive_delivery()
