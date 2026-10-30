@@ -2,6 +2,10 @@
 -- At most 20 rows per person, 200 per pass, one round at a time. Random priority
 -- per person prevents a fixed set of users winning every pass when >200 qualify.
 -- A reminder more than 24 hours late stays available to the in-app checker.
+-- Cover the id tie-break so LIMIT can stop the ordered scan for each person.
+create index reminders_pending_push_idx on public.reminders (user_id, remind_at, id)
+where not notified and deleted_at is null;
+
 create function public.due_push_reminders()
 returns table (id text, user_id uuid, page_id text, body text)
 language sql volatile security definer set search_path = ''
