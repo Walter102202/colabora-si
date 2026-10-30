@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, it, vi } from "vitest";
-import { approveConsent, denyConsent, disconnectApp, loadConsent, safeRedirect } from "@/lib/agentConsent";
+import { approveConsent, denyConsent, disconnectApp, hostOf, loadConsent, safeRedirect } from "@/lib/agentConsent";
 
 function fake() {
   const oauth = { getAuthorizationDetails: vi.fn(), approveAuthorization: vi.fn(), denyAuthorization: vi.fn(), revokeGrant: vi.fn() };
@@ -8,12 +8,14 @@ function fake() {
   return { oauth, rpc, client: { auth: { oauth }, rpc } as unknown as SupabaseClient };
 }
 describe("OAuth consent", () => {
+  it.each(["evilapp://claude.ai/cb", "web+evil://claude.ai/cb", "intent://claude.ai/cb", "http://127.0.0.1:9/cb", "http://localhost:3000/cb"])
+    ("shows the entire non-HTTPS destination %s", (uri) => expect(hostOf(uri)).toBe(uri));
   it("reads details before asking, showing the real redirect host", async () => {
     const f = fake();
     f.oauth.getAuthorizationDetails.mockResolvedValue({ data: { client: { id: "c", name: "Claude" },
       redirect_uri: "https://trusted.test@actual.test/cb", user: { email: "me@test.local" } }, error: null });
     expect(await loadConsent(f.client, "a")).toEqual({ kind: "ask", authorizationId: "a", clientId: "c", clientName: "Claude",
-      redirectHost: "actual.test", email: "me@test.local" });
+      redirectHost: "https://actual.test", redirectIsApp: false, email: "me@test.local" });
     expect(f.oauth.getAuthorizationDetails).toHaveBeenCalledWith("a");
   });
   it("returns the already-consented redirect and propagates expired requests", async () => {

@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type ConsentState =
   | { kind: "redirect"; url: string }
-  | { kind: "ask"; authorizationId: string; clientId: string; clientName: string; redirectHost: string; email: string };
+  | { kind: "ask"; authorizationId: string; clientId: string; clientName: string; redirectHost: string; redirectIsApp: boolean; email: string };
 export interface LinkableAgent { id: string; name: string; workspace_id: string; role: string }
 export interface ConnectedApp { clientId: string; name: string; agentName: string | null; linked: boolean; revoked: boolean }
 
@@ -13,7 +13,7 @@ export function safeRedirect(url: string): string | null {
   try { return BLOCKED.has(new URL(url).protocol) ? null : url; } catch { return null; }
 }
 export function hostOf(uri: string): string {
-  try { return new URL(uri).host || uri; } catch { return uri; }
+  try { const url = new URL(uri); return url.protocol === "https:" ? url.origin : uri; } catch { return uri; }
 }
 
 /** This read also binds the authorization to the person; approving without it returns 404. */
@@ -22,7 +22,7 @@ export async function loadConsent(client: SupabaseClient, authorizationId: strin
   if (error) throw error;
   if ("redirect_url" in data) return { kind: "redirect", url: data.redirect_url };
   return { kind: "ask", authorizationId, clientId: data.client.id, clientName: data.client.name || "An app",
-    redirectHost: hostOf(data.redirect_uri), email: data.user.email };
+    redirectHost: hostOf(data.redirect_uri), redirectIsApp: !["http:", "https:"].includes(new URL(data.redirect_uri).protocol), email: data.user.email };
 }
 export async function linkableAgents(client: SupabaseClient): Promise<LinkableAgent[]> {
   const { data, error } = await client.rpc("linkable_agents");

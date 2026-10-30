@@ -67,6 +67,7 @@ export function ConsentPage() {
       <header className="space-y-3">
         <h1 id="consent-title" className="text-2xl font-semibold">{detail.clientName} wants to connect to colabora.si</h1>
         <p>After you approve, you return to <strong className="break-all">{detail.redirectHost}</strong>.</p>
+        {detail.redirectIsApp && <p className="text-sm">This opens an app on your device, not a website. Check the entire address.</p>}
         <p className="rounded border border-border bg-bg-secondary p-3 text-sm">The app wrote this name itself. Check the address above before you approve.</p>
       </header>
       <fieldset className="space-y-4" disabled={busy}>

@@ -44,6 +44,13 @@ it("offers only As you when there are no linkable agents", async () => {
   expect(container.textContent).not.toContain("As an agent");
   expect(container.querySelector<HTMLInputElement>('input[value="human"]')?.checked).toBe(true);
 });
+it("shows a custom scheme as an app destination rather than a trusted website", async () => {
+  f.loadConsent.mockResolvedValue({ ...detail, redirectHost: "evilapp://claude.ai/cb", redirectIsApp: true });
+  await mount();
+  expect(container.textContent).toContain("evilapp://claude.ai/cb");
+  expect(container.textContent).toContain("This opens an app on your device, not a website.");
+  expect(container.textContent).not.toContain("you return to claude.ai");
+});
 it("approves the selected agent then navigates to the returned URL", async () => {
   const navigate = vi.spyOn(window.location, "assign").mockImplementation(() => {});
   f.approveConsent.mockResolvedValue("https://real.test/cb"); await mount();
