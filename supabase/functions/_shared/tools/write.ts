@@ -298,11 +298,12 @@ const addRow: ToolDef = {
 const addComment: ToolDef = {
   name: 'add_comment',
   title: 'Comment on a page or block',
-  description: 'Adds a comment to a page, or to one block with block_id. Mentioning an agent never makes it act.',
+  description: 'Adds a comment to a page, or to one block with block_id; with parent_id it replies in that thread. A person\'s mention of an agent on a page with no open task creates a task for that agent; an agent\'s mention never does.',
   inputSchema: object({
     page_id: { type: 'string', minLength: 1 },
     body: { type: 'string', minLength: 1, maxLength: 10_000 },
     block_id: { type: 'string' },
+    parent_id: { type: 'string' },
   }, ['page_id', 'body']),
   outputSchema: output({ comment_id: { type: ['string', 'null'] } }),
   annotations: WRITE,
@@ -313,6 +314,7 @@ const addComment: ToolDef = {
       p_page_id: pageId,
       p_body: args.body,
       p_block_id: str(args.block_id),
+      p_parent_id: str(args.parent_id),
     }));
     if (status !== 'ok') {
       const message = String(status ?? 'The comment was not added.');
@@ -323,7 +325,8 @@ const addComment: ToolDef = {
     const body = String(args.body).trim();
     const { bundle } = await loadPage(ctx.db, pageId);
     const mine = (bundle.page.comments ?? [])
-      .filter((c) => c.authorId === ctx.principal.userId && c.body === body)
+      .filter((c) => c.authorId === ctx.principal.userId && c.body === body
+        && (c.parentId ?? undefined) === str(args.parent_id) && (c.blockId ?? undefined) === str(args.block_id))
       .sort((a, b) => b.createdAt - a.createdAt);
     const commentId = mine[0]?.id ?? null;
     return { text: commentId ? `Comment ${commentId} added to page ${pageId}.` : `Comment added to page ${pageId}.`, structured: { comment_id: commentId } };
