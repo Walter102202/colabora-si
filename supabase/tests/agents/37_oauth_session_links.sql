@@ -1,5 +1,5 @@
 begin;
-select plan(80);
+select plan(84);
 create or replace function tests.set_oauth_agent(p_uid uuid, p_agent uuid, p_client text)
 returns void language sql as $$
   select tests.set_claims(jsonb_build_object('sub', p_uid, 'role', 'authenticated', 'aud', 'authenticated',
@@ -55,6 +55,19 @@ select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'client-other');
 select private.apply_session_link();
 select is(private.principal_type(), 'human', 'an explicit human link stays the person');
 select is((select auth.uid()), (:'f'::jsonb->>'owner')::uuid, 'and keeps the person''s id');
+select tests.reset_role();
+
+-- Human RLS must not restore membership or sharing when OAuth loses its client claim.
+insert into public.page_shares (page_id, user_id, level) values ('page_G', (:'f'::jsonb->>'owner')::uuid, 'edit');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'client-other');
+select ok(private.is_workspace_member((:'f'::jsonb->>'ws')::uuid) and private.can_edit_workspace((:'f'::jsonb->>'ws')::uuid)
+          and private.has_page_share('page_G', array['edit']), 'a live As-you client keeps its human permissions');
+select tests.reset_role();
+select tests.set_claims(jsonb_build_object('sub', :'f'::jsonb->>'owner', 'role', 'authenticated',
+  'amr', '[{"method":"oauth_provider/authorization_code"},{"method":"totp"}]'::jsonb), 'authenticated');
+select is(private.is_workspace_member((:'f'::jsonb->>'ws')::uuid), false, 'claimless human OAuth has no membership access outside PostgREST');
+select is(private.can_edit_workspace((:'f'::jsonb->>'ws')::uuid), false, 'claimless human OAuth has no editor access outside PostgREST');
+select is(private.has_page_share('page_G', array['edit']), false, 'claimless human OAuth cannot recover access through page shares');
 select tests.reset_role();
 
 -- A known live link cannot be recovered from a claimless MFA token, even with a sentinel row.

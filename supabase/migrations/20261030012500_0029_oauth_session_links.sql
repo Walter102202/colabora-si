@@ -91,6 +91,31 @@ returns text language sql stable set search_path = '' as $$
       then 'oauth-session-without-client' end);
 $$;
 
+-- Full latest human permission helpers from 0001: RLS also rejects unresolved OAuth sessions.
+create or replace function private.is_workspace_member(ws uuid)
+returns boolean language sql security definer set search_path = '' stable as $$
+  select private.principal_type() = 'human'
+    and private.jwt_client_id() is distinct from 'oauth-session-without-client' and (
+    exists (select 1 from public.workspace_members m where m.workspace_id = ws and m.user_id = (select auth.uid()))
+    or exists (select 1 from public.workspaces w where w.id = ws and w.owner_id = (select auth.uid()))
+  );
+$$;
+create or replace function private.can_edit_workspace(ws uuid)
+returns boolean language sql security definer set search_path = '' stable as $$
+  select private.principal_type() = 'human'
+    and private.jwt_client_id() is distinct from 'oauth-session-without-client' and (
+    exists (select 1 from public.workspace_members m where m.workspace_id = ws and m.user_id = (select auth.uid()) and m.role in ('owner','editor'))
+    or exists (select 1 from public.workspaces w where w.id = ws and w.owner_id = (select auth.uid()))
+  );
+$$;
+create or replace function private.has_page_share(p_page_id text, p_levels text[])
+returns boolean language sql security definer set search_path = '' stable as $$
+  select private.principal_type() = 'human'
+    and private.jwt_client_id() is distinct from 'oauth-session-without-client' and exists (
+    select 1 from public.page_shares s where s.page_id = p_page_id and s.user_id = (select auth.uid()) and s.level = any(p_levels)
+  );
+$$;
+
 -- Deletion preserves a tombstone. A missing association must never become human access.
 alter table public.agent_oauth_links
   add column if not exists as_human boolean not null default false,
