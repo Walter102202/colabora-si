@@ -1,5 +1,5 @@
 begin;
-select plan(36);
+select plan(40);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_G']) p;
 select tests.make_user('other-person@test.local') as other \gset
@@ -32,6 +32,9 @@ select is(public.set_oauth_link('client-1', (:'f'::jsonb->>'agent')::uuid)->>'li
 select tests.reset_role();
 
 -- 9-10. A session without a link stays the person.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.set_oauth_link('client-other', null);
+select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'client-other');
 select private.apply_session_link();
 select is(private.principal_type(), 'human', 'a chat without a link stays the person');
@@ -91,7 +94,11 @@ select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.set_oauth_link('client-1', null);
 select tests.reset_role();
-select is((select count(*)::int from public.agent_oauth_links where client_id = 'client-1'), 0, 'connecting as the person clears the link');
+select is((select count(*)::int from public.agent_oauth_links where client_id = 'client-1' and agent_id is null), 1, 'connecting as the person keeps an explicit human link');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'unknown-client');
+select ok(tests.error_of('select private.apply_session_link()') like '%link_revoked%', 'a client without an explicit link is denied');
+select ok(tests.error_of('select public.session_identity()') like '%link_revoked%', 'an unknown client also fails closed without the hook');
+select tests.reset_role();
 
 -- The sponsor must still belong to the workspace, both when linking and on every request.
 select tests.reset_role();
@@ -114,6 +121,17 @@ select is(tests.error_of(format('select public.revoke_agent_token(%L::uuid)', :'
 select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'viewer')::uuid, 'former-member');
 select ok(tests.error_of('select private.apply_session_link()') like '%link_revoked%', 'an existing link stops when its person leaves the workspace');
+select tests.reset_role();
+
+-- Keep a tombstone when the agent's workspace is deleted; absence must never recover human reach.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.set_oauth_link('deleted-workspace', (:'f'::jsonb->>'agent')::uuid);
+delete from public.workspaces where id = (:'f'::jsonb->>'ws')::uuid;
+select is((select count(*)::int from public.agent_oauth_links where client_id = 'deleted-workspace' and agent_id is null and workspace_id is null), 1,
+          'workspace deletion preserves an orphaned link');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'deleted-workspace');
+select ok(tests.error_of('select private.apply_session_link()') like '%link_revoked%', 'workspace deletion cannot turn the agent chat into its person');
 select tests.reset_role();
 
 select * from finish();

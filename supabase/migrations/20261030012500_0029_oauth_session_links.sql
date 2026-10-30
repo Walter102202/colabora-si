@@ -12,6 +12,19 @@
 -- PostgREST calls the hook as the request's role, and without usage on this schema every service-role call fails.
 grant usage on schema private to service_role;
 
+-- Deletion preserves a tombstone. A missing association must never become human access.
+alter table public.agent_oauth_links
+  add column if not exists as_human boolean not null default false,
+  alter column workspace_id drop not null,
+  alter column agent_id drop not null,
+  alter column user_id drop not null,
+  drop constraint agent_oauth_links_workspace_id_fkey,
+  drop constraint agent_oauth_links_agent_id_fkey,
+  drop constraint agent_oauth_links_user_id_fkey,
+  add constraint agent_oauth_links_workspace_id_fkey foreign key (workspace_id) references public.workspaces(id) on delete set null,
+  add constraint agent_oauth_links_agent_id_fkey foreign key (agent_id) references public.agents(id) on delete set null,
+  add constraint agent_oauth_links_user_id_fkey foreign key (user_id) references auth.users(id) on delete set null;
+
 -- Explicit user form also works after a request has an agent principal.
 create or replace function private.is_workspace_member_user(p_ws uuid, p_user uuid)
 returns boolean language sql stable security definer set search_path = '' as $$
@@ -29,13 +42,14 @@ begin
   if v_client is null then return; end if;
   v_user := (v_claims->>'sub')::uuid;
   select * into v_l from public.agent_oauth_links where user_id = v_user and client_id = v_client;
-  if not found then return; end if;
   -- A disconnected chat is refused at once, not when its token expires, and never falls back to the person.
-  if v_l.revoked_at is not null or not private.is_workspace_member_user(v_l.workspace_id, v_l.user_id) then
+  if not found or v_l.revoked_at is not null or (not v_l.as_human and
+     (v_l.agent_id is null or v_l.workspace_id is null or not private.is_workspace_member_user(v_l.workspace_id, v_l.user_id))) then
     raise sqlstate 'PGRST' using
       message = json_build_object('code', 'link_revoked', 'message', 'link_revoked', 'details', null, 'hint', null)::text,
       detail = json_build_object('status', 401, 'headers', json_build_object())::text;
   end if;
+  if v_l.as_human then return; end if;
   -- The status of the agent is not read here: a disabled agent stays the principal, so current_agent_id() is null
   -- and every agent RPC refuses it. Falling back to the person would widen the chat's reach.
   select * into v_a from public.agents where id = v_l.agent_id;
@@ -56,12 +70,12 @@ begin
   if private.principal_type() = 'human' and private.jwt_client_id() is not null then
     select * into v_link from public.agent_oauth_links
      where user_id = (select auth.uid()) and client_id = private.jwt_client_id();
-    if found then
-      if v_link.revoked_at is not null then
+    if not found or v_link.revoked_at is not null or (not v_link.as_human and (v_link.agent_id is null or v_link.workspace_id is null)) then
         raise sqlstate 'PGRST' using
           message = json_build_object('code', 'link_revoked', 'message', 'link_revoked', 'details', null, 'hint', null)::text,
           detail = json_build_object('status', 401, 'headers', json_build_object())::text;
-      end if;
+    end if;
+    if not v_link.as_human then
       raise exception using errcode = 'PT500', message = 'session_link_not_applied';
     end if;
   end if;
@@ -85,7 +99,7 @@ $$;
 revoke all on function public.linkable_agents() from public, anon;
 grant execute on function public.linkable_agents() to authenticated;
 
--- Connects this person's chat client as an agent; a null agent removes the link, so the chat acts as the person.
+-- A null agent explicitly authorizes human identity; it never means an absent link.
 create or replace function public.set_oauth_link(p_client_id text, p_agent_id uuid)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare v_uid uuid := (select auth.uid()); v_a public.agents%rowtype; v_old public.agent_oauth_links%rowtype;
@@ -94,8 +108,12 @@ begin
   if private.jwt_client_id() is not null then raise exception using errcode = 'PT403', message = 'direct_session_required'; end if;
   if coalesce(btrim(p_client_id), '') = '' then raise exception using errcode = 'PT400', message = 'invalid_input'; end if;
   if p_agent_id is null then
-    delete from public.agent_oauth_links where user_id = v_uid and client_id = p_client_id returning * into v_old;
-    if found then
+    select * into v_old from public.agent_oauth_links where user_id = v_uid and client_id = p_client_id;
+    insert into public.agent_oauth_links (user_id, client_id, as_human)
+    values (v_uid, p_client_id, true)
+    on conflict (user_id, client_id) do update set workspace_id = null, agent_id = null,
+      as_human = true, created_at = now(), revoked_at = null;
+    if v_old.workspace_id is not null then
       perform private.audit(v_old.workspace_id, 'oauth.unlink', jsonb_build_object('client_id', p_client_id, 'agent_id', v_old.agent_id));
     end if;
     return jsonb_build_object('linked', false);
@@ -111,7 +129,7 @@ begin
   insert into public.agent_oauth_links (workspace_id, agent_id, user_id, client_id)
   values (v_a.workspace_id, v_a.id, v_uid, p_client_id)
   on conflict (user_id, client_id) do update
-    set workspace_id = excluded.workspace_id, agent_id = excluded.agent_id, created_at = now(), revoked_at = null;
+    set workspace_id = excluded.workspace_id, agent_id = excluded.agent_id, as_human = false, created_at = now(), revoked_at = null;
   perform private.audit(v_a.workspace_id, 'oauth.link', jsonb_build_object('client_id', p_client_id, 'agent_id', v_a.id));
   return jsonb_build_object('linked', true, 'agent_id', v_a.id, 'agent_name', v_a.name);
 end $$;
@@ -128,7 +146,9 @@ begin
   update public.agent_oauth_links set revoked_at = now()
    where user_id = (select auth.uid()) and client_id = p_client_id and revoked_at is null returning * into v_l;
   if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
-  perform private.audit(v_l.workspace_id, 'oauth.revoke', jsonb_build_object('client_id', p_client_id, 'agent_id', v_l.agent_id));
+  if v_l.workspace_id is not null then
+    perform private.audit(v_l.workspace_id, 'oauth.revoke', jsonb_build_object('client_id', p_client_id, 'agent_id', v_l.agent_id));
+  end if;
   return jsonb_build_object('revoked', true);
 end $$;
 revoke all on function public.revoke_oauth_link(text) from public, anon;
