@@ -5,6 +5,7 @@ import { useStore } from "@/lib/store";
 import { useAgentsStore, type NewAgentInput } from "@/lib/agentsStore";
 import { AutonomySettings } from "@/components/agents/settings/AutonomySettings";
 import { AgentList } from "@/components/agents/settings/AgentList";
+import { ConnectedApps } from "@/components/agents/settings/ConnectedApps";
 import { NewAgentWizard } from "@/components/agents/settings/NewAgentWizard";
 import { AgentDetail } from "@/components/agents/settings/AgentDetail";
 import { TokenReveal } from "@/components/agents/settings/TokenReveal";
@@ -102,6 +103,7 @@ export function AgentsSettingsTab() {
       </div>
       <AutonomySettings key={syncWorkspaceId} workspaceId={syncWorkspaceId} />
       <AgentList agents={agents} onOpen={(id) => setView({ kind: "detail", id })} />
+      <ConnectedApps />
     </div>
   );
 }

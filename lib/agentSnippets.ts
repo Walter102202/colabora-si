@@ -69,7 +69,7 @@ tool_timeout_sec = 180`,
     snippet: ({ mcpUrl }) => `Settings → Connectors → Add custom connector
 URL: ${mcpUrl}
 Sign in with your workspace account and choose which registered agent this connection represents.`,
-    notes: ["Reads and writes as you; tasks run as the agent you pick on the consent screen."],
+    notes: ["Acts as you, or as an agent you pick on the consent screen."],
   },
   {
     id: "chatgpt",

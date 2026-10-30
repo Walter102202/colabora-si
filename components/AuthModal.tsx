@@ -25,7 +25,7 @@ function friendlyAuthError(message: string, status?: number): string {
   if (m.includes("failed to fetch") || m.includes("network")) return "Network error — check your connection and try again.";
   return message;
 }
-export default function AuthModal({ onClose }: { onClose: () => void }) {
+export default function AuthModal({ onClose, redirectTo }: { onClose: () => void; redirectTo?: string }) {
   const { user, loading } = useAuth(), supabase = getSupabase();
   const [mode, setMode] = useState<Mode>("signin"), [email, setEmail] = useState(""), [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null), [emailSent, setEmailSent] = useState<"confirm" | "magic" | null>(null);
@@ -44,7 +44,7 @@ export default function AuthModal({ onClose }: { onClose: () => void }) {
         else if (data.user?.identities?.length === 0) setError("An account with this email already exists. Try signing in instead.");
         else setEmailSent("confirm");
       } else {
-        const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
+        const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo ?? window.location.origin } });
         if (error) setError(friendlyAuthError(error.message, error.status)); else setEmailSent("magic");
       }
     } catch { setError("Something went wrong. Please try again."); }

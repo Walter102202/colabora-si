@@ -22,3 +22,4 @@ export function pubUrl(id: string): string { return `/pub/${encodeURIComponent(i
 export function settingsUrl(tab: SettingsTab = "appearance", path = HOME_URL): string { return withQuery(path, { settings: tab, modal: null, search: null }); }
 export function searchUrl(query = "", path = HOME_URL): string { return withQuery(path, { search: query, modal: null, settings: null }); }
 export function peekUrl(id: string | null, path = HOME_URL): string { return withQuery(path, { peek: id }); }
+export const OAUTH_CONSENT_URL = "/oauth/consent";

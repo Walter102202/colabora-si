@@ -77,7 +77,7 @@ export function McpPatPage({ onOpenSettings }: { onOpenSettings?: () => void }) 
 
       <section className="space-y-1 text-text-secondary">
         <h2 className="font-medium text-text">Chat apps</h2>
-        <p>Claude and ChatGPT connect with OAuth instead: add the MCP endpoint as a connector and sign in as yourself. The consent screen can link the connection to an agent.</p>
+        <p>Claude and ChatGPT connect with OAuth: add the MCP endpoint as a connector and sign in. Acts as you, or as an agent you pick on the consent screen.</p>
       </section>
     </main>
   );
