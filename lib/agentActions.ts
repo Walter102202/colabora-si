@@ -5,7 +5,7 @@ import type { MetricsResult } from "@/lib/agentMetrics";
 import { useStore } from "@/lib/store";
 import { stripHtml } from "@/lib/utils";
 import { agentErrorMessage, getAgentClient } from "@/lib/agentClient";
-import { pendingApprovalFor, taskForPage, useAgentTasks } from "@/lib/agentTasks";
+import { pendingApprovalFor, taskForPage, useAgentTasks, type TaskRow } from "@/lib/agentTasks";
 
 // Control actions a person takes on a task. Every call is a SECURITY DEFINER
 // RPC: the server decides, the client only asks.
@@ -135,6 +135,22 @@ export async function updateBrief(
   const version = await rpc<number>("update_brief", { p_task_id: taskId, p_patch: patch });
   await refresh(taskId);
   return version;
+}
+
+export type MergeCondition = "review_approved" | "ci_green";
+
+/** The server permits trusted rules only from a direct human session. */
+export async function setMergeRule(task: TaskRow, conditions: MergeCondition[] | null): Promise<number> {
+  await useAgentTasks.getState().loadTask(task.id);
+  await useAgentTasks.getState().loadBriefs(task.id);
+  const state = useAgentTasks.getState();
+  const current = state.tasks[task.id] ?? task;
+  const brief = state.briefs[`${task.id}:${current.brief_version}`];
+  if (!brief) throw new Error("The current brief is unavailable. Refresh the task and try again.");
+  const rules = { ...(brief.policies.preapproved_if as Record<string, unknown> | undefined) };
+  if (conditions) rules["git.merge"] = conditions;
+  else delete rules["git.merge"];
+  return updateBrief(task.id, { policies: { ...brief.policies, preapproved_if: rules } });
 }
 
 export function getTaskAutonomy(taskId: string): Promise<TaskAutonomy> {

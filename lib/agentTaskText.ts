@@ -75,6 +75,7 @@ export function activityLabel(a: ActivityRow): string {
     case "thought":
       return pick("text") ?? "";
     case "action": {
+      if (b.auto_by === "condition" || (b.op === "auto_approval" && b.by === "condition")) return "Approved automatically: its conditions hold";
       const op = pick("op");
       return pick("summary") ?? (op ? OP_LABEL[op] ?? op : "action");
     }

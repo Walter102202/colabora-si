@@ -79,7 +79,7 @@ export interface ApprovalRow {
   // false: asked with request_input blocking false; the task keeps working.
   blocking?: boolean;
   // Set when the autonomy level or the brief approved it without a person.
-  auto_by?: "preset" | "brief" | null;
+  auto_by?: "preset" | "brief" | "condition" | null;
 }
 
 export interface ReviewRow {

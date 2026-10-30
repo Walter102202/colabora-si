@@ -4,6 +4,40 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DecisionsHomeView } from "@/components/agents/panel";
 import type { DecisionsHomeData, HomeItem } from "@/lib/agentHome";
+import type { ApprovalRow } from "@/lib/agentTasks";
+import { mockCard } from "@/components/agents/card/mock";
+import type { TaskCardData } from "@/lib/agentCard";
+
+const approvals = () => ["one", "two", "three"].map((id) => ({ ...(mockCard("approval") as TaskCardData).approval!, id, task_id: "t1", kind: "action", status: "pending", question: `Action ${id}`, options: ["approve", "reject"] } as ApprovalRow));
+
+it("decides selected approvals once each and keeps a failed row visible while continuing", async () => {
+  const { ApprovalGroupCard } = await import("@/components/agents/panel/ApprovalGroupCard");
+  const rows = approvals();
+  const onDecide = vi.fn(async (id: string) => { if (id === "one") throw new Error("Still pending"); });
+  await act(async () => root.render(createElement(ApprovalGroupCard, { approvals: rows, onDecide })));
+  expect([...container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].every((c) => !c.checked)).toBe(true);
+  act(() => { (container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')[0]).click(); (container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')[2]).click(); });
+  await act(async () => [...container.querySelectorAll("button")].find((b) => b.textContent === "Approve selected")!.click());
+  expect(onDecide.mock.calls.map((c) => c[0])).toEqual(["one", "three"]);
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain("Still pending");
+  await act(async () => root.render(createElement(ApprovalGroupCard, { approvals: [rows[0]], onDecide })));
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain("Still pending");
+});
+
+it("uses the existing approval card for one item and groups actions by task on Home", async () => {
+  const { ApprovalGroupCard } = await import("@/components/agents/panel/ApprovalGroupCard");
+  const rows = approvals().slice(0, 2);
+  const onDecide = vi.fn(async () => {});
+  await act(async () => root.render(createElement(ApprovalGroupCard, { approvals: [rows[0]], onDecide })));
+  expect(container.querySelector('input[type="checkbox"]')).toBeNull();
+  expect([...container.querySelectorAll("button")].some((b) => b.textContent === "Approve")).toBe(true);
+  const home = { ...empty, waiting: rows.map((a) => item({ key: `approval:${a.id}` })) };
+  await act(async () => root.render(createElement(DecisionsHomeView, { home, approvals: rows, onDecide })));
+  expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(2);
+  act(() => (container.querySelector('input[type="checkbox"]') as HTMLInputElement).click());
+  await act(async () => [...container.querySelectorAll("button")].find((b) => b.textContent === "Reject selected")!.click());
+  expect(onDecide).toHaveBeenCalledExactlyOnceWith("one", "reject", null);
+});
 
 const item = (over: Partial<HomeItem>): HomeItem => ({
   key: "k", section: "waiting", taskId: "t1", rowPageId: "row-1", title: "Task", detail: "Detail", agentName: "Codex",

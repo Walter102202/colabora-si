@@ -22,6 +22,7 @@ import { continuityFrom } from "@/lib/agentContinuity";
 import type { AutonomyLevel, TaskAutonomy } from "@/lib/agentAutonomy";
 import type { TaskDiff } from "@/lib/agentRunDiff";
 import { approvalIdFromHash, openQuestionsFor } from "@/lib/agentCard";
+import { setMergeRule } from "@/lib/agentActions";
 import { AssignView, TaskView, type SubtaskItem } from "@/components/agents/panel";
 
 // Agent layer plug. Mounted by the page view of a database row, under the row
@@ -114,6 +115,7 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
   const approval = useAgentTasks((s) => pendingApprovalFor(s, task.id, focusApprovalId));
   const approvals = useAgentTasks((s) => s.approvals);
   const openQuestions = useMemo(() => openQuestionsFor(approvals, task.id, approval?.id ?? null), [approvals, task.id, approval?.id]);
+  const actionApprovals = useMemo(() => Object.values(approvals).filter((a) => a.task_id === task.id && a.kind === "action" && a.status === "pending"), [approvals, task.id]);
   const artifact = useAgentTasks((s) => currentArtifactFor(s, task.id));
   const review = useAgentTasks((s) => latestReviewFor(s, task.id));
   const brief = useAgentTasks((s) => currentBriefFor(s, task));
@@ -191,6 +193,9 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
       onHandOver={(to, note) => handOver(task.id, to, note).then(() => undefined)}
       run={run}
       approval={approval}
+      actionApprovals={actionApprovals}
+      onDecideApproval={(id, decision, response) => decideApproval(id, decision, response).then(() => undefined)}
+      onSetMergeRule={autonomy?.taskId === task.id && autonomy.value?.can_edit ? (conditions) => setMergeRule(task, conditions).then(() => undefined) : undefined}
       openQuestions={openQuestions}
       autonomy={autonomy?.taskId === task.id ? autonomy.value : null}
       onSetAutonomy={onSetAutonomy}

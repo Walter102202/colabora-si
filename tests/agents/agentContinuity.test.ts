@@ -34,6 +34,11 @@ describe("task continuity", () => {
     expect(activityLabel(act(5, "prompt", { source: "lease", signal: "continue", handover: true })))
       .toBe("The session went silent; the task is back in the queue");
   });
+  it("explains conditional approval using the server activity shape", () => {
+    for (const body of [{ auto_by: "condition" }, { op: "auto_approval", by: "condition", summary: "Old summary" }]) {
+      expect(activityLabel(act(6, "action", body))).toBe("Approved automatically: its conditions hold");
+    }
+  });
   it("lastCheckpointFor returns the newest checkpoint", () => {
     expect(lastCheckpointFor([act(1, "checkpoint", { v: 1, next_step: "a" }), act(2, "action", {}), act(5, "checkpoint", { v: 1, next_step: "b" })])?.seq).toBe(5);
     expect(lastCheckpointFor([])).toBeNull();

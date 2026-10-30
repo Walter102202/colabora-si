@@ -9,6 +9,8 @@ import { AutonomySettings, AutonomySettingsView } from "@/components/agents/sett
 import { cardDataFrom, type TaskCardData } from "@/lib/agentCard";
 import { mockCard } from "@/components/agents/card/mock";
 import { Card } from "@/components/agents/card/Card";
+import * as agentActions from "@/lib/agentActions";
+import { useAgentTasks } from "@/lib/agentTasks";
 
 const balanced: TaskAutonomy = { level: "balanced", requested: null, source: "workspace", workspace_level: "balanced", auto_approved: ["publish_page"], require_approval: [] };
 const policy: AutonomyPolicy = { level: "ask", updated_at: null, updated_by: null, can_edit: true, presets: { ask: [], balanced: ["publish_page"], autonomous: ["publish_page", "send_email"] } };
@@ -28,6 +30,27 @@ const deferred = <T,>() => {
 };
 
 describe("autonomyLine", () => {
+  it("sets or removes only the merge conditions, preserving other brief policies", async () => {
+    const original = useAgentTasks.getState();
+    const data = mockCard("1") as TaskCardData;
+    const policies = { reviewer_agent_id: "reviewer", lease_minutes: 90, preapproved_if: { deploy: ["review_approved"], "git.merge": ["review_approved"] } };
+    useAgentTasks.setState({ workspaceId: null, tasks: { [data.task.id]: data.task },
+      briefs: { [`${data.task.id}:${data.task.brief_version}`]: { ...data.brief!, policies } },
+      loadTask: async () => {}, loadBriefs: async () => {} });
+    try {
+      rpc.mockReset().mockResolvedValue({ data: 2, error: null });
+      await agentActions.setMergeRule(data.task, ["review_approved", "ci_green"]);
+      expect(rpc).toHaveBeenLastCalledWith("update_brief", { p_task_id: data.task.id, p_patch: { policies: {
+        ...policies, preapproved_if: { ...policies.preapproved_if, "git.merge": ["review_approved", "ci_green"] },
+      } } });
+      await agentActions.setMergeRule(data.task, null);
+      expect(rpc).toHaveBeenLastCalledWith("update_brief", { p_task_id: data.task.id, p_patch: { policies: {
+        ...policies, preapproved_if: { deploy: ["review_approved"] },
+      } } });
+      rpc.mockResolvedValue({ data: null, error: { message: "direct_session_required" } });
+      await expect(agentActions.setMergeRule(data.task, ["review_approved", "ci_green"])).rejects.toThrow("direct_session_required");
+    } finally { useAgentTasks.setState(original); }
+  });
   it("says the level, where it comes from and what runs on its own", () => {
     expect(autonomyLine(balanced)).toBe("Autonomy: Balanced (workspace default); runs on its own: publish_page.");
     expect(autonomyLine({ ...balanced, level: "ask", source: "parent", auto_approved: [] }))
@@ -70,6 +93,20 @@ const view = (extra: Record<string, unknown>) => {
 };
 
 describe("autonomy in the task panel", () => {
+  it("lets an editable parent enable the merge rule and leaves other surfaces read-only", async () => {
+    const data = mockCard("1") as TaskCardData;
+    const onSetMergeRule = vi.fn(noop);
+    await act(async () => root.render(view({ task: { ...data.task, parent_task_id: null }, onSetMergeRule })));
+    const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    expect(checkbox).not.toBeNull();
+    expect(container.textContent).toContain("The server checks both before each merge. If one fails, you decide.");
+    await act(async () => checkbox.click());
+    expect(onSetMergeRule).toHaveBeenCalledExactlyOnceWith(["review_approved", "ci_green"]);
+    await act(async () => root.render(view({ task: { ...data.task, parent_task_id: "parent" }, onSetMergeRule })));
+    expect(container.querySelector('input[type="checkbox"]')).toBeNull();
+    await act(async () => root.render(view({ task: { ...data.task, parent_task_id: null } })));
+    expect(container.querySelector('input[type="checkbox"]')).toBeNull();
+  });
   it("shows the line and sets this task's level, or goes back to the workspace default", async () => {
     const set = vi.fn(noop);
     act(() => root.render(view({ autonomy: balanced, onSetAutonomy: set })));

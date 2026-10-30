@@ -5,7 +5,7 @@ import type { TaskDiff } from "@/lib/agentRunDiff";
 import { RunDiffCard } from "@/components/agents/panel/RunDiffCard";
 import { useQueuedChoice } from "@/components/agents/panel/useQueuedChoice";
 import type { ActivityRow, ApprovalRow, ArtifactRow, BriefRow, ReviewRow, RunRow, TaskRow } from "@/lib/agentTasks";
-import type { ApprovalDecision, MessageSignal } from "@/lib/agentActions";
+import type { ApprovalDecision, MergeCondition, MessageSignal } from "@/lib/agentActions";
 import type { AgentRole } from "@/lib/agentsStore";
 import { RUN_STATUS_LABEL, acceptanceLabel, canAcceptAndClose, isTerminal, whatWillHappen } from "@/lib/agentState";
 import { formatRelative } from "@/lib/utils";
@@ -23,6 +23,8 @@ import type { Metric } from "@/lib/agentMetrics";
 import type { CiCheckRow } from "@/lib/agentCi";
 import type { EnvironmentResource } from "@/lib/agentTasks";
 import { EnvironmentCard } from "@/components/agents/panel/EnvironmentCard";
+import { MergeRule } from "@/components/agents/panel/MergeRule";
+import { ApprovalGroupCard } from "@/components/agents/panel/ApprovalGroupCard";
 
 // The row panel as pure views: everything a person sees and does about one
 // task, driven by data and callbacks. No router, no stores, no network, so
@@ -48,6 +50,9 @@ export interface TaskViewProps {
   agent: AgentOption | null;
   run: RunRow | null;
   approval: ApprovalRow | null;
+  actionApprovals?: ApprovalRow[];
+  onDecideApproval?: (id: string, decision: ApprovalDecision, response: Record<string, unknown> | null) => Promise<void>;
+  onSetMergeRule?: (conditions: MergeCondition[] | null) => Promise<void>;
   artifact: ArtifactRow | null;
   review: ReviewRow | null;
   brief: BriefRow | null;
@@ -139,7 +144,7 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ task, agent, run, approval, artifact, review, brief, ciChecks, environment = [], activities, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ task, agent, run, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, environment = [], activities, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -156,6 +161,7 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
 
   const agentLike = agent ? { name: agent.name, capabilities: agent.capabilities } : null;
   const terminal = isTerminal(task.state);
+  const mergeConditions = (brief?.policies.preapproved_if as Record<string, unknown> | undefined)?.["git.merge"];
   const handOverOthers = handOverAgents.filter((a) => a.id !== agent?.id);
   // Without a delegate there is no "same agent": the first other agent is preselected.
   const handoverTarget = handoverAgent || (agent ? "" : (handOverOthers[0]?.id ?? ""));
@@ -215,6 +221,9 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
       {error && <p role="alert" className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-700 dark:text-red-400">{error}</p>}
 
       <EnvironmentCard environment={environment} />
+      {!task.parent_task_id && !terminal && onSetMergeRule && <MergeRule
+        enabled={Array.isArray(mergeConditions) && mergeConditions.includes("review_approved") && mergeConditions.includes("ci_green")}
+        onChange={onSetMergeRule} />}
 
       <section className="space-y-1">
         <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">What was asked and what changed</h4>
@@ -282,9 +291,10 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
 
       <SubtaskList subtasks={subtasks} onOpenTask={onOpenTask} />
 
-      {approval && (approval.kind === "action"
-        ? <ApprovalCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />
-        : <DecisionCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />)}
+      {actionApprovals && onDecideApproval
+        ? <ApprovalGroupCard approvals={actionApprovals} onDecide={onDecideApproval} focusApprovalId={focusApprovalId} />
+        : approval?.kind === "action" && <ApprovalCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />}
+      {approval && approval.kind !== "action" && <DecisionCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />}
 
       {openQuestions.map((q) => (
         <DecisionCard key={q.id} approval={q} nonBlocking={q.blocking === false} focus={focusApprovalId === q.id}
