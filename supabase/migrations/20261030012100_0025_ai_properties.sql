@@ -174,7 +174,7 @@ end $$;
 create or replace function public.set_ai_cells(p_run_id uuid, p_values jsonb, p_idempotency_key text default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare v_r public.agent_runs%rowtype; v_t public.agent_tasks%rowtype; v_page public.pages%rowtype; v_actor uuid := (select auth.uid());
-        v_receipt jsonb; v_v jsonb; v_row jsonb; v_cell jsonb; v_res jsonb; v_since numeric; v_prop text; v_text text; v_err text;
+        v_receipt jsonb; v_v jsonb; v_row jsonb; v_cell jsonb; v_res jsonb; v_since numeric; v_prop text; v_prior_rows text[]; v_text text; v_err text;
         v_written jsonb := '[]'; v_conflicts jsonb := '[]'; v_skipped jsonb := '[]';
 begin
   v_r := private.own_run(p_run_id);
@@ -201,6 +201,9 @@ begin
   end if;
   if not private.can_write_page(v_page.id, v_page.workspace_id) then raise exception using errcode = 'PT403', message = 'forbidden'; end if;
   v_prop := v_t.request->>'property_id';
+  select coalesce(array_agg(distinct body->>'row_id'), '{}'::text[]) into v_prior_rows
+    from public.agent_activities where run_id = v_r.id and body->>'op' = 'set_cells'
+      and body->>'page_id' = v_t.request->>'page_id';
   if not exists (select 1 from jsonb_array_elements(coalesce(v_page.data->'database'->'properties', '[]')) p
                   where p->>'id' = v_prop and p->>'type' = 'ai') then
     raise exception using errcode = 'PT422', message = 'not_ai_property';
@@ -228,7 +231,8 @@ begin
       continue;
     end if;
     v_cell := v_row->'cells'->v_prop;
-    if private.ai_person_edit(v_cell, v_t.request->'initial_cells'->(v_v->>'row_id'), v_since) then
+    if private.ai_person_edit(v_cell, v_t.request->'initial_cells'->(v_v->>'row_id'), v_since)
+       or ((v_v->>'row_id') = any(v_prior_rows) and v_cell->>'runId' is distinct from v_r.id::text) then
       v_skipped := v_skipped || jsonb_build_object('row_id', v_v->>'row_id', 'reason', 'edited_by_person');
       continue;
     end if;
@@ -262,7 +266,7 @@ end $$;
 create or replace function public.complete_ai_request(p_run_id uuid, p_summary text default null, p_usage jsonb default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare v_r public.agent_runs%rowtype; v_t public.agent_tasks%rowtype; v_data jsonb; v_since numeric; v_missing text[];
-        v_counts jsonb := '{}'; v_prop text;
+        v_counts jsonb := '{}'; v_prop text; v_prior_rows text[];
 begin
   v_r := private.own_run(p_run_id);
   if v_r.stop_requested_at is not null then raise exception using errcode = 'PT409', message = 'stop_requested'; end if;
@@ -274,11 +278,15 @@ begin
   select data into v_data from public.pages where id = v_t.request->>'page_id';
   v_since := floor(extract(epoch from v_t.created_at) * 1000);
   v_prop := v_t.request->>'property_id';
+  select coalesce(array_agg(distinct body->>'row_id'), '{}'::text[]) into v_prior_rows
+    from public.agent_activities where run_id = v_r.id and body->>'op' = 'set_cells'
+      and body->>'page_id' = v_t.request->>'page_id';
   select array_agg(x order by x) into v_missing
     from jsonb_array_elements_text(v_t.request->'row_ids') x
     join jsonb_array_elements(coalesce(v_data->'database'->'rows', '[]')) r on r->>'id' = x
    where coalesce(private.ai_cell_at(r->'cells'->v_prop), 0) < v_since
-     and not private.ai_person_edit(r->'cells'->v_prop, v_t.request->'initial_cells'->x, v_since);
+     and not private.ai_person_edit(r->'cells'->v_prop, v_t.request->'initial_cells'->x, v_since)
+     and not (x = any(v_prior_rows));
   if v_missing is not null then
     raise exception using errcode = 'PT422', message = 'request_incomplete',
       detail = jsonb_build_object('row_ids', to_jsonb(v_missing))::text;
@@ -286,7 +294,8 @@ begin
   select jsonb_build_object(
     'filled', count(*) filter (where r->'cells'->v_prop->>'by' = 'agent' and not (r->'cells'->v_prop ? 'error')),
     'failed', count(*) filter (where r->'cells'->v_prop->>'by' = 'agent' and r->'cells'->v_prop ? 'error'),
-    'by_person', count(*) filter (where private.ai_person_edit(r->'cells'->v_prop, v_t.request->'initial_cells'->x, v_since)),
+    'by_person', count(*) filter (where private.ai_person_edit(r->'cells'->v_prop, v_t.request->'initial_cells'->x, v_since)
+      or (x = any(v_prior_rows) and r->'cells'->v_prop->>'runId' is distinct from v_r.id::text)),
     'deleted', jsonb_array_length(v_t.request->'row_ids') - count(*)) into v_counts
     from jsonb_array_elements_text(v_t.request->'row_ids') x
     join jsonb_array_elements(coalesce(v_data->'database'->'rows', '[]')) r on r->>'id' = x;

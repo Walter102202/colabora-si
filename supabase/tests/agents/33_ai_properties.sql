@@ -2,7 +2,7 @@
 -- does not take the page's task slot; the run writes only requested rows, with server-stamped provenance and one
 -- revertable activity per row; a person's edit wins; the request closes itself once every row has a value.
 begin;
-select plan(54);
+select plan(59);
 
 select tests.fixture() as f \gset
 -- The fixture agent plays the workspace's platform agent and takes pushes.
@@ -118,6 +118,33 @@ select is(public.revert_run(:'run'::uuid, array['row:db_L:r1']) -> 'reverted', '
 select tests.reset_role();
 select is((select r->'cells'->'p_ai' from public.pages p, jsonb_array_elements(p.data->'database'->'rows') r
             where p.id = 'db_L' and r->>'id' = 'r1'), 'null'::jsonb, 'the cell is empty again');
+
+-- A human can clear a value generated from an initially empty cell before completion.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.apply_page_ops('db_L', '[{"op":"db_cell_set","rowId":"r1","propertyId":"p_ai","value":null},{"op":"db_cell_set","rowId":"r2","propertyId":"p_ai","value":null}]'::jsonb);
+select public.request_ai_fill('db_L', 'p_ai', 'empty', array['r1','r2']) ->> 'task_id' as clear_req \gset
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'clear_req'::uuid) ->> 'run_id' as clear_run \gset
+select public.set_ai_cells(:'clear_run'::uuid, '[{"row_id":"r1","text":"First"},{"row_id":"r2","text":"Second"}]'::jsonb);
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.apply_page_ops('db_L', '[{"op":"db_cell_set","rowId":"r1","propertyId":"p_ai","value":null},{"op":"db_cell_set","rowId":"r2","propertyId":"p_ai","value":null}]'::jsonb);
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select is(public.set_ai_cells(:'clear_run'::uuid, '[{"row_id":"r1","text":"Overwrite"}]'::jsonb)->'skipped'->0->>'reason', 'edited_by_person', 'a retry preserves a cleared generated value');
+select lives_ok(format('select public.complete_ai_request(%L::uuid)', :'clear_run'), 'completion accepts a human clear after this run filled an empty cell');
+select tests.reset_role();
+select is((select body->'counts'->>'by_person' from public.agent_activities where run_id = :'clear_run'::uuid and type = 'response'), '2', 'both cleared cells count as human edits');
+select is((select data#>'{database,rows,0,cells,p_ai}' from public.pages where id = 'db_L'), 'null'::jsonb, 'completion keeps the cleared cell empty');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.request_ai_fill('db_L', 'p_ai', 'empty', array['r1']) ->> 'task_id' as untouched_req \gset
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'untouched_req'::uuid) ->> 'run_id' as untouched_run \gset
+select is(tests.error_of(format('select public.complete_ai_request(%L::uuid)', :'untouched_run')), 'request_incomplete', 'a prior run write does not complete a new request');
+select public.end_run(:'untouched_run'::uuid, 'error', 'test finished', null, true);
+select tests.reset_role();
 
 -- E. Failure, generic writes, limits and the agent that fills.
 -- Clearing a cell is a person's edit too, including when the model reads it only after the clear.
