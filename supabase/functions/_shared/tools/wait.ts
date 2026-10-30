@@ -305,7 +305,10 @@ const TASK_FIELDS = 'id,title,state,review_state,waiting_on,brief_version,brief_
 export function reasonFor(task: Row, prompt: Row | undefined, waitsOnPerson = false): Reason | null {
   if (task.state === 'done' || task.state === 'failed') return 'closed';
   if (task.state === 'cancelled') return 'stop';
-  if (prompt) {
+  const idle = task.state === 'input_required' && !task.active_run_id;
+  // A message from the Lead does not move a task waiting without a run (send_agent_message keeps it there): what that
+  // task waits for decides, below, so a handover that lands with the Lead's message is still a handover.
+  if (prompt && !(idle && prompt.author_type === 'agent')) {
     const body = (prompt.body ?? {}) as Row;
     if (body.signal === 'stop') return 'stop';
     if (body.handover === true) return 'handover';
@@ -321,7 +324,7 @@ export function reasonFor(task: Row, prompt: Row | undefined, waitsOnPerson = fa
   // A handover leaves a task waiting on a person without a run: the next session claims it and waits there. A blocked or
   // escalated review leaves the same fields, but no session may take that task (claim_task refuses it): it is feedback
   // that waits on a person (waiting_on human), which harnesses leave to the person.
-  if (task.state === 'input_required' && !task.active_run_id) return waitsOnPerson ? 'feedback' : 'handover';
+  if (idle) return waitsOnPerson ? 'feedback' : 'handover';
   if (task.brief_stale === true) return 'brief';
   if (task.state === 'queued') return 'queued';
   return null;
@@ -440,7 +443,7 @@ async function changesSince(ctx: ToolContext, cursor: Cursor): Promise<Delta> {
     })),
     must(ctx.db.select<Row>({
       table: 'agent_activities',
-      columns: 'task_id,seq,body,created_at',
+      columns: 'task_id,seq,body,author_type,created_at',
       filters: [{ col: 'type', op: 'eq', value: 'prompt' }, { col: 'created_at', op: 'gte', value: cursor.t }],
       order: [{ column: 'created_at', ascending: true }],
       limit: 100,

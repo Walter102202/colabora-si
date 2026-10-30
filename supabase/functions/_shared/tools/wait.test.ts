@@ -363,6 +363,36 @@ Deno.test('reasonFor: a blocked or escalated review without a run is feedback th
   assert.equal(reasonFor(idle, undefined, false), 'handover');
 });
 
+Deno.test('reasonFor: a message from the Lead on a task waiting without a run does not hide a handover', () => {
+  const idle = { state: 'input_required', waiting_on: 'human', active_run_id: null };
+  const lead = { author_type: 'agent', body: { signal: 'feedback', source: 'lead', text: 'Use 2025' } };
+  assert.equal(reasonFor(idle, lead, false), 'handover');
+  assert.equal(reasonFor(idle, lead, true), 'feedback');
+  assert.equal(reasonFor({ state: 'working', active_run_id: 'run-1' }, lead, false), 'feedback');
+});
+
+Deno.test('wait_for_my_tasks with after reports a handover that lands with a message from the Lead as a handover', async () => {
+  const tables = {
+    agent_tasks: [task({ id: 't1', state: 'working', updated_at: '2026-10-27T10:00:00+00:00' })],
+    agent_activities: [] as Row[],
+    agent_events: [] as Row[],
+    agent_runs: [{ task_id: 't1', started_at: '2026-10-27T09:00:00+00:00' }] as Row[],
+    agent_reviews: [] as Row[],
+  };
+  const after = encodeTaskCursor({ t: normTs('2026-10-27T10:00:00+00:00'), k: ['t:t1:' + normTs('2026-10-27T10:00:00+00:00')] });
+  const h = harness(tables, (n) => {
+    if (n === 1) {
+      tables.agent_tasks[0] = task({ id: 't1', state: 'input_required', waiting_on: 'human', active_run_id: null, updated_at: '2026-10-27T10:01:00+00:00' });
+      tables.agent_activities.push(activity(7, {
+        type: 'prompt', author_type: 'agent', created_at: '2026-10-27T10:01:00.500000+00:00',
+        body: { text: 'Mind the totals', signal: 'feedback', source: 'lead' },
+      }));
+    }
+  });
+  const out = await tool('wait_for_my_tasks').handler({ after, timeout_s: 60 }, h.ctx);
+  assert.deepEqual((out.structured.tasks as Row[]).map((t) => [t.task_id, t.reason, t.pending_prompts]), [['t1', 'handover', 1]]);
+});
+
 Deno.test('wait_for_my_tasks tells a blocked or escalated review from a handover by the review newer than the last run', async () => {
   const h = harness({
     agent_tasks: [
