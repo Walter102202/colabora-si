@@ -25,3 +25,9 @@ Deno.test('review_task and close_subtask describe the reviewer path without chan
   assert.match(close.description, /reviewer/);
   assert.deepEqual(Object.keys(review.inputSchema.properties ?? {}), ['task_id', 'run_id', 'artifact_id', 'verdict', 'findings', 'evidence']); // properties is optional in JsonSchema (jsonSchema.ts:10)
 });
+
+Deno.test('review_task says that blocked waits on a person before the worker resumes', () => {
+  const review = leadTools.find((t) => t.name === 'review_task')!;
+  assert.match(review.description, /blocked means a person must decide/);
+  assert.match(review.description, /worker resumes only after their answer/);
+});
