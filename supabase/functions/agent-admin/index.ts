@@ -2,6 +2,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { randomHex } from '../_shared/agentLogin.ts';
 import { oauthError } from '../_shared/errors.ts';
+import { oauthClientId } from '../_shared/jwt.ts';
 import { anonClient, callerClient, denoEnv, serviceClient } from '../_shared/supabase.ts';
 import { type AgentRecord, type CallerApi, CORS_HEADERS, handleAgentAdmin } from './handler.ts';
 
@@ -71,7 +72,7 @@ Deno.serve((req) => {
       const claims = data?.claims;
       if (error || !claims?.sub || claims.role !== 'authenticated') return null;
       const appMetadata = (claims.app_metadata ?? {}) as { principal_type?: string };
-      return { userId: claims.sub, principalType: appMetadata.principal_type ?? 'human', clientId: typeof claims.client_id === 'string' ? claims.client_id : null };
+      return { userId: claims.sub, principalType: appMetadata.principal_type ?? 'human', clientId: oauthClientId(claims) };
     },
     caller: (token) => callerApi(callerClient(env, token)),
     admin: {

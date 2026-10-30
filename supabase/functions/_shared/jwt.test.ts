@@ -114,6 +114,23 @@ Deno.test('valid ES256 agent token verified against the JWKS', async () => {
   assert.equal(out.principal.clientId, null);
 });
 
+Deno.test('OAuth origin survives MFA without client_id for people and agents', async () => {
+  for (const app_metadata of [{}, { principal_type: 'agent', agent_id: AGENT_ID }]) {
+    const out = await verifyBearer(req(await sign(claims({ app_metadata,
+      amr: [{ method: 'oauth_provider/authorization_code', timestamp: 1 }, { method: 'totp', timestamp: 2 }],
+    }))), ENV, verify);
+    assert.equal(out.principal.clientId, 'oauth-session-without-client');
+    await assert.rejects(resolveLinkedSession(out, async () => ({ data: null, error: { message: 'link_revoked' } })),
+      (e) => e instanceof AuthError && e.status === 401);
+  }
+});
+
+Deno.test('password plus TOTP stays a direct session', async () => {
+  const out = await verifyBearer(req(await sign(claims({ amr: [{ method: 'password' }, { method: 'totp' }] }))), ENV, verify);
+  assert.equal(out.principal.clientId, null);
+  assert.equal(await resolveLinkedSession(out, () => { throw new Error('unexpected link lookup'); }), out);
+});
+
 Deno.test('signature from another key is rejected', async () => {
   await rejects(await sign(claims(), otherKey.privateKey), 401, 'invalid_token');
 });

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { hmacSha256Hex } from '../_shared/hmac.ts';
 import { agentLoginPassword } from '../_shared/agentLogin.ts';
+import { verifyBearer } from '../_shared/jwt.ts';
 import { type AgentAdminDeps, type AgentRecord, handleAgentAdmin } from './handler.ts';
 
 const HUMAN = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -236,6 +237,28 @@ Deno.test('every admin action rejects an OAuth chat before any privileged operat
     deps.verifyCaller = async () => ({ userId: HUMAN, principalType: 'human', clientId: 'chat-client' });
     const res = await handleAgentAdmin(new Request('http://localhost/functions/v1/agent-admin', {
       method: 'POST', headers: { Authorization: 'Bearer chat-jwt', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, workspace_id: WORKSPACE, agent_id: AGENT_ID, name: 'Chat-created', kind: 'mcp_client', repo: 'acme/app' }),
+    }), deps);
+    assert.equal(res.status, 403, action);
+    assert.equal((await res.json()).error, 'direct_session_required', action);
+    assert.deepEqual(calls, [], action);
+  }
+});
+
+Deno.test('admin actions reject verified OAuth MFA tokens without client_id', async () => {
+  const claims = { sub: HUMAN, role: 'authenticated', aud: 'authenticated', iss: 'http://localhost/auth/v1',
+    exp: Math.floor(Date.now() / 1000) + 3600, app_metadata: {},
+    amr: [{ method: 'oauth_provider/authorization_code' }, { method: 'totp' }] };
+  const token = `e30.${btoa(JSON.stringify(claims))}.signature`;
+  for (const action of ['create_agent', 'rotate_login', 'revoke_agent', 'enable_platform_agent', 'ci_connect', 'oauth_read', 'oauth_approve', 'oauth_deny', 'oauth_disconnect']) {
+    const { deps, calls } = makeDeps();
+    deps.verifyCaller = async () => {
+      const { principal } = await verifyBearer(new Request('http://localhost', { headers: { Authorization: `Bearer ${token}` } }),
+        { SUPABASE_URL: 'http://localhost' }, async () => ({ data: { claims }, error: null }));
+      return { userId: principal.userId, principalType: principal.type, clientId: principal.clientId };
+    };
+    const res = await handleAgentAdmin(new Request('http://localhost/functions/v1/agent-admin', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, workspace_id: WORKSPACE, agent_id: AGENT_ID, name: 'Chat-created', kind: 'mcp_client', repo: 'acme/app' }),
     }), deps);
     assert.equal(res.status, 403, action);
