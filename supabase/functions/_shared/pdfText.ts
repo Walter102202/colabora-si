@@ -160,9 +160,14 @@ function readObjects(bytes: Uint8Array) {
 function unicode(value: string): string { return new TextDecoder('utf-16be').decode(byteArray(value)); }
 function cmap(source: string): Map<string, string> {
   const result = new Map<string, string>();
+  let mappedChars = 0;
   const put = (key: string, value: string) => {
     if (result.size >= 100_000 || key.length > 8) throw new Error('PDF character map limit exceeded');
-    result.set(key.toUpperCase(), unicode(hexBytes(value)));
+    const previous = result.get(key.toUpperCase())?.length ?? 0;
+    if (Math.ceil(value.length / 4) > MAX_TEXT - mappedChars + previous) throw new Error('PDF character map text limit exceeded');
+    const text = unicode(hexBytes(value));
+    mappedChars += text.length - previous;
+    result.set(key.toUpperCase(), text);
   };
   for (const section of source.matchAll(/beginbfchar([\s\S]*?)endbfchar/g)) {
     for (const m of section[1].matchAll(/<([\da-f]+)>\s*<([\da-f]+)>/gi)) put(m[1], m[2]);
@@ -192,25 +197,37 @@ function fallback(value: string, winAnsi: boolean): string {
   }).join('');
 }
 interface Font { map: Map<string, string>; widths: number[]; winAnsi: boolean }
-function decodeText(value: string, font?: Font): string {
-  if (!font?.map.size) return fallback(value, font?.winAnsi ?? false);
+function decodeText(value: string, font: Font | undefined, budget: number): string {
+  if (!font?.map.size) {
+    const text = fallback(value, font?.winAnsi ?? false);
+    if (text.length > budget) throw new Error('PDF text limit exceeded');
+    return text;
+  }
   let out = '';
+  const append = (text: string) => {
+    if (text.length > budget - out.length) throw new Error('PDF text limit exceeded');
+    out += text;
+  };
   for (let i = 0; i < value.length;) {
     let found = false;
     for (const width of font.widths) {
       if (i + width > value.length) continue;
       const key = [...value.slice(i, i + width)].map((c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('').toUpperCase();
-      if (font.map.has(key)) { out += font.map.get(key); i += width; found = true; break; }
+      if (font.map.has(key)) { append(font.map.get(key)!); i += width; found = true; break; }
     }
-    if (!found) out += fallback(value[i++], font.winAnsi);
+    if (!found) append(fallback(value[i++], font.winAnsi));
   }
   return out;
 }
-function contentText(source: string, fonts: Map<string, Font>): string {
+function contentText(source: string, fonts: Map<string, Font>, budget: number): string {
   let active = false, font: Font | undefined, out = '', y: number | undefined;
   const operands: Value[] = [];
-  const line = () => { if (out && !out.endsWith('\n')) out += '\n'; };
-  const show = (value: Value | undefined) => { if (tagged(value, 'bytes')) out += decodeText(value.value, font); };
+  const append = (text: string) => {
+    if (text.length > budget - out.length) throw new Error('PDF text limit exceeded');
+    out += text;
+  };
+  const line = () => { if (out && !out.endsWith('\n')) append('\n'); };
+  const show = (value: Value | undefined) => { if (tagged(value, 'bytes')) append(decodeText(value.value, font, budget - out.length)); };
   for (const value of parse(source)) {
     if (!tagged(value, 'word')) { operands.push(value); continue; }
     const last = operands.at(-1);
@@ -222,7 +239,7 @@ function contentText(source: string, fonts: Map<string, Font>): string {
         case 'Tj': show(last); break;
         case 'TJ':
           for (const item of Array.isArray(last) ? last : []) {
-            if (typeof item === 'number' && item < -100 && out && !/\s$/.test(out)) out += ' ';
+            if (typeof item === 'number' && item < -100 && out && !/\s$/.test(out)) append(' ');
             else show(item);
           }
           break;
@@ -327,7 +344,7 @@ export async function extractPdfText(bytes: Uint8Array, opts: { maxPages?: numbe
           }
         }
       }
-      const text = contentText(streams.join('\n'), fonts); textSize += text.length;
+      const text = contentText(streams.join('\n'), fonts, MAX_TEXT - textSize); textSize += text.length;
       if (textSize > MAX_TEXT) throw new Error('PDF text limit exceeded');
       result.push({ page: pageIndex + 1, text });
     }

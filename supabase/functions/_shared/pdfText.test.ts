@@ -46,3 +46,21 @@ Deno.test('stops at maxPages', async () => {
   const result = await extractPdfText(textPdf(['BT (First) Tj ET', 'BT (Second) Tj ET']), { maxPages: 1 });
   assert.equal(result.totalPages, 2); assert.equal(result.pages.length, 1);
 });
+Deno.test('stops Unicode expansion before exceeding the text budget', async () => {
+  const expansion = '0041'.repeat(4096);
+  for (const content of [`<${'01'.repeat(1000)}> Tj`, `[${'<01> '.repeat(1000)}] TJ`]) {
+    const pdf = textPdf([`BT /F1 12 Tf ${content} ET`], {
+      3: '<< /Type /Font /Subtype /Type0 /ToUnicode 20 0 R >>',
+      20: pdfStream(`1 beginbfchar <01> <${expansion}> endbfchar`),
+    });
+    const original = Map.prototype.get; let expandedGlyphs = 0;
+    Map.prototype.get = function(key: unknown) {
+      if (key === '01' && this.has('01')) expandedGlyphs++;
+      return original.call(this, key);
+    };
+    try {
+      assert.equal((await extractPdfText(pdf)).status, 'failed');
+      assert.ok(expandedGlyphs <= Math.floor(2_000_000 / 4096) + 1, 'stop before constructing text beyond the output budget');
+    } finally { Map.prototype.get = original; }
+  }
+});
