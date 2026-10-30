@@ -25,6 +25,11 @@
       "supabase/migrations/*_0020_*",
       "supabase/migrations/*_0021_*",
       "supabase/migrations/*_0022_*",
+      "supabase/migrations/*_0024_*",
+      "supabase/migrations/*_0025_*",
+      "supabase/migrations/*_0026_*",
+      "supabase/migrations/*_0027_*",
+      "supabase/migrations/*_0028_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -140,6 +145,26 @@
     ],
     "a/decisions-home": [
       "AGENTS.md"
+    ],
+    "a/p6": [
+      "OWNERS.json",
+      "README.md",
+      "AGENTS.md",
+      "app/globals.css",
+      "lib/types.ts",
+      "lib/dbCompute.ts",
+      "lib/dbFilter.ts",
+      "lib/dbView.ts",
+      "components/BlockEditor.tsx",
+      "components/InlineToolbar.tsx",
+      "components/PageView.tsx",
+      "components/database/TableView.tsx",
+      "components/database/dbShared.tsx",
+      "components/database/cells/Cell.tsx",
+      "public/llms.txt",
+      "supabase/seeds/01_workspace.sql",
+      "tests/clone/dbCompute.test.ts",
+      "tests/clone/dbFilter.test.ts"
     ]
   }
 }
