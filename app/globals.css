@@ -245,6 +245,11 @@ kbd { border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; bac
 tr:hover .row-actions > button, tr:focus-within .row-actions > button, th.row-actions > button, tr:hover .cell-open, tr:focus-within .cell-open { opacity: 1; }
 .cell-input { width: 100%; min-width: 0; padding: 3px 4px; background: transparent; font-size: 14px; outline: none; }
 .cell-readonly { display: block; padding: 4px; color: var(--text-secondary); font-size: 13px; }
+.ai-cell { display: flex; flex-direction: column; gap: 3px; padding: 4px; font-size: 13px; }
+.ai-cell textarea { width: 100%; min-height: 24px; resize: vertical; background: transparent; color: var(--text-primary); }
+.ai-cell-sign { color: var(--text-secondary); font-size: 11px; }
+.ai-cell-generating { color: var(--text-tertiary); }
+.ai-cell button { text-align: left; color: var(--text-secondary); }
 .cell-button { width: 100%; text-align: left; padding: 4px; border-radius: 4px; min-height: 30px; }
 .cell-open { font-size: 10px; color: var(--text-secondary); padding: 2px 4px; }
 .cell-backdrop { position: fixed; inset: 0; z-index: 60; cursor: default; }.cell-backdrop:hover { background: transparent; }

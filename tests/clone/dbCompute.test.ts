@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { aggregate, computeCell, DateValue, displayValue, formatIdValue, formatNumber, isoDay, sortValue } from "@/lib/dbCompute";
+import { aggregate, computeCell, DateValue, displayValue, formatIdValue, formatNumber, isAiCellValue, isoDay, sortValue } from "@/lib/dbCompute";
 import { db, makeFormulaDb, page, prop, row } from "./fixtures";
 import type { AggregationFn, DbProperty } from "@/lib/types";
 
@@ -9,6 +9,19 @@ function formula(expr: string, props: DbProperty[] = [], cells: Record<string, u
 }
 const number = prop({ id: "n", name: "N", type: "number" });
 const date = prop({ id: "d", name: "D", type: "date" });
+it.each([
+  ["an ai cell computes to its text", { text: "Short", by: "agent", id: "u", at: 1 }, "Short"],
+  ["a string in an ai cell is a person's text", "Hi", "Hi"],
+  ["an ai error shows as empty text", { text: "", error: "No answer", by: "agent", id: "u", at: 1 }, ""],
+])("%s", (_name, value, expected) => {
+  const ai = prop({ id: "ai", type: "ai" });
+  expect(computeCell(row({ ai: value }), ai, db([ai]), {})).toBe(expected);
+});
+it("isAiCellValue rejects a value without by or at", () => {
+  expect(isAiCellValue({ text: "Value", at: 1 })).toBe(false);
+  expect(isAiCellValue({ text: "Value", by: "human" })).toBe(false);
+  expect(isAiCellValue({ text: "Value", by: "human", id: "u", at: 1 })).toBe(true);
+});
 const cases: [number, [string, unknown][]][] = [
   [1, [["1 + 2", 3], ["10 - 4", 6], ["6 * 7", 42], ["9 / 2", 4.5], ["7 % 3", 1]]],
   [2, [["2 + 3 * 4", 14], ["(2 + 3) * 4", 20]]],

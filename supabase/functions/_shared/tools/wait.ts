@@ -300,7 +300,7 @@ export function decodeTaskCursor(raw: string): Cursor {
   throw new ToolError('invalid_input', 'The cursor is not valid. Call wait_for_my_tasks without `after` to get a new one.');
 }
 
-const TASK_FIELDS = 'id,title,state,review_state,waiting_on,brief_version,brief_stale,active_run_id,updated_at,depends_on_task_ids';
+const TASK_FIELDS = 'id,title,state,review_state,waiting_on,brief_version,brief_stale,active_run_id,updated_at,depends_on_task_ids,request_kind';
 
 /** A dependency not visible to the caller is still blocked: only a visible done task releases it. */
 export async function openDependencies(ctx: ToolContext, tasks: Row[]): Promise<Map<string, string[]>> {

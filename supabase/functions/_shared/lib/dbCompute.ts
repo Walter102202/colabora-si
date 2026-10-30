@@ -1,4 +1,15 @@
-import type { Actor, AggregationFn, Database, DbProperty, DbRow, DbView, Page, PropertyType } from "./types.ts";
+import type { Actor, AggregationFn, AiCellValue, Database, DbProperty, DbRow, DbView, Page, PropertyType } from "./types.ts";
+
+export function isAiCellValue(value: unknown): value is AiCellValue {
+  if (!value || typeof value !== "object") return false;
+  const cell = value as Partial<AiCellValue>;
+  return typeof cell.text === "string" && (cell.by === "agent" || cell.by === "human")
+    && typeof cell.id === "string" && typeof cell.at === "number" && Number.isFinite(cell.at);
+}
+
+export function aiCellText(value: unknown): string {
+  return typeof value === "string" ? value : isAiCellValue(value) && !value.error ? value.text : "";
+}
 
 export type FormulaValue = number | string | boolean | Date | null;
 export interface ComputeContext { members?: Actor[]; agents?: Actor[] }
@@ -194,6 +205,7 @@ export function computeCell(row: DbRow, prop: DbProperty, database: Database, pa
     return [...(ctx?.members ?? []), ...(ctx?.agents ?? [])].find((a) => a.id === id)?.name ?? id ?? null;
   }
   if (prop.type === "agentStatus" || prop.type === "agentDelegate" || prop.type === "button") return null;
+  if (prop.type === "ai") return aiCellText(row.cells[prop.id]);
   if (prop.type !== "formula" && prop.type !== "rollup") return row.cells[prop.id] ?? null;
   const key = `${database.id}:${row.id}:${prop.id}`;
   if (seen.has(key)) return "⚠ Invalid formula";

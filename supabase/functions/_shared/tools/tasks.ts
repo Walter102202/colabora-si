@@ -71,7 +71,7 @@ const listMyTasks: ToolDef = {
     if (Array.isArray(args.state) && args.state.length) filters.push({ col: 'state', op: 'in', value: args.state });
     const rows = await must(ctx.db.select<Row>({
       table: 'agent_tasks',
-      columns: 'id,title,state,review_state,waiting_on,row_page_id,brief_version,brief_stale,last_activity_at,updated_at,depends_on_task_ids',
+      columns: 'id,title,state,review_state,waiting_on,row_page_id,brief_version,brief_stale,last_activity_at,updated_at,depends_on_task_ids,request_kind',
       filters,
       order: [{ column: 'updated_at', ascending: false }],
       limit: num(args.limit) ?? 20,

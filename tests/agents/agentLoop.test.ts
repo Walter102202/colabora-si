@@ -28,6 +28,18 @@ const names = (calls: { name: string }[]) => calls.map((c) => c.name).filter((n)
 const seed = (subtasks: object[] = []) => ({ changed: false, stop_requested: false, activities: [], next_seq: 1, task: { task_id: "task-1", state: "working", subtasks } });
 
 describe("reference agent loop", () => {
+  it("a request task goes to runRequest, not to the model loop", async () => {
+    const mcp = createStubMcp({ tasks: [{ ...queued[0], request_kind: "fill" }], handlers: {
+      get_ai_request: () => ({ kind: "fill", property: { prompt: "Summarize" }, rows: [{ row_id: "r1", rev: 0, inputs: { Notes: "Text" } }] }),
+      fill_ai_cells: () => ({ written: [{ row_id: "r1" }], conflicts: [], skipped: [] }),
+      complete_ai_request: () => ({ task_state: "done" }),
+    } });
+    const model = createStubModel([{ content: '{"values":[{"row_id":"r1","text":"Short"}]}' }]);
+    const result = await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, maxTurns: 1 });
+    expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "get_ai_request", "fill_ai_cells", "complete_ai_request"]);
+    expect(model.requests[0].tools).toBeUndefined();
+    expect(result.tasks[0].outcome).toBe("submitted");
+  });
   it("asks without blocking, keeps working, and hands the answer over when a heartbeat brings it", async () => {
     const answer = { seq: 12, text: "Casual", signal: "feedback", source: "row_panel", author_type: "human", approval_id: "input-1", decision: "respond" };
     const mcp = createStubMcp({

@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Bell } from "lucide-react";
 import { createPortal } from "react-dom";
 import { AgentPropertyCell } from "@/components/agents/AgentPropertyCell";
+import { AiCell } from "@/components/agents/AiCell";
 import DatePickerCalendar from "@/components/DatePickerCalendar";
 import { formatIsoDate } from "@/lib/datePicker";
 import { computeCell, displayValue } from "@/lib/dbCompute";
@@ -35,6 +36,7 @@ export default function Cell({ ops, database, row, property, pages }: { ops: DbO
   if (property.type === "button") return <button className="cell-button" disabled={ops.readOnly} onClick={() => { for (const action of property.buttonActions ?? []) ops.runButton(row.id, action); }}>{property.buttonLabel || "Run"}</button>;
   if (isAutoProperty(property, database)) return <span className={`cell-readonly ${text.startsWith("⚠") ? "danger" : ""}`} title={text.startsWith("⚠") ? text : property.type === "id" ? "Auto-generated ID (read-only)" : "Automatically updated"}>{text || "—"}</span>;
   if (property.type === "person") return <PersonCell value={value} onChange={set} readOnly={ops.readOnly} />;
+  if (property.type === "ai") return <AiCell row={row} property={property} database={database} readOnly={ops.readOnly} onChange={set} />;
   if (property.type === "files") return <FilesCell value={value} onChange={set} readOnly={ops.readOnly} />;
   if (property.type === "relation") return <RelationCell property={property} value={value} pages={pages} onChange={set} onOpen={(id) => ops.openRow(id)} readOnly={ops.readOnly} />;
   if (ops.readOnly && ["url", "email", "phone"].includes(property.type)) return text ? <a className="cell-readonly text-accent" href={safeHref(property.type === "email" ? `mailto:${text}` : property.type === "phone" ? `tel:${text}` : text)} target="_blank" rel="noopener noreferrer">{text}</a> : <span className="cell-readonly">—</span>;

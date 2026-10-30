@@ -4,6 +4,7 @@
 import { argsHash, buildCheckpoint, guardFor, guardsFromResume, parseCheckpoint, WRITE_TOOLS } from "./checkpoint.mjs";
 import { McpError, toOpenAiTools } from "./mcpClient.mjs";
 import { buildSystemPrompt, buildTaskMessage } from "./prompt.mjs";
+import { runRequest } from "./requests.mjs";
 
 /**
  * @typedef {import("./mcpClient.mjs").McpClient} McpClient
@@ -16,6 +17,7 @@ import { buildSystemPrompt, buildTaskMessage } from "./prompt.mjs";
 
 /** Tools the runtime drives itself; the model never sees them. */
 export const RUNTIME_TOOLS = new Set(["wait_for_my_tasks", "list_my_tasks", "claim_task", "heartbeat", "wait_for_task", "end_run", "ack_stop", "save_checkpoint", "hand_over", "await_questions"]);
+export const REQUEST_TOOLS = new Set(["get_ai_request", "fill_ai_cells", "complete_ai_request", "apply_ai_rewrite"]);
 /** wait_for_my_tasks reasons that mean "there is work to claim". */
 const CLAIM_REASONS = new Set(["queued", "feedback", "brief", "handover"]);
 /** Activity signals that answer a pending human decision. */
@@ -86,7 +88,7 @@ export async function runAgent(opts) {
   await mcp.initialize();
   const allTools = await mcp.listTools();
   const toolSchemas = new Map(allTools.map((t) => [t.name, t.inputSchema ?? {}]));
-  const tools = toOpenAiTools(allTools.filter((t) => !RUNTIME_TOOLS.has(t.name)));
+  const tools = toOpenAiTools(allTools.filter((t) => !RUNTIME_TOOLS.has(t.name) && !REQUEST_TOOLS.has(t.name)));
   const system = buildSystemPrompt({ harness, serverInstructions: mcp.instructions, reviewerAgentId });
 
   /** @param {ChannelEvent} event */
@@ -168,6 +170,18 @@ export async function runAgent(opts) {
     };
     const taskId = String(claim.task_id ?? task.task_id);
     const runId = String(claim.run_id);
+    if (task.request_kind) {
+      try {
+        const outcome = await runRequest({ call, model, task, runId, log, prices });
+        await notify({ kind: outcome.status === "failed" ? "error" : "delivered", task_id: taskId, text: outcome.summary });
+        return { task_id: taskId, run_id: runId, outcome: outcome.status === "failed" ? "error" : "submitted", usage: outcome.usage };
+      } catch (error) {
+        const text = error instanceof Error ? error.message : String(error);
+        await call("end_run", { run_id: runId, status: "error", terminal: true, error: text });
+        await notify({ kind: "error", task_id: taskId, text });
+        return { task_id: taskId, run_id: runId, outcome: "error", usage: { input_tokens: 0, output_tokens: 0, cost_usd: 0 } };
+      }
+    }
     const link = appUrl && claim.row_page_id ? `${appUrl}/p/${claim.row_page_id}?task=${taskId}` : undefined;
     const label = task.title ?? claim.title ?? taskId;
     let seenSeq = maxSeq(claim.recent_activities);

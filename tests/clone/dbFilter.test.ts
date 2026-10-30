@@ -16,6 +16,10 @@ const operators: [number, PropertyType[], FilterOperator[]][] = [
 ];
 it.each(operators)("A-5-%i available filter operators", (_id, types, expected) => { for (const type of types) expect(operatorsFor(type)).toEqual(expected); });
 it("A-5-95 default operators", () => { expect(defaultOperator("checkbox")).toBe("checked"); expect(defaultOperator("multiSelect")).toBe("contains"); expect(defaultOperator("text")).toBe("is"); });
+it("ai properties filter like text", () => {
+  expect(operatorsFor("ai")).toEqual(operatorsFor("text"));
+  expect(match("ai", { text: "Short", by: "agent", id: "u", at: 1 }, "contains", "short")).toBe(true);
+});
 it("A-5-96 operators without operands", () => expect([...NO_VALUE_OPS].sort()).toEqual(["checked", "isEmpty", "isNotEmpty", "unchecked"]));
 function match(type: PropertyType, cell: unknown, operator: FilterOperator, value?: string, patch: Partial<DbProperty> = {}) {
   const p = prop({ id: "p", type, ...patch }), r = row({ p: cell }, "owner");
