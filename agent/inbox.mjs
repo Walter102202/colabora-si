@@ -79,32 +79,34 @@ export function createInbox({ call, transcribe, send, typing = () => () => {}, t
   /** @param {ChannelMessage} m */
   async function handle(m) {
     const t = TEXT[m.lang];
-    if (m.unsupported) return send(m.chatId, t.unsupported);
+    if (m.unsupported) { await send(m.chatId, t.unsupported); return true; }
     if (m.text) {
       try {
         const reply = confirmation(await relay(m, m.text, "text"));
         if (reply) await send(m.chatId, reply);
+        return true;
       } catch (e) {
         log(`inbox: ${e instanceof Error ? e.message : String(e)}`);
         await send(m.chatId, t.not_saved);
+        return false;
       }
-      return;
     }
-    if (!m.voice) return;
-    if (m.voice.seconds > MAX_VOICE_SECONDS || m.voice.bytes > MAX_VOICE_BYTES) return send(m.chatId, t.too_long);
+    if (!m.voice) return true;
+    if (m.voice.seconds > MAX_VOICE_SECONDS || m.voice.bytes > MAX_VOICE_BYTES) { await send(m.chatId, t.too_long); return true; }
     const stop = typing(m.chatId);
     try {
       const heard = await transcribe(m);
-      if (heard.duplicate) return;
-      if (!heard.transcript) return await send(m.chatId, t.no_speech);
+      if (heard.duplicate) return true;
+      if (!heard.transcript) { await send(m.chatId, t.no_speech); return true; }
       const data = await relay(m, heard.transcript, "voice", heard.clip_id);
-      if (data.duplicate) return;
+      if (data.duplicate) return true;
       const echo = `${m.forwarded ? t.forwarded : t.heard}: "${heard.transcript.slice(0, MAX_ECHO_CHARS)}"`;
       await send(m.chatId, [echo, confirmation(data)].filter(Boolean).join("\n\n"));
     } catch (e) {
       const code = e instanceof Error ? e.message : String(e);
       log(`inbox voice: ${code}`);
       await send(m.chatId, /** @type {any} */ (t)[code] ?? t.failed);
+      return ["too_long", "voice_too_long", "voice_too_short", "bad_format", "not_wav", "no_audio", "unsupported"].includes(code);
     } finally {
       stop();
     }
@@ -113,7 +115,7 @@ export function createInbox({ call, transcribe, send, typing = () => () => {}, t
   return {
     /** @param {ChannelMessage} m */
     deliver(m) {
-      const next = (tails.get(m.chatId) ?? Promise.resolve()).then(() => handle(m)).catch((e) => log(`inbox: ${e instanceof Error ? e.message : String(e)}`));
+      const next = (tails.get(m.chatId) ?? Promise.resolve()).then(() => handle(m)).catch((e) => { log(`inbox: ${e instanceof Error ? e.message : String(e)}`); return false; });
       tails.set(m.chatId, next);
       return next;
     },

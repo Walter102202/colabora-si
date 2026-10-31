@@ -19,7 +19,7 @@ import { flushPersonReplies } from "./inbox.mjs";
 
 /** Tools the runtime drives itself; the model never sees them. */
 export const RUNTIME_TOOLS = new Set(["wait_for_my_tasks", "list_my_tasks", "claim_task", "heartbeat", "wait_for_task", "end_run", "ack_stop", "save_checkpoint", "hand_over", "await_questions"]);
-export const REQUEST_TOOLS = new Set(["relay_person_message", "reply_person_message", "deliver_person_replies", "save_to_notes", "get_ai_request", "fill_ai_cells", "complete_ai_request", "complete_lesson_request", "report_source_check", "apply_ai_rewrite", "save_file_text"]);
+export const REQUEST_TOOLS = new Set(["take_channel_updates", "person_work_status", "relay_person_message", "reply_person_message", "deliver_person_replies", "save_to_notes", "get_ai_request", "fill_ai_cells", "complete_ai_request", "complete_lesson_request", "report_source_check", "apply_ai_rewrite", "save_file_text"]);
 /** wait_for_my_tasks reasons that mean "there is work to claim". */
 const CLAIM_REASONS = new Set(["queued", "feedback", "brief", "handover"]);
 /** Activity signals that answer a pending human decision. */

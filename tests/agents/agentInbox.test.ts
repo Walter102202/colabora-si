@@ -283,3 +283,68 @@ describe("the voice client", () => {
     await expect(oggToWav(new Uint8Array(1), { ffmpeg: "no-such-binary-here" })).rejects.toThrow("no_ffmpeg");
   });
 });
+
+it("webhook transport acknowledges only after successful inbox delivery and never polls Telegram", async () => {
+  const stop = new AbortController();
+  const fetchImpl = vi.fn(async () => { throw new Error("getUpdates must not run"); });
+  let delivered = false;
+  const call = vi.fn(async (_name: string, args: Record<string, unknown>) => {
+    if (args.ack_update_id) { expect(delivered).toBe(true); stop.abort(); return { updates: [] }; }
+    return { updates: [{ update_id: 4, message: { message_id: 8, chat, from, text: "hello" } }] };
+  });
+  const channel = createTelegramChannel({ token: "fake", ownerChatId: "5", transport: "webhook", channelRpc: call, fetchImpl });
+  await channel.start({ signal: stop.signal, onMessage: async (m) => { expect(m.text).toBe("hello"); delivered = true; } });
+  expect(fetchImpl).not.toHaveBeenCalled();
+  expect(call).toHaveBeenLastCalledWith("take_channel_updates", { ack_update_id: 4 });
+});
+
+it.each([
+  { chat: { id: -10, type: "group" }, from: { id: 5 } },
+  { chat: { id: 5, type: "private" }, from: { id: 6 } },
+])("polling status does not reveal person work to an unverified sender: %j", async (sender) => {
+  const stop = new AbortController(); let first = true;
+  const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+    if (String(url).endsWith("getUpdates") && first) { first = false; return Response.json({ ok: true, result: [{ update_id: 1, message: { message_id: 1, ...sender, text: "/status" } }] }); }
+    stop.abort(); return Response.json({ ok: true, result: [] });
+  });
+  const call = vi.fn(async () => ({ running_work: [] }));
+  const channel = createTelegramChannel({ token: "fake", ownerChatId: String(sender.chat.id), fetchImpl, channelRpc: call });
+  await channel.start({ signal: stop.signal });
+  expect(call).not.toHaveBeenCalled();
+});
+
+it("registers only message and callback updates without discarding pending deliveries", async () => {
+  const { setTelegramWebhook } = await import("../../agent/telegram-webhook.mjs");
+  const fetchImpl = vi.fn(async () => Response.json({ ok: true }));
+  await setTelegramWebhook({ token: "fake", secret: "local-only-test-secret", url: "https://example.test/functions/v1/telegram-webhook", fetchImpl });
+  const body = JSON.parse(String((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body));
+  expect(body.allowed_updates).toEqual(["message", "callback_query"]);
+  expect(body.drop_pending_updates).toBe(false);
+});
+
+it("does not acknowledge a real inbox relay failure and retries the same queued message", async () => {
+  let failed = true, acknowledged = false;
+  const first = new AbortController(), second = new AbortController();
+  const box = createInbox({ call: async () => ({ isError: failed, text: "", data: failed ? { code: "temporarily_unavailable" } : { message_id: "saved" } }), transcribe: async () => ({}), send: async () => {} });
+  const call = vi.fn(async (_name: string, args: Record<string, unknown>) => {
+    if (args.ack_update_id) { acknowledged = true; second.abort(); return { updates: [] }; }
+    return { updates: [{ update_id: 9, message: { message_id: 9, chat, from, text: "keep me" } }] };
+  });
+  const channel = createTelegramChannel({ token: "fake", ownerChatId: "5", transport: "webhook", channelRpc: call });
+  await channel.start({ signal: first.signal, onMessage: async (m) => { const result = await box.deliver(m); first.abort(); return result; } });
+  expect(acknowledged).toBe(false);
+  failed = false;
+  await channel.start({ signal: second.signal, onMessage: box.deliver });
+  expect(acknowledged).toBe(true);
+});
+
+it("keeps ordinary-agent polling status when person-scoped work is not authorized", async () => {
+  const stop = new AbortController(); const sent: string[] = [];
+  const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    if (String(url).endsWith("getUpdates")) return Response.json({ ok: true, result: [{ update_id: 1, message: { message_id: 1, chat, from, text: "/status" } }] });
+    sent.push(JSON.parse(String(init?.body)).text); return Response.json({ ok: true, result: {} });
+  });
+  const channel = createTelegramChannel({ token: "fake", ownerChatId: "5", fetchImpl, channelRpc: async () => { stop.abort(); throw Object.assign(new Error("Channel request failed"), { code: "platform_only" }); } });
+  await channel.start({ signal: stop.signal, status: () => "waiting for tasks" });
+  expect(sent).toEqual(["Status: waiting for tasks"]);
+});

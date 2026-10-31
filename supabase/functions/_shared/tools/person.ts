@@ -90,4 +90,14 @@ const deliveries: ToolDef = {
   },
 };
 
-export const personTools: ToolDef[] = [relay, reply, save, deliveries];
+const updates: ToolDef = {
+  name: 'take_channel_updates', title: 'Receive verified channel updates', description: 'Platform runtime only: fetch updates, acknowledging only after inbox delivery.',
+  inputSchema: object({ ack_update_id: { type: 'integer', minimum: 0 } }, []), outputSchema: output({ updates: { type: 'array' } }), annotations: WRITE, cacheTtlMs: 0,
+  async handler(args, ctx) { return { text: 'Channel updates.', structured: await must(ctx.db.rpc<Record<string, unknown>>('take_channel_updates', { p_ack_update_id: args.ack_update_id })) ?? {} }; },
+};
+const status: ToolDef = {
+  name: 'person_work_status', title: 'Read linked person work status', description: 'Platform runtime only: deterministic status for a linked chat.',
+  inputSchema: object({ chat_id: { type: 'string' } }, ['chat_id']), outputSchema: output({ running_work: { type: 'array' } }), annotations: WRITE, cacheTtlMs: 0,
+  async handler(args, ctx) { return { text: 'Work status.', structured: await must(ctx.db.rpc<Record<string, unknown>>('person_work_status', { p_chat_id: args.chat_id })) ?? {} }; },
+};
+export const personTools: ToolDef[] = [relay, reply, save, deliveries, updates, status];

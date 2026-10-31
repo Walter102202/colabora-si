@@ -51,6 +51,16 @@ Voice is transcribed through `voice-transcribe`; browser clips are reviewed befo
 
 Explicit requests such as “save in notes: buy bread” are verified from the original person message before the agent can save. Pasted or forwarded text cannot authorize saving. Notes are private by default; Undo and `/undo` or `/deshacer` remove a saved note. The platform runtime must be running to answer and save; messages remain queued while it is unavailable.
 
+### Trama in Telegram
+
+Settings → Agents → Connect Telegram creates a one-use link valid for ten minutes. Open it in a private chat with the configured bot; Disconnect revokes the link. Trama can report saved work status with “How is everything going?”; `/status` and `/pending` work without a model.
+
+The verified `telegram-webhook` receives Telegram updates. Ordinary text and voice enter a persistent queue for the platform runtime; only verified callbacks reach service-role decision RPCs. Notices are built from saved approval rows and target the task owner, regardless of which agent asked. Payment, editing an approval, and delivery acceptance stay in the app. Forwarded messages, voice and groups cannot decide. Open replies prepare an answer and require a separate confirmation button because Telegram does not identify clipboard pastes.
+
+Server setup after deployment: configure `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `DISPATCH_SECRET` and `APP_URL` for the Edge Functions. Configure `private.app_secrets` with the non-secret `telegram_bot_username` and Vault `project_url` / `dispatch_cron_secret` for the ten-second notifier. Switch the platform runtime to `TELEGRAM_TRANSPORT=webhook` before registering the webhook; polling and webhooks cannot receive on the same bot simultaneously. The runtime never receives the webhook secret.
+
+Run `node agent/telegram-webhook.mjs` separately with `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` and `TELEGRAM_WEBHOOK_URL` in that setup process environment. It retains pending Telegram updates and prints no credentials. Local integration uses `tests/agents/channel-smoke.mjs` with a fake Telegram server; never aim that test at a hosted project.
+
 ## How a task flows
 
 ```text
@@ -141,7 +151,7 @@ Use a criterion such as `{"id":"ci","text":"CI is green","check":"ci","command":
 
 [`agent/`](agent/README.md) is a small worker in plain Node 22 with no dependencies. It waits for tasks, claims them, runs model turns against any OpenAI-compatible chat completions endpoint with tool calling, reports heartbeats with measured cost, pauses on `request_approval` until a person decides, and stops at `submit_for_review`. It never marks a task done.
 
-It is designed to run as two instances: a Lead on a hosted frontier model and a worker on an open-weight model served behind a chat completions endpoint. A typical pair is Meta's Muse Spark for the Lead and Muse Spark Open (open weights) for the worker; any other pair works, including a local server. Notifications go to the console or to a Telegram chat; decisions are always taken in the app. With `AGENT_INBOX=1`, the owner can also write or send voice notes to the platform agent from Telegram.
+It is designed to run as two instances: a Lead on a hosted frontier model and a worker on an open-weight model served behind a chat completions endpoint. A typical pair is Meta's Muse Spark for the Lead and Muse Spark Open (open weights) for the worker; any other pair works, including a local server. Notifications go to the console or to a Telegram chat; decisions are taken in the app, or from Trama's verified buttons in a linked Telegram chat. With `AGENT_INBOX=1`, the owner can also write or send voice notes to the platform agent from Telegram.
 
 ## Getting started
 

@@ -1,8 +1,6 @@
-// Telegram channel over the Bot API (fetch + long polling getUpdates).
-// Tells the owner when a task is claimed, when a decision is pending (with a
-// deep link to the task in the app) and when work is delivered. Decisions are
-// always taken in the app, never in the chat. With an inbox, what the owner
-// writes or says reaches the workspace as their message.
+// Telegram polling is message-only. Webhook transport receives a server-verified queue.
+// Decisions go directly from verified callbacks to the server, never through this runtime or its model.
+// Voice and ordinary messages keep the P12 inbox and acknowledge only after durable delivery.
 
 const ECHO = /^(?:Entendí|I heard|Audio reenviado|Forwarded audio): "([\s\S]*?)"(?:\n\n|$)/;
 
@@ -29,10 +27,11 @@ export function readMessage(msg) {
 /**
  * @param {{
  *   token: string, ownerChatId: string, fetchImpl?: typeof fetch,
+ *   transport?: "polling"|"webhook", channelRpc?: (name: string, args: Record<string, unknown>) => Promise<Record<string, any>>,
  *   apiBase?: string, log?: (msg: string) => void,
  * }} opts
  */
-export function createTelegramChannel({ token, ownerChatId, fetchImpl = globalThis.fetch, apiBase = "https://api.telegram.org", log = () => {} }) {
+export function createTelegramChannel({ token, ownerChatId, fetchImpl = globalThis.fetch, apiBase = "https://api.telegram.org", log = () => {}, transport = "polling", channelRpc }) {
   const base = `${apiBase}/bot${token}`;
 
   /** @param {string} method @param {Record<string, unknown>} body @param {number} [timeoutMs] */
@@ -56,6 +55,7 @@ export function createTelegramChannel({ token, ownerChatId, fetchImpl = globalTh
   return {
     /** @param {import("../loop.mjs").ChannelEvent} event */
     async notify(event) {
+      if (transport === "webhook") return; // Server notices target the task owner; the legacy owner chat must not receive other people's work.
       const lines = [`${icons[event.kind] ?? event.kind}: ${event.text}`];
       if (event.link) lines.push(event.kind === "approval_pending" || event.kind === "input_requested" ? `Decide here: ${event.link}` : event.link);
       await send(lines.join("\n"));
@@ -94,6 +94,26 @@ export function createTelegramChannel({ token, ownerChatId, fetchImpl = globalTh
      * @param {{signal?: AbortSignal, status?: () => string, onMessage?: (m: import("../inbox.mjs").ChannelMessage) => unknown}} [opts]
      */
     async start({ signal, status = () => "idle", onMessage } = {}) {
+      if (transport === "webhook") {
+        if (!channelRpc || !onMessage) throw new Error("Webhook transport requires the platform inbox.");
+        let delay = 1500;
+        while (!signal?.aborted) {
+          try {
+            const batch = await channelRpc("take_channel_updates", {});
+            for (const update of batch.updates ?? []) {
+              if (await onMessage(readMessage(update.message)) === false) throw new Error("Inbox delivery remains pending.");
+              await channelRpc("take_channel_updates", { ack_update_id: update.update_id });
+            }
+            delay = batch.updates?.length ? 1500 : Math.min(10000, delay * 1.5);
+          } catch { log("Channel delivery remains pending for retry."); delay = Math.min(10000, delay * 1.5); }
+          if (signal?.aborted) break;
+          await new Promise((resolve) => {
+            const done = () => { clearTimeout(timer); signal?.removeEventListener("abort", done); resolve(); };
+            const timer = setTimeout(done, delay); signal?.addEventListener("abort", done, { once: true });
+          });
+        }
+        return;
+      }
       let offset = 0;
       const deliveries = new Map();
       while (!signal?.aborted) {
@@ -110,12 +130,23 @@ export function createTelegramChannel({ token, ownerChatId, fetchImpl = globalTh
             const msg = u.message;
             if (!msg || String(msg.chat?.id) !== String(ownerChatId)) continue;
             const text = String(msg.text ?? "").trim();
-            if (text.startsWith("/status")) await send(`Status: ${status()}`);
+            if (text.startsWith("/status")) {
+              if (channelRpc) {
+                if (msg.chat?.type !== "private" || String(msg.from?.id) !== String(ownerChatId) || msg.from?.is_bot) continue;
+                try {
+                  const data = await channelRpc("person_work_status", { chat_id: String(msg.chat.id) });
+                  await send((data.running_work ?? []).map((t) => `${t.title}: ${t.state}; subtasks ${t.subtasks_done}/${t.subtasks_total}`).join("\n") || "No open work is visible for you.");
+                } catch (error) {
+                  if (error?.code !== "platform_only") throw error;
+                  await send(`Status: ${status()}`);
+                }
+              } else await send(`Status: ${status()}`);
+            }
             else if (!onMessage) await send("Decisions and feedback go through the task in the app; open the link of the task message.");
             else if (msg.chat?.type === "private" && !msg.from?.is_bot) {
               deliveries.set(u.update_id, false);
               void Promise.resolve().then(() => onMessage(readMessage(msg))).then(
-                () => deliveries.set(u.update_id, true),
+                (delivered) => deliveries.set(u.update_id, delivered === false ? "retry" : true),
                 () => { deliveries.set(u.update_id, "retry"); log("telegram ingestion failed; delivery remains unacknowledged"); },
               );
             }

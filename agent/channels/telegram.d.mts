@@ -6,6 +6,8 @@ export interface TelegramOptions {
   fetchImpl?: typeof fetch;
   apiBase?: string;
   log?: (message: string) => void;
+  transport?: "polling" | "webhook";
+  channelRpc?: (name: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>;
 }
 export function createTelegramChannel(opts: TelegramOptions): {
   notify(event: unknown): Promise<void>;
