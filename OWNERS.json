@@ -48,6 +48,8 @@
       "supabase/migrations/*_0044_*",
       "supabase/migrations/*_0045_*",
       "supabase/migrations/*_0046_*",
+      "supabase/migrations/*_0047_*",
+      "supabase/migrations/*_0048_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -230,6 +232,13 @@
       "public/llms.txt",
       "supabase/config.toml",
       "lib/tramaSuggestions.ts"
+    ],
+    "a/p14-workspace": [
+      "README.md",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "public/llms.txt",
+      "supabase/config.toml"
     ]
   }
 }
