@@ -25,7 +25,7 @@ export function describeApproval(action: string | null, params: Record<string, u
       break;
     }
     case "publish_page":
-      what = `Publish page ${textOr(params.page_id || params.ref || params.page, "(page missing)")}`;
+      what = `Publish page ${textOr(params.page_id, "(page missing)")}`;
       effect = "Anyone with the link can read it until it is unpublished.";
       break;
     case "http_request":
