@@ -78,7 +78,8 @@ begin
   if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
   select max(seq) into v_through from public.agent_messages
    where workspace_id = v_t.workspace_id and user_id = v_t.owner_user_id and direction = 'in' and needs_reply;
-  select coalesce(jsonb_agg(x.m order by x.seq), '[]'::jsonb) into v_items from (
+  select coalesce(jsonb_agg(x.m order by x.seq), '[]'::jsonb), max(x.seq) filter (where (x.m->>'waiting')::boolean)
+    into v_items, v_through from (
     select a.seq, jsonb_build_object('id', a.id, 'from', case when a.direction = 'in' then 'person' else 'agent' end, 'voice', a.kind = 'voice',
              'forwarded', a.forwarded, 'pasted', a.pasted, 'text', left(a.body, 4000), 'at', a.created_at, 'waiting', a.needs_reply)
            || case when a.needs_reply and a.intent->>'kind' = 'save' and not exists (select 1 from public.saved_notes n where n.message_id = a.id)
@@ -91,9 +92,9 @@ begin
       from public.agent_messages a
      where a.workspace_id = v_t.workspace_id and a.user_id = v_t.owner_user_id and a.kind <> 'system'
        and (a.created_at > now() - interval '1 day' or a.needs_reply)
-     order by a.seq desc limit 20) x(seq, m);
+     order by a.needs_reply desc, case when a.needs_reply then a.seq end asc, a.seq desc limit 20) x(seq, m);
   select * into v_last from public.agent_messages where workspace_id = v_t.workspace_id
-    and user_id = v_t.owner_user_id and direction = 'in' and needs_reply order by seq desc limit 1;
+    and user_id = v_t.owner_user_id and direction = 'in' and needs_reply and seq <= v_through order by seq desc limit 1;
   if private.person_reads_page(v_last.context->>'page_id', v_t.workspace_id, v_t.owner_user_id) then
     select jsonb_build_object('id', p.id, 'title', p.data->>'title', 'text', left(private.page_text(p.data), 6000))
       into v_page from public.pages p where p.id = v_last.context->>'page_id';

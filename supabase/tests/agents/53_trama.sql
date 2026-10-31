@@ -103,5 +103,19 @@ select is((select count(*) from public.agent_tasks where workspace_id=:'ws'::uui
 select tests.set_human(:'owner'::uuid);
 select is(tests.sqlstate_of(format($q$select public.assist_request_context(%L)$q$, :'req')), 'PT404', 'a person cannot call the agent context RPC');
 select tests.reset_role();
+-- A backlog must not acknowledge requests the model has not received.
+update public.agent_messages set created_at=now()-interval '2 minutes' where user_id=:'owner'::uuid;
+select tests.set_human(:'owner'::uuid);
+select public.post_agent_message(:'ws'::uuid, 'guarda en notas: oldest request', gen_random_uuid())->>'message_id' as oldest \gset
+select public.post_agent_message(:'ws'::uuid, 'queued ' || n, gen_random_uuid()) from generate_series(1,20) n;
+select tests.reset_role();
+select id as req from public.agent_tasks where request_kind='assist' and owner_user_id=:'owner'::uuid and state='queued' \gset
+select tests.set_agent(:'pu'::uuid, :'pa'::uuid);
+select public.claim_task(:'req'::uuid,'backlog-check')->>'run_id' as run \gset
+select public.assist_request_context(:'req'::uuid) as batch \gset
+select ok(exists(select 1 from jsonb_array_elements(:'batch'::jsonb->'messages') m where m->>'id'=:'oldest'), 'oldest pending save is included in the first batch');
+select public.reply_person_message(:'run'::uuid,'Batch answered',(:'batch'::jsonb->>'through_seq')::bigint,null);
+select tests.reset_role();
+select is((select count(*) from public.agent_messages where user_id=:'owner'::uuid and needs_reply),1::bigint,'unseen backlog remains pending');
 select * from finish();
 rollback;
