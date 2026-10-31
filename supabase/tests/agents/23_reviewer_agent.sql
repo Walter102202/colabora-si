@@ -23,7 +23,7 @@ select public.submit_for_review(:'w1'::uuid, 'v1', array[:'art'::uuid]);
 -- The Lead delegates the review task to the reviewer.
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
-select public.create_subtask(:'parent'::uuid, 'page_A3',
+select tests.make_review_subtask(:'parent'::uuid, 'page_A3',
   format('{"objective":"Review the report against its done_when","done_when":[{"id":"r1","text":"One finding per criterion","check":"lead"}],"sources":[{"kind":"page","ref":"page_A2"}],"policies":{"review_of":"%s"}}', :'sub')::jsonb,
   (:'rev'::jsonb->>'agent')::uuid) ->> 'task_id' as rtask \gset
 
@@ -43,7 +43,7 @@ select is(tests.error_of(format('select public.review_task(%L::uuid, %L, %L::jso
 -- parent's Lead can delegate a review). The owner creates a top-level task on page_A4 for the reviewer.
 select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
-select public.create_agent_task('page_A4', format('{"objective":"Rogue review","policies":{"review_of":"%s"}}', :'sub')::jsonb, (:'rev'::jsonb->>'agent')::uuid) ->> 'task_id' as rogue \gset
+select tests.make_review_task('page_A4', format('{"objective":"Rogue review","policies":{"review_of":"%s"}}', :'sub')::jsonb, (:'rev'::jsonb->>'agent')::uuid) ->> 'task_id' as rogue \gset
 select tests.reset_role();
 select tests.set_agent((:'rev'::jsonb->>'user')::uuid, (:'rev'::jsonb->>'agent')::uuid);
 select public.claim_task(:'rogue'::uuid, 'reference-agent') ->> 'run_id' as rg \gset
@@ -108,7 +108,7 @@ select public.add_artifact(:'w2'::uuid, 'page', 'page_A6', 'Green build', '{d1}'
 select public.submit_for_review(:'w2'::uuid, 'v1', array[:'art2'::uuid]);
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
-select public.create_subtask(:'parent2'::uuid, 'page_A7',
+select tests.make_review_subtask(:'parent2'::uuid, 'page_A7',
   format('{"objective":"Review the build","done_when":[{"id":"r1","text":"One finding per criterion","check":"lead"}],"sources":[{"kind":"page","ref":"page_A6"}],"policies":{"review_of":"%s"}}', :'sub2')::jsonb,
   (:'rev'::jsonb->>'agent')::uuid) ->> 'task_id' as rtask2 \gset
 select tests.reset_role();

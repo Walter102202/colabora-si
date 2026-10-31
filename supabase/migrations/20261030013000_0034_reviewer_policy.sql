@@ -93,9 +93,9 @@ begin
   if v_row is null then return null; end if;
 
   insert into public.agent_tasks (id, workspace_id, context_id, db_page_id, row_page_id, title, delegate_agent_id, owner_user_id,
-                                  parent_task_id, brief_version, created_by, created_by_type)
+                                  parent_task_id, brief_version, created_by, created_by_type, server_review)
   values (v_id, p_t.workspace_id, p_t.context_id, p_t.db_page_id, v_row, v_title, v_r.id, p_t.owner_user_id,
-          p_t.parent_task_id, 1, p_worker, 'agent');
+          p_t.parent_task_id, 1, p_worker, 'agent', true);
   insert into public.task_briefs (task_id, version, workspace_id, objective, constraints, done_when, decisions, sources,
                                   open_questions, next_step, policies, author_id, author_type, preapproved_trusted)
   values (v_id, 1, p_t.workspace_id, v_goal, v_rules,

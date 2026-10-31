@@ -257,6 +257,7 @@ begin
     v_full := true; v_author := (select auth.uid()); v_author_type := 'human';
   end if;
 
+  if coalesce(p_patch->'policies','{}') ? 'review_of' then raise exception using errcode='PT422',message='field_not_allowed',detail='review_of is server-owned'; end if;
   select key into v_bad from jsonb_object_keys(p_patch) key
    where not key = any (case when v_full
                      then array['objective','constraints','done_when','decisions','sources','open_questions','next_step','policies',

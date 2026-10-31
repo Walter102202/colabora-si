@@ -336,6 +336,9 @@ begin
 end $$;
 
 -- Full copy from0025: direct child creation must not bypass the Lead command fence.
+-- Only automatic review creation sets this provenance bit; legacy labels count as normal work.
+alter table public.agent_tasks add column server_review boolean not null default false;
+
 create or replace function public.create_agent_task(p_row_page_id text, p_brief jsonb, p_delegate_agent_id uuid default null,
   p_parent_task_id uuid default null, p_reference_task_ids uuid[] default '{}', p_depends_on_task_ids uuid[] default '{}',
   p_idempotency_key text default null)
@@ -350,6 +353,7 @@ begin
      where scope = 'create_agent_task' and key = p_idempotency_key and actor_id = v_uid;
     if found then return v_receipt; end if;
   end if;
+  if coalesce(p_brief->'policies','{}') ? 'review_of' then raise exception using errcode='PT422',message='field_not_allowed',detail='review_of is server-owned'; end if;
   perform private.validate_brief(p_brief);
 
   select * into v_page from public.pages where id = p_row_page_id and deleted_at is null;
@@ -411,9 +415,9 @@ begin
   if private.is_agent() and p_parent_task_id is not null then
     perform private.require_active_task(p_parent_task_id);
     select (policies->>'team_size_max')::int into v_max from public.task_briefs where task_id=v_parent.id and version=v_parent.brief_version;
-    if v_max is not null and not (coalesce(p_brief->'policies','{}') ? 'review_of') then
+    if v_max is not null then
       select count(*) into v_count from public.agent_tasks t join public.task_briefs b on b.task_id=t.id and b.version=t.brief_version
-        where t.parent_task_id=v_parent.id and t.state<>'cancelled' and not (b.policies ? 'review_of');
+        where t.parent_task_id=v_parent.id and t.state<>'cancelled' and not t.server_review;
       if v_count>=v_max then raise exception using errcode='PT422',message='team_size_exceeded',detail=jsonb_build_object('max',v_max)::text; end if;
     end if;
   end if;

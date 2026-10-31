@@ -1,5 +1,5 @@
 begin;
-select plan(34);
+select plan(37);
 select tests.fixture() as f \gset
 -- A real database page: the review task gets its own row, as a task a Lead creates by hand does.
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_DB', 'page_A', jsonb_build_object('id', 'page_DB', 'title', 'Tasks', 'parentId', 'page_A', 'blocks', '[]'::jsonb,
@@ -99,6 +99,15 @@ select public.update_brief(:'parent'::uuid,jsonb_build_object('policies',jsonb_b
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
 select public.claim_task(:'parent'::uuid,'claude_code')->>'run_id' as lr \gset
+
+select tests.reset_role();
+select tests.make_page((:'f'::jsonb->>'ws')::uuid,'page_forged','page_DB');
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.create_subtask(%L::uuid,%L,%L::jsonb)',:'parent','page_forged','{"objective":"Fake review","policies":{"review_of":"nothing"}}')),'field_not_allowed','an agent cannot mint review identity on creation');
+select is(tests.error_of(format('select public.update_brief(%L::uuid,%L::jsonb)',:'self',jsonb_build_object('policies',jsonb_build_object('review_of',:'sub')))),'field_not_allowed','an agent cannot relabel counted work as a review');
+select tests.reset_role();
+select ok((select server_review from public.agent_tasks where id=:'rt'::uuid),'automatic review has server provenance');
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
 select is(tests.error_of(format('select public.create_subtask(%L::uuid,%L,%L::jsonb,null,%L::uuid[],%L::uuid[],%L)',:'parent','page_extra','{"objective":"Third delivery"}','{}','{}','capacity-retry')), '', 'review tasks do not occupy delivery capacity');
 select is(tests.error_of(format('select public.create_subtask(%L::uuid,%L,%L::jsonb,null,%L::uuid[],%L::uuid[],%L)',:'parent','page_extra','{"objective":"Third delivery"}','{}','{}','capacity-retry')), '', 'retry at capacity returns the receipt');
 select public.review_task(:'sub'::uuid,'changes_requested','[{"criterion_id":"c1","status":"contradicted","note":"Lead intervened"}]','[]',null,:'lr'::uuid);

@@ -190,7 +190,7 @@ select is(tests.error_of(format('do $b$ begin perform public.close_subtask(%L::u
 select public.create_subtask(:'parent'::uuid, 'page_ci_worker',
   '{"objective":"Worker-authored CI","done_when":[{"id":"c1","text":"CI","check":"ci","command":"check"}]}'::jsonb,
   (:'f'::jsonb->>'agent')::uuid)->>'task_id' as worker_self_task \gset
-select public.create_subtask(:'parent'::uuid, 'page_ci_self_review',
+select tests.make_review_subtask(:'parent'::uuid, 'page_ci_self_review',
   jsonb_build_object('objective', 'Review own commit', 'policies', jsonb_build_object('review_of', :'worker_self_task')),
   (:'f'::jsonb->>'agent')::uuid)->>'task_id' as self_review_task \gset
 select tests.reset_role();

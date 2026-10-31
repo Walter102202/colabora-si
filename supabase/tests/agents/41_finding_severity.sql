@@ -48,7 +48,7 @@ select public.claim_task(:'sub'::uuid, 'codex') ->> 'run_id' as run2 \gset
 select public.submit_for_review(:'run2'::uuid, 'fixed', array[:'art'::uuid]);
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
-select public.create_agent_task('page_R', format('{"objective":"Review","policies":{"review_of":"%s"}}', :'sub')::jsonb, (:'rev'::jsonb->>'agent')::uuid, :'parent'::uuid) ->> 'task_id' as rt \gset
+select tests.make_review_task('page_R', format('{"objective":"Review","policies":{"review_of":"%s"}}', :'sub')::jsonb, (:'rev'::jsonb->>'agent')::uuid, :'parent'::uuid) ->> 'task_id' as rt \gset
 select tests.reset_role();
 select tests.set_agent((:'rev'::jsonb->>'user')::uuid, (:'rev'::jsonb->>'agent')::uuid);
 select public.claim_task(:'rt'::uuid, 'claude_code') ->> 'run_id' as rr \gset
