@@ -67,3 +67,11 @@ verify_jwt = false
 [functions.voice-transcribe]
 # Signed-in people and the platform agent. The function reads the raw WAV.
 verify_jwt = true
+
+[functions.telegram-webhook]
+# Verified Telegram secret token; no agent or person JWT authorizes this endpoint.
+verify_jwt = false
+
+[functions.channel-notify]
+# Cron uses the dispatch secret.
+verify_jwt = false

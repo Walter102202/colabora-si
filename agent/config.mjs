@@ -20,6 +20,7 @@ import { readFile } from "node:fs/promises";
  * @property {string} reviewerAgentId   reviewer instance delegated by the Lead ("" disables the review protocol)
  * @property {string} appUrl            public app URL for deep links ("" disables links)
  * @property {string} telegramBotToken  "" selects the console channel
+ * @property {"polling"|"webhook"} telegramTransport
  * @property {string} telegramOwnerChatId
  * @property {number} maxTurns          model turns per run before giving up
  * @property {boolean} inbox           the platform agent reads what its owner sends on Telegram
@@ -98,7 +99,8 @@ export function readConfig(env) {
     telegramBotToken: env.TELEGRAM_BOT_TOKEN ?? "",
     telegramOwnerChatId: env.TELEGRAM_OWNER_CHAT_ID ?? "",
     maxTurns: num(env.AGENT_MAX_TURNS, 40),
-    inbox: env.AGENT_INBOX === "1",
+    inbox: env.AGENT_INBOX === "1" || env.TELEGRAM_TRANSPORT === "webhook",
+    telegramTransport: env.TELEGRAM_TRANSPORT === "webhook" ? "webhook" : "polling",
     voiceUrl: env.WORKSPACE_VOICE_URL || `${new URL(mcpUrl).origin}/functions/v1/voice-transcribe`,
     timezone: env.AGENT_TIMEZONE ?? "",
     ffmpegPath: env.FFMPEG_PATH || "ffmpeg",

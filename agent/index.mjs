@@ -40,7 +40,7 @@ const model = createModel({ baseUrl: config.modelBaseUrl, apiKey: config.modelAp
 
 let status = "waiting for tasks";
 const base = config.telegramBotToken
-  ? createTelegramChannel({ token: config.telegramBotToken, ownerChatId: config.telegramOwnerChatId, log })
+  ? createTelegramChannel({ token: config.telegramBotToken, ownerChatId: config.telegramOwnerChatId, log, transport: config.telegramTransport, channelRpc: async (name, args) => { const result = await mcp.callTool(name, args); if (result.isError) throw new Error("Channel request failed"); return result.data; } })
   : createConsoleChannel();
 const channel = {
   appUrl: config.appUrl,

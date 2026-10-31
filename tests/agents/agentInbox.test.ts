@@ -283,3 +283,17 @@ describe("the voice client", () => {
     await expect(oggToWav(new Uint8Array(1), { ffmpeg: "no-such-binary-here" })).rejects.toThrow("no_ffmpeg");
   });
 });
+
+it("webhook transport acknowledges only after successful inbox delivery and never polls Telegram", async () => {
+  const stop = new AbortController();
+  const fetchImpl = vi.fn(async () => { throw new Error("getUpdates must not run"); });
+  let delivered = false;
+  const call = vi.fn(async (_name: string, args: Record<string, unknown>) => {
+    if (args.ack_update_id) { expect(delivered).toBe(true); stop.abort(); return { updates: [] }; }
+    return { updates: [{ update_id: 4, message: { message_id: 8, chat, from, text: "hello" } }] };
+  });
+  const channel = createTelegramChannel({ token: "fake", ownerChatId: "5", transport: "webhook", channelRpc: call, fetchImpl });
+  await channel.start({ signal: stop.signal, onMessage: async (m) => { expect(m.text).toBe("hello"); delivered = true; } });
+  expect(fetchImpl).not.toHaveBeenCalled();
+  expect(call).toHaveBeenLastCalledWith("take_channel_updates", { ack_update_id: 4 });
+});
