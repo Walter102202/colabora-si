@@ -45,6 +45,9 @@
       "supabase/migrations/*_0041_*",
       "supabase/migrations/*_0042_*",
       "supabase/migrations/*_0043_*",
+      "supabase/migrations/*_0044_*",
+      "supabase/migrations/*_0045_*",
+      "supabase/migrations/*_0046_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -219,6 +222,14 @@
       "lib/tramaSuggestions.ts",
       "lib/types.ts",
       "app/globals.css"
+    ],
+    "a/p12-chat": [
+      "README.md",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "public/llms.txt",
+      "supabase/config.toml",
+      "lib/tramaSuggestions.ts"
     ]
   }
 }
