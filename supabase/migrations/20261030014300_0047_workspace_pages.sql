@@ -293,11 +293,13 @@ declare p public.pages%rowtype;
 begin
   select * into p from public.pages where id=p_id;
   if not found or p.data is null then raise exception using errcode='PT404',message='not_found'; end if;
+  perform pg_advisory_xact_lock(hashtextextended(p.workspace_id::text,47));
+  select * into p from public.pages where id=p_id for update;
   if private.is_agent() and private.current_agent_id() is null then raise exception using errcode='PT403',message='agent_disabled'; end if;
   if auth.uid() is null or not private.can_write_page(p_id,p.workspace_id) then raise exception using errcode='PT403',message='forbidden'; end if;
   if coalesce((p.data->>'locked')::boolean,false) then raise exception using errcode='PT423',message='page_locked'; end if;
   if p.deleted_at is not null and not p_archived then raise exception using errcode='PT404',message='not_found'; end if;
-  if p.deleted_at is null then perform private.pw_page(p_id); end if;
+  if p.deleted_at is null then p:=private.pw_page(p_id); end if;
   return p;
 end $$;
 

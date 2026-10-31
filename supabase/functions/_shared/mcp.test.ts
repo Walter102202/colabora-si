@@ -274,7 +274,7 @@ Deno.test('a stalled denial log times out without changing the original denial',
     }) }));
     assert.equal(logAborted, true);
     assert.equal(parent.signal.aborted, false);
-    assert.deepEqual(result.body.result.structuredContent, { code: 'forbidden', message: 'no', detail: null });
+    assert.deepEqual(result.body.result.structuredContent, { code: 'forbidden', message: 'no', detail: null, hint: 'Check the input and permissions, then retry with the same idempotency key.' });
   } finally {
     clearTimeout(watchdog);
   }

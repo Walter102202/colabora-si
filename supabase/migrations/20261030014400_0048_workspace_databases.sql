@@ -205,3 +205,28 @@ revoke all on function private.workspace_property(jsonb,text) from public,anon,a
 revoke all on function private.workspace_view(jsonb,jsonb) from public,anon,authenticated;
 
 revoke all on function private.workspace_databases(text,jsonb,text) from public,anon,authenticated;
+
+-- All partial writers use the same lock order: workspace, then page, before deriving cells/options.
+create or replace function private.pw_page(p_page_id text)
+returns public.pages language plpgsql security definer set search_path = '' as $$
+declare v_page public.pages%rowtype; v_agent uuid; v_ws uuid;
+begin
+  select workspace_id into v_ws from public.pages where id=p_page_id;
+  perform pg_advisory_xact_lock(hashtextextended(v_ws::text,47));
+  select * into v_page from public.pages where id = p_page_id and deleted_at is null for update;
+  if not found or v_page.data is null then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+  if coalesce((v_page.data->>'locked')::boolean, false) then
+    raise exception using errcode = 'PT423', message = 'page_locked',
+      detail = jsonb_build_object('locked_by', v_page.last_edited_by)::text;
+  end if;
+  if private.is_agent() then
+    v_agent := private.current_agent_id();
+    if v_agent is null then raise exception using errcode = 'PT403', message = 'agent_disabled'; end if;
+    perform private.check_rate(v_agent);
+    perform private.require_task_page_run(p_page_id);
+  end if;
+  if not private.can_write_page(p_page_id, v_page.workspace_id) then
+    raise exception using errcode = 'PT403', message = 'forbidden';
+  end if;
+  return v_page;
+end $$;
