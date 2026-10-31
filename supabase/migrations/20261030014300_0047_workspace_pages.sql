@@ -557,7 +557,7 @@ begin
   select result into r from private.write_receipts where actor_id=auth.uid() and scope='workspace:comment' and key=p_idempotency_key;
   if found then return r; end if;
   status:=public.add_page_comment(p_page_id,p_body,p_block_id,null,p_parent_id);
-  if not exists(select 1 from public.pages p,lateral jsonb_array_elements(p.data->'comments') c where p.id=p_page_id and c->>'id'=status) then raise exception using errcode='PT422',message='invalid_input',detail=status; end if;
+  if not exists(select 1 from public.pages cp,lateral jsonb_array_elements(cp.data->'comments') c where cp.id=p_page_id and c->>'id'=status) then raise exception using errcode='PT422',message='invalid_input',detail=status; end if;
   select jsonb_build_object('id',p_page_id,'revision',revision,'comment_id',data->'comments'->-1->>'id') into r from public.pages where id=p_page_id;
   insert into private.write_receipts(scope,key,actor_id,result) values('workspace:comment',p_idempotency_key,auth.uid(),r);
   return r;
