@@ -137,6 +137,11 @@ export async function updateBrief(
   return version;
 }
 
+export async function releaseEnvironment(taskId: string): Promise<void> {
+  await rpc<{ released: number }>("release_environment", { p_task_id: taskId });
+  await refresh(taskId);
+}
+
 export type MergeCondition = "review_approved" | "ci_green";
 
 /** The server permits trusted rules only from a direct human session. */

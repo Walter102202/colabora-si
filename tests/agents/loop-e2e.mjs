@@ -149,7 +149,7 @@ async function main() {
   ok("10 closing the task releases its dependent and requests environment shutdown");
 
   // These are synthetic resource records; the real test stack stays up until its caller stops it.
-  const confirmed = await lead.callTool("release_environment", { task_id: first });
+  const confirmed = await lead.callTool("release_environment", { task_id: eventToChannel(released).meta.subtask_id });
   assert.equal(confirmed.released, 2);
   assert.deepEqual((await worker.callTool("get_task", { task_id: first })).environment, []);
   ownedEnvironment = null;

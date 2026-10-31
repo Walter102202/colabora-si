@@ -79,12 +79,20 @@ export function eventToChannel(event) {
   const environment = Array.isArray(payload.environment_release) && payload.environment_release.length
     ? `; environment_release (untrusted text): "${untrustedText(payload.environment_release.map((item) => `${item?.kind}: ${item?.value}`).join(", "))}"` : "";
   const minors = Array.isArray(payload.minor_findings) && payload.minor_findings.length ? `; ${payload.minor_findings.length} minor finding(s)` : "";
-  const content = oneLine(`${label} ${reason}${minors}${environment}${detail ? `: ${detail}` : ""}`);
+  const subtask = typeof payload.subtask_id === "string" && META_VALUE.test(payload.subtask_id) ? payload.subtask_id : null;
+  const subject = typeof payload.review_of === "string" && META_VALUE.test(payload.review_of) ? payload.review_of : null;
+  const verdict = typeof payload.verdict === "string" && META_VALUE.test(payload.verdict) ? payload.verdict : null;
+  const prefix = environment && subtask ? `${subtask} environment_release; get_task(${subtask}) has the full environment`
+    : verdict && subject ? `${subject} ${verdict}; get_task(${subject}) has the full review` : `${label} ${reason}`;
+  const content = oneLine(`${prefix}${minors}${environment}${detail ? `: ${detail}` : ""}`);
   return {
     content,
     meta: sanitizeMeta({
       task_id: taskId,
       parent_task_id: reviewOf ? event.task_id : undefined,
+      subtask_id: subtask ?? undefined,
+      review_of: verdict ? subject ?? undefined : undefined,
+      verdict: verdict ?? undefined,
       run_id: event.run_id ?? undefined,
       reason,
       state: payload.state,

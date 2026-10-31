@@ -48,10 +48,17 @@ begin
 end $$;
 revoke execute on function private.can_manage_environment(public.agent_tasks) from public;
 
+-- Resource identity follows Windows worktree/branch spelling rules; display and audit use the canonical value.
+create or replace function private.environment_key(p_kind text,p_value text)
+returns text language sql immutable set search_path = '' as $$
+  select case when p_kind in ('worktree','branch') then lower(rtrim(regexp_replace(replace(btrim(p_value),E'\\','/'),'/+','/','g'),'/')) else btrim(p_value) end;
+$$;
+revoke all on function private.environment_key(text,text) from public;
+
 create or replace function public.reserve_environment(p_task_id uuid, p_items jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare v_t public.agent_tasks%rowtype; v_item jsonb; v_kind text; v_value text; v_m text[]; v_low int; v_high int;
-        v_hold public.agent_resources%rowtype;
+        v_hold public.agent_resources%rowtype; v_audit_items jsonb:='[]';
 begin
   select * into v_t from public.agent_tasks where id = p_task_id for update;
   if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
@@ -65,9 +72,14 @@ begin
   perform pg_advisory_xact_lock(hashtextextended('agent_resources:' || v_t.workspace_id::text, 0));
   for v_item in select e from jsonb_array_elements(p_items) e loop
     v_kind := v_item->>'kind';
-    v_value := btrim(coalesce(v_item->>'value', ''));
+    v_value := private.environment_key(v_kind,coalesce(v_item->>'value',''));
     if v_kind is null or v_kind not in ('ports','stack','worktree','branch','migration') or v_value = '' or char_length(v_value) > 300 then
       raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'each item has a kind and a value';
+    end if;
+    -- Credentials are never environment identifiers. Reject common credential forms before storage or audit.
+    if v_value ~* '(://[^/?#[:space:]]*@|[?&;[:space:]]?(password|passwd|token|secret|api[_-]?key|authorization)[[:space:]]*[:=]|bearer[[:space:]]|-----begin.*private key|(^|[^a-z0-9])(agt_|sb_secret_|sk_live_)[a-z0-9_-]+|eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.)'
+       or (v_kind='stack' and v_value !~ '^[a-zA-Z0-9][a-zA-Z0-9_.-]*$') then
+      raise exception using errcode='PT400',message='invalid_input',detail='environment values are identifiers, never credentials';
     end if;
     v_low := null; v_high := null;
     if v_kind = 'ports' then
@@ -83,7 +95,7 @@ begin
       raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'a migration number has four digits';
     else
       select * into v_hold from public.agent_resources r
-       where r.workspace_id = v_t.workspace_id and r.kind = v_kind and r.value = v_value and r.status <> 'released' and r.task_id <> v_t.id limit 1;
+       where r.workspace_id = v_t.workspace_id and r.kind = v_kind and private.environment_key(r.kind,r.value) = v_value and r.status <> 'released' and r.task_id <> v_t.id limit 1;
     end if;
     if v_hold.id is not null then
       raise exception using errcode = 'PT409', message = 'resource_taken',
@@ -92,9 +104,10 @@ begin
     insert into public.agent_resources (workspace_id, task_id, kind, value, port_low, port_high, created_by)
     select v_t.workspace_id, v_t.id, v_kind, v_value, v_low, v_high, (select auth.uid())
      where not exists (select 1 from public.agent_resources r
-                        where r.task_id = v_t.id and r.kind = v_kind and r.value = v_value and r.status <> 'released');
+                        where r.task_id = v_t.id and r.kind = v_kind and private.environment_key(r.kind,r.value) = v_value and r.status <> 'released');
+    v_audit_items:=v_audit_items || jsonb_build_array(jsonb_build_object('kind',v_kind,'value',v_value));
   end loop;
-  perform private.audit(v_t.workspace_id, 'environment.reserve', jsonb_build_object('task_id', v_t.id, 'items', p_items));
+  perform private.audit(v_t.workspace_id, 'environment.reserve', jsonb_build_object('task_id', v_t.id, 'items', v_audit_items));
   return (select coalesce(jsonb_agg(jsonb_build_object('kind', r.kind, 'value', r.value, 'status', r.status) order by r.created_at), '[]'::jsonb)
             from public.agent_resources r where r.task_id = v_t.id and r.status <> 'released');
 end $$;
@@ -120,7 +133,7 @@ grant execute on function public.release_environment(uuid) to authenticated;
 -- A task that ends gives its migration numbers back at once and asks the Lead to stop the rest.
 create or replace function private.task_environment_ended()
 returns trigger language plpgsql security definer set search_path = '' as $$
-declare v_lead uuid; v_items jsonb;
+declare v_lead uuid; v_target uuid; v_items jsonb;
 begin
   update public.agent_resources set status = 'released', released_at = now()
    where task_id = new.id and kind = 'migration' and status = 'held';
@@ -131,13 +144,20 @@ begin
   )
   select jsonb_agg(jsonb_build_object('kind', kind, 'value', value)) into v_items from changed;
   if v_items is null then return null; end if;
-  select p.delegate_agent_id into v_lead from public.agent_tasks p join public.agents a on a.id = p.delegate_agent_id
+  select p.delegate_agent_id,p.id into v_lead,v_target from public.agent_tasks p join public.agents a on a.id = p.delegate_agent_id
    where p.id = new.parent_task_id and a.role = 'lead';
+  if v_lead is null then
+    select a.id,new.id into v_lead,v_target from public.agents a where a.id=new.delegate_agent_id and a.role='lead';
+  end if;
   if v_lead is not null then
     insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
-    values (new.workspace_id, new.parent_task_id, null, v_lead, 'task.updated',
+    values (new.workspace_id, v_target, null, v_lead, 'task.updated',
       jsonb_build_object('subtask_id', new.id, 'subtask_state', new.state, 'environment_release', v_items),
-      private.next_event_seq(new.parent_task_id));
+      private.next_event_seq(v_target));
+  else
+    insert into public.notifications(workspace_id,user_id,kind,page_id,task_id,actor_type,payload)
+    values(new.workspace_id,new.owner_user_id,'input_required',new.row_page_id,new.id,'system',
+      jsonb_build_object('subtask_id',new.id,'environment_release',v_items));
   end if;
   return null;
 end $$;

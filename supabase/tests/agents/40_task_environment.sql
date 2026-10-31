@@ -1,5 +1,5 @@
 begin;
-select plan(22);
+select plan(31);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_1','page_2','page_3']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+envlead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -41,6 +41,16 @@ select ok(tests.detail_of(format('select public.reserve_environment(%L::uuid, %L
 select is(tests.error_of(format('select public.reserve_environment(%L::uuid, %L::jsonb)', :'two', '[{"kind":"branch","value":"a/two"},{"kind":"stack","value":"colabora-si-a"}]')), 'resource_taken', 'one taken item refuses the list');
 select is((select count(*)::int from public.agent_resources where task_id = :'two'::uuid), 0, 'and nothing of that list stays held');
 
+select is(tests.error_of(format('select public.reserve_environment(%L::uuid,%L::jsonb)',:'two','[{"kind":"worktree","value":"c:\\dev\\a\\"}]')),'resource_taken','worktree slash, case and trailing slash aliases collide');
+select public.reserve_environment(:'two'::uuid,'[{"kind":"branch","value":"A/Feature/"}]');
+select is(tests.error_of(format('select public.reserve_environment(%L::uuid,%L::jsonb)',:'one','[{"kind":"branch","value":"a/feature"}]')),'resource_taken','branch aliases collide');
+select is(tests.error_of(format('select public.reserve_environment(%L::uuid,%L::jsonb)',:'one','[{"kind":"stack","value":"postgres://user:fixture-password@localhost/db"}]')),'invalid_input','credential-bearing resource values are refused');
+select public.reserve_environment(:'two'::uuid,'[{"kind":"stack","value":"audit-shape","extra_private_field":"must-not-persist"}]');
+select tests.reset_role();
+select ok(not exists(select 1 from public.audit_events where action='environment.reserve' and target::text like '%must-not-persist%'),'audits retain only kind and value');
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select public.release_environment(:'two'::uuid);
+
 -- 14. The worker sees its environment.
 select tests.reset_role();
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
@@ -64,6 +74,28 @@ select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent
 select public.release_environment(:'one'::uuid);
 select is(jsonb_array_length(public.reserve_environment(:'two'::uuid, '[{"kind":"ports","value":"60945-60955"}]'::jsonb)), 1, 'released ports can be reserved again');
 select tests.reset_role();
+
+-- Root Lead receives its own release request; a worker root falls back to its human owner.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.reserve_environment(:'parent'::uuid,'[{"kind":"stack","value":"root-lead"}]');
+select public.create_agent_task('page_3','{"objective":"Root worker"}',(:'f'::jsonb->>'agent')::uuid)->>'task_id' as root_worker \gset
+select public.reserve_environment(:'root_worker'::uuid,'[{"kind":"stack","value":"root-worker"}]');
+select tests.reset_role();
+update public.agent_tasks set state='ready_for_review' where id in (:'parent'::uuid,:'root_worker'::uuid);
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.close_task(:'parent'::uuid,'rejected','Stopped');
+select public.close_task(:'root_worker'::uuid,'rejected','Stopped');
+select tests.reset_role();
+select ok(exists(select 1 from public.agent_events where task_id=:'parent'::uuid and agent_id=(:'lead'::jsonb->>'agent')::uuid and payload->>'subtask_id'=:'parent' and payload ? 'environment_release'),'root Lead receives the release event');
+select ok(exists(select 1 from public.notifications where task_id=:'root_worker'::uuid and user_id=(:'f'::jsonb->>'owner')::uuid and payload->>'subtask_id'=:'root_worker' and payload ? 'environment_release'),'human owner receives the worker root release request');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is((public.release_environment(:'root_worker'::uuid))->>'released','1','human owner can confirm shutdown');
+select tests.reset_role();
+select ok(not exists(select 1 from public.agent_resources where task_id=:'root_worker'::uuid and status<>'released'),'confirmation makes the resources available again');
+
+update public.agents set role='worker' where id=(:'lead'::jsonb->>'agent')::uuid;
+update public.agent_tasks set state='cancelled' where id=:'two'::uuid;
+select ok(exists(select 1 from public.notifications where task_id=:'two'::uuid and user_id=(:'f'::jsonb->>'owner')::uuid and payload->>'subtask_id'=:'two'),'a non-Lead parent falls back to the human owner');
 
 select * from finish();
 rollback;

@@ -4,10 +4,12 @@ import { createChannel, eventToChannel, sanitizeMeta, type ChannelEvent } from "
 
 it("reports resources to release as untrusted text", () => {
   const event = eventToChannel({ type: "task.updated", task_id: "parent", payload: {
-    environment_release: [{ kind: "stack", value: 'p11<stop>"`' }, { kind: "ports", value: "60990-60999" }],
+    subtask_id: "release-task", environment_release: [{ kind: "stack", value: 'p11<stop>"`' }, { kind: "ports", value: "60990-60999" }],
   } });
   expect(event.meta.reason).toBe("updated");
-  expect(event.content).toContain("environment_release");
+  expect(event.content).toMatch(/^release-task environment_release/);
+  expect(event.meta.subtask_id).toBe("release-task");
+  expect(event.content).toContain("get_task");
   expect(event.content).toContain("untrusted text");
   expect(event.content).toContain("60990-60999");
   expect(event.content).not.toMatch(/[<>`]/);
@@ -31,6 +33,15 @@ it("routes the reviewer start to its own task and the verdict to the parent", ()
   const verdict = eventToChannel({ type: "task.updated", task_id: "parent", payload: { review_of: "delivery", verdict: "approved", minor_findings: [{ note: "later" }] } });
   expect(verdict.meta).toMatchObject({ task_id: "parent", reason: "updated" });
   expect(verdict.content).toContain("1 minor finding(s)");
+  expect(verdict.meta).toMatchObject({ review_of: "delivery", verdict: "approved" });
+  expect(verdict.content).toMatch(/^delivery approved/);
+});
+
+it("keeps release identity and retrieval instructions ahead of truncated resource data", () => {
+  const event = eventToChannel({ type: "task.updated", task_id: "parent", payload: { subtask_id: "child", environment_release: [{ kind: "worktree", value: "x".repeat(300) }] } });
+  expect(event.content).toMatch(/^child environment_release/);
+  expect(event.content).toContain("get_task");
+  expect(event.content.length).toBeLessThanOrEqual(300);
 });
 
 const MCP_URL = "https://ws.test/functions/v1/mcp";
