@@ -1,0 +1,72 @@
+"use client";
+
+import { Send } from "lucide-react";
+import type { ClipboardEvent, ReactNode } from "react";
+import type { PersonMessage } from "@/lib/agentConversation";
+import { VOICE_NOTICE } from "@/lib/agentVoice";
+
+export interface AssistantThreadViewProps {
+  messages: PersonMessage[];
+  draft: string;
+  reviewing: boolean;
+  error: string | null;
+  voice: ReactNode;
+  avatar?: ReactNode;
+  onDraft: (text: string) => void;
+  onPaste: (e: ClipboardEvent<HTMLTextAreaElement>) => void;
+  onSend: () => void;
+  onRetrySend: (() => void) | null;
+  onUndo: (noteId: string) => void;
+  onOpenNotes: () => void;
+}
+
+// Pure view of the conversation with the workspace agent. P12 mounts it in its own surface.
+export function AssistantThreadView({ messages, draft, reviewing, error, voice, avatar, onDraft, onPaste, onSend, onRetrySend, onUndo, onOpenNotes }: AssistantThreadViewProps) {
+  return (
+    <div className="flex h-96 w-full flex-col gap-2 text-sm">
+      <div className="flex items-center justify-between gap-2 px-1">
+        <span className="flex items-center gap-2 font-medium">{avatar}Trama</span>
+        <button type="button" className="text-xs text-text-secondary underline" onClick={onOpenNotes}>Open notes</button>
+      </div>
+      <ol className="flex-1 space-y-1 overflow-auto px-1" aria-label="Conversation with the agent" aria-live="polite">
+        {messages.length === 0 && <li className="py-2 text-xs text-text-tertiary">Write or talk to the agent. Say “save in notes” to keep something.</li>}
+        {messages.map((m) => (
+          <li key={m.id} className={m.direction === "in" ? "ml-6 rounded bg-bg-secondary px-2 py-1" : "mr-6 px-2 py-1"}>
+            <p className="whitespace-pre-wrap break-words">{m.body}</p>
+            {(m.kind === "voice" || m.forwarded || m.channel !== "surface") && (
+              <p className="text-xs text-text-tertiary">{[m.channel === "telegram" ? "Telegram" : null, m.kind === "voice" ? "voice" : null, m.forwarded ? "forwarded" : null].filter(Boolean).join(" · ")}</p>
+            )}
+            {m.outcome?.kind === "note_saved" && m.outcome.note_id && (
+              <button type="button" className="text-xs text-text-secondary underline" onClick={() => onUndo(m.outcome?.note_id as string)}>Undo</button>
+            )}
+          </li>
+        ))}
+      </ol>
+      {error && (
+        <p className="px-1 text-xs text-red-600" role="alert">
+          {error}{" "}
+          {onRetrySend && <button type="button" className="underline" onClick={onRetrySend}>Try again</button>}
+        </p>
+      )}
+      {reviewing && <p className="px-1 text-xs text-text-secondary">Check the text before sending. {VOICE_NOTICE}</p>}
+      <div className="flex items-end gap-1">
+        <textarea
+          className="min-h-9 flex-1 resize-none rounded border border-border bg-transparent px-2 py-1"
+          aria-label="Message to the agent"
+          rows={2}
+          value={draft}
+          onChange={(e) => onDraft(e.target.value)}
+          onPaste={onPaste}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              onSend();
+            }
+          }}
+        />
+        {voice}
+        <button type="button" className="icon-button" aria-label="Send" disabled={!draft.trim()} onClick={onSend}><Send size={16} /></button>
+      </div>
+    </div>
+  );
+}
