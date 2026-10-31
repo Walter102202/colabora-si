@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { LessonsHome } from "@/components/agents/LessonsHome";
 import { DecisionsHomeView } from "@/components/agents/panel/DecisionsHomeView";
 import { getAgentClient } from "@/lib/agentClient";
 import { buildDecisionsHome } from "@/lib/agentHome";
@@ -50,13 +51,16 @@ export function DecisionsHome() {
 
   if (!active || !workspaceId) return null;
   return (
-    <DecisionsHomeView
-      home={home}
-      approvals={Object.values(approvals)}
-      onDecide={(id, decision, response) => decideApproval(id, decision, response).then(() => undefined)}
-      loading={(status === "idle" || status === "loading") && Object.keys(tasks).length === 0}
-      error={status === "error" ? error ?? "Unknown error" : null}
-      onRetry={() => void load(workspaceId)}
-    />
+    <>
+      <LessonsHome workspaceId={workspaceId} />
+      <DecisionsHomeView
+        home={home}
+        approvals={Object.values(approvals)}
+        onDecide={(id, decision, response) => decideApproval(id, decision, response).then(() => undefined)}
+        loading={(status === "idle" || status === "loading") && Object.keys(tasks).length === 0}
+        error={status === "error" ? error ?? "Unknown error" : null}
+        onRetry={() => void load(workspaceId)}
+      />
+    </>
   );
 }

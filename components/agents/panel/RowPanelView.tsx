@@ -1,5 +1,5 @@
 import { autonomyLine, AUTONOMY_LABEL, AUTONOMY_LEVELS, type AutonomyLevel, type TaskAutonomy } from "@/lib/agentAutonomy";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { continuityText, type ContinuityInfo } from "@/lib/agentContinuity";
 import type { TaskDiff } from "@/lib/agentRunDiff";
 import { RunDiffCard } from "@/components/agents/panel/RunDiffCard";
@@ -46,6 +46,8 @@ export interface AssignViewProps {
 }
 
 export interface TaskViewProps {
+  // Lessons proposed from corrections on this task; the chat card leaves them out.
+  lessons?: ReactNode;
   task: TaskRow;
   agent: AgentOption | null;
   run: RunRow | null;
@@ -144,7 +146,7 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ task, agent, run, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, environment = [], activities, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ lessons = null, task, agent, run, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, environment = [], activities, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -291,6 +293,8 @@ export function TaskView({ task, agent, run, approval, actionApprovals, onDecide
         <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Verification</h4>
         <LeadReviewCard key={decisionIdentity} task={task} review={review} brief={brief} ciChecks={ciChecks} artifact={artifact} reviewerName={reviewerName} onReview={onReview} />
       </section>
+
+      {lessons}
 
       <SubtaskList subtasks={subtasks} onOpenTask={onOpenTask} />
 

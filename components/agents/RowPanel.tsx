@@ -23,6 +23,7 @@ import type { AutonomyLevel, TaskAutonomy } from "@/lib/agentAutonomy";
 import type { TaskDiff } from "@/lib/agentRunDiff";
 import { approvalIdFromHash, openQuestionsFor } from "@/lib/agentCard";
 import { setMergeRule } from "@/lib/agentActions";
+import { TaskLessons } from "@/components/agents/TaskLessons";
 import { AssignView, TaskView, type SubtaskItem } from "@/components/agents/panel";
 
 // Agent layer plug. Mounted by the page view of a database row, under the row
@@ -183,6 +184,7 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
 
   return (
     <TaskView
+      lessons={<TaskLessons workspaceId={task.workspace_id} taskId={task.id} />}
       task={task}
       metrics={metrics}
       agent={agent}
