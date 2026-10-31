@@ -37,9 +37,10 @@ export function findCodex(env, fs = { existsSync, readdirSync, statSync }) {
   return builds[0] ?? "codex";
 }
 
-export function codexQueue(bin, run = execFile) {
+export function codexQueue(bin, run = execFile, env = process.env) {
   return (thread, message) => new Promise((resolve, reject) => {
-    run(bin, ["queue", "--thread", thread, "--message", message], { timeout: 60_000, windowsHide: true },
+    const childEnv = Object.fromEntries(Object.entries(env).filter(([key]) => !["WORKSPACE_AGENT_PAT", "WORKSPACE_AGENT_JWT"].includes(key.toUpperCase())));
+    run(typeof bin === "function" ? bin() : bin, ["queue", "--thread", thread, "--message", message], { timeout: 60_000, windowsHide: true, env: childEnv },
       (error) => (error ? reject(error) : resolve()));
   });
 }
@@ -60,7 +61,7 @@ export function fileState(path) {
 const eligible = (task) => Boolean(task?.task_id) && CONTINUE_REASONS.has(task.reason) && !FINISHED_STATES.has(task.state)
   && (task.reason === "handover" || task.waiting_on !== "human");
 
-export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, log = () => {} }) {
+export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, now = Date.now, log = () => {} }) {
   const pause = sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const mcpUrl = (env.WORKSPACE_MCP_URL ?? "").trim();
   const pat = (env.WORKSPACE_AGENT_PAT ?? "").trim();
@@ -76,13 +77,24 @@ export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, 
     log,
     clientInfo: { name: "colabora-codex-watch", version: "0.1.0" },
   });
-  let cursor = state.load().cursor;
-  const sent = new Map();
+  let loaded = {};
+  try { loaded = state.load() ?? {}; } catch (error) { log(`state load failed: ${error instanceof Error ? error.message : String(error)}`); }
+  let cursor = loaded.cursor;
+  const sent = new Map(Object.entries(loaded.sent ?? {}).map(([id, keys]) => [id, new Set(Array.isArray(keys) ? keys : [keys])]));
+  const pending = new Map(Object.entries(loaded.pending ?? {}).filter(([, entry]) => entry?.task?.task_id).map(([id, entry]) =>
+    [id, { ...entry, failures: 0, quarantined: false, nextAttemptAt: 0 }]));
+  const persist = () => {
+    try { state.save({ cursor, sent: Object.fromEntries([...sent].map(([id, keys]) => [id, [...keys]])), pending: Object.fromEntries(pending) }); }
+    catch (error) { log(`state save failed; retaining progress in memory: ${error instanceof Error ? error.message : String(error)}`); }
+  };
+  const identity = (task) => JSON.stringify([task.reason, task.brief_version, task.session_id]);
   let failures = 0;
   while (!signal?.aborted) {
     let result;
     try {
-      result = await remote.callTool("wait_for_my_tasks", cursor ? { timeout_s: 120, after: cursor } : { timeout_s: 0 });
+      // A pending retry must not sit behind a two-minute long poll.
+      const timeout = pending.size ? 0 : cursor ? 120 : 0;
+      result = await remote.callTool("wait_for_my_tasks", { timeout_s: timeout, ...(cursor ? { after: cursor } : {}) });
       failures = 0;
     } catch (error) {
       failures++;
@@ -90,37 +102,58 @@ export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, 
       await pause(Math.min(60_000, 2000 * 2 ** failures));
       continue;
     }
-    let retry = false;
-    for (const task of (Array.isArray(result?.tasks) ? result.tasks : []).filter(eligible)) {
-      const thread = targetThread(task, env.WORKSPACE_CODEX_THREAD);
-      if (!thread) { log(`no session for task ${task.task_id}; not sending`); continue; }
-      let detail;
-      try { detail = await remote.callTool("get_task", { task_id: task.task_id, activities_limit: 10 }); }
-      catch (error) {
-        retry = true;
-        log(`get_task failed: ${error instanceof Error ? error.message : String(error)}`);
+    for (const task of Array.isArray(result?.tasks) ? result.tasks : []) {
+      if (!task?.task_id) continue;
+      if (!eligible(task)) {
+        if (FINISHED_STATES.has(task.state) || task.reason === "stop" || task.waiting_on === "human") pending.delete(task.task_id);
         continue;
       }
-      // Snapshot and cursor answers count prompts differently. Identify the prompt itself,
-      // so a later review round in the same session still delivers even with the same count.
-      const prompts = (Array.isArray(detail?.activities) ? detail.activities : []).filter((a) => a?.type === "prompt");
-      const promptSeq = Math.max(0, ...prompts.map((a) => Number(a.seq) || 0));
-      const key = [thread, task.reason, task.brief_version, promptSeq].join("|");
-      if (sent.get(task.task_id) === key) continue;
-      const excerpt = task.reason === "feedback" ? feedbackExcerpt(detail) : "";
+      const previous = pending.get(task.task_id);
+      pending.set(task.task_id, previous && identity(previous.task) === identity(task)
+        ? { ...previous, task } : { task, failures: 0, quarantined: false, nextAttemptAt: 0 });
+    }
+    for (const [id, entry] of pending) {
+      if (entry.quarantined || entry.nextAttemptAt > now()) continue;
+      const task = entry.task;
+      const thread = targetThread(task, env.WORKSPACE_CODEX_THREAD);
+      if (!thread) {
+        if (!entry.awaitingDestination) log(`no session for task ${id}; notice retained until a destination exists`);
+        entry.awaitingDestination = true;
+        entry.nextAttemptAt = now() + 30_000;
+        continue;
+      }
+      entry.awaitingDestination = false;
       try {
-        await queue(thread, `${buildReason(task, excerpt)}${SESSION_HINT}`);
-        sent.set(task.task_id, key);
-        log(`task ${task.task_id} (${task.reason}) sent to ${thread}`);
+        const detail = await remote.callTool("get_task", { task_id: id, activities_limit: 10 });
+        if (FINISHED_STATES.has(detail?.task?.state)) { pending.delete(id); continue; }
+        const prompts = (Array.isArray(detail?.activities) ? detail.activities : []).filter((a) => a?.type === "prompt");
+        const promptSeq = Math.max(0, ...prompts.map((a) => Number(a.seq) || 0));
+        const key = [thread, task.reason, task.brief_version, promptSeq].join("|");
+        if (!sent.get(id)?.has(key)) {
+          const excerpt = task.reason === "feedback" ? feedbackExcerpt(detail) : "";
+          await queue(thread, `${buildReason(task, excerpt)}${SESSION_HINT}`);
+          const keys = sent.get(id) ?? new Set();
+          keys.add(key);
+          sent.set(id, keys);
+          log(`task ${id} (${task.reason}) sent to ${thread}`);
+        }
+        pending.delete(id);
+        // Save acknowledgement before advancing the cursor. A later poll/save error cannot forget a successful send.
+        persist();
       } catch (error) {
-        retry = true;
-        log(`codex queue failed for task ${task.task_id}: ${error instanceof Error ? error.message : String(error)}`);
+        entry.failures++;
+        entry.nextAttemptAt = now() + Math.min(60_000, 2000 * 2 ** (entry.failures - 1));
+        entry.quarantined = entry.failures >= 5;
+        entry.lastError = (error instanceof Error ? error.message : String(error)).replaceAll(pat, "[redacted]").slice(0, 500);
+        log(`task ${id}: ${entry.lastError}${entry.quarantined ? "; quarantined after 5 failures" : `; retry ${entry.failures} scheduled`}`);
       }
     }
-    if (retry) { await pause(5000); continue; }
-    if (typeof result?.next_cursor === "string") {
-      cursor = result.next_cursor;
-      state.save({ cursor });
+    const retrying = [...pending.values()].some((entry) => entry.failures && !entry.quarantined);
+    if (!retrying && typeof result?.next_cursor === "string") cursor = result.next_cursor;
+    persist();
+    if (pending.size && !signal?.aborted) {
+      const due = [...pending.values()].filter((entry) => !entry.quarantined).map((entry) => entry.nextAttemptAt);
+      await pause(due.length ? Math.max(1000, Math.min(60_000, Math.min(...due) - now())) : 30_000);
     }
   }
 }
@@ -128,7 +161,7 @@ export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   await runWatcher({
     env: process.env,
-    queue: codexQueue(findCodex(process.env)),
+    queue: codexQueue(() => findCodex(process.env)),
     state: fileState((process.env.WORKSPACE_WATCH_STATE ?? "").trim() || join(homedir(), ".codex", "colabora-watch.json")),
     log: (message) => process.stderr.write(`[colabora-codex-watch] ${message}\n`),
   });
