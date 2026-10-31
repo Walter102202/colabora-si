@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 // enable happy-dom with a `@vitest-environment` docblock per file.
 export default defineConfig({
   test: {
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.{ts,tsx}"],
     environment: "node",
     passWithNoTests: true,
   },
