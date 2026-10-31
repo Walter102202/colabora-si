@@ -60,6 +60,15 @@ jobs:
         with:
           version: 2.122.0
 
+      # supabase start also serves the Edge Functions, which read this ignored file. The two
+      # values unlock the seeded agent tokens and make the mcp function accept local tokens.
+      - name: Local secrets for the served Edge Functions
+        if: hashFiles('supabase/migrations/*.sql') != ''
+        run: |
+          sed -e 's/^AGENT_LOGIN_PEPPER=$/AGENT_LOGIN_PEPPER=local-dev-login-pepper/' \
+              -e 's|^MCP_AUTH_SERVER_URL=$|MCP_AUTH_SERVER_URL=http://127.0.0.1:54321/auth/v1|' \
+              supabase/functions/.env.example > supabase/functions/.env
+
       - name: Database tests (pgTAP)
         if: hashFiles('supabase/migrations/*.sql') != ''
         run: |
@@ -72,6 +81,25 @@ jobs:
           npx vitest run tests/agents/handoverE2E.test.ts tests/agents/stubWorld.test.ts
           (cd supabase/functions && deno test --allow-env --allow-net --allow-read _shared/tools/handover.test.ts)
           supabase test db supabase/tests/agents/24_handover.sql
+
+      # The Deno tests import handlers, not entrypoints, so a function that cannot boot passed
+      # them. Every function is called once (503 is a boot error; 4xx and 500 mean it answered),
+      # then the MCP flow runs over HTTP with the seeded Codex agent and its queued seed task.
+      - name: Served MCP smoke (every function boots, then the MCP flow)
+        if: hashFiles('supabase/migrations/*.sql') != ''
+        run: |
+          for dir in supabase/functions/*/; do
+            name=$(basename "$dir")
+            [ "$name" = "_shared" ] && continue
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 120 -X POST "http://127.0.0.1:54321/functions/v1/$name" -H 'Content-Type: application/json' -d '{}')
+            echo "$name $code"
+            if [ "$code" = "503" ]; then echo "::error::$name does not boot"; docker logs supabase_edge_runtime_colabora-si 2>&1 | tail -20; exit 1; fi
+          done
+          AGENT_PAT="$(grep -oE 'agt_LOCALDEVCODEX[0-9]+' supabase/seeds/02_agents.sql | head -1)" \
+          MCP_URL=http://127.0.0.1:54321/functions/v1/mcp \
+          SMOKE_PAGE_ID=research-task-1 \
+          SMOKE_TASK_ID=00000000-0000-4000-8000-000000000051 \
+          node tests/agents/mcp-smoke.mjs
 
       - run: npm run build
 
