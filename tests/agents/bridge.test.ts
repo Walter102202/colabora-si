@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createBridge, resolveConfig, type BridgeConfig } from "../../bridge/index.mjs";
-import { createChannel, eventToChannel, sanitizeMeta, type ChannelEvent } from "../../bridge/channel.mjs";
+import { createChannel, eventToChannel, taskToChannel, sanitizeMeta, type ChannelEvent } from "../../bridge/channel.mjs";
 
 it("reports resources to release as untrusted text", () => {
   const event = eventToChannel({ type: "task.updated", task_id: "parent", payload: {
@@ -42,6 +42,17 @@ it("keeps release identity and retrieval instructions ahead of truncated resourc
   expect(event.content).toMatch(/^child environment_release/);
   expect(event.content).toContain("get_task");
   expect(event.content.length).toBeLessThanOrEqual(300);
+});
+
+it("renders polled Lead notices with the same identities and data as realtime events", () => {
+  for (const [type, payload] of [
+    ["task.continue", { review_of: "child", review_task_id: "review" }],
+    ["task.updated", { review_of: "child", verdict: "approved", minor_findings: [{ note: "later" }] }],
+    ["task.updated", { subtask_id: "child", environment_release: [{ kind: "stack", value: "local" }] }],
+  ] as const) {
+    const event = { type, task_id: "parent", event_id: "notice", payload };
+    expect(taskToChannel({ task_id: "parent", notice: { type, event_id: "notice", payload } })).toEqual(eventToChannel(event));
+  }
 });
 
 const MCP_URL = "https://ws.test/functions/v1/mcp";

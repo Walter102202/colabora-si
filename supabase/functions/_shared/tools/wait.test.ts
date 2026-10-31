@@ -86,6 +86,29 @@ function activity(seq: number, overrides: Row = {}): Row {
   };
 }
 
+Deno.test('a Lead without a bridge receives policy review, verdict, minor findings and environment release notices', async () => {
+  const after=encodeTaskCursor({t:normTs('2026-10-27T10:00:01Z'),k:[]});
+  const payloads = [
+    { review_of:'delivery',review_task_id:'review' },
+    { review_of:'delivery',verdict:'approved',minor_findings:[{note:'Later'}] },
+    { subtask_id:'delivery',environment_release:[{kind:'stack',value:'local'}] },
+  ];
+  const tables = { agent_tasks:[task({id:'parent',updated_at:'2026-10-27T10:00:00Z'})], agent_activities:[] as Row[],
+    agent_events: payloads.map((payload,i)=>event(`notice-${i}`,`2026-10-27T10:00:0${i+2}Z`,{task_id:'parent',type:i===0?'task.continue':'task.updated',payload})) };
+  const h=harness(tables);
+  const result=await tool('wait_for_my_tasks').handler({after,timeout_s:0},h.ctx);
+  assert.equal(result.structured.changed,true);
+  const views=result.structured.tasks as Row[];
+  assert.deepEqual(views.map(v=>(v.notice as Row).payload),payloads);
+  assert.equal(views[0].reason,'under_review');
+  const again=await tool('wait_for_my_tasks').handler({after:result.structured.next_cursor,timeout_s:0},h.ctx);
+  assert.equal(again.structured.changed,false,'the event cursor prevents repeated notices');
+  // An event timestamp must never advance the task/prompt cursor past a late commit.
+  tables.agent_activities.push(activity(9,{task_id:'parent',type:'prompt',created_at:'2026-10-27T10:00:01.500000Z',body:{signal:'feedback',text:'Late transaction'}}));
+  const late=await tool('wait_for_my_tasks').handler({after:result.structured.next_cursor,timeout_s:0},h.ctx);
+  assert.equal((late.structured.tasks as Row[])[0].reason,'feedback');
+});
+
 Deno.test('wait_for_my_tasks returns the latest own session on both snapshot and cursor paths', async () => {
   const tables: Record<string, Row[]> = { agent_tasks: ['own', 'other', 'none'].map((id) => task({ id, state: 'queued' })), agent_runs: [
     { task_id: 'own', agent_id: 'agent-1', external_session_id: 'own-old', started_at: '2026-10-27T09:00:00Z' },
@@ -355,7 +378,7 @@ Deno.test('wait_for_task with a short timeout re-reads the task at the deadline,
   assert.equal(h.elapsed(), 6000);
 });
 
-Deno.test('wait_for_my_tasks: an event for a task that is not mine triggers a full pass but does not move the cursor', async () => {
+Deno.test('wait_for_my_tasks: unrelated events advance only the independent event position', async () => {
   const tables = { agent_tasks: [task({ id: 'p1', updated_at: '2026-10-27T10:00:00+00:00' })], agent_activities: [] as Row[], agent_events: [] as Row[] };
   const h = harness(tables, (n) => {
     if (n === 1) tables.agent_events.push(event('e7', '2026-10-27T10:00:30+00:00', { task_id: 'other-task', type: 'task.start' }));
@@ -363,7 +386,7 @@ Deno.test('wait_for_my_tasks: an event for a task that is not mine triggers a fu
   const after = encodeTaskCursor({ t: normTs('2026-10-27T10:00:01+00:00'), k: [] });
   const out = await tool('wait_for_my_tasks').handler({ after, timeout_s: 5 }, h.ctx);
   assert.equal(out.structured.changed, false);
-  assert.deepEqual(decodeTaskCursor(String(out.structured.next_cursor)), decodeTaskCursor(after));
+  assert.deepEqual(decodeTaskCursor(String(out.structured.next_cursor)), { ...decodeTaskCursor(after), e: { t: normTs('2026-10-27T10:00:30+00:00'), k: ['e:e7'] } });
   assert.equal(h.selects.filter((t) => t === 'agent_tasks').length, 2); // the first pass and the one the event triggered; nothing at the deadline
 });
 

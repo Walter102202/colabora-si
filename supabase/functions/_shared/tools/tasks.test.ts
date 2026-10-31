@@ -217,6 +217,18 @@ Deno.test('claim_task with resume passes p_resume and returns the resume context
   assert.match(out.text, /No checkpoint yet./);
 });
 
+Deno.test('claim_task returns the task environment under the caller permissions', async () => {
+  const ctx = ctxWith(() => Promise.resolve({ data: { task_id: 't1', run_id: 'r1' }, error: null }));
+  const environment = [{ kind:'ports',value:'60990-60999',status:'held' }];
+  ctx.db.select = <T>(spec: SelectSpec) => {
+    assert.equal(spec.table,'agent_resources');
+    assert.deepEqual(spec.filters,[{col:'task_id',op:'eq',value:'t1'},{col:'status',op:'neq',value:'released'}]);
+    return Promise.resolve({data:environment as T[],error:null});
+  };
+  const result = await tool('claim_task').handler({ task_id:'t1',harness:'codex' },ctx);
+  assert.deepEqual(result.structured.environment,environment);
+});
+
 Deno.test('claim_task without resume sends p_resume false and keeps the description promise', async () => {
   const calls: Row[] = [];
   const ctx = ctxWith((_fn, args) => { calls.push(args); return Promise.resolve({ data: { task_id: 't1', run_id: 'r1' }, error: null }); });

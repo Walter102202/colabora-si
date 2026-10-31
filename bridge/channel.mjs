@@ -103,9 +103,11 @@ export function eventToChannel(event) {
 
 /**
  * Converts one task of a `wait_for_my_tasks` answer into a channel event.
- * @param {{ task_id: string, title?: string, state?: string, reason?: string, pending_prompts?: number, active_run_id?: string }} task
+ * @param {{ task_id: string, title?: string, state?: string, reason?: string, pending_prompts?: number, active_run_id?: string, notice?: { type: string, payload?: any, event_id?: string } }} task
  */
 export function taskToChannel(task) {
+  if (task.notice) return eventToChannel({ type: task.notice.type, task_id: task.task_id, run_id: task.active_run_id,
+    payload: task.notice.payload, event_id: task.notice.event_id });
   const reason = typeof task.reason === "string" && META_VALUE.test(task.reason) ? task.reason : "changed";
   const cleanTitle = untrustedText(task.title);
   const title = cleanTitle ? ` "${cleanTitle}"` : "";
@@ -164,7 +166,7 @@ export function createChannel(options) {
   /** @param {any} task */
   function handleTask(task) {
     if (!task?.task_id) return;
-    const signature = [task.reason, task.state, task.review_state, task.brief_version, task.pending_prompts].join("|");
+    const signature = [task.reason, task.state, task.review_state, task.brief_version, task.pending_prompts, task.notice?.event_id].join("|");
     if (lastTaskSignature.get(task.task_id) === signature) return;
     lastTaskSignature.set(task.task_id, signature);
     emit(taskToChannel(task));

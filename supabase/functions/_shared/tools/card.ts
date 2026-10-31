@@ -11,7 +11,7 @@ import { taskUrl } from '../lib/routes.ts';
 import { approvalPath } from '../lib/agentLinks.ts';
 import type { JsonSchema } from '../jsonSchema.ts';
 import { num, object, output, plural, READ, str, WRITE } from './common.ts';
-import { answeredQuestions, loadTask, loadTaskBundle, type Row, TASK_COLUMNS, type TaskBundle } from './taskData.ts';
+import { answeredQuestions, loadTask, loadTaskBundle, loadEnvironment, type Row, TASK_COLUMNS, type TaskBundle } from './taskData.ts';
 
 export const CARD_URI = 'ui://colabora/task-card.html';
 export const CARD_MIME = 'text/html;profile=mcp-app';
@@ -135,9 +135,7 @@ export async function loadTaskCard(
       order: [{ column: 'seq', ascending: false }], limit: 1,
     })),
     answeredQuestions(db, taskId),
-    must(db.select<Row>({ table: 'agent_resources', columns: 'kind,value,status',
-      filters: [{ col: 'task_id', op: 'eq', value: taskId }, { col: 'status', op: 'neq', value: 'released' }],
-      order: [{ column: 'created_at', ascending: true }] })),
+    loadEnvironment(db, taskId),
   ]);
   const subtasks = subtaskRows ?? [];
   const review = reviews?.[0] ?? null;

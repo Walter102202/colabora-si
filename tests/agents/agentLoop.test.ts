@@ -28,6 +28,15 @@ const names = (calls: { name: string }[]) => calls.map((c) => c.name).filter((n)
 const seed = (subtasks: object[] = []) => ({ changed: false, stop_requested: false, activities: [], next_seq: 1, task: { task_id: "task-1", state: "working", subtasks } });
 
 describe("reference agent loop", () => {
+  it("passes the claimed environment through to the real model request", async () => {
+    const environment = [{ kind: "stack", value: "isolated-review-stack", status: "held" }];
+    const mcp = createStubMcp({ tasks: queued, handlers: { claim_task: () => ({ task_id: "task-1", run_id: "run-task-1", row_page_id: "row-task-1", brief: {}, environment }) } });
+    const model = createStubModel([{ content: "Done" }]);
+    await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, maxTurns: 1 });
+    const message = String(model.requests[0].messages.find((message) => message.role === "user")?.content);
+    const context = JSON.parse(message.slice(message.indexOf("{"), message.lastIndexOf("}") + 1));
+    expect(context.environment).toEqual(environment);
+  });
   it.each(["get_ai_request", "fill_ai_cells", "complete_ai_request", "apply_ai_rewrite", "save_file_text"])("rejects a model attempt to call hidden request tool %s", async (name) => {
     const mcp = createStubMcp({ tasks: queued, handlers: { [name]: () => ({ ok: true }) } });
     const list = mcp.listTools;

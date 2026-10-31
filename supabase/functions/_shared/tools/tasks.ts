@@ -3,7 +3,7 @@ import { type Filter, must } from '../db.ts';
 import type { ToolContext, ToolDef } from '../mcp.ts';
 import { CARD_OUTPUT, CARD_TOOL_META, loadTaskCard } from './card.ts';
 import { bool, num, object, output, plural, READ, str, WRITE, WRITE_IDEMPOTENT } from './common.ts';
-import type { Row } from './taskData.ts';
+import { loadEnvironment, type Row } from './taskData.ts';
 import { openDependencies } from './wait.ts';
 
 const TASK_STATES = ['queued', 'working', 'input_required', 'ready_for_review', 'done', 'failed', 'cancelled'];
@@ -160,6 +160,7 @@ const claimTask: ToolDef = {
     brief: { type: ['object', 'null'] },
     artifacts: { type: 'array', items: { type: 'object' } },
     recent_activities: { type: 'array', items: { type: 'object' } },
+    environment: { type: 'array', items: { type: 'object' } },
     resume: { type: ['object', 'null'] },
   }),
   annotations: WRITE,
@@ -171,6 +172,7 @@ const claimTask: ToolDef = {
       p_resume: bool(args.resume) ?? false,
     })) ?? { task_id: null };
     if (!data.task_id) return { text: 'No queued task to claim.', structured: { task_id: null } };
+    data.environment = await loadEnvironment(ctx.db, String(data.task_id));
     return {
       text: `Claimed task ${String(data.task_id)}: run ${String(data.run_id)} on page ${String(data.row_page_id)}. Read the brief before writing.` + (data.resume ? ` ${String((data.resume as Row).summary)}` : ''),
       structured: data,
