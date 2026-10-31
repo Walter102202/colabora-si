@@ -144,6 +144,7 @@ npx supabase start           # Postgres 17, Auth, Realtime, Storage, Edge Functi
 cp .env.example .env.local   # set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY; `npx supabase status` prints both
 npx supabase db reset        # migrations and seeds (demo workspace, four demo agents)
 cp supabase/functions/.env.example supabase/functions/.env   # set AGENT_LOGIN_PEPPER=local-dev-login-pepper to unlock the four seeded agent tokens
+                                                              # and MCP_AUTH_SERVER_URL=http://127.0.0.1:54321/auth/v1 so the mcp function accepts tokens from the local Auth
 npx supabase functions serve --env-file supabase/functions/.env   # mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, github-webhook, pub-html, send-*
 ```
 
