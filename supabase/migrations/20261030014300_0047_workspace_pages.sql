@@ -349,11 +349,48 @@ begin
       else v:=private.workspace_copy_json(v,p_map); end if;
       out:=out||jsonb_build_object(k,v);
     end loop;
+    if p_value->>'type'='synced' then out:=out||jsonb_build_object('syncedFrom',coalesce(p_value->>'syncedFrom',p_value->>'id')); end if;
     return out;
   end if;
   return p_value;
 end $$;
 revoke all on function private.workspace_copy_json(jsonb,jsonb) from public,anon,authenticated;
+
+create table if not exists private.workspace_archived_rows (
+  page_id text primary key references public.pages(id),
+  database_id text not null references public.pages(id),
+  row_data jsonb not null,
+  after_id text,
+  restored_at timestamptz
+);
+alter table private.workspace_archived_rows enable row level security;
+revoke all on private.workspace_archived_rows from public,anon,authenticated;
+
+create or replace function private.workspace_row_membership(p_id text,p_restore boolean)
+returns void language plpgsql security definer set search_path='' as $$
+declare item record; r jsonb; db public.pages%rowtype; result jsonb;
+begin
+  if p_restore then
+    for item in select * from private.workspace_archived_rows where page_id=p_id and restored_at is null loop
+      db:=private.workspace_page(item.database_id);
+      if not exists(select 1 from jsonb_array_elements(db.data->'database'->'rows') x where x->>'id'=item.row_data->>'id') then
+        result:=private.apply_page_ops_core(db.id,jsonb_build_array(jsonb_build_object('op','db_row_add','row',item.row_data,'after',item.after_id)),null);
+      end if;
+      update private.workspace_archived_rows set restored_at=now() where page_id=p_id;
+    end loop;
+  else
+    for item in select p.id,p.data,x.value,x.ordinality from public.pages p,
+      lateral jsonb_array_elements(coalesce(p.data->'database'->'rows','[]')) with ordinality x
+      where p.deleted_at is null and x.value->>'pageId'=p_id loop
+      db:=private.workspace_page(item.id);
+      insert into private.workspace_archived_rows(page_id,database_id,row_data,after_id,restored_at)
+        values(p_id,item.id,item.value,case when item.ordinality>1 then item.data->'database'->'rows'->(item.ordinality::int-2)->>'id' end,null)
+        on conflict(page_id) do update set row_data=excluded.row_data,after_id=excluded.after_id,restored_at=null;
+      result:=private.apply_page_ops_core(db.id,jsonb_build_array(jsonb_build_object('op','db_row_delete','rowId',item.value->>'id')),null);
+    end loop;
+  end if;
+end $$;
+revoke all on function private.workspace_row_membership(text,boolean) from public,anon,authenticated;
 
 create or replace function private.workspace_pages(p_action text,p_input jsonb,p_key text)
 returns jsonb language plpgsql security definer set search_path='' as $$
@@ -416,6 +453,7 @@ begin
     for b in select to_jsonb(s) from private.page_subtree(v_id) s loop perform private.workspace_page(b#>>'{}',true); end loop;
     for b in select to_jsonb(s) from private.page_subtree(v_id) s loop
       v_res:=private.apply_page_ops_core(b#>>'{}',jsonb_build_array(jsonb_build_object('op','workspace_patch','patch',jsonb_build_object('isDeleted',p_action='archive_page'))),null);
+      perform private.workspace_row_membership(b#>>'{}',p_action='restore_page');
     end loop;
   elsif p_action='duplicate_page' then
     -- Database copies always include row pages; ordinary subtrees are opt-in.
@@ -526,7 +564,7 @@ grant select on public.workspace_visible_pages to authenticated;
 
 create or replace function public.workspace_page_bundle(p_page_id text,p_max_pages integer default 50)
 returns jsonb language plpgsql stable security definer set search_path='' as $$
-declare b jsonb; visible jsonb;
+declare b jsonb; visible jsonb; synced jsonb;
 begin
   if auth.uid() is null or not exists(select 1 from public.pages p where p.id=p_page_id
     and not private.page_hidden(p.id) and private.can_read_page(p.id,p.workspace_id)) then return null; end if;
@@ -534,7 +572,13 @@ begin
   if b is null then return null; end if;
   select coalesce(jsonb_object_agg(e.key,e.value),'{}') into visible from jsonb_each(b->'pages') e
     join public.pages p on p.id=e.key where not private.page_hidden(p.id) and private.can_read_page(p.id,p.workspace_id);
-  return jsonb_set(b,'{pages}',visible);
+  select coalesce(jsonb_object_agg(e.key,e.value),'{}') into synced from jsonb_each(coalesce(b->'syncedBlocks','{}')) e
+    where exists(select 1 from jsonb_each(visible||jsonb_build_object(p_page_id,b->'page')) vp,
+      lateral private.all_blocks(vp.value) bl where bl->>'type'='synced' and coalesce(bl->>'syncedFrom',bl->>'id')=e.key)
+    and not exists(select 1 from public.pages source,lateral private.all_blocks(source.data) sb
+      where sb->>'type'='synced' and sb->>'id'=e.key
+        and (private.page_hidden(source.id) or not private.can_read_page(source.id,source.workspace_id)));
+  return jsonb_set(jsonb_set(b,'{pages}',visible),'{syncedBlocks}',synced);
 end $$;
 revoke all on function public.workspace_page_bundle(text,integer) from public,anon;
 grant execute on function public.workspace_page_bundle(text,integer) to authenticated;

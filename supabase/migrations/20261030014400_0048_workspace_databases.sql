@@ -13,7 +13,7 @@ end $$;
 
 create or replace function private.workspace_view(p_db jsonb,p_input jsonb)
 returns jsonb language plpgsql set search_path='' as $$
-declare v jsonb; old jsonb; x jsonb; a jsonb; k text; prop jsonb;
+declare v jsonb; old jsonb; x jsonb; a jsonb; k text; prop jsonb; option_id text;
 begin
   if jsonb_typeof(p_input)<>'object' or coalesce(p_input->>'name','')='' then raise exception using errcode='PT422',message='invalid_view'; end if;
   select value into old from jsonb_array_elements(p_db->'views') where value->>'id'=p_input->>'name' or lower(value->>'name')=lower(p_input->>'name') limit 1;
@@ -36,6 +36,12 @@ begin
           a:=a||jsonb_build_object('propertyId',prop->'id','direction',coalesce(x->>'direction','asc'));
         else
           if coalesce(x->>'operator','') not in ('is','isNot','contains','notContains','isEmpty','isNotEmpty','gt','lt','checked','unchecked') then raise exception using errcode='PT422',message='invalid_view'; end if;
+          if prop->>'type' in ('select','status','multiSelect') and x ? 'value' then
+            select value->>'id' into option_id from jsonb_array_elements(coalesce(prop->'options','[]'))
+              where value->>'id'=x->>'value' or lower(value->>'name')=lower(x->>'value') limit 1;
+            if option_id is null then raise exception using errcode='PT422',message='unknown_option',hint='Use an option name or id from query_database with limit:0.'; end if;
+            x:=jsonb_set(x,'{value}',to_jsonb(option_id));
+          end if;
           a:=a||jsonb_build_object('id',private.random_base62(12),'propertyId',prop->'id','operator',x->'operator','value',x->'value');
         end if;
       end loop;
