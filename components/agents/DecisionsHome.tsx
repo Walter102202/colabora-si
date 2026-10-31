@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { DiscrepanciesHome } from "@/components/agents/DiscrepanciesHome";
 import { LessonsHome } from "@/components/agents/LessonsHome";
 import { DecisionsHomeView } from "@/components/agents/panel/DecisionsHomeView";
 import { getAgentClient } from "@/lib/agentClient";
@@ -53,6 +54,7 @@ export function DecisionsHome() {
   return (
     <>
       <LessonsHome workspaceId={workspaceId} />
+      <DiscrepanciesHome workspaceId={workspaceId} />
       <DecisionsHomeView
         home={home}
         approvals={Object.values(approvals)}

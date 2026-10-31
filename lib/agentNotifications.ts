@@ -17,7 +17,8 @@ export type NotificationKind =
   | "approval_requested"
   | "approval_expired"
   | "escalation"
-  | "lesson_proposed";
+  | "lesson_proposed"
+  | "source_discrepancy";
 
 export interface NotificationRow {
   id: string;
@@ -159,6 +160,7 @@ const KIND_TEXT: Record<NotificationKind, string> = {
   approval_expired: "approval expired",
   escalation: "escalated to you",
   lesson_proposed: "has a lesson to review",
+  source_discrepancy: "disagrees with a source",
 };
 
 export function notificationText(n: NotificationRow): string {

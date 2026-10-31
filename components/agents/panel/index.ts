@@ -29,3 +29,4 @@ export { RunDiffCard } from "@/components/agents/panel/RunDiffCard";
 export type { TaskDiff, RunDiff, DiffItem } from "@/lib/agentRunDiff";
 export { LessonCard } from "@/components/agents/panel/LessonCard";
 export { HomeCards } from "@/components/agents/panel/HomeCards";
+export { DiscrepancyCard } from "@/components/agents/panel/DiscrepancyCard";
