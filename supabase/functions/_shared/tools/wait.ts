@@ -386,9 +386,28 @@ async function waitingOnPerson(ctx: ToolContext, tasks: Row[]): Promise<Set<stri
   return new Set(ids.filter((id) => review.has(id) && (!run.has(id) || review.get(id)! > run.get(id)!)));
 }
 
-function myTaskView(task: Row, reason: Reason, prompts: number, blockedBy: string[] = []) {
+async function lastSessions(ctx: ToolContext, ids: string[]): Promise<Map<string, string | null>> {
+  const sessions = new Map<string, string | null>();
+  if (!ids.length || !ctx.principal.agentId) return sessions;
+  const select = (filter: Filter, limit: number) => must(ctx.db.select<Row>({
+    table: 'agent_runs', columns: 'task_id,external_session_id,started_at',
+    filters: [filter, { col: 'agent_id', op: 'eq', value: ctx.principal.agentId }],
+    order: [{ column: 'started_at', ascending: false }], limit,
+  }));
+  const rows = await select({ col: 'task_id', op: 'in', value: ids }, LATEST_PAGE) ?? [];
+  const add = (row: Row) => { if (!sessions.has(String(row.task_id))) sessions.set(String(row.task_id), typeof row.external_session_id === 'string' ? row.external_session_id : null); };
+  rows.forEach(add);
+  if (rows.length === LATEST_PAGE) {
+    const extra = await Promise.all(ids.filter((id) => !sessions.has(id)).map((id) => select({ col: 'task_id', op: 'eq', value: id }, 1)));
+    for (const page of extra) if (page?.[0]) add(page[0]);
+  }
+  return sessions;
+}
+
+function myTaskView(task: Row, reason: Reason, prompts: number, blockedBy: string[] = [], sessionId: string | null = null) {
   return {
     task_id: task.id,
+    session_id: sessionId,
     title: task.title,
     state: task.state,
     review_state: task.review_state,
@@ -428,8 +447,9 @@ async function initialState(ctx: ToolContext) {
       limit: 1,
     })),
   ]);
-  const waiting = await waitingOnPerson(ctx, open ?? []);
-  const blocked = await openDependencies(ctx, open ?? []);
+  const [waiting, blocked] = await Promise.all([
+    waitingOnPerson(ctx, open ?? []), openDependencies(ctx, open ?? []),
+  ]);
   const tasks = (open ?? []).flatMap((t) => {
     // review_state outlives the round it describes: on a task waiting without a run, only the reviews and runs tell.
     const idle = t.state === 'input_required' && !t.active_run_id;
@@ -439,6 +459,8 @@ async function initialState(ctx: ToolContext) {
     const blockedBy = blocked.get(String(t.id)) ?? [];
     return reason && !(reason === 'queued' && blockedBy.length) ? [myTaskView(t, reason, 0, blockedBy)] : [];
   });
+  const sessions = await lastSessions(ctx, tasks.map((task) => String(task.task_id)));
+  for (const task of tasks) task.session_id = sessions.get(String(task.task_id)) ?? null;
   const marks = [
     ...(latest ?? []).map((t) => normTs(String(t.updated_at))),
     ...(latestPrompt ?? []).map((a) => normTs(String(a.created_at))),
@@ -505,8 +527,9 @@ async function changesSince(ctx: ToolContext, cursor: Cursor): Promise<Delta> {
   }
 
   const out: ReturnType<typeof myTaskView>[] = [];
-  const waiting = await waitingOnPerson(ctx, [...tasks.values()]);
-  const blocked = await openDependencies(ctx, [...tasks.values()]);
+  const [waiting, blocked] = await Promise.all([
+    waitingOnPerson(ctx, [...tasks.values()]), openDependencies(ctx, [...tasks.values()]),
+  ]);
   for (const [id, task] of tasks) {
     const list = newPrompts.get(id) ?? [];
     const latest = list.length ? list.reduce((a, b) => (Number(b.seq) > Number(a.seq) ? b : a)) : undefined;
@@ -514,6 +537,8 @@ async function changesSince(ctx: ToolContext, cursor: Cursor): Promise<Delta> {
     const blockedBy = blocked.get(id) ?? [];
     if (reason && !(reason === 'queued' && blockedBy.length)) out.push(myTaskView(task, reason, list.length, blockedBy));
   }
+  const sessions = await lastSessions(ctx, out.map((task) => String(task.task_id)));
+  for (const task of out) task.session_id = sessions.get(String(task.task_id)) ?? null;
 
   let next = cursor;
   if (items.length) {
@@ -543,6 +568,7 @@ const waitForMyTasks: ToolDef = {
         type: 'object',
         properties: {
           task_id: { type: 'string' },
+          session_id: { type: ['string', 'null'] },
           title: { type: 'string' },
           state: { type: 'string' },
           review_state: { type: 'string' },

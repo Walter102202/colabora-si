@@ -149,7 +149,7 @@ const claimTask: ToolDef = {
   inputSchema: object({
     task_id: { type: 'string' },
     harness: { type: 'string', minLength: 1, maxLength: 60, description: 'claude_code, codex, chatgpt, claude_ai, custom…' },
-    external_session_id: { type: 'string', maxLength: 200 },
+    external_session_id: { type: 'string', maxLength: 200, description: 'Your harness session id. Codex: the value of the CODEX_THREAD_ID environment variable. It lets corrections reach this same session.' },
     resume: { type: 'boolean', description: 'Continue from the last checkpoint: returns it, classified by the server.' },
   }, ['harness']),
   outputSchema: output({

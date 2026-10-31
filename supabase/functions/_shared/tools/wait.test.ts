@@ -25,6 +25,7 @@ function matches(row: Row, f: Filter): boolean {
 function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = () => {}) {
   const rpcs: { fn: string; params: Record<string, unknown> }[] = [];
   const selects: string[] = [];
+  const selectSpecs: SelectSpec[] = [];
   const selectAt: { table: string; at: number }[] = [];
   let clock = 1_000_000;
   let sleeps = 0;
@@ -39,6 +40,7 @@ function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = (
     },
     select: <T>(spec: SelectSpec) => {
       selects.push(spec.table);
+      selectSpecs.push(spec);
       selectAt.push({ table: spec.table, at: clock - 1_000_000 });
       let rows = (tables[spec.table] ?? []).filter((r) => (spec.filters ?? []).every((f) => matches(r, f)));
       for (const o of [...(spec.order ?? [])].reverse()) {
@@ -65,7 +67,7 @@ function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = (
     },
     progress: () => {},
   };
-  return { ctx, rpcs, selects, selectAt, sleeps: () => sleeps, elapsed: () => clock - 1_000_000 };
+  return { ctx, rpcs, selects, selectSpecs, selectAt, sleeps: () => sleeps, elapsed: () => clock - 1_000_000 };
 }
 
 function task(overrides: Row = {}): Row {
@@ -83,6 +85,22 @@ function activity(seq: number, overrides: Row = {}): Row {
     body: { op: 'append_blocks', summary: `step ${seq}` }, created_at: `2026-10-27T10:00:0${seq}+00:00`, ...overrides,
   };
 }
+
+Deno.test('wait_for_my_tasks returns the latest own session on both snapshot and cursor paths', async () => {
+  const tables: Record<string, Row[]> = { agent_tasks: ['own', 'other', 'none'].map((id) => task({ id, state: 'queued' })), agent_runs: [
+    { task_id: 'own', agent_id: 'agent-1', external_session_id: 'own-old', started_at: '2026-10-27T09:00:00Z' },
+    { task_id: 'own', agent_id: 'agent-1', external_session_id: 'own-new', started_at: '2026-10-27T10:00:00Z' },
+    { task_id: 'own', agent_id: 'agent-2', external_session_id: 'someone-else', started_at: '2026-10-27T11:00:00Z' },
+    { task_id: 'other', agent_id: 'agent-2', external_session_id: 'someone-else', started_at: '2026-10-27T11:00:00Z' },
+  ] };
+  const h = harness(tables);
+  const first = await tool('wait_for_my_tasks').handler({ timeout_s: 0 }, h.ctx);
+  const sessions = (out: Row) => Object.fromEntries((out.tasks as Row[]).map((t) => [t.task_id, t.session_id]));
+  assert.deepEqual(sessions(first.structured), { own: 'own-new', other: null, none: null });
+  for (const t of tables.agent_tasks) t.updated_at = '2026-10-27T10:00:01Z';
+  const next = await tool('wait_for_my_tasks').handler({ timeout_s: 0, after: first.structured.next_cursor }, h.ctx);
+  assert.deepEqual(sessions(next.structured), { own: 'own-new', other: null, none: null });
+});
 
 Deno.test('a queued task with an open dependency is not offered', async () => {
   const h = harness({ agent_tasks: [
@@ -491,10 +509,15 @@ Deno.test('wait_for_my_tasks with after reports a task that a review just blocke
   assert.deepEqual((out.structured.tasks as Row[]).map((t) => [t.task_id, t.reason, t.waiting_on]), [['t1', 'feedback', 'human']]);
 });
 
-Deno.test('wait_for_my_tasks reads reviews and runs only for tasks waiting without a run', async () => {
+Deno.test('a queued task reads only its own session, not human-wait classification history', async () => {
   const h = harness({ agent_tasks: [task({ id: 'q1', state: 'queued', active_run_id: null })], agent_activities: [] });
   await tool('wait_for_my_tasks').handler({ timeout_s: 120 }, h.ctx);
-  assert.ok(!h.selects.includes('agent_reviews') && !h.selects.includes('agent_runs'), h.selects.join(', '));
+  assert.ok(!h.selects.includes('agent_reviews'), h.selects.join(', '));
+  assert.deepEqual(h.selectSpecs.filter((s) => s.table === 'agent_runs'), [{
+    table: 'agent_runs', columns: 'task_id,external_session_id,started_at',
+    filters: [{ col: 'task_id', op: 'in', value: ['q1'] }, { col: 'agent_id', op: 'eq', value: 'agent-1' }],
+    order: [{ column: 'started_at', ascending: false }], limit: 200,
+  }]);
 });
 
 Deno.test('wait_for_task hands over the approval_id and decision of an answer', async () => {

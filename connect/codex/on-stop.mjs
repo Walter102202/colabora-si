@@ -13,8 +13,8 @@ import { createRemote } from "../../bridge/remote.mjs";
 
 export const MAX_REASON_CHARS = 2500;
 export const DEFAULT_WAIT_MIN = 25;
-const CONTINUE_REASONS = new Set(["feedback", "queued", "brief", "handover"]);
-const FINISHED_STATES = new Set(["done", "cancelled", "failed"]);
+export const CONTINUE_REASONS = new Set(["feedback", "queued", "brief", "handover"]);
+export const FINISHED_STATES = new Set(["done", "cancelled", "failed"]);
 
 /** @param {unknown} value */
 const text = (value) => (typeof value === "string" ? value : "");

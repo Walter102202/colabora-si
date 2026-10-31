@@ -12,6 +12,16 @@ The JWT lasts one hour. For longer sessions use the commented stdio block in `co
 
 **Limits.** `tool_timeout_sec` defaults to 60 s; the snippet sets 180 so `wait_for_task` (up to 120 s) fits. Codex shows no incoming MCP notifications.
 
+## Waking a Codex Desktop session
+
+Run `node connect/codex/watch.mjs` on the machine where Codex Desktop is open, with `WORKSPACE_MCP_URL` and `WORKSPACE_AGENT_PAT` set. The watcher waits outside Codex and carries corrections to the session recorded by the task's latest run for that agent. When claiming, pass `external_session_id` with the value of `CODEX_THREAD_ID`.
+
+- `WORKSPACE_CODEX_THREAD`: explicit fallback for a task that has no session yet. Use the `CODEX_THREAD_ID` from that session; the watcher never guesses a session.
+- `WORKSPACE_CODEX_BIN`: optional CLI path. Otherwise it uses the newest Desktop `codex.exe` under `%LOCALAPPDATA%/OpenAI/Codex/bin/`, then `codex` on PATH.
+- `WORKSPACE_WATCH_STATE`: cursor file, default `~/.codex/colabora-watch.json`. Use a separate file for each agent/workspace watcher.
+
+Use the watcher **or** the hook, never both: running both delivers the same correction twice. The hook remains the path for Codex CLI and for people who do not use Desktop. The watcher reaches only threads loaded in Desktop. Without `external_session_id` or an explicit fallback it has no destination; `approval_decided` does not wake a session. Busy-thread and closed-Desktop behavior require separate verification.
+
 **How it wakes up.** A Stop hook. Copy [`hooks.json`](hooks.json) to `<repo>/.codex/hooks.json` and set the path to `on-stop.mjs`. Hooks are on by default.
 
 - When Codex ends its turn, [`on-stop.mjs`](on-stop.mjs) exchanges `WORKSPACE_AGENT_PAT` (with `WORKSPACE_MCP_URL`) and waits on `wait_for_my_tasks` for up to `HOOK_WAIT_MIN` minutes (25 by default, below the hook timeout of 1800 s).
