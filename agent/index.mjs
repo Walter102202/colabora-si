@@ -9,6 +9,8 @@ import { loadEnvFile, readConfig } from "./config.mjs";
 import { runAgent } from "./loop.mjs";
 import { createMcpClient } from "./mcpClient.mjs";
 import { createModel } from "./model.mjs";
+import { resolve } from "node:path";
+import { fileState } from "../connect/codex/state.mjs";
 
 const args = process.argv.slice(2);
 const envIndex = args.indexOf("--env");
@@ -51,6 +53,7 @@ log(`${config.harness} started: model ${config.modelName}, workspace ${new URL(c
 await runAgent({
   mcp,
   model,
+  noticeState: fileState(`${resolve(envPath)}.notices.json`),
   channel,
   harness: config.harness,
   reviewerAgentId: config.reviewerAgentId,

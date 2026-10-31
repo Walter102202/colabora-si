@@ -8,5 +8,5 @@ export const INSTRUCTIONS = [
   '4. Use only environment resources returned by claim_task/get_task. Never choose delivery ports, stacks or migrations yourself. Review tasks have no reservation: reviewers use their own isolated environment, never the delivery environment.',
   '5. request_input with options for decisions. request_approval before irreversible outside actions; wait unless approved. Never infer permission.',
   '6. add_artifact and submit_for_review with evidence for each done-when criterion. A person closes tasks. Reviewers instead record review_task and end their turn.',
-  '7. Re-read changed briefs. After delegating, wait_for_task; use hand_over if leaving. Lead notices in wait_for_my_tasks carry review and environment details; inspect their task ids before acting.',
+  '7. Re-read changed briefs. After delegating, wait_for_task; use hand_over if leaving. Lead notices carry review/environment details: inspect their task ids. After delivery acknowledge with after:notice.ack_cursor; next_cursor is only for scanning.',
 ].join('\n');

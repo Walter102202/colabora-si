@@ -13,6 +13,7 @@ async function exercise(waits: Answer[], options: {
   env?: Record<string, string | undefined>; cursor?: string; detail?: unknown; details?: unknown[]; saved?: WatchSnapshot; saveError?: boolean;
   queue?: (thread: string, message: string) => Promise<void>;
   detailForWait?: (poll: number) => unknown;
+  ackFailures?: number;
 } = {}) {
   const controller = new AbortController();
   const calls: { name: string; args: Record<string, unknown> }[] = [];
@@ -21,6 +22,7 @@ async function exercise(waits: Answer[], options: {
   const logs: string[] = [];
   let index = 0;
   let detailIndex = 0;
+  let ackFailures = options.ackFailures ?? 0;
   const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     if (String(input).endsWith("/agent-token")) return Response.json({ access_token: "test-jwt", expires_in: 3600 });
     const body = JSON.parse(String(init?.body));
@@ -28,6 +30,10 @@ async function exercise(waits: Answer[], options: {
     if (body.method.startsWith("notifications/")) return new Response(null, { status: 202 });
     const { name, arguments: args } = body.params;
     calls.push({ name, args });
+    if (name === "wait_for_my_tasks" && String(args.after).startsWith("ack:")) {
+      if (ackFailures-- > 0) return Response.json({ jsonrpc:"2.0", id:body.id, error:{code:-32000,message:"ack unavailable"} });
+      return Response.json({ jsonrpc:"2.0", id:body.id, result:{structuredContent:{changed:false,tasks:[]}} });
+    }
     let result: unknown = options.detail ?? { activities: [] };
     if (name === "get_task" && options.detailForWait) result = options.detailForWait(index);
     if (name === "get_task" && options.details) result = options.details[Math.min(detailIndex++, options.details.length - 1)];
@@ -204,4 +210,16 @@ it("destinationless notices return to the normal long poll", async () => {
   const result=await exercise([answer([task({session_id:null})]),answer([])],{cursor:"saved"});
   expect(result.calls.filter(c=>c.name==="wait_for_my_tasks")[1].args.timeout_s).toBe(120);
   expect(result.queue).not.toHaveBeenCalled();
+});
+
+it("persists successful delivery before a failed acknowledgement and retries only the acknowledgement after restart", async () => {
+  const notice=task({reason:"updated",notice:{event_id:"notice",ack_cursor:"ack:notice",type:"task.updated",payload:{verdict:"approved",review_of:"delivery"}}});
+  const first=await exercise([answer([notice])],{ackFailures:1});
+  expect(first.queue).toHaveBeenCalledTimes(1);
+  expect(first.calls.filter(c=>c.args.after==="ack:notice")).toHaveLength(1);
+  expect(Object.values(first.saves.at(-1)?.pending??{})).toHaveLength(1);
+  const restarted=await exercise([answer([])],{saved:first.saves.at(-1)});
+  expect(restarted.queue).not.toHaveBeenCalled();
+  expect(restarted.calls.filter(c=>c.args.after==="ack:notice")).toHaveLength(1);
+  expect(restarted.saves.at(-1)?.pending).toEqual({});
 });

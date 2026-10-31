@@ -33,6 +33,14 @@ function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = (
     download: async () => ({ data: null, error: null }),
     rpc: <T>(fn: string, params: Record<string, unknown>) => {
       rpcs.push({ fn, params });
+      if (fn === 'mark_events_delivered') for (const event of tables.agent_events ?? []) {
+        const ids = params.p_event_ids as string[] | undefined;
+        const payload = (event.payload ?? {}) as Row;
+        const notice = (event.type === 'task.continue' && payload.review_of) ||
+          (event.type === 'task.updated' && ['verdict','minor_findings','environment_release','review_timeout'].some(key => key in payload));
+        if (event.agent_id === ctx.principal.agentId && ['queued','leased'].includes(String(event.status)) &&
+            (ids ? ids.includes(String(event.event_id)) : !notice)) event.status = 'delivered';
+      }
       const data = fn === 'open_dependencies' ? Object.fromEntries((tables.agent_tasks ?? [])
         .filter(t => (params.p_task_ids as string[]).includes(String(t.id)))
         .map(t => [t.id, ((t.depends_on_task_ids ?? []) as string[]).filter(id => !tables.agent_tasks.some(d => d.id === id && d.state === 'done'))])) : null;
@@ -641,4 +649,28 @@ Deno.test('a newly committed undelivered notice survives even outside the overla
   const h=harness({agent_tasks:[task()],agent_events:[event('slow','2026-10-27T09:00:00Z',{status:'queued',type:'task.updated',payload:{verdict:'approved',review_of:'delivery'}})]});
   const result=await tool('wait_for_my_tasks').handler({after:encodeTaskCursor({t:normTs('2026-10-27T10:00:02Z'),k:[]}),timeout_s:0},h.ctx);
   assert.equal((result.structured.tasks as Row[]).filter(t=>t.notice).length,1);
+});
+
+Deno.test('notice fetch is recoverable; acknowledgement covers only the delivered recipient event and never advances the scan', async () => {
+  const tables = { agent_tasks:[task()], agent_events:['one','two'].map(id => event(id,'2026-10-27T10:00:03Z',
+    {status:'queued',type:'task.updated',payload:{environment_release:[],subtask_id:id}})) };
+  const h=harness(tables);
+  const first=await tool('wait_for_my_tasks').handler({timeout_s:0},h.ctx);
+  const notices=(first.structured.tasks as Row[]).filter(t=>t.notice).map(t=>t.notice as Row);
+  assert.equal(notices.length,2);
+  assert.deepEqual(tables.agent_events.map(e=>e.status),['queued','queued'],'a lost response or stopped consumer must not lose notices');
+  const lost=await tool('wait_for_my_tasks').handler({timeout_s:0},h.ctx);
+  assert.equal((lost.structured.tasks as Row[]).filter(t=>t.notice).length,2);
+  const selects=h.selects.length;
+  const ack=await tool('wait_for_my_tasks').handler({after:notices[0].ack_cursor,timeout_s:0},h.ctx);
+  assert.equal(h.selects.length,selects,'acknowledgement does not read or consume a new batch');
+  assert.equal(ack.structured.next_cursor,undefined,'the original scan cursor remains authoritative');
+  assert.deepEqual(tables.agent_events.map(e=>e.status),['delivered','queued']);
+  const next=await tool('wait_for_my_tasks').handler({after:first.structured.next_cursor,timeout_s:0},h.ctx);
+  assert.deepEqual((next.structured.tasks as Row[]).filter(t=>t.notice).map(t=>(t.notice as Row).event_id),['two']);
+  h.ctx.principal.agentId='other-agent';
+  await tool('wait_for_my_tasks').handler({after:notices[1].ack_cursor,timeout_s:0},h.ctx);
+  assert.equal(tables.agent_events[1].status,'queued','another agent cannot acknowledge the recipient event');
+  h.ctx.principal.agentId=null;
+  await assert.rejects(()=>tool('wait_for_my_tasks').handler({after:notices[1].ack_cursor,timeout_s:0},h.ctx),/agent/i);
 });

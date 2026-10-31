@@ -26,6 +26,8 @@ Use the watcher **or** the hook, never both: running both delivers the same corr
 
 The CLI child does not inherit `WORKSPACE_AGENT_PAT` or `WORKSPACE_AGENT_JWT`. State-save failures are logged and the process keeps in-memory progress, retrying persistence on later polls. There is no transaction between `codex queue` and the state file: a crash after a successful enqueue but before its acknowledgement is saved can still replay that notice. If persistence keeps failing, fix the state-file permissions/path before relying on restart deduplication.
 
+Lead notices remain pending on the server until their `ack_cursor` is returned through `wait_for_my_tasks(after: ..., timeout_s: 0)` after delivery. This acknowledgement does not advance the scan cursor or consume another batch. The watcher persists successful queue delivery before acknowledging; a failed acknowledgement retries without queueing again. The Stop hook emits one acknowledged-protocol notice per turn (at most 2,500 characters), then acknowledges only after stdout accepts it. Its pending acknowledgements are stored per session in `~/.codex/colabora-hook-<session_id>.json`, or `WORKSPACE_HOOK_STATE` when explicitly configured. Use separate state files per consumer; run the watcher or hook, never both.
+
 **How it wakes up.** A Stop hook. Copy [`hooks.json`](hooks.json) to `<repo>/.codex/hooks.json` and set the path to `on-stop.mjs`. Hooks are on by default.
 
 - When Codex ends its turn, [`on-stop.mjs`](on-stop.mjs) exchanges `WORKSPACE_AGENT_PAT` (with `WORKSPACE_MCP_URL`) and waits on `wait_for_my_tasks` for up to `HOOK_WAIT_MIN` minutes (25 by default, below the hook timeout of 1800 s).

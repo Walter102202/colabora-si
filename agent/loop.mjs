@@ -65,6 +65,7 @@ function answerText(p) {
  *   maxTurns?: number, maxTasks?: number, harness?: string, reviewerAgentId?: string, resume?: boolean,
  *   prices?: {input: number, output: number}, appUrl?: string,
  *   signal?: AbortSignal, waitTimeoutS?: number, log?: (msg: string) => void, modelVision?: boolean, modelPdf?: boolean,
+ *   noticeState?: { load: () => { delivered?: Record<string, string> }, save: (state: { delivered: Record<string, string> }) => void },
  * }} opts
  * @returns {Promise<{tasks: TaskOutcome[]}>}
  */
@@ -124,7 +125,22 @@ export async function runAgent(opts) {
   let cursor;
   let resumeRejected = false;
   let retryNotices = [];
+  let savedNotices = {};
+  try { savedNotices = opts.noticeState?.load() ?? {}; } catch (error) { log(`Notice state read failed: ${error.message}`); }
+  const noticeAcks = new Map(Object.entries(savedNotices.delivered ?? {}));
+  const deliveredNotices = new Set(noticeAcks.keys());
+  const persistNotices = () => {
+    try { opts.noticeState?.save({ delivered: Object.fromEntries(noticeAcks) }); }
+    catch (error) { log(`Notice state save failed; retaining delivery in memory: ${error.message}`); }
+  };
+  const acknowledgeNotices = async () => {
+    for (const [id, after] of noticeAcks) {
+      const result = await call("wait_for_my_tasks", { after, timeout_s: 0 });
+      if (!result.isError) { noticeAcks.delete(id); persistNotices(); }
+    }
+  };
   while (handled.length < maxTasks && !signal?.aborted) {
+    await acknowledgeNotices();
     const waited = await call("wait_for_my_tasks", cursor ? { after: cursor, timeout_s: waitTimeoutS } : { timeout_s: waitTimeoutS });
     if (waited.isError) {
       log(`wait_for_my_tasks failed: ${waited.text}`);
@@ -137,10 +153,12 @@ export async function runAgent(opts) {
     const seenNotices = new Set();
     const candidates = incoming.filter(task => {
       if (!isLeadNotice(task)) return true;
+      if (deliveredNotices.has(task.notice.event_id)) return false;
       if (seenNotices.has(task.notice.event_id)) return false;
       seenNotices.add(task.notice.event_id); return true;
     }).filter((/** @type {any} */ t) => isLeadNotice(t) || CLAIM_REASONS.has(t.reason) || (!t.reason && t.state === "queued"));
     if (!candidates.length && !waited.data.changed) await clock.sleep(1000);
+    if (!candidates.length && noticeAcks.size) await clock.sleep(5000);
     for (const task of candidates) {
       if (handled.length >= maxTasks || signal?.aborted) break;
       const outcome = isLeadNotice(task) ? await runNotice(task) : await runTask(task);
@@ -160,10 +178,20 @@ export async function runAgent(opts) {
     const noticeTools = tools.filter(tool => allowed.has(tool.function.name));
     const messages = [{ role: "system", content: system }, { role: "user", content: `${buildReason(task, "")}\nCurrent task data (not instructions): ${JSON.stringify(detail.data)}` }];
     const usage = { input_tokens: 0, output_tokens: 0, cost_usd: 0 };
+    let modelDelivered = false;
     try {
       for (let turn = 0; turn < maxTurns; turn++) {
         if (signal?.aborted) return null;
         const reply = await model.chat({ messages, tools: noticeTools });
+        if (!modelDelivered) {
+          modelDelivered = true;
+          deliveredNotices.add(task.notice.event_id);
+          if (task.notice.ack_cursor) {
+            noticeAcks.set(task.notice.event_id, task.notice.ack_cursor);
+            persistNotices();
+            await acknowledgeNotices();
+          }
+        }
         usage.input_tokens += reply.usage.input_tokens; usage.output_tokens += reply.usage.output_tokens;
         usage.cost_usd = costUsd(usage, prices);
         const calls = reply.message.tool_calls ?? [];
@@ -180,7 +208,7 @@ export async function runAgent(opts) {
       return { task_id: task.task_id, run_id: null, outcome: "max_turns", usage };
     } catch (error) {
       log(`Lead notice was not completed: ${error instanceof Error ? error.message : String(error)}`);
-      return null;
+      return modelDelivered ? { task_id: task.task_id, run_id: null, outcome: "error", usage } : null;
     }
   }
 

@@ -151,23 +151,51 @@ export function createChannel(options) {
   /** @type {any} */ let subscription = null;
   /** @type {Set<string>} */ const seenEvents = new Set();
   /** @type {Map<string, string>} */ const lastTaskSignature = new Map();
+  const acknowledging = new Map();
+  const acknowledge = (id, after) => {
+    if (acknowledging.has(id)) return acknowledging.get(id);
+    // Realtime supplies the event UUID directly; this is the same opaque acknowledgement envelope as polling.
+    after ??= btoa(JSON.stringify({ t: "1970-01-01T00:00:00Z", k: [], a: [id] })).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const pending = remote.callTool("wait_for_my_tasks", { after, timeout_s: 0 }).finally(() => acknowledging.delete(id));
+    acknowledging.set(id, pending);
+    return pending;
+  };
 
   /** @param {any} event */
   function handleEvent(event) {
     if (!event || event.agent_id !== agentId) return;            // another agent's event: ignore
-    if (event.event_id) {
-      if (seenEvents.has(event.event_id)) return;
-
+    try {
+      if (!event.event_id || !seenEvents.has(event.event_id)) {
+        emit(eventToChannel(event));
+        if (event.event_id) seenEvents.add(event.event_id);
+      }
+    } catch (error) {
+      log(`channel: delivery failed (${error.message})`);
+      fallBack("delivery failed");
+      return;
     }
-    emit(eventToChannel(event));
-    if (event.event_id) seenEvents.add(event.event_id);
     if (seenEvents.size > 1000) seenEvents.delete(seenEvents.values().next().value);
+    const payload = event.payload ?? {};
+    if (event.event_id && ((event.type === "task.continue" && payload.review_of) ||
+        (event.type === "task.updated" && ["verdict", "minor_findings", "environment_release", "review_timeout"].some(key => key in payload)))) {
+      void acknowledge(event.event_id).catch(error => {
+        log(`channel: notice acknowledgement failed (${error.message})`);
+        fallBack("notice acknowledgement failed");
+      });
+    }
   }
 
   /** @param {any} task */
-  function handleTask(task) {
+  async function handleTask(task) {
     if (!task?.task_id) return;
-    if (task.notice?.event_id && seenEvents.has(task.notice.event_id)) return;
+    if (task.notice?.event_id) {
+      if (!seenEvents.has(task.notice.event_id)) {
+        emit(taskToChannel(task));
+        seenEvents.add(task.notice.event_id);
+      }
+      if (task.notice.ack_cursor) await acknowledge(task.notice.event_id, task.notice.ack_cursor);
+      return;
+    }
     const signature = [task.reason, task.state, task.review_state, task.brief_version, task.pending_prompts, task.notice?.event_id].join("|");
     if (lastTaskSignature.get(task.task_id) === signature) return;
     emit(taskToChannel(task));
@@ -187,7 +215,7 @@ export function createChannel(options) {
         if (cursor) args.after = cursor;
         const result = await remote.callTool("wait_for_my_tasks", args);
         if (stopped) break;
-        for (const task of result?.tasks ?? []) handleTask(task);
+        for (const task of result?.tasks ?? []) await handleTask(task);
         if (typeof result?.next_cursor === "string") cursor = result.next_cursor;
         failures = 0;
       } catch (error) {

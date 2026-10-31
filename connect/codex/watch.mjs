@@ -6,12 +6,14 @@
 // It never guesses a session.
 
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRemote } from "../../bridge/remote.mjs";
 import { CONTINUE_REASONS, FINISHED_STATES, isLeadNotice, buildReason, feedbackExcerpt } from "./on-stop.mjs";
+import { fileState } from "./state.mjs";
+export { fileState } from "./state.mjs";
 
 const THREAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const SESSION_HINT = " When you call claim_task, pass external_session_id with the value of the CODEX_THREAD_ID environment variable.";
@@ -43,19 +45,6 @@ export function codexQueue(bin, run = execFile, env = process.env) {
     run(typeof bin === "function" ? bin() : bin, ["queue", "--thread", thread, "--message", message], { timeout: 60_000, windowsHide: true, env: childEnv },
       (error) => (error ? reject(error) : resolve()));
   });
-}
-
-export function fileState(path) {
-  return {
-    load() {
-      try { return JSON.parse(readFileSync(path, "utf8")); } catch { return {}; }
-    },
-    save(state) {
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(`${path}.tmp`, JSON.stringify(state));
-      renameSync(`${path}.tmp`, path);
-    },
-  };
 }
 
 const eligible = (task) => Boolean(task?.task_id) && (isLeadNotice(task) || (CONTINUE_REASONS.has(task.reason) && !FINISHED_STATES.has(task.state)
@@ -149,6 +138,11 @@ export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, 
           keys.add(key);
           sent.set(id, keys);
           log(`task ${id} (${task.reason}) sent to ${thread}`);
+        }
+        if (typeof task.notice?.ack_cursor === "string") {
+          // Keep the sent identity and pending ack durable before any network acknowledgement.
+          persist();
+          await remote.callTool("wait_for_my_tasks", { after: task.notice.ack_cursor, timeout_s: 0 });
         }
         pending.delete(id);
         // Save acknowledgement before advancing the cursor. A later poll/save error cannot forget a successful send.

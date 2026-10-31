@@ -9,6 +9,9 @@
 // Output (stdout): {"decision":"block","reason":"…"} to continue, or nothing.
 
 import { pathToFileURL } from "node:url";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { fileState } from "./state.mjs";
 import { taskToChannel } from "../../bridge/channel.mjs";
 import { createRemote } from "../../bridge/remote.mjs";
 
@@ -90,13 +93,14 @@ export function buildReason(task, excerpt) {
  *   input: { stop_hook_active?: boolean, [key: string]: unknown },
  *   env: Record<string, string | undefined>,
  *   fetchImpl?: typeof fetch,
+ *   state?: { load: () => { delivered?: Record<string, string> }, save: (state: { delivered: Record<string, string> }) => void },
  *   now?: () => number,
  *   sleep?: (ms: number) => Promise<void>,
  *   log?: (message: string) => void,
  * }} options
- * @returns {Promise<{ exitCode: number, output?: string }>}
+ * @returns {Promise<{ exitCode: number, output?: string, acknowledge?: () => Promise<void> }>}
  */
-export async function runStopHook({ input, env, fetchImpl, now = Date.now, sleep, log = () => {} }) {
+export async function runStopHook({ input, env, fetchImpl, state, now = Date.now, sleep, log = () => {} }) {
   const pause = sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const mcpUrl = (env.WORKSPACE_MCP_URL ?? "").trim();
   const pat = (env.WORKSPACE_AGENT_PAT ?? "").trim();
@@ -115,6 +119,27 @@ export async function runStopHook({ input, env, fetchImpl, now = Date.now, sleep
     log,
     clientInfo: { name: "colabora-codex-stop-hook", version: "0.1.0" },
   });
+  let saved = {};
+  try { saved = state?.load() ?? {}; } catch (error) { log(`state load failed: ${error.message}`); }
+  const delivered = new Map(Object.entries(saved.delivered ?? {}));
+  const ackRetry = new Map();
+  const persist = () => {
+    try { state?.save({ delivered: Object.fromEntries(delivered) }); }
+    catch (error) { log(`state save failed; retaining acknowledgement in memory: ${error.message}`); }
+  };
+  const acknowledge = async () => {
+    for (const [id, after] of delivered) {
+      if ((ackRetry.get(id)?.nextAt ?? 0) > now()) continue;
+      try {
+        await remote.callTool("wait_for_my_tasks", { after, timeout_s: 0 });
+        delivered.delete(id); ackRetry.delete(id); persist();
+      } catch (error) {
+        const failures = (ackRetry.get(id)?.failures ?? 0) + 1;
+        ackRetry.set(id, { failures, nextAt: now() + Math.min(60_000, 2000 * 2 ** Math.min(failures - 1, 5)) });
+        log(`notice acknowledgement failed; retry scheduled: ${error.message}`);
+      }
+    }
+  };
 
   // In a continuation, old feedback/brief changes were already handled.
   // Queued tasks and handovers in the first snapshot still need a session.
@@ -124,6 +149,7 @@ export async function runStopHook({ input, env, fetchImpl, now = Date.now, sleep
   let failures = 0;
 
   for (;;) {
+    await acknowledge();
     const remainingS = Math.floor((deadline - now()) / 1000);
     if (!first && remainingS <= 0) return { exitCode: 0 };
     /** @type {Record<string, unknown>} */
@@ -153,7 +179,15 @@ export async function runStopHook({ input, env, fetchImpl, now = Date.now, sleep
     const next = tasks.find((/** @type {any} */ t) =>
       t?.task_id && !(initial && (t.reason === "feedback" || t.reason === "brief"))
       && CONTINUE_REASONS.has(t.reason) && !FINISHED_STATES.has(t.state) && (t.reason === "handover" || t.waiting_on !== "human"));
-    const notices = tasks.filter(isLeadNotice);
+    const notices = tasks.filter(task => isLeadNotice(task) && !delivered.has(task.notice.event_id));
+    const notice = notices.find(task => typeof task.notice.ack_cursor === "string");
+    if (notice) return {
+      exitCode: 0, output: JSON.stringify({ decision: "block", reason: buildReason(notice, "") }),
+      acknowledge: async () => {
+        delivered.set(notice.notice.event_id, notice.notice.ack_cursor); persist();
+        await acknowledge();
+      },
+    };
     if (next || notices.length) {
       let excerpt = "";
       if (next?.reason === "feedback") {
@@ -161,6 +195,12 @@ export async function runStopHook({ input, env, fetchImpl, now = Date.now, sleep
         catch (error) { log(`get_task failed: ${error instanceof Error ? error.message : String(error)}`); }
       }
       return { exitCode: 0, output: JSON.stringify({ decision: "block", reason: [...(next ? [buildReason(next, excerpt)] : []), ...notices.map(task => buildReason(task, ""))].join("\n\n") }) };
+    }
+    if (delivered.size) {
+      const current = now();
+      if (current >= deadline) return { exitCode: 0 };
+      const due = Math.min(...[...delivered.keys()].map(id => ackRetry.get(id)?.nextAt ?? current));
+      await pause(Math.min(deadline - current, Math.max(1000, Math.min(30_000, due - current))));
     }
   }
 }
@@ -176,11 +216,17 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const raw = await readStdin();
   /** @type {any} */ let input = {};
   try { input = raw.trim() ? JSON.parse(raw) : {}; } catch { input = {}; }
-  const { exitCode, output } = await runStopHook({
+  const session = String(input.session_id ?? process.env.CODEX_THREAD_ID ?? "");
+  const statePath = process.env.WORKSPACE_HOOK_STATE || (/^[0-9a-f-]{36}$/i.test(session) ? join(homedir(), ".codex", `colabora-hook-${session}.json`) : null);
+  const { exitCode, output, acknowledge } = await runStopHook({
     input,
     env: process.env,
+    state: statePath ? fileState(statePath) : undefined,
     log: (message) => process.stderr.write(`[colabora-stop-hook] ${message}\n`),
   });
-  if (output) process.stdout.write(`${output}\n`);
+  if (output) {
+    await new Promise((resolve, reject) => process.stdout.write(`${output}\n`, error => error ? reject(error) : resolve()));
+    await acknowledge?.();
+  }
   process.exit(exitCode);
 }

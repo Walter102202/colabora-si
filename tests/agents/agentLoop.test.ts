@@ -681,3 +681,39 @@ it("delivers a terminal Lead environment notice to the model without trying to c
   expect(JSON.stringify(model.requests[0].messages)).toContain("environment_release");
   expect(mcp.calls.some(c=>c.name==="claim_task")).toBe(false);
 });
+
+it("acknowledges only model-delivered notices when a batch exceeds maxTasks", async () => {
+  const pending=new Map(["one","two"].map(id=>[id,{task_id:id,state:"done",reason:"updated",notice:{event_id:id,ack_cursor:`ack:${id}`,type:"task.updated",payload:{environment_release:[],subtask_id:id}}}]));
+  const mcp=createStubMcp({handlers:{wait_for_my_tasks:args=>{
+    if(String(args.after).startsWith("ack:")){pending.delete(String(args.after).slice(4));return {tasks:[]};}
+    return {tasks:[...pending.values()],next_cursor:"scan"};
+  }}});
+  const model=createStubModel([{content:"Check current ownership before stopping."}]);
+  const original=model.chat;let attempts=0;
+  model.chat=async request=>{if(++attempts===1)throw new Error("model unavailable");return original(request);};
+  await runAgent({mcp,model,clock:fakeClock(),maxTasks:1});
+  expect(attempts).toBe(2);
+  expect(model.requests).toHaveLength(1);
+  expect([...pending.keys()]).toEqual(["one"],"the model failure remains recoverable after the other notice was delivered");
+  await runAgent({mcp,model:createStubModel([{content:"Handle the remaining notice."}]),clock:fakeClock(),maxTasks:1});
+  expect(pending.size).toBe(0);
+});
+
+it("restarts with acknowledgement-only work after the model received a notice", async () => {
+  let pending=true,acks=0;const abort=new AbortController();
+  const notice={task_id:"one",state:"done",reason:"updated",notice:{event_id:"one",ack_cursor:"ack:one",type:"task.updated",payload:{environment_release:[],subtask_id:"one"}}};
+  const mcp=createStubMcp({handlers:{wait_for_my_tasks:args=>{
+    if(args.after==="ack:one"){
+      if(++acks===1)return {isError:true,data:{code:"unavailable"}};
+      pending=false;return {tasks:[]};
+    }
+    if(!pending)abort.abort();return {tasks:pending?[notice]:[],next_cursor:"scan"};
+  }}});
+  let saved:{delivered:Record<string,string>}={delivered:{}};
+  const noticeState={load:()=>saved,save:(value:typeof saved)=>{saved=structuredClone(value);}};
+  await runAgent({mcp,model:createStubModel([{content:"Notice received."}]),noticeState,clock:fakeClock(),maxTasks:1});
+  expect(saved.delivered).toEqual({one:"ack:one"});
+  const restarted=createStubModel([]);
+  await runAgent({mcp,model:restarted,noticeState,clock:fakeClock(),maxTasks:1,signal:abort.signal});
+  expect(restarted.requests).toHaveLength(0);expect(acks).toBe(2);expect(saved.delivered).toEqual({});
+});

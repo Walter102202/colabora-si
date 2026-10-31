@@ -317,11 +317,30 @@ it("deduplicates a Realtime notice replayed by fallback polling", async () => {
   const emitted:ChannelEvent[]=[];let calls=0;let finished:()=>void=()=>{};
   const done=new Promise<void>(resolve=>{finished=resolve;});
   const notice={event_id:"shared-event",type:"task.updated",payload:{review_of:"delivery",verdict:"approved"}};
-  const channel=createChannel({agentId:AGENT,emit:e=>emitted.push(e),remote:{callTool:async()=>{
+  const channel=createChannel({agentId:AGENT,emit:e=>emitted.push(e),remote:{callTool:async(_name,args)=>{
+    if (String(args.after).startsWith("eyJ")) return {tasks:[]};
     if(++calls>1){channel.stop();finished();return {tasks:[]};}
     return {tasks:[{task_id:"parent",reason:"updated",notice}],next_cursor:"next"};
   }}});
   channel.handleEvent({...notice,agent_id:AGENT,task_id:"parent"});
   await channel.start();await done;
   expect(emitted).toHaveLength(1);
+});
+
+it("acknowledges Realtime Lead notices only after emission and recovers a failed emission through polling", async () => {
+  const notice={event_id:"notice",type:"task.updated",payload:{review_of:"delivery",verdict:"approved"}};
+  const ack=btoa(JSON.stringify({t:"1970-01-01T00:00:00Z",k:[],a:["notice"]}));
+  const emitted:ChannelEvent[]=[];let attempts=0;let finish:()=>void=()=>{};
+  const done=new Promise<void>(resolve=>{finish=resolve;});
+  const channel=createChannel({agentId:AGENT,supabaseUrl:"https://ws.test",jwt:"fixture",emit:event=>{
+    if(++attempts===1)throw new Error("output unavailable");emitted.push(event);
+  },realtimeFactory:()=>({channel:()=>({on(){return this;},subscribe(cb:(status:string)=>void){cb("SUBSCRIBED");return this;}})}),
+  remote:{callTool:async(_name,args)=>{
+    if(String(args.after).startsWith("eyJ")){expect(emitted).toHaveLength(1);channel.stop();finish();return {tasks:[]};}
+    return {tasks:[{task_id:"parent",reason:"updated",notice:{...notice,ack_cursor:ack}}],next_cursor:"scan"};
+  }}});
+  await channel.start();
+  channel.handleEvent({...notice,agent_id:AGENT,task_id:"parent"});
+  await done;
+  expect(attempts).toBe(2);expect(emitted).toHaveLength(1);
 });

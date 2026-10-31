@@ -11,6 +11,7 @@ type ToolCall = { name: string; args: Record<string, unknown> };
 /** Fake remote: `waits` answers successive wait_for_my_tasks calls (the last one repeats). */
 function fakeRemote(waits: Tasks[], detail: unknown = { activities: [] }) {
   const calls: ToolCall[] = [];
+  const delivered = new Set<string>();
   let index = 0;
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -20,9 +21,15 @@ function fakeRemote(waits: Tasks[], detail: unknown = { activities: [] }) {
     if (body.method?.startsWith("notifications/")) return new Response(null, { status: 202 });
     const { name, arguments: args } = body.params;
     calls.push({ name, args });
+    if (name === "wait_for_my_tasks" && String(args.after).startsWith("ack:")) {
+      delivered.add(String(args.after).slice(4));
+      return Response.json({jsonrpc:"2.0",id:body.id,result:{structuredContent:{changed:false,tasks:[]}}});
+    }
     let structuredContent: unknown = detail;
     if (name === "wait_for_my_tasks") {
-      structuredContent = { changed: waits[Math.min(index, waits.length - 1)].tasks.length > 0, ...waits[Math.min(index, waits.length - 1)] };
+      const response = waits[Math.min(index, waits.length - 1)];
+      structuredContent = { changed: response.tasks.length > 0, ...response,
+        tasks: response.tasks.filter(task => !delivered.has(String((task.notice as {event_id?: string} | undefined)?.event_id))) };
       index++;
     }
     return Response.json({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "ok" }], structuredContent } });
@@ -174,4 +181,57 @@ it("passes all Lead notices to the model, including terminal environment release
   const reason=JSON.parse(result.output??"{}").reason??"";
   expect(reason).toContain("approved"); expect(reason).toContain("minor");
   expect(reason).toMatch(/get_task.*before.*stop/i);
+});
+
+it("acknowledges only the bounded continuation after stdout delivery and leaves the rest for the next turn", async () => {
+  const notices=["one","two"].map(id=>({task_id:TASK,state:"done",reason:"updated",notice:{event_id:id,ack_cursor:`ack:${id}`,type:"task.updated",payload:{subtask_id:id,environment_release:[{kind:"stack",value:id}]}}}));
+  const {fetchImpl,calls}=fakeRemote([{tasks:notices,next_cursor:"scan"}]);
+  const first=await runStopHook({input:{},env:ENV,fetchImpl,now:clock(1000),sleep});
+  expect(calls.some(call=>String(call.args.after).startsWith("ack:"))).toBe(false);
+  expect(JSON.parse(first.output!).reason.length).toBeLessThanOrEqual(MAX_REASON_CHARS);
+  expect(first.acknowledge).toBeTypeOf("function");
+  await first.acknowledge!(); // The entry point invokes this only after stdout's write callback succeeds.
+  const second=await runStopHook({input:{},env:ENV,fetchImpl,now:clock(1000),sleep});
+  expect(JSON.parse(second.output!).reason).toContain('get_task("two")');
+  await second.acknowledge!();
+  expect(calls.filter(call=>String(call.args.after).startsWith("ack:")).map(call=>call.args.after)).toEqual(["ack:one","ack:two"]);
+});
+
+it("keeps a delivered hook notice durable when acknowledgement fails and does not emit it after restart", async () => {
+  const notice={task_id:TASK,state:"done",reason:"updated",notice:{event_id:"one",ack_cursor:"ack:one",type:"task.updated",payload:{subtask_id:"one",environment_release:[]}}};
+  const remote=fakeRemote([{tasks:[notice],next_cursor:"scan"}]);let acknowledgements=0;
+  const fetchImpl:typeof fetch=async(input,init)=>{
+    const body=JSON.parse(String(init?.body));
+    if(body.params?.arguments?.after==="ack:one" && ++acknowledgements===1)
+      return Response.json({jsonrpc:"2.0",id:body.id,error:{code:-32000,message:"ack unavailable"}});
+    return remote.fetchImpl(input,init);
+  };
+  let saved:{delivered:Record<string,string>}={delivered:{}};
+  const state={load:()=>saved,save:(value:typeof saved)=>{saved=structuredClone(value);}};
+  const first=await runStopHook({input:{},env:ENV,state,fetchImpl,now:clock(1000),sleep});
+  expect(first.output).toBeDefined();await first.acknowledge!();
+  expect(saved.delivered).toEqual({one:"ack:one"});
+  const restarted=await runStopHook({input:{},env:{...ENV,HOOK_WAIT_MIN:"1"},state,fetchImpl,now:clock(10_000),sleep});
+  expect(restarted.output).toBeUndefined();expect(acknowledgements).toBe(2);expect(saved.delivered).toEqual({});
+});
+
+it("backs off a persistent acknowledgement outage while allowing unrelated new work", async () => {
+  const notice={task_id:TASK,state:"done",reason:"updated",notice:{event_id:"one",ack_cursor:"ack:one",type:"task.updated",payload:{environment_release:[]}}};
+  const check=async(extra:Record<string,unknown>[])=>{
+    let time=0,acks=0;const naps:number[]=[];
+    const remote=fakeRemote([{tasks:[notice,...extra],next_cursor:"scan"}]);
+    const fetchImpl:typeof fetch=async(input,init)=>{
+      time+=100;const body=JSON.parse(String(init?.body));
+      if(body.params?.arguments?.after==="ack:one"){
+        acks++;return Response.json({jsonrpc:"2.0",id:body.id,error:{code:-32000,message:"ack unavailable"}});
+      }
+      return remote.fetchImpl(input,init);
+    };
+    const result=await runStopHook({input:{},env:{...ENV,HOOK_WAIT_MIN:"1"},state:{load:()=>({delivered:{one:"ack:one"}}),save:()=>{}},fetchImpl,now:()=>time,sleep:async ms=>{naps.push(ms);time+=ms;}});
+    return {result,acks,naps};
+  };
+  const idle=await check([]);
+  expect(idle.acks).toBeLessThan(15);expect(idle.naps.length).toBeGreaterThan(0);expect(idle.result.output).toBeUndefined();
+  const healthy=await check([{task_id:"new-work",state:"queued",reason:"queued"}]);
+  expect(JSON.parse(healthy.result.output!).reason).toContain("new-work");expect(healthy.naps).toEqual([]);
 });

@@ -159,7 +159,8 @@ async function newEvents(ctx: ToolContext, mark: EventMark, withPending = false)
     if (page.length < 100) break;
   }
   const seen = new Set(mark.k);
-  const fresh = rows.filter(e => !seen.has(`e:${String(e.event_id)}`));
+  const fresh = rows.filter(e => !seen.has(`e:${String(e.event_id)}`) ||
+    (withPending && isLeadEvent(e) && ['queued','leased'].includes(String(e.status))));
   const t = [mark.t, ...rows.map(e => normTs(String(e.created_at)))].sort().at(-1)!;
   return { fresh, mark: { t, k: rows.map(e => `e:${String(e.event_id)}`) } };
 }
@@ -290,6 +291,8 @@ interface Cursor {
   k: string[];
   /** Independent event position: never skips a late task/prompt transaction. */
   e?: EventMark;
+  /** Delivery acknowledgement only: never a new scan position. */
+  a?: string[];
 }
 
 /** Postgres timestamps -> "YYYY-MM-DDTHH:MM:SS.ffffffZ", comparable as strings. */
@@ -312,7 +315,8 @@ export function decodeTaskCursor(raw: string): Cursor {
     const json = atob(raw.replace(/-/g, '+').replace(/_/g, '/'));
     const c = JSON.parse(json);
     if (typeof c?.t === 'string' && Array.isArray(c.k)) return { t: c.t, k: c.k.map(String),
-      ...(typeof c.e?.t === 'string' && Array.isArray(c.e.k) ? { e: { t: c.e.t, k: c.e.k.map(String) } } : {}) };
+      ...(typeof c.e?.t === 'string' && Array.isArray(c.e.k) ? { e: { t: c.e.t, k: c.e.k.map(String) } } : {}),
+      ...(Array.isArray(c.a) ? { a: c.a.map(String) } : {}) };
   } catch {
     // fall through
   }
@@ -452,7 +456,8 @@ async function leadNotices(ctx: ToolContext, events: Row[]): Promise<ReturnType<
     if (!task) return [];
     const payload=event.payload as Row;
     const reason: Reason=event.type==='task.continue' ? payload.review_task_id ? 'under_review' : 'ready_for_review' : 'updated';
-    return [{ ...myTaskView(task,reason,0,[],sessions.get(String(task.id))??null), notice:{event_id:event.event_id,type:event.type,payload} }];
+    return [{ ...myTaskView(task,reason,0,[],sessions.get(String(task.id))??null), notice:{event_id:event.event_id,type:event.type,payload,
+      ack_cursor:encodeTaskCursor({t:normTs(String(event.created_at)),k:[],a:[String(event.event_id)]})} }];
   });
 }
 
@@ -590,7 +595,7 @@ const waitForMyTasks: ToolDef = {
   description:
     'Without `after`: answers at once with your pending tasks and a cursor. With `after` (the next_cursor of the previous ' +
     'call): holds until a task assigned to you is queued, gets feedback, a new brief, an approval decision, a stop, or is ' +
-    'closed; or until timeout_s (default 50, max 120). Lead notices also carry reviews in progress, verdicts, minor findings and environment releases. On changed:false call again with the same cursor.',
+    'closed; or until timeout_s (default 50, max 120). Lead notices also carry reviews in progress, verdicts, minor findings and environment releases. After delivering a notice to its model/session, acknowledge only it with after:notice.ack_cursor and timeout_s:0. Acknowledgements return no new scan cursor. On changed:false call again with the same scan cursor.',
   inputSchema: object({
     after: { type: 'string' },
     timeout_s: { type: 'integer', minimum: 0, maximum: MAX_WAIT_S, default: DEFAULT_WAIT_S },
@@ -610,7 +615,7 @@ const waitForMyTasks: ToolDef = {
           waiting_on: { type: ['string', 'null'] },
           brief_version: { type: 'integer' },
           pending_prompts: { type: 'integer' },
-          notice: { type: 'object', description: 'An addressed review, verdict, minor-findings or environment-release event; payload carries the subject ids and data.' },
+          notice: { type: 'object', description: 'An addressed review, verdict, minor-findings or environment-release event. payload carries subject ids and data; ack_cursor acknowledges only this notice after delivery, using the existing after parameter.' },
           reason: { type: 'string', enum: ['handover', 'queued', 'feedback', 'brief', 'approval_decided', 'stop', 'closed', 'under_review', 'ready_for_review', 'updated'] },
         },
       },
@@ -631,7 +636,6 @@ const waitForMyTasks: ToolDef = {
       cursor.e = notices.mark;
       if (tasks.length) {
         await markDelivered(ctx);
-        await markDelivered(ctx, tasks.flatMap(task => 'notice' in task ? [String((task.notice as Row).event_id)] : []));
       }
       return {
         text: tasks.length ? `${plural(tasks.length, 'task')} need you.` : 'Nothing pending. Wait again with next_cursor.',
@@ -639,6 +643,11 @@ const waitForMyTasks: ToolDef = {
       };
     }
     let cursor = decodeTaskCursor(after);
+    if (cursor.a?.length) {
+      if (!ctx.principal.agentId) throw new ToolError('forbidden','Only the recipient agent can acknowledge a notice.');
+      await must(ctx.db.rpc('mark_events_delivered',{p_event_ids:cursor.a}));
+      return {text:'Notice delivery acknowledged. Continue with your previous scan cursor.',structured:{changed:false,tasks:[]}};
+    }
     // Event and task positions advance independently, preserving late task/prompt commits.
     let mark: EventMark = cursor.e ?? { t: cursor.t, k: cursor.k };
     let delay = POLL_MS;
@@ -658,7 +667,6 @@ const waitForMyTasks: ToolDef = {
         lastFull = ctx.now();
         if (delta.tasks.length) {
           await markDelivered(ctx);
-          await markDelivered(ctx, delta.tasks.flatMap(task => 'notice' in task ? [String((task.notice as Row).event_id)] : []));
           return {
             text: delta.tasks.map((t) => `${String(t.task_id)} ${t.reason} (${String(t.state)})`).join('; '),
             structured: { changed: true, tasks: delta.tasks, next_cursor: encodeTaskCursor(cursor) },

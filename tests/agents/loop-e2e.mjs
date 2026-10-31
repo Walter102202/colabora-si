@@ -76,27 +76,37 @@ appendFileSync(process.env.P11_CAPTURE_PATH,JSON.stringify(args)+"\n"); process.
     P11_CAPTURE_PATH: capture, P11_TEST_THREAD_ID: session, WORKSPACE_AGENT_PAT: tokenFor(agentName),
   });
   let queueCalls = 0;
+  let firstPassCalls = 0;
   for (let pass = 0; pass < 2; pass++) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
     try {
       await runWatcher({ env, signal: controller.signal,
-        state: { load: () => ({ ...disk.load(), cursor }), save: (value) => { disk.save(value); if (pass === 1) controller.abort(); } },
+        state: { load: () => ({ ...disk.load(), cursor }), save: (value) => {
+          disk.save(value);
+          const sent = Object.keys(value.sent ?? {}).some(id => id === taskId || id.startsWith(`${taskId}:`));
+          const pending = Object.values(value.pending ?? {}).some(entry => entry.task?.task_id === taskId);
+          if (sent && !pending) controller.abort();
+        } },
         fetchImpl: (input, init) => fetch(input, { ...init, signal: controller.signal }),
         queue: async (thread, message) => {
           queueCalls++;
           assert.equal(pass, 0, "Restart must not resend the acknowledged correction");
           assert.equal(thread, session); assert.ok(message.includes(taskId));
-          await send(thread, message); controller.abort();
+          await send(thread, message);
         },
       });
     } finally { clearTimeout(timeout); }
+    if (pass === 0) firstPassCalls = queueCalls;
+    else assert.equal(queueCalls, firstPassCalls, "Restart must not invoke queue again, including a swallowed callback failure");
   }
-  assert.equal(queueCalls, 1, "Restart must not invoke queue again, including a swallowed callback failure");
+  assert.ok(firstPassCalls > 0, "The first watcher pass must actually deliver work");
+  if (agentName === "CODEX") assert.equal(queueCalls, 1, "The worker correction is delivered exactly once");
   const calls = readFileSync(capture, "utf8").trim().split("\n").map(line => JSON.parse(line));
-  assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].slice(0, 4), ["queue", "--thread", session, "--message"]);
-  assert.ok(calls[0][4].includes(blocking)); if (minor) assert.ok(!calls[0][4].includes(minor));
+  assert.equal(calls.length, firstPassCalls);
+  for (const call of calls) assert.deepEqual(call.slice(0, 4), ["queue", "--thread", session, "--message"]);
+  assert.ok(calls.some(call => call[4].includes(blocking)));
+  if (minor) assert.ok(calls.every(call => !call[4].includes(minor)));
   console.log(`watcher evidence: ${capture}`);
 }
 
@@ -126,6 +136,9 @@ async function main() {
       const result = await lead.callTool("wait_for_my_tasks", { after: leadCursor, timeout_s: 0 });
       leadCursor = result.next_cursor;
       notices.push(...result.tasks.filter(task => task.task_id === parent.task_id && task.notice));
+      for (const task of result.tasks.filter(task => task.task_id === parent.task_id && task.notice?.ack_cursor)) {
+        await lead.callTool("wait_for_my_tasks", { after: task.notice.ack_cursor, timeout_s: 0 });
+      }
       const hit = notices.find(predicate); if (hit) return hit.notice.payload;
     }
     assert.fail("Expected notice did not reach the Lead without a bridge");
@@ -170,9 +183,10 @@ async function main() {
   assert.ok(delivered.review_task_id);
   const deliveryEvent = event(parent.task_id, "type='task.continue' and payload ? 'review_task_id'");
   assert.equal(eventToChannel(deliveryEvent).meta.reason, "under_review");
+  await watchCorrection(parent.task_id, watchLeadCursor, "under_review", null, "LEAD");
+  assert.equal(event(parent.task_id, "type='task.continue' and payload ? 'review_task_id'").status, "delivered");
   assert.equal((await leadNotice(task => task.reason === "under_review" && task.notice.payload.review_of === first)).review_task_id, delivered.review_task_id);
   const reviewRun = await reviewer.callTool("claim_task", { task_id: delivered.review_task_id, harness: "claude_code" });
-  await watchCorrection(parent.task_id, watchLeadCursor, "under_review", null, "LEAD");
   ok("4 review task opens automatically and Lead receives under_review");
 
   const blocking = "Fix the missing assertion";
@@ -206,8 +220,9 @@ async function main() {
   assert.equal(verdictEvent.payload.minor_findings.length, 1);
   assert.equal(eventToChannel(verdictEvent).meta.reason, "updated");
   assert.ok(eventToChannel(verdictEvent).content.includes("1 minor finding(s)"));
-  assert.equal((await leadNotice(task => task.notice.payload.verdict === "approved" && task.notice.payload.review_of === first)).minor_findings.length, 1);
   await watchCorrection(parent.task_id, watchLeadCursor, "minor finding", null, "LEAD");
+  assert.equal(event(parent.task_id, "type='task.updated' and payload->>'verdict'='approved'").status, "delivered");
+  assert.equal((await leadNotice(task => task.notice.payload.verdict === "approved" && task.notice.payload.review_of === first)).minor_findings.length, 1);
   ok("8 the Lead receives minor findings through the watcher");
 
   await human("set_merge_rule", { p_task_id: parent.task_id, p_conditions: ["review_approved", "ci_green"] });
@@ -254,9 +269,10 @@ async function main() {
   const released = event(parent.task_id, "type='task.updated' and payload ? 'environment_release'");
   assert.equal(released.payload.environment_release.length, 2);
   assert.ok(eventToChannel(released).content.includes("environment_release"));
+  await watchCorrection(parent.task_id, watchLeadCursor, "before stopping anything", null, "LEAD");
+  assert.equal(event(parent.task_id, "type='task.updated' and payload ? 'environment_release'").status, "delivered");
   const polledRelease = await leadNotice(task => task.notice.payload.environment_release && task.notice.payload.subtask_id === first);
   assert.equal(polledRelease.environment_release.length, 2);
-  await watchCorrection(parent.task_id, watchLeadCursor, "before stopping anything", null, "LEAD");
   ok("10 closing the task releases its dependent and requests environment shutdown");
 
   // These are synthetic resource records; the real test stack stays up until its caller stops it.
