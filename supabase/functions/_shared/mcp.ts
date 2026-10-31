@@ -177,7 +177,7 @@ export function toolResult(out: ToolOutput) {
 }
 
 export function toolErrorResult(err: ToolError) {
-  const structured = { code: err.code, message: err.message, detail: err.detail ?? null };
+  const structured = { code: err.code, message: err.message, detail: err.detail ?? null, hint: err.hint };
   let text = `Error ${err.code}: ${err.message}`;
   const detail = err.detail as Record<string, unknown> | null;
   if (err.code === 'block_conflict' && detail && typeof detail === 'object' && typeof detail.text === 'string') {
@@ -475,9 +475,9 @@ function unauthorized(req: Request, env: Env, err: AuthError, cors: Record<strin
 }
 
 /** Handles one HTTP request to the mcp function. */
-export async function handleMcp(req: Request, server: McpServer, deps: McpDeps): Promise<Response> {
+export async function handleMcp(req: Request, server: McpServer, deps: McpDeps, options: { resourceUrl?: string } = {}): Promise<Response> {
   const started = deps.now?.() ?? Date.now();
-  const env = deps.env;
+  const env = options.resourceUrl ? { ...deps.env, MCP_RESOURCE_URL: options.resourceUrl } : deps.env;
   const origin = req.headers.get('Origin');
   const cors = corsHeaders(origin, env);
   const url = new URL(req.url);
