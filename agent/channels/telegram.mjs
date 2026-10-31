@@ -101,11 +101,11 @@ export function createTelegramChannel({ token, ownerChatId, fetchImpl = globalTh
           try {
             const batch = await channelRpc("take_channel_updates", {});
             for (const update of batch.updates ?? []) {
-              await onMessage(readMessage(update.message));
+              if (await onMessage(readMessage(update.message)) === false) throw new Error("Inbox delivery remains pending.");
               await channelRpc("take_channel_updates", { ack_update_id: update.update_id });
             }
             delay = batch.updates?.length ? 1500 : Math.min(10000, delay * 1.5);
-          } catch { log("Channel delivery remains pending for retry."); }
+          } catch { log("Channel delivery remains pending for retry."); delay = Math.min(10000, delay * 1.5); }
           if (signal?.aborted) break;
           await new Promise((resolve) => {
             const done = () => { clearTimeout(timer); signal?.removeEventListener("abort", done); resolve(); };
@@ -141,7 +141,7 @@ export function createTelegramChannel({ token, ownerChatId, fetchImpl = globalTh
             else if (msg.chat?.type === "private" && !msg.from?.is_bot) {
               deliveries.set(u.update_id, false);
               void Promise.resolve().then(() => onMessage(readMessage(msg))).then(
-                () => deliveries.set(u.update_id, true),
+                (delivered) => deliveries.set(u.update_id, delivered === false ? "retry" : true),
                 () => { deliveries.set(u.update_id, "retry"); log("telegram ingestion failed; delivery remains unacknowledged"); },
               );
             }

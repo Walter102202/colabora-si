@@ -19,5 +19,5 @@ export interface InboxOptions {
   timezone?: string;
   log?: (message: string) => void;
 }
-export function createInbox(opts: InboxOptions): { deliver(m: ChannelMessage): Promise<unknown> };
+export function createInbox(opts: InboxOptions): { deliver(m: ChannelMessage): Promise<boolean> };
 export function flushPersonReplies(opts: { call: InboxOptions["call"]; reply: InboxOptions["send"]; appUrl?: string }): Promise<void>;

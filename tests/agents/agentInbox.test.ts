@@ -321,3 +321,19 @@ it("registers only message and callback updates without discarding pending deliv
   expect(body.allowed_updates).toEqual(["message", "callback_query"]);
   expect(body.drop_pending_updates).toBe(false);
 });
+
+it("does not acknowledge a real inbox relay failure and retries the same queued message", async () => {
+  let failed = true, acknowledged = false;
+  const first = new AbortController(), second = new AbortController();
+  const box = createInbox({ call: async () => ({ isError: failed, text: "", data: failed ? { code: "temporarily_unavailable" } : { message_id: "saved" } }), transcribe: async () => ({}), send: async () => {} });
+  const call = vi.fn(async (_name: string, args: Record<string, unknown>) => {
+    if (args.ack_update_id) { acknowledged = true; second.abort(); return { updates: [] }; }
+    return { updates: [{ update_id: 9, message: { message_id: 9, chat, from, text: "keep me" } }] };
+  });
+  const channel = createTelegramChannel({ token: "fake", ownerChatId: "5", transport: "webhook", channelRpc: call });
+  await channel.start({ signal: first.signal, onMessage: async (m) => { const result = await box.deliver(m); first.abort(); return result; } });
+  expect(acknowledged).toBe(false);
+  failed = false;
+  await channel.start({ signal: second.signal, onMessage: box.deliver });
+  expect(acknowledged).toBe(true);
+});
