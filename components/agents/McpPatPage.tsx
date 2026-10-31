@@ -2,13 +2,15 @@
 
 import { useState } from "react";
 import { mcpUrls } from "@/lib/agentsStore";
-import { snippetFor } from "@/lib/agentSnippets";
+import { snippetFor, workspaceMcpUrl } from "@/lib/agentSnippets";
 
 // Minimal page that tells a person (or an agent that landed here) how to get
 // an agent token and where the MCP endpoint is. Mounted by the `/mcp-pat`
 // route, which belongs to the app shell; the content lives here.
 export function McpPatPage({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const { mcpUrl, tokenUrl } = mcpUrls();
+  const workspaceUrl = workspaceMcpUrl(mcpUrl);
+  const [connection, setConnection] = useState("claude-code-workspace");
   const [copied, setCopied] = useState<string | null>(null);
   const copy = async (label: string, text: string) => {
     try {
@@ -19,14 +21,14 @@ export function McpPatPage({ onOpenSettings }: { onOpenSettings?: () => void }) 
       setCopied(null);
     }
   };
-  const claudeCode = snippetFor("claude-code");
+  const claudeCode = snippetFor(connection);
 
   return (
     <main className="mx-auto max-w-2xl space-y-6 px-4 py-10 text-sm" aria-labelledby="mcp-pat-title">
       <header className="space-y-2">
         <h1 id="mcp-pat-title" className="text-2xl font-semibold">Connect an agent with a token</h1>
         <p className="text-text-secondary">
-          Agents reach this workspace through one remote MCP endpoint. Harnesses that cannot sign in with OAuth use an agent token instead.
+          Choose a connection for pages and databases, task work, or connect both. Harnesses that cannot sign in with OAuth use an agent token instead.
         </p>
       </header>
 
@@ -46,7 +48,16 @@ export function McpPatPage({ onOpenSettings }: { onOpenSettings?: () => void }) 
         <h2 className="font-medium">2. Point the harness at the endpoint</h2>
         <dl className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <dt className="w-28 text-text-secondary">MCP endpoint</dt>
+            <dt className="w-28 text-text-secondary">Pages and databases</dt>
+            <dd className="flex min-w-0 flex-1 items-center gap-2">
+              <code className="truncate rounded bg-bg-secondary px-2 py-1">{workspaceUrl}</code>
+              <button type="button" className="rounded border border-border px-2 py-1 text-xs" onClick={() => copy("workspace", workspaceUrl)}>
+                {copied === "workspace" ? "Copied" : "Copy workspace URL"}
+              </button>
+            </dd>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <dt className="w-28 text-text-secondary">Task endpoint</dt>
             <dd className="flex min-w-0 flex-1 items-center gap-2">
               <code className="truncate rounded bg-bg-secondary px-2 py-1">{mcpUrl}</code>
               <button type="button" className="rounded border border-border px-2 py-1 text-xs hover:bg-bg-secondary" onClick={() => copy("mcp", mcpUrl)}>
@@ -71,6 +82,13 @@ export function McpPatPage({ onOpenSettings }: { onOpenSettings?: () => void }) 
 
       <section className="space-y-2">
         <h2 className="font-medium">3. Example: {claudeCode.name}</h2>
+        <label className="block">Connection
+          <select className="ml-2 rounded border border-border p-1" value={connection} onChange={(event) => setConnection(event.target.value)}>
+            <option value="claude-code-workspace">Pages and databases</option>
+            <option value="claude-code">Tasks and reviews</option>
+          </select>
+        </label>
+        <p className="text-text-secondary">Use pages and databases for direct editing without tasks. Task work uses the task endpoint. Connect both when you need both.</p>
         <pre className="overflow-x-auto rounded bg-bg-secondary p-3 text-xs"><code>{claudeCode.snippet({ mcpUrl, tokenUrl })}</code></pre>
         <p className="text-text-secondary">Recipes for every harness are in <code>connect/</code>; the Agents settings tab shows the same snippets with your values filled in.</p>
       </section>

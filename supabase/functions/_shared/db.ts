@@ -92,7 +92,7 @@ export function supabaseDb(client: SupabaseClient, signal?: AbortSignal): Db {
 
 /** An error the model can act on. Returned as a tool result with isError: true, never as a JSON-RPC error. */
 export class ToolError extends Error {
-  constructor(readonly code: string, message: string, readonly detail: unknown = null) {
+  constructor(readonly code: string, message: string, readonly detail: unknown = null, readonly hint: string = 'Check the input and permissions, then retry with the same idempotency key.') {
     super(message);
     this.name = 'ToolError';
   }
@@ -193,7 +193,7 @@ export function fromDbError(err: DbError): ToolError {
   else if (/abort/i.test(msg)) code = 'timeout';
   else code = 'internal';
   const message = code === 'internal' ? `The database returned an error: ${msg || err.code || 'unknown'}` : messageFor(code);
-  return new ToolError(code, message, parseDetail(err.details));
+  return new ToolError(code, message, parseDetail(err.details), err.hint || messageFor(code));
 }
 
 /** Returns data or throws the mapped ToolError. A null result of a non-void RPC is left to the caller. */

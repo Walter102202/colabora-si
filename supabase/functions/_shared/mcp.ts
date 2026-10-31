@@ -95,6 +95,7 @@ export interface ResourceProvider {
 }
 
 export interface McpServer {
+  requireWriteKey?: boolean;
   name: string;
   title: string;
   version: string;
@@ -177,7 +178,7 @@ export function toolResult(out: ToolOutput) {
 }
 
 export function toolErrorResult(err: ToolError) {
-  const structured = { code: err.code, message: err.message, detail: err.detail ?? null };
+  const structured = { code: err.code, message: err.message, detail: err.detail ?? null, hint: err.hint };
   let text = `Error ${err.code}: ${err.message}`;
   const detail = err.detail as Record<string, unknown> | null;
   if (err.code === 'block_conflict' && detail && typeof detail === 'object' && typeof detail.text === 'string') {
@@ -283,7 +284,15 @@ async function callTool(state: RequestState, params: Record<string, unknown>) {
 
   const budget = abortAfter(tool.budgetMs?.(args) ?? DEFAULT_TOOL_BUDGET_MS, state.signal);
   try {
+    if (state.server.requireWriteKey && !tool.annotations.readOnlyHint &&
+      (typeof args.idempotency_key !== 'string' || !args.idempotency_key.trim())) {
+      throw new ToolError('invalid_input', 'A write needs idempotency_key.', null, 'Supply a unique key; reuse it only to retry this write.');
+    }
     const out = await tool.handler(args, makeContext(state, budget.signal));
+    if (state.server.requireWriteKey && !tool.annotations.readOnlyHint) {
+      const id = out.structured.id ?? args.database_id ?? args.page_id ?? out.structured.page_id;
+      if (typeof id === 'string') out.structured = { ...out.structured, id, url: `${state.appUrl}/p/${encodeURIComponent(id)}` };
+    }
     state.code = 'ok';
     const result: Record<string, unknown> = toolResult(out);
     if (state.era === '2026') {
@@ -475,9 +484,9 @@ function unauthorized(req: Request, env: Env, err: AuthError, cors: Record<strin
 }
 
 /** Handles one HTTP request to the mcp function. */
-export async function handleMcp(req: Request, server: McpServer, deps: McpDeps): Promise<Response> {
+export async function handleMcp(req: Request, server: McpServer, deps: McpDeps, options: { resourceUrl?: string } = {}): Promise<Response> {
   const started = deps.now?.() ?? Date.now();
-  const env = deps.env;
+  const env = options.resourceUrl ? { ...deps.env, MCP_RESOURCE_URL: options.resourceUrl } : deps.env;
   const origin = req.headers.get('Origin');
   const cors = corsHeaders(origin, env);
   const url = new URL(req.url);

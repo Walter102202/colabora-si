@@ -27,3 +27,9 @@ node connect/claude-code/wait.mjs --task <task_id>
 ```
 
 A task handed over to this agent wakes the session with reason `handover`; claim it with `resume: true`.
+
+## Direct pages and databases
+
+Use `/functions/v1/workspace-mcp` to create and edit pages and databases without a task. It exposes 23 tools, including one-call `create_database` with properties, views and initial rows. Set `WORKSPACE_MCP_URL` to that URL and run `node bridge/index.mjs --no-channel`. The bridge accepts either endpoint and uses the same token exchange.
+
+Keep `/functions/v1/mcp` for tasks, reviews, handovers and the channel. Connect both under distinct server names (`colabora-workspace` and `colabora`) if you need both. Agents need a write grant on a parent; root creation is available to human sessions only. OAuth uses the same consent and linked identity, with separate protected-resource metadata per endpoint.

@@ -24,6 +24,11 @@ function originOf(url: string): string {
 
 const tokenNote = "Exchange the personal access token for a 1-hour JWT at the token URL; the bridge and the reference agent do it for you.";
 
+/** The workspace connection shares credentials, but exposes pages and databases only. */
+export function workspaceMcpUrl(mcpUrl: string): string {
+  return mcpUrl.replace(/\/mcp\/?$/, "/workspace-mcp");
+}
+
 export const HARNESS_SNIPPETS: HarnessSnippet[] = [
   {
     id: "claude-code",
@@ -135,8 +140,17 @@ MODEL_NAME=...
 node agent/index.mjs --env agent/.env`,
     notes: ["Any OpenAI-compatible chat endpoint works; change the three MODEL_* values to switch models.", "WORKSPACE_AGENT_TOKEN_URL is optional; it defaults to <MCP origin>/functions/v1/agent-token."],
   },
+  {
+    id: "claude-code-workspace", name: "Claude Code · pages and databases", auth: "pat",
+    wake: "Direct workspace editing; no task channel needed.",
+    snippet: ({ mcpUrl, tokenUrl }) => "# .mcp.json · direct workspace editing\n" + JSON.stringify({ mcpServers: { "colabora-workspace": {
+      command: "node", args: ["bridge/index.mjs", "--no-channel"],
+      env: { WORKSPACE_MCP_URL: workspaceMcpUrl(mcpUrl), WORKSPACE_AGENT_TOKEN_URL: tokenUrl, WORKSPACE_AGENT_PAT: "agt_..." },
+    } } }, null, 2),
+    notes: ["Use this connection to create pages and databases without tasks. Connect colabora (mcp) too when you also work on tasks.", tokenNote],
+  },
 ];
 
 export function snippetFor(id: string): HarnessSnippet {
-  return HARNESS_SNIPPETS.find((s) => s.id === id) ?? HARNESS_SNIPPETS[0];
+  return HARNESS_SNIPPETS.find((s) => s.id === id) ?? HARNESS_SNIPPETS.find((s) => s.id === "claude-code")!;
 }

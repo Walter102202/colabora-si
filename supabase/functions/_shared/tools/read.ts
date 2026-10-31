@@ -232,7 +232,7 @@ const queryDatabase: ToolDef = {
       type: 'array',
       items: object({ property: { type: 'string' }, direction: { type: 'string', enum: ['asc', 'desc'] } }, ['property']),
     },
-    limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
+    limit: { type: 'integer', minimum: 0, maximum: 100, default: 50 },
     cursor: { type: 'string' },
   }, ['database_id']),
   outputSchema: output({
@@ -290,11 +290,12 @@ const queryDatabase: ToolDef = {
     });
     const structured: Record<string, unknown> = {
       database_id: dbId,
-      properties: db.properties.map((p) => ({ id: p.id, name: p.name, type: p.type })),
+      properties: db.properties,
+      views: db.views,
       rows: outRows,
       total: rows.length,
     };
-    if (offset + limit < rows.length) structured.next_cursor = offsetCursor(offset + limit);
+    if (limit > 0 && offset + limit < rows.length) structured.next_cursor = offsetCursor(offset + limit);
     return {
       text: `Database "${bundle.page.title || 'Untitled'}": ${plural(outRows.length, 'row')} of ${rows.length}.`,
       structured,
