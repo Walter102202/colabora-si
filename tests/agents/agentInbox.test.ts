@@ -337,3 +337,14 @@ it("does not acknowledge a real inbox relay failure and retries the same queued 
   await channel.start({ signal: second.signal, onMessage: box.deliver });
   expect(acknowledged).toBe(true);
 });
+
+it("keeps ordinary-agent polling status when person-scoped work is not authorized", async () => {
+  const stop = new AbortController(); const sent: string[] = [];
+  const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    if (String(url).endsWith("getUpdates")) return Response.json({ ok: true, result: [{ update_id: 1, message: { message_id: 1, chat, from, text: "/status" } }] });
+    sent.push(JSON.parse(String(init?.body)).text); return Response.json({ ok: true, result: {} });
+  });
+  const channel = createTelegramChannel({ token: "fake", ownerChatId: "5", fetchImpl, channelRpc: async () => { stop.abort(); throw Object.assign(new Error("Channel request failed"), { code: "platform_only" }); } });
+  await channel.start({ signal: stop.signal, status: () => "waiting for tasks" });
+  expect(sent).toEqual(["Status: waiting for tasks"]);
+});
