@@ -1,5 +1,5 @@
 begin;
-select plan(20);
+select plan(21);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_S','page_O','page_X']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+condlead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -32,6 +32,7 @@ select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
 select public.claim_task(:'parent'::uuid, 'claude_code') ->> 'run_id' as lr \gset
 select public.claim_task(:'other'::uuid, 'claude_code') ->> 'run_id' as or_run \gset
+select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', repeat('-', 36)), null, 'Merge?'))->>'status', 'pending', 'a malformed subject cannot satisfy a conditional approval');
 
 -- 2. Nothing proved yet: a person decides.
 select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub'), null, 'Merge?'))->>'status', 'pending', 'no review and no CI: a person decides');

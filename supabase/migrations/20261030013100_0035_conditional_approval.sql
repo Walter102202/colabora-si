@@ -29,7 +29,7 @@ begin
 
   v_subject := v_t;
   if coalesce(p_params->>'subtask_id', '') <> '' then
-    if p_params->>'subtask_id' !~ '^[0-9a-fA-F-]{36}$' then return false; end if;
+    if p_params->>'subtask_id' !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' then return false; end if;
     select * into v_subject from public.agent_tasks where id = (p_params->>'subtask_id')::uuid and parent_task_id = v_t.id;
     if not found then return false; end if;
   end if;
