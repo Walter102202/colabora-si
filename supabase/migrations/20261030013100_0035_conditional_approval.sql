@@ -116,7 +116,7 @@ create or replace function private.conditional_allowed(p_action text, p_run publ
 returns boolean language plpgsql stable security definer set search_path = '' as $$
 declare v_t public.agent_tasks%rowtype; v_b public.task_briefs%rowtype; v_subject public.agent_tasks%rowtype;
         v_art public.agent_artifacts%rowtype; v_review public.agent_reviews%rowtype;
-        v_conds jsonb; v_required text[]; v_up uuid; v_depth int:=0; v_repo text; v_sha text; v_c jsonb; v_ci jsonb;
+        v_conds jsonb; v_required text[]; v_up uuid; v_depth int:=0; v_repo text; v_sha text; v_c jsonb; v_ci jsonb; v_human_veto boolean;
 begin
   if coalesce(p_action,'')='' or p_action='payment' or p_run.status not in ('running','waiting') or p_run.stop_requested_at is not null then return false; end if;
   select * into v_t from public.agent_tasks where id=p_run.task_id and active_run_id=p_run.id;
@@ -150,8 +150,13 @@ begin
      or v_review.brief_version<>v_subject.brief_version or v_review.artifact_id<>v_art.id or v_review.artifact_version<>v_art.version
      or exists(select 1 from public.agent_artifacts a where a.task_id=v_subject.id and private.same_artifact_ref(a.ref,v_art.ref)
        and a.author_type=v_review.reviewer_type and a.author_id=v_review.reviewer_id) then return false; end if;
-  if exists(select 1 from public.agent_reviews r where r.task_id=v_subject.id and r.reviewer_type='human'
-    and r.artifact_id=v_art.id and r.artifact_version=v_art.version and r.verdict<>'approved') then return false; end if;
+  -- A new row or spelling does not change the content a person rejected. Only their later direct approval lifts it.
+  select r.verdict<>'approved' or (not r.direct_session and bool_or(r.verdict<>'approved') over()) into v_human_veto
+    from public.agent_reviews r join public.agent_artifacts a on a.id=r.artifact_id and a.task_id=r.task_id
+   where r.task_id=v_subject.id and r.reviewer_type='human' and private.same_artifact_ref(a.ref,v_art.ref)
+     and (v_art.kind<>'page' or (a.kind='page' and (a.page_revision is null or a.page_revision=v_art.page_revision)))
+   order by r.created_at desc,r.id desc limit 1;
+  if coalesce(v_human_veto,false) then return false; end if;
   if v_art.kind='diff' then
     select repo,sha into v_repo,v_sha from private.ci_commit(v_art.ref);
     if v_sha is null or p_params->>'repo' is distinct from v_repo or p_params->>'head_sha' is distinct from v_sha then return false; end if;

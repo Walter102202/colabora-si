@@ -1,5 +1,5 @@
 begin;
-select plan(63);
+select plan(67);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_S','page_O','page_X']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+condlead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -306,6 +306,68 @@ select tests.reset_role();
 update public.external_ops set task_id=:'other'::uuid,run_id=:'or_run'::uuid where task_id=:'parent'::uuid and provider='scope';
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
 select is(public.begin_external_op(:'or_run'::uuid,'scope','http_request','{"url":"https://scope.test"}')->>'status','approval_required','a legacy pending operation cannot borrow another task human approval');
+select tests.reset_role();
+
+-- Public-RPC lifecycle: changing the artifact row is not changing the rejected commit.
+select tests.make_page((:'f'::jsonb->>'ws')::uuid,'veto_subject','page_A');
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select public.create_subtask(:'parent'::uuid,'veto_subject','{"objective":"Veto history","done_when":[{"id":"c","text":"Deliver","check":"lead"}]}',(:'f'::jsonb->>'agent')::uuid)->>'task_id' as veto_sub \gset
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid,(:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'veto_sub'::uuid,'codex')->>'run_id' as vr1 \gset
+select public.add_artifact(:'vr1'::uuid,'diff','acme/app@'||repeat('a',40),'Rejected commit',array['c'])->>'artifact_id' as va1 \gset
+select public.submit_for_review(:'vr1'::uuid,'Ready',array[:'va1'::uuid]);
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.review_task(:'veto_sub'::uuid,'changes_requested','[{"criterion_id":"c","status":"contradicted","note":"Fix this commit"}]');
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid,(:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'veto_sub'::uuid,'codex')->>'run_id' as vr2 \gset
+select public.add_artifact(:'vr2'::uuid,'diff','https://github.com/ACME/APP/commit/'||repeat('A',40),'Same commit',array['c'])->>'artifact_id' as va2 \gset
+select public.submit_for_review(:'vr2'::uuid,'Unchanged commit',array[:'va2'::uuid]);
+select tests.reset_role();
+update public.agent_artifacts set created_at=now()+interval '1 second' where id=:'va2'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select public.review_task(:'veto_sub'::uuid,'approved','[{"criterion_id":"c","status":"verified"}]','[]',:'va2'::uuid,:'lr'::uuid)->>'review_id' as latest_veto_review \gset
+select tests.reset_role();
+update public.agent_reviews set created_at=now()+interval '1 second' where id=:'latest_veto_review'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'veto_sub','repo','acme/app','head_sha',repeat('a',40)))->>'status','pending','redeclaring a rejected commit cannot erase the human veto');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid,'g2-chat');
+select public.review_task(:'veto_sub'::uuid,'approved','[{"criterion_id":"c","status":"verified"}]','[]',:'va2'::uuid)->>'review_id' as chat_lift \gset
+select tests.reset_role();
+update public.agent_reviews set created_at=now()+interval '1.5 seconds' where id=:'chat_lift'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select public.review_task(:'veto_sub'::uuid,'approved','[{"criterion_id":"c","status":"verified"}]','[]',:'va2'::uuid,:'lr'::uuid)->>'review_id' as after_chat_review \gset
+select tests.reset_role();
+update public.agent_reviews set created_at=now()+interval '1.75 seconds' where id=:'after_chat_review'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'veto_sub','repo','acme/app','head_sha',repeat('a',40)))->>'status','pending','a chat approval cannot lift a direct human veto for an automatic effect');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.review_task(:'veto_sub'::uuid,'approved','[{"criterion_id":"c","status":"verified"}]','[]',:'va2'::uuid)->>'review_id' as human_lift \gset
+select tests.reset_role();
+update public.agent_reviews set created_at=now()+interval '2 seconds' where id=:'human_lift'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'veto_sub','repo','acme/app','head_sha',repeat('a',40)))->>'status','approved','a later real human approval lifts the veto without rewriting history');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.review_task(:'veto_sub'::uuid,'changes_requested','[{"criterion_id":"c","status":"contradicted","note":"New concern"}]','[]',:'va2'::uuid)->>'review_id' as second_veto \gset
+select tests.reset_role();
+update public.agent_reviews set created_at=now()+interval '3 seconds' where id=:'second_veto'::uuid;
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid,(:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'veto_sub'::uuid,'codex')->>'run_id' as vr3 \gset
+select public.add_artifact(:'vr3'::uuid,'diff','acme/app@'||repeat('b',40),'New commit',array['c'])->>'artifact_id' as va3 \gset
+select public.submit_for_review(:'vr3'::uuid,'Changed commit',array[:'va3'::uuid]);
+select tests.reset_role();
+update public.agent_artifacts set created_at=now()+interval '4 seconds' where id=:'va3'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select public.review_task(:'veto_sub'::uuid,'approved','[{"criterion_id":"c","status":"verified"}]','[]',:'va3'::uuid,:'lr'::uuid)->>'review_id' as new_commit_review \gset
+select tests.reset_role();
+update public.agent_reviews set created_at=now()+interval '4 seconds' where id=:'new_commit_review'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'veto_sub','repo','acme/app','head_sha',repeat('b',40)))->>'status','approved','a genuinely new independently reviewed commit is not vetoed by older content');
 select tests.reset_role();
 
 select * from finish();
