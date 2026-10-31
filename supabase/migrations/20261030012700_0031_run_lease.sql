@@ -191,22 +191,32 @@ begin
 end $$;
 revoke all on function private.require_active_task(uuid) from public;
 
+-- A stopped run may report its last uncertain outcome once; it cannot turn that into a new effect.
+alter table public.external_ops add column stop_reported_at timestamptz;
+
 -- Full copy from0006: completed operations and expired runs cannot be rewritten.
 create or replace function public.finish_external_op(p_op_id uuid, p_status text, p_provider_ref text, p_error text default null)
 returns void language plpgsql security definer set search_path = '' as $$
-declare v_op public.external_ops%rowtype; v_r public.agent_runs%rowtype; v_t public.agent_tasks%rowtype;
+declare v_op public.external_ops%rowtype; v_r public.agent_runs%rowtype; v_t public.agent_tasks%rowtype; v_stopped boolean;
 begin
   select * into v_op from public.external_ops where op_id = p_op_id for update;
   if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
   v_r := private.own_run(v_op.run_id);
-  if v_r.status not in ('running','waiting') or v_r.stop_requested_at is not null then
+  select * into v_t from public.agent_tasks where id=v_r.task_id;
+  v_stopped := v_r.status='cancelled' and v_r.stop_requested_at is not null
+    and v_r.error_message is distinct from 'lease expired'
+    and (v_r.stop_acked_at is not null or v_t.state='cancelled');
+  if not v_stopped and (v_r.status in ('running','waiting') and v_t.active_run_id=v_r.id
+      and v_t.state not in ('done','failed','cancelled')) is not true then
     raise exception using errcode='PT422',message='run_not_active';
   end if;
-  perform private.require_active_task(v_r.task_id);
-  if v_op.status not in ('pending','unknown') then raise exception using errcode='PT422',message='invalid_state'; end if;
+  if v_op.status not in ('pending','unknown') or (v_stopped and v_op.stop_reported_at is not null) then
+    raise exception using errcode='PT422',message='invalid_state';
+  end if;
   if p_status is null or p_status not in ('done','unknown','failed') then raise exception using errcode = 'PT400', message = 'invalid_input'; end if;
   update public.external_ops set status = p_status, provider_ref = p_provider_ref, last_error = p_error,
-         checked_at = now(), attempts = attempts + 1
+         checked_at = now(), attempts = attempts + 1,
+         stop_reported_at = case when v_stopped then now() else stop_reported_at end
    where op_id = v_op.op_id;
   perform set_config('app.run_id', v_r.id::text, true);
   insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, author_type, author_id)
@@ -292,7 +302,7 @@ returns void language plpgsql stable security definer set search_path = '' as $$
 declare v_agent uuid:=private.current_agent_id();
 begin
   if v_agent is not null then
-    if exists(select 1 from public.agent_tasks t where t.row_page_id=p_page_id and (t.delegate_agent_id=v_agent
+    if exists(select 1 from public.agent_tasks t where t.row_page_id=p_page_id and t.request_kind is null and (t.delegate_agent_id=v_agent
       or exists(select 1 from public.agent_runs previous where previous.task_id=t.id and previous.agent_id=v_agent))
       and t.state not in ('done','failed','cancelled') and not exists(select 1 from public.agent_runs r where r.id=t.active_run_id
         and r.agent_id=v_agent and r.status in ('running','waiting') and r.stop_requested_at is null)) then

@@ -37,9 +37,9 @@ begin
     if v_agent is null then raise exception using errcode = 'PT403', message = 'agent_disabled'; end if;
     if not exists(select 1 from public.agents a where a.id=v_agent and a.role='lead') then return false; end if;
     if exists(select 1 from public.agent_tasks p where p.id=p_t.parent_task_id and p.delegate_agent_id=v_agent) then
-      perform private.require_active_task(p_t.parent_task_id);
+      if p_t.state not in ('done','failed','cancelled') then perform private.require_active_task(p_t.parent_task_id); end if;
     elsif p_t.delegate_agent_id=v_agent then
-      perform private.require_active_task(p_t.id);
+      if p_t.state not in ('done','failed','cancelled') then perform private.require_active_task(p_t.id); end if;
     else return false;
     end if;
     return true;
@@ -154,7 +154,11 @@ begin
     values (new.workspace_id, v_target, null, v_lead, 'task.updated',
       jsonb_build_object('subtask_id', new.id, 'subtask_state', new.state, 'environment_release', v_items),
       private.next_event_seq(v_target));
-  else
+  end if;
+  if v_lead is null or not exists(select 1 from public.agent_tasks t join public.agent_runs r on r.id=t.active_run_id
+      join public.agents a on a.id=r.agent_id where t.id=v_target and t.state not in ('done','failed','cancelled')
+      and r.agent_id=v_lead and r.status in ('running','waiting') and r.stop_requested_at is null
+      and a.status='enabled' and a.revoked_at is null) then
     insert into public.notifications(workspace_id,user_id,kind,page_id,task_id,actor_type,payload)
     values(new.workspace_id,new.owner_user_id,'input_required',new.row_page_id,new.id,'system',
       jsonb_build_object('subtask_id',new.id,'environment_release',v_items));

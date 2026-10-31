@@ -123,7 +123,7 @@ const MESSAGES: Record<string, string> = {
   rate_limited: 'Too many calls in the last minute. Wait about a minute and retry.',
   budget_exceeded: "The agent's monthly budget is spent. Stop and tell the person.",
   run_active: 'A run is active. Use its owning session, or stop or hand over the task before retrying.',
-  run_not_active: 'The run is not active. Claim the task again with claim_task.',
+  run_not_active: 'This run cannot perform that action. Check get_task: resume open work through its current run; closed tasks cannot be claimed. A Lead may confirm stopped resources with release_environment, or the owner can use Settings > Agents.',
   stop_requested: 'A person asked to stop this run. Acknowledge it with ack_stop instead of handing the task over.',
   idempotency_conflict: 'That idempotency key was already used for a different call on this task. Use a new key.',
   task_unavailable: 'The task cannot be claimed in its current state.',

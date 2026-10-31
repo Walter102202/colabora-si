@@ -1,5 +1,5 @@
 begin;
-select plan(31);
+select plan(34);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_1','page_2','page_3']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+envlead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -92,6 +92,13 @@ select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select is((public.release_environment(:'root_worker'::uuid))->>'released','1','human owner can confirm shutdown');
 select tests.reset_role();
 select ok(not exists(select 1 from public.agent_resources where task_id=:'root_worker'::uuid and status<>'released'),'confirmation makes the resources available again');
+
+
+select ok(exists(select 1 from public.notifications where task_id=:'parent'::uuid and payload ? 'environment_release'),'a terminal root also alerts its owner when no live Lead run can act');
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.release_environment(%L::uuid)',:'parent')),'','a terminal root Lead confirms shutdown without reclaiming a closed task');
+select is(tests.error_of(format('select public.reserve_environment(%L::uuid,%L::jsonb)',:'parent','[{"kind":"stack","value":"closed"}]')),'invalid_state','terminal authority never permits reserving new resources');
+select tests.reset_role();
 
 update public.agents set role='worker' where id=(:'lead'::jsonb->>'agent')::uuid;
 update public.agent_tasks set state='cancelled' where id=:'two'::uuid;
