@@ -40,6 +40,11 @@
       "supabase/migrations/*_0036_*",
       "supabase/migrations/*_0037_*",
       "supabase/migrations/*_0038_*",
+      "supabase/migrations/*_0039_*",
+      "supabase/migrations/*_0040_*",
+      "supabase/migrations/*_0041_*",
+      "supabase/migrations/*_0042_*",
+      "supabase/migrations/*_0043_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -203,6 +208,17 @@
       "AGENTS.md",
       "CLAUDE.md",
       "public/llms.txt"
+    ],
+    "a/p12-voice": [
+      "README.md",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "public/llms.txt",
+      "supabase/config.toml",
+      "lib/tramaIdentity.ts",
+      "lib/tramaSuggestions.ts",
+      "lib/types.ts",
+      "app/globals.css"
     ]
   }
 }
