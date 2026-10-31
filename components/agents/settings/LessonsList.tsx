@@ -1,3 +1,4 @@
+import { useAuthStore } from "@/lib/auth";
 import { useEffect, useMemo, useState } from "react";
 import { acceptedLessons, lessonStats, retireLesson, reviseLesson, useAgentLessons, type LessonRow, type LessonStat } from "@/lib/agentLessons";
 
@@ -37,21 +38,24 @@ function LessonItem({ lesson, stat }: { lesson: LessonRow; stat?: LessonStat }) 
 
 // The lessons that reach agents today and what each one did. Settings → Agents mounts it.
 export function LessonsList({ workspaceId }: { workspaceId: string }) {
+  const user = useAuthStore((s) => s.user);
   const lessons = useAgentLessons((s) => s.lessons);
   const subscribe = useAgentLessons((s) => s.subscribe);
-  const [stats, setStats] = useState<LessonStat[]>([]);
-  useEffect(() => subscribe(workspaceId), [subscribe, workspaceId]);
+  const [stats, setStats] = useState<{ workspaceId: string; user: typeof user; rows: LessonStat[] } | null>(null);
+  useEffect(() => user ? subscribe(workspaceId) : undefined, [subscribe, workspaceId, user]);
   useEffect(() => {
+    if (!user) return;
     let live = true;
-    void lessonStats(workspaceId).then((rows) => { if (live) setStats(rows); }).catch(() => {});
+    void lessonStats(workspaceId).then((rows) => { if (live && useAuthStore.getState().user === user) setStats({ workspaceId, user, rows }); }).catch(() => {});
     return () => { live = false; };
-  }, [workspaceId, lessons]);
-  const accepted = useMemo(() => acceptedLessons(lessons), [lessons]);
-  if (!accepted.length) return null;
+  }, [workspaceId, lessons, user]);
+  const accepted = useMemo(() => acceptedLessons(lessons).filter((l) => l.workspace_id === workspaceId), [lessons, workspaceId]);
+  if (!user || !accepted.length) return null;
+  const currentStats = stats?.workspaceId === workspaceId && stats.user === user ? stats.rows : [];
   return (
     <section aria-label="Lessons" className="space-y-2">
       <h3 className="text-sm font-semibold">Lessons agents receive ({accepted.length})</h3>
-      <ul className="space-y-2">{accepted.map((l) => <LessonItem key={l.id} lesson={l} stat={stats.find((s) => s.lesson_id === l.id)} />)}</ul>
+      <ul className="space-y-2">{accepted.map((l) => <LessonItem key={l.id} lesson={l} stat={currentStats.find((s) => s.lesson_id === l.id)} />)}</ul>
     </section>
   );
 }

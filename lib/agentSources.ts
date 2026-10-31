@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useAuthStore } from "@/lib/auth";
 import { agentErrorMessage, getAgentClient } from "@/lib/agentClient";
 import { byId, learningRpc, liveRows, mergeRow } from "@/lib/agentLive";
 
@@ -37,6 +38,7 @@ export interface DiscrepancyRow {
 export type DiscrepancyResolution = "keep" | "update";
 
 interface SourcesState {
+  workspaceId: string | null;
   status: "idle" | "loading" | "ready" | "error";
   error: string | null;
   sources: Record<string, PageSourceRow>;
@@ -47,20 +49,26 @@ interface SourcesState {
 
 const channel = liveRows("agent-sources");
 
+let loadVersion = 0;
+
 export const useAgentSources = create<SourcesState>()((set, get) => ({
+  workspaceId: null,
   status: "idle",
   error: null,
   sources: {},
   discrepancies: {},
 
   async load(workspaceId) {
+    const version = ++loadVersion, user = useAuthStore.getState().user;
     const client = getAgentClient();
-    if (!client) return;
-    set({ status: "loading", error: null });
+    set({ workspaceId, status: "loading", error: null, sources: {}, discrepancies: {} });
+    if (!client || !user) { set({ status: "idle" }); return; }
+    const current = () => version === loadVersion && user === useAuthStore.getState().user;
     const [sources, discrepancies] = await Promise.all([
       client.from("page_sources").select("*").eq("workspace_id", workspaceId).limit(1000),
       client.from("page_discrepancies").select("*").eq("workspace_id", workspaceId).eq("status", "open").limit(200),
     ]);
+    if (!current()) return;
     const failed = sources.error ?? discrepancies.error;
     if (failed) {
       set({ status: "error", error: agentErrorMessage(failed) });
@@ -71,11 +79,20 @@ export const useAgentSources = create<SourcesState>()((set, get) => ({
 
   subscribe(workspaceId) {
     return channel.subscribe(workspaceId, {
-      page_sources: (payload) => set({ sources: mergeRow(get().sources, payload) }),
-      page_discrepancies: (payload) => set({ discrepancies: mergeRow(get().discrepancies, payload) }),
+      page_sources: (payload) => { if (get().workspaceId === workspaceId) set({ sources: mergeRow(get().sources, payload) }); },
+      page_discrepancies: (payload) => { if (get().workspaceId === workspaceId) set({ discrepancies: mergeRow(get().discrepancies, payload) }); },
     }, () => void get().load(workspaceId));
   },
 }));
+
+// Auth updates replace the user object, including a new session for the same account.
+// Invalidate before React effects run so cached reads cannot cross that boundary.
+useAuthStore.subscribe((state, previous) => {
+  if (state.user === previous.user) return;
+  loadVersion += 1;
+  channel.close();
+  useAgentSources.setState({ workspaceId: null, status: "idle", error: null, sources: {}, discrepancies: {} });
+});
 
 // Selectors take the record, not the store: a selector that builds an array on every call would re-render forever.
 

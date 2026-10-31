@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useAuthStore } from "@/lib/auth";
 import { agentErrorMessage, getAgentClient } from "@/lib/agentClient";
 import { byId, learningRpc, liveRows, mergeRow } from "@/lib/agentLive";
 
@@ -43,6 +44,7 @@ export interface LessonStat {
 export type LessonDecision = "accept" | "dismiss";
 
 interface LessonsState {
+  workspaceId: string | null;
   status: "idle" | "loading" | "ready" | "error";
   error: string | null;
   lessons: Record<string, LessonRow>;
@@ -52,16 +54,22 @@ interface LessonsState {
 
 const channel = liveRows("agent-lessons");
 
+let loadVersion = 0;
+
 export const useAgentLessons = create<LessonsState>()((set, get) => ({
+  workspaceId: null,
   status: "idle",
   error: null,
   lessons: {},
 
   async load(workspaceId) {
+    const version = ++loadVersion, user = useAuthStore.getState().user;
     const client = getAgentClient();
-    if (!client) return;
-    set({ status: "loading", error: null });
+    set({ workspaceId, status: "loading", error: null, lessons: {} });
+    if (!client || !user) { set({ status: "idle" }); return; }
+    const current = () => version === loadVersion && user === useAuthStore.getState().user;
     const { data, error } = await client.from("lessons").select("*").eq("workspace_id", workspaceId).order("created_at", { ascending: false }).limit(500);
+    if (!current()) return;
     if (error) {
       set({ status: "error", error: agentErrorMessage(error) });
       return;
@@ -71,10 +79,19 @@ export const useAgentLessons = create<LessonsState>()((set, get) => ({
 
   subscribe(workspaceId) {
     return channel.subscribe(workspaceId, {
-      lessons: (payload) => set({ lessons: mergeRow(get().lessons, payload) }),
+      lessons: (payload) => { if (get().workspaceId === workspaceId) set({ lessons: mergeRow(get().lessons, payload) }); },
     }, () => void get().load(workspaceId));
   },
 }));
+
+// Auth updates replace the user object, including a new session for the same account.
+// Invalidate before React effects run so cached reads cannot cross that boundary.
+useAuthStore.subscribe((state, previous) => {
+  if (state.user === previous.user) return;
+  loadVersion += 1;
+  channel.close();
+  useAgentLessons.setState({ workspaceId: null, status: "idle", error: null, lessons: {} });
+});
 
 // Selectors take the record, not the store: a selector that builds an array on every call would re-render forever.
 

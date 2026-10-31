@@ -2,6 +2,10 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { User } from "@supabase/supabase-js";
+import { useAuthStore } from "@/lib/auth";
+import { DiscrepanciesHome } from "@/components/agents/DiscrepanciesHome";
+import { useAgentSources } from "@/lib/agentSources";
 import { DiscrepancyCard } from "@/components/agents/panel/DiscrepancyCard";
 import { openDiscrepancies, parseSourceInput, sourcesOfPage, type DiscrepancyRow, type PageSourceRow } from "@/lib/agentSources";
 
@@ -45,4 +49,15 @@ describe("parseSourceInput", () => {
     expect(parseSourceInput("javascript:alert(1)", origin)).toBeNull();
     expect(parseSourceInput("not a link", origin)).toBeNull();
   });
+});
+
+it("the differences home never renders another workspace's cached discrepancy", () => {
+  act(() => useAuthStore.setState({ user: { id: "person" } as User, loading: false }));
+  useAgentSources.setState({ discrepancies: {
+    a: { ...discrepancy, id: "a", workspace_id: "a", summary: "Private A" },
+    b: { ...discrepancy, id: "b", workspace_id: "b", summary: "Visible B" },
+  } });
+  const host = render(createElement(DiscrepanciesHome, { workspaceId: "b" }));
+  expect(host.textContent).not.toContain("Private A");
+  expect(host.textContent).toContain("Visible B");
 });

@@ -1,3 +1,4 @@
+import { useAuthStore } from "@/lib/auth";
 import { useEffect, useMemo, useState } from "react";
 import { DiscrepancyCard } from "@/components/agents/panel/DiscrepancyCard";
 import { getAgentClient } from "@/lib/agentClient";
@@ -9,6 +10,7 @@ const STATUS: Record<PageSourceRow["status"], string> = { current: "Up to date",
 
 // What this page was built from. PresenceBadge mounts it in the topbar of every page.
 export function SourcesBadge({ pageId }: { pageId: string }) {
+  const user = useAuthStore((s) => s.user);
   const workspaceId = useStore((s) => s.syncWorkspaceId);
   const pages = useStore((s) => s.pages);
   const allSources = useAgentSources((s) => s.sources);
@@ -16,10 +18,10 @@ export function SourcesBadge({ pageId }: { pageId: string }) {
   const subscribe = useAgentSources((s) => s.subscribe);
   const [link, setLink] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const active = !!getAgentClient() && !!workspaceId;
-  useEffect(() => (active && workspaceId ? subscribe(workspaceId) : undefined), [active, subscribe, workspaceId]);
-  const sources = useMemo(() => sourcesOfPage(allSources, pageId), [allSources, pageId]);
-  const discrepancy = useMemo(() => openDiscrepancies(allOpen).find((d) => d.page_id === pageId), [allOpen, pageId]);
+  const active = !!getAgentClient() && !!workspaceId && !!user;
+  useEffect(() => (active && workspaceId ? subscribe(workspaceId) : undefined), [active, subscribe, workspaceId, user]);
+  const sources = useMemo(() => sourcesOfPage(allSources, pageId).filter((s) => s.workspace_id === workspaceId), [allSources, pageId, workspaceId]);
+  const discrepancy = useMemo(() => openDiscrepancies(allOpen).find((d) => d.page_id === pageId && d.workspace_id === workspaceId), [allOpen, pageId, workspaceId]);
   if (!active) return null;
 
   const moved = sources.filter((s) => s.status !== "current").length;

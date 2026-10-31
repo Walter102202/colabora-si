@@ -1,3 +1,4 @@
+import { useAuthStore } from "@/lib/auth";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { agentErrorMessage, getAgentClient } from "@/lib/agentClient";
 
@@ -19,46 +20,48 @@ export function mergeRow<T extends { id: string }>(rows: Record<string, T>, chan
 }
 
 export function liveRows(prefix: string) {
-  let channel: RealtimeChannel | null = null;
-  let workspace: string | null = null;
-  let subscribers = 0;
+  type Subscription = { channel: RealtimeChannel; client: NonNullable<ReturnType<typeof getAgentClient>>;
+    workspace: string; user: ReturnType<typeof useAuthStore.getState>["user"]; subscribers: number };
+  let active: Subscription | null = null;
+  const close = () => {
+    const closing = active;
+    active = null;
+    if (closing) void closing.client.removeChannel(closing.channel);
+  };
   return {
+    close,
     subscribe(workspaceId: string, tables: Record<string, (change: RowChange) => void>, onOpen: () => void): () => void {
-      const client = getAgentClient();
-      // A client without Realtime gets no live rows: these views are extras and never take a page down.
-      if (!client?.realtime) return () => {};
-      const once = () => {
+      const client = getAgentClient(), user = useAuthStore.getState().user;
+      // A client without Realtime gets no live rows: these views never take a page down.
+      if (!client?.realtime || !user) return () => {};
+      const once = (subscription: Subscription) => {
         let released = false;
         return () => {
-          if (released) return;
+          if (released || active !== subscription) return;
           released = true;
-          subscribers -= 1;
-          if (subscribers <= 0 && channel) {
-            const closing = channel;
-            channel = null;
-            workspace = null;
-            void client.removeChannel(closing);
-          }
+          if (--subscription.subscribers === 0) close();
         };
       };
-      if (channel && workspace === workspaceId) {
-        subscribers += 1;
-        return once();
+      if (active?.workspace === workspaceId && active.user === user && active.client === client) {
+        active.subscribers += 1;
+        return once(active);
       }
-      if (channel) void client.removeChannel(channel);
-      subscribers = 1;
-      workspace = workspaceId;
+      close();
       const topic = `${prefix}-${workspaceId}`;
-      // supabase-js returns the registered channel for a live topic, and `.on` throws on one already subscribed.
+      // removeChannel is async; don't reuse a still-registered subscribed channel.
       client.realtime.channels = client.realtime.channels.filter((c) => c.topic !== `realtime:${topic}`);
-      const filter = `workspace_id=eq.${workspaceId}`;
-      let next = client.channel(topic);
+      const subscription: Subscription = { channel: client.channel(topic), client, workspace: workspaceId, user, subscribers: 1 };
+      active = subscription;
       for (const [table, onChange] of Object.entries(tables)) {
-        next = next.on("postgres_changes", { event: "*", schema: "public", table, filter }, onChange);
+        subscription.channel.on("postgres_changes", { event: "*", schema: "public", table, filter: `workspace_id=eq.${workspaceId}` }, (change) => {
+          if (active !== subscription || useAuthStore.getState().user !== user) return;
+          if (change.eventType !== "DELETE" && change.new.workspace_id !== workspaceId) return;
+          onChange(change);
+        });
       }
-      channel = next.subscribe();
+      subscription.channel.subscribe();
       onOpen();
-      return once();
+      return once(subscription);
     },
   };
 }
