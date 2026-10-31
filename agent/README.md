@@ -115,3 +115,9 @@ Any harness that speaks MCP connects to the same server and follows the same tas
 ## Tests
 
 `npx vitest run tests/agents/agentLoop.test.ts` runs the loop against `agent/test/stub-model.mjs` (a local scripted chat completions server) and `agent/test/stub-mcp.mjs` (an in-memory workspace). No network calls.
+
+### Verified Telegram transport
+
+`TELEGRAM_TRANSPORT=polling` remains the default and cannot decide approvals. With `webhook`, the platform agent takes `channel_updates` through MCP, delivers them to the existing inbox, and acknowledges only after delivery. Text and ffmpeg voice handling are unchanged. Queue/status tools are hidden from the model. The runtime suppresses legacy owner-chat notices in webhook mode; the server sends each notice to the linked task owner.
+
+The webhook signing secret is server-only. Register it in a separate setup process with `node agent/telegram-webhook.mjs`; do not put it in the runtime environment. `/status` reports person-scoped saved work; `/pending` asks the server to resend current notices. Confirmations and expiry/permission checks happen on the server with the linked human identity, not the runtime token.

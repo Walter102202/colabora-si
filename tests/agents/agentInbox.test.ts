@@ -312,3 +312,12 @@ it.each([
   await channel.start({ signal: stop.signal });
   expect(call).not.toHaveBeenCalled();
 });
+
+it("registers only message and callback updates without discarding pending deliveries", async () => {
+  const { setTelegramWebhook } = await import("../../agent/telegram-webhook.mjs");
+  const fetchImpl = vi.fn(async () => Response.json({ ok: true }));
+  await setTelegramWebhook({ token: "fake", secret: "local-only-test-secret", url: "https://example.test/functions/v1/telegram-webhook", fetchImpl });
+  const body = JSON.parse(String((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body));
+  expect(body.allowed_updates).toEqual(["message", "callback_query"]);
+  expect(body.drop_pending_updates).toBe(false);
+});

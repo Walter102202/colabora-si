@@ -212,3 +212,13 @@ When Trama proposes work, **Do it** creates a normal task with your original mes
 Voice is transcribed through `voice-transcribe`; browser clips are reviewed before sending. Audio stays in memory and is not stored by colabora.si. Meta receives it for transcription; Telegram retains its own copy. Limits are five minutes in the app, ten minutes for Telegram voice notes, plus person, workspace-agent budget and global quotas enforced by the server before calling Meta. Telegram requires `ffmpeg` on the agent host.
 
 Explicit requests such as “save in notes: buy bread” are verified from the original person message before the agent can save. Pasted or forwarded text cannot authorize saving. Notes are private by default; Undo and `/undo` or `/deshacer` remove a saved note. The platform runtime must be running to answer and save; messages remain queued while it is unavailable.
+
+### Trama in Telegram
+
+Settings → Agents → Connect Telegram creates a one-use link valid for ten minutes. Open it in a private chat with the configured bot; Disconnect revokes the link. Trama can report saved work status with “How is everything going?”; `/status` and `/pending` work without a model.
+
+The verified `telegram-webhook` receives Telegram updates. Ordinary text and voice enter a persistent queue for the platform runtime; only verified callbacks reach service-role decision RPCs. Notices are built from saved approval rows and target the task owner, regardless of which agent asked. Payment, editing an approval, and delivery acceptance stay in the app. Forwarded messages, voice and groups cannot decide. Open replies prepare an answer and require a separate confirmation button because Telegram does not identify clipboard pastes.
+
+Server setup after deployment: configure `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `DISPATCH_SECRET` and `APP_URL` for the Edge Functions. Configure `private.app_secrets` with the non-secret `telegram_bot_username` and Vault `project_url` / `dispatch_cron_secret` for the ten-second notifier. Switch the platform runtime to `TELEGRAM_TRANSPORT=webhook` before registering the webhook; polling and webhooks cannot receive on the same bot simultaneously. The runtime never receives the webhook secret.
+
+Run `node agent/telegram-webhook.mjs` separately with `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` and `TELEGRAM_WEBHOOK_URL` in that setup process environment. It retains pending Telegram updates and prints no credentials. Local integration uses `tests/agents/channel-smoke.mjs` with a fake Telegram server; never aim that test at a hosted project.
