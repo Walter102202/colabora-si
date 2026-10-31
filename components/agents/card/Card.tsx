@@ -160,6 +160,11 @@ function TaskCard({
       agent={agent}
       run={data.run}
       approval={approval}
+      actionApprovals={data.approvals_pending?.filter((a) => a.kind === "action")}
+      onDecideApproval={async (id, decision, response) => {
+        const result = await call("decide_approval", { approval_id: id, decision, ...(response ? { response } : {}) }, link);
+        await applyResult(result, task.id);
+      }}
       openQuestions={data.approvals_pending ? openQuestionsFor(data.approvals_pending, task.id, approval?.id ?? null) : (data.questions ?? [])}
       autonomy={data.autonomy ?? null}
       onDecideQuestion={async (id, decision, response) => {
@@ -170,6 +175,7 @@ function TaskCard({
       review={review}
       brief={data.brief}
       ciChecks={data.ci_checks}
+      environment={data.environment}
       activities={data.activities}
       subtasks={subtasks}
       reviewerName={reviewerName}

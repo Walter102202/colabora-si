@@ -94,6 +94,12 @@ export async function loadTaskBundle(
   };
 }
 
+export async function loadEnvironment(db: Db, taskId: string): Promise<Row[]> {
+  return await must(db.select<Row>({ table: 'agent_resources', columns: 'kind,value,status',
+    filters: [{ col: 'task_id', op: 'eq', value: taskId }, { col: 'status', op: 'neq', value: 'released' }],
+    order: [{ column: 'created_at', ascending: true }] })) ?? [];
+}
+
 /** One line of an activity body for summaries. */
 export function excerpt(body: unknown, max = 280): string {
   const b = (body ?? {}) as Row;

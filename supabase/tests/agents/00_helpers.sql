@@ -157,3 +157,18 @@ end $$;
 select plan(1);
 select pass('test helpers installed');
 select * from finish();
+
+-- Build a server-labelled review fixture for focused legacy reviewer tests. Full automatic creation is tested in 42.
+create or replace function tests.make_review_task(p_row text,p_brief jsonb,p_agent uuid,p_parent uuid default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_result jsonb;
+begin
+  v_result:=public.create_agent_task(p_row,jsonb_set(p_brief,'{policies}',coalesce(p_brief->'policies','{}')-'review_of'),p_agent,p_parent);
+  update public.task_briefs set policies=policies||jsonb_build_object('review_of',p_brief->'policies'->'review_of') where task_id=(v_result->>'task_id')::uuid;
+  update public.agent_tasks set server_review=true where id=(v_result->>'task_id')::uuid;
+  return v_result;
+end $$;
+create or replace function tests.make_review_subtask(p_parent uuid,p_row text,p_brief jsonb,p_agent uuid)
+returns jsonb language sql security definer set search_path='' as $$
+  select tests.make_review_task(p_row,p_brief,p_agent,p_parent);
+$$;

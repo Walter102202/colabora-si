@@ -5,7 +5,7 @@ import type { TaskDiff } from "@/lib/agentRunDiff";
 import { RunDiffCard } from "@/components/agents/panel/RunDiffCard";
 import { useQueuedChoice } from "@/components/agents/panel/useQueuedChoice";
 import type { ActivityRow, ApprovalRow, ArtifactRow, BriefRow, ReviewRow, RunRow, TaskRow } from "@/lib/agentTasks";
-import type { ApprovalDecision, MessageSignal } from "@/lib/agentActions";
+import type { ApprovalDecision, MergeCondition, MessageSignal } from "@/lib/agentActions";
 import type { AgentRole } from "@/lib/agentsStore";
 import { RUN_STATUS_LABEL, acceptanceLabel, canAcceptAndClose, isTerminal, whatWillHappen } from "@/lib/agentState";
 import { formatRelative } from "@/lib/utils";
@@ -21,6 +21,10 @@ import { FeedbackComposer } from "@/components/agents/panel/FeedbackComposer";
 import { MetricsList } from "@/components/agents/panel/MetricsList";
 import type { Metric } from "@/lib/agentMetrics";
 import type { CiCheckRow } from "@/lib/agentCi";
+import type { EnvironmentResource } from "@/lib/agentTasks";
+import { EnvironmentCard } from "@/components/agents/panel/EnvironmentCard";
+import { MergeRule } from "@/components/agents/panel/MergeRule";
+import { ApprovalGroupCard } from "@/components/agents/panel/ApprovalGroupCard";
 
 // The row panel as pure views: everything a person sees and does about one
 // task, driven by data and callbacks. No router, no stores, no network, so
@@ -46,10 +50,14 @@ export interface TaskViewProps {
   agent: AgentOption | null;
   run: RunRow | null;
   approval: ApprovalRow | null;
+  actionApprovals?: ApprovalRow[];
+  onDecideApproval?: (id: string, decision: ApprovalDecision, response: Record<string, unknown> | null) => Promise<void>;
+  onSetMergeRule?: (conditions: MergeCondition[] | null) => Promise<void>;
   artifact: ArtifactRow | null;
   review: ReviewRow | null;
   brief: BriefRow | null;
   ciChecks?: CiCheckRow[];
+  environment?: EnvironmentResource[];
   activities: ActivityRow[];
   subtasks: SubtaskItem[];
   reviewerName: string | null;
@@ -136,13 +144,17 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ task, agent, run, approval, artifact, review, brief, ciChecks, activities, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ task, agent, run, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, environment = [], activities, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [closing, setClosing] = useState<"accepted" | "rejected" | null>(null);
-  const [closeNote, setCloseNote] = useState("");
+  const decisionIdentity = JSON.stringify([task.id, task.state, task.brief_version, brief?.version, artifact?.id, artifact?.version]);
+  const [closeDraft, setCloseDraft] = useState<{ identity: string; decision: "accepted" | "rejected"; note: string } | null>(null);
+  const closing = closeDraft?.identity === decisionIdentity ? closeDraft.decision : null;
+  const closeNote = closing ? closeDraft!.note : "";
+  const setClosing = (decision: "accepted" | "rejected" | null) => setCloseDraft(decision ? { identity: decisionIdentity, decision, note: "" } : null);
+  const setCloseNote = (note: string) => setCloseDraft((current) => current?.identity === decisionIdentity ? { ...current, note } : current);
   const [handingOver, setHandingOver] = useState(false);
   const [handoverAgent, setHandoverAgent] = useState("");
   const [handoverNote, setHandoverNote] = useState("");
@@ -211,6 +223,11 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
 
       {error && <p role="alert" className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-700 dark:text-red-400">{error}</p>}
 
+      <EnvironmentCard environment={environment} />
+      {!task.parent_task_id && !terminal && onSetMergeRule && <MergeRule
+        enabled={autonomy?.merge_rule?.enabled === true}
+        onChange={onSetMergeRule} />}
+
       <section className="space-y-1">
         <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">What was asked and what changed</h4>
         <p>{brief?.objective ?? task.title ?? "Loading brief…"}</p>
@@ -272,14 +289,15 @@ export function TaskView({ task, agent, run, approval, artifact, review, brief, 
 
       <section className="space-y-1">
         <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Verification</h4>
-        <LeadReviewCard task={task} review={review} brief={brief} ciChecks={ciChecks} artifact={artifact} reviewerName={reviewerName} onReview={onReview} />
+        <LeadReviewCard key={decisionIdentity} task={task} review={review} brief={brief} ciChecks={ciChecks} artifact={artifact} reviewerName={reviewerName} onReview={onReview} />
       </section>
 
       <SubtaskList subtasks={subtasks} onOpenTask={onOpenTask} />
 
-      {approval && (approval.kind === "action"
-        ? <ApprovalCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />
-        : <DecisionCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />)}
+      {actionApprovals && onDecideApproval
+        ? <ApprovalGroupCard approvals={actionApprovals} onDecide={onDecideApproval} focusApprovalId={focusApprovalId} />
+        : approval?.kind === "action" && <ApprovalCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />}
+      {approval && approval.kind !== "action" && <DecisionCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />}
 
       {openQuestions.map((q) => (
         <DecisionCard key={q.id} approval={q} nonBlocking={q.blocking === false} focus={focusApprovalId === q.id}

@@ -35,7 +35,8 @@ export const WORLD_TOOLS = [
         },
         "external_session_id": {
           "type": "string",
-          "maxLength": 200
+          "maxLength": 200,
+          "description": "Your harness session id. Codex: the value of the CODEX_THREAD_ID environment variable. It lets corrections reach this same session."
         },
         "resume": {
           "type": "boolean",

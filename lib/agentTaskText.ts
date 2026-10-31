@@ -67,6 +67,7 @@ export function activityLabel(a: ActivityRow): string {
     case "checkpoint": return `checkpoint: ${pick("next_step") ?? ""}`;
     case "handover": return handoverLabel(a);
     case "prompt": {
+      if (b.source === "lease") return "The session went silent; the task is back in the queue";
       const close = pick("close");
       if (close) return `closed as ${close}${pick("text") ? `: ${pick("text")}` : ""}`;
       return `${pick("signal") ?? "message"}: ${pick("text") ?? ""}`;
@@ -74,6 +75,7 @@ export function activityLabel(a: ActivityRow): string {
     case "thought":
       return pick("text") ?? "";
     case "action": {
+      if (b.auto_by === "condition" || (b.op === "auto_approval" && b.by === "condition")) return "Approved automatically: its conditions hold";
       const op = pick("op");
       return pick("summary") ?? (op ? OP_LABEL[op] ?? op : "action");
     }

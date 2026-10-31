@@ -145,6 +145,18 @@ Deno.test('get_task returns the card: run, pending approval, current artifact, l
   assert.deepEqual(h.rpcs.filter((r) => r.fn !== 'task_autonomy'), [{ fn: 'task_diff', params: { p_task_id: 't1' } }]);
 });
 
+Deno.test('get_task includes only its unreleased environment', async () => {
+  const tables = world();
+  tables.agent_resources = [
+    { task_id: 't1', kind: 'stack', value: 'p11', status: 'held' },
+    { task_id: 't1', kind: 'ports', value: '60990-60999', status: 'releasing' },
+    { task_id: 't1', kind: 'migration', value: '0031', status: 'released' },
+    { task_id: 'sub1', kind: 'branch', value: 'a/other', status: 'held' },
+  ];
+  const out = await tool('get_task').handler({ task_id: 't1' }, harness(tables).ctx);
+  assert.deepEqual(out.structured.environment, tables.agent_resources.slice(0, 2));
+});
+
 Deno.test('currentArtifact picks the highest version, then the latest', () => {
   assert.equal(currentArtifact([]), null);
   const pick = currentArtifact([

@@ -60,9 +60,10 @@ select is(tests.error_of(format('select public.close_subtask(%L::uuid)', :'s3'))
 
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select public.claim_task(:'p1'::uuid, 'claude_code') ->> 'run_id' as lr \gset
+select public.claim_task(:'p2'::uuid, 'claude_code');
 select is(tests.error_of(format('select public.close_subtask(%L::uuid)', :'s1')), 'policy_denied', 'without policy or checks the Lead cannot close');
 select public.close_subtask(:'s3'::uuid);
-select public.claim_task(:'p1'::uuid, 'claude_code') ->> 'run_id' as lr \gset
 select public.review_task(:'s2'::uuid, 'approved', '[{"criterion_id":"d1","status":"verified","note":"green"}]'::jsonb,
                           '[{"kind":"capture","ref":"npm test"}]'::jsonb, null, :'lr'::uuid);
 select public.close_subtask(:'s2'::uuid, 'accepted', '[{"kind":"capture","ref":"npm test"}]'::jsonb);

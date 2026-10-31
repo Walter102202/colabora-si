@@ -25,6 +25,7 @@ function matches(row: Row, f: Filter): boolean {
 function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = () => {}) {
   const rpcs: { fn: string; params: Record<string, unknown> }[] = [];
   const selects: string[] = [];
+  const selectSpecs: SelectSpec[] = [];
   const selectAt: { table: string; at: number }[] = [];
   let clock = 1_000_000;
   let sleeps = 0;
@@ -32,6 +33,14 @@ function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = (
     download: async () => ({ data: null, error: null }),
     rpc: <T>(fn: string, params: Record<string, unknown>) => {
       rpcs.push({ fn, params });
+      if (fn === 'mark_events_delivered') for (const event of tables.agent_events ?? []) {
+        const ids = params.p_event_ids as string[] | undefined;
+        const payload = (event.payload ?? {}) as Row;
+        const notice = (event.type === 'task.continue' && payload.review_of) ||
+          (event.type === 'task.updated' && ['verdict','minor_findings','environment_release','review_timeout'].some(key => key in payload));
+        if (event.agent_id === ctx.principal.agentId && ['queued','leased'].includes(String(event.status)) &&
+            (ids ? ids.includes(String(event.event_id)) : !notice)) event.status = 'delivered';
+      }
       const data = fn === 'open_dependencies' ? Object.fromEntries((tables.agent_tasks ?? [])
         .filter(t => (params.p_task_ids as string[]).includes(String(t.id)))
         .map(t => [t.id, ((t.depends_on_task_ids ?? []) as string[]).filter(id => !tables.agent_tasks.some(d => d.id === id && d.state === 'done'))])) : null;
@@ -39,6 +48,7 @@ function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = (
     },
     select: <T>(spec: SelectSpec) => {
       selects.push(spec.table);
+      selectSpecs.push(spec);
       selectAt.push({ table: spec.table, at: clock - 1_000_000 });
       let rows = (tables[spec.table] ?? []).filter((r) => (spec.filters ?? []).every((f) => matches(r, f)));
       for (const o of [...(spec.order ?? [])].reverse()) {
@@ -48,6 +58,7 @@ function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = (
           return o.ascending === false ? -cmp : cmp;
         });
       }
+      if (spec.offset) rows = rows.slice(spec.offset);
       if (spec.limit !== undefined) rows = rows.slice(0, spec.limit);
       return Promise.resolve({ data: rows.map((r) => ({ ...r })) as T[], error: null });
     },
@@ -65,7 +76,7 @@ function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = (
     },
     progress: () => {},
   };
-  return { ctx, rpcs, selects, selectAt, sleeps: () => sleeps, elapsed: () => clock - 1_000_000 };
+  return { ctx, rpcs, selects, selectSpecs, selectAt, sleeps: () => sleeps, elapsed: () => clock - 1_000_000 };
 }
 
 function task(overrides: Row = {}): Row {
@@ -83,6 +94,45 @@ function activity(seq: number, overrides: Row = {}): Row {
     body: { op: 'append_blocks', summary: `step ${seq}` }, created_at: `2026-10-27T10:00:0${seq}+00:00`, ...overrides,
   };
 }
+
+Deno.test('a Lead without a bridge receives policy review, verdict, minor findings and environment release notices', async () => {
+  const after=encodeTaskCursor({t:normTs('2026-10-27T10:00:01Z'),k:[]});
+  const payloads = [
+    { review_of:'delivery',review_task_id:'review' },
+    { review_of:'delivery',verdict:'approved',minor_findings:[{note:'Later'}] },
+    { subtask_id:'delivery',environment_release:[{kind:'stack',value:'local'}] },
+  ];
+  const tables = { agent_tasks:[task({id:'parent',updated_at:'2026-10-27T10:00:00Z'})], agent_activities:[] as Row[],
+    agent_events: payloads.map((payload,i)=>event(`notice-${i}`,`2026-10-27T10:00:0${i+2}Z`,{task_id:'parent',type:i===0?'task.continue':'task.updated',payload})) };
+  const h=harness(tables);
+  const result=await tool('wait_for_my_tasks').handler({after,timeout_s:0},h.ctx);
+  assert.equal(result.structured.changed,true);
+  const views=result.structured.tasks as Row[];
+  assert.deepEqual(views.map(v=>(v.notice as Row).payload),payloads);
+  assert.equal(views[0].reason,'under_review');
+  const again=await tool('wait_for_my_tasks').handler({after:result.structured.next_cursor,timeout_s:0},h.ctx);
+  assert.equal(again.structured.changed,false,'the event cursor prevents repeated notices');
+  // An event timestamp must never advance the task/prompt cursor past a late commit.
+  tables.agent_activities.push(activity(9,{task_id:'parent',type:'prompt',created_at:'2026-10-27T10:00:01.500000Z',body:{signal:'feedback',text:'Late transaction'}}));
+  const late=await tool('wait_for_my_tasks').handler({after:result.structured.next_cursor,timeout_s:0},h.ctx);
+  assert.equal((late.structured.tasks as Row[])[0].reason,'feedback');
+});
+
+Deno.test('wait_for_my_tasks returns the latest own session on both snapshot and cursor paths', async () => {
+  const tables: Record<string, Row[]> = { agent_tasks: ['own', 'other', 'none'].map((id) => task({ id, state: 'queued' })), agent_runs: [
+    { task_id: 'own', agent_id: 'agent-1', external_session_id: 'own-old', started_at: '2026-10-27T09:00:00Z' },
+    { task_id: 'own', agent_id: 'agent-1', external_session_id: 'own-new', started_at: '2026-10-27T10:00:00Z' },
+    { task_id: 'own', agent_id: 'agent-2', external_session_id: 'someone-else', started_at: '2026-10-27T11:00:00Z' },
+    { task_id: 'other', agent_id: 'agent-2', external_session_id: 'someone-else', started_at: '2026-10-27T11:00:00Z' },
+  ] };
+  const h = harness(tables);
+  const first = await tool('wait_for_my_tasks').handler({ timeout_s: 0 }, h.ctx);
+  const sessions = (out: Row) => Object.fromEntries((out.tasks as Row[]).map((t) => [t.task_id, t.session_id]));
+  assert.deepEqual(sessions(first.structured), { own: 'own-new', other: null, none: null });
+  for (const t of tables.agent_tasks) t.updated_at = '2026-10-27T10:00:01Z';
+  const next = await tool('wait_for_my_tasks').handler({ timeout_s: 0, after: first.structured.next_cursor }, h.ctx);
+  assert.deepEqual(sessions(next.structured), { own: 'own-new', other: null, none: null });
+});
 
 Deno.test('a queued task with an open dependency is not offered', async () => {
   const h = harness({ agent_tasks: [
@@ -337,7 +387,7 @@ Deno.test('wait_for_task with a short timeout re-reads the task at the deadline,
   assert.equal(h.elapsed(), 6000);
 });
 
-Deno.test('wait_for_my_tasks: an event for a task that is not mine triggers a full pass but does not move the cursor', async () => {
+Deno.test('wait_for_my_tasks: unrelated events advance only the independent event position', async () => {
   const tables = { agent_tasks: [task({ id: 'p1', updated_at: '2026-10-27T10:00:00+00:00' })], agent_activities: [] as Row[], agent_events: [] as Row[] };
   const h = harness(tables, (n) => {
     if (n === 1) tables.agent_events.push(event('e7', '2026-10-27T10:00:30+00:00', { task_id: 'other-task', type: 'task.start' }));
@@ -345,7 +395,7 @@ Deno.test('wait_for_my_tasks: an event for a task that is not mine triggers a fu
   const after = encodeTaskCursor({ t: normTs('2026-10-27T10:00:01+00:00'), k: [] });
   const out = await tool('wait_for_my_tasks').handler({ after, timeout_s: 5 }, h.ctx);
   assert.equal(out.structured.changed, false);
-  assert.deepEqual(decodeTaskCursor(String(out.structured.next_cursor)), decodeTaskCursor(after));
+  assert.deepEqual(decodeTaskCursor(String(out.structured.next_cursor)), { ...decodeTaskCursor(after), e: { t: normTs('2026-10-27T10:00:30+00:00'), k: ['e:e7'] } });
   assert.equal(h.selects.filter((t) => t === 'agent_tasks').length, 2); // the first pass and the one the event triggered; nothing at the deadline
 });
 
@@ -491,10 +541,15 @@ Deno.test('wait_for_my_tasks with after reports a task that a review just blocke
   assert.deepEqual((out.structured.tasks as Row[]).map((t) => [t.task_id, t.reason, t.waiting_on]), [['t1', 'feedback', 'human']]);
 });
 
-Deno.test('wait_for_my_tasks reads reviews and runs only for tasks waiting without a run', async () => {
+Deno.test('a queued task reads only its own session, not human-wait classification history', async () => {
   const h = harness({ agent_tasks: [task({ id: 'q1', state: 'queued', active_run_id: null })], agent_activities: [] });
   await tool('wait_for_my_tasks').handler({ timeout_s: 120 }, h.ctx);
-  assert.ok(!h.selects.includes('agent_reviews') && !h.selects.includes('agent_runs'), h.selects.join(', '));
+  assert.ok(!h.selects.includes('agent_reviews'), h.selects.join(', '));
+  assert.deepEqual(h.selectSpecs.filter((s) => s.table === 'agent_runs'), [{
+    table: 'agent_runs', columns: 'task_id,external_session_id,started_at',
+    filters: [{ col: 'task_id', op: 'in', value: ['q1'] }, { col: 'agent_id', op: 'eq', value: 'agent-1' }],
+    order: [{ column: 'started_at', ascending: false }], limit: 200,
+  }]);
 });
 
 Deno.test('wait_for_task hands over the approval_id and decision of an answer', async () => {
@@ -565,4 +620,57 @@ Deno.test('a completed dependency hidden by RLS releases the assigned task', asy
   h.ctx.db.rpc = <T>(fn: string) => Promise.resolve({ data: (fn === 'open_dependencies' ? { b: [] } : null) as T, error: null });
   const out = await tool('wait_for_my_tasks').handler({ timeout_s: 0 }, h.ctx);
   assert.deepEqual((out.structured.tasks as Row[]).map(t => t.task_id), ['b']);
+});
+
+Deno.test('cursorless polls do not replay Lead history, but overlapping cursors recover late commits once', async () => {
+  const tables={agent_tasks:[task()],agent_events:[event('old','2026-10-27T10:00:04Z',{type:'task.updated',payload:{verdict:'approved',review_of:'delivery'}})]};
+  const h=harness(tables);
+  const initial=await tool('wait_for_my_tasks').handler({timeout_s:0},h.ctx);
+  assert.equal((initial.structured.tasks as Row[]).filter(t=>t.notice).length,0,'no cursor starts at the current event baseline');
+  tables.agent_events.push(event('new','2026-10-27T10:00:06Z',{type:'task.updated',payload:{verdict:'approved',review_of:'delivery'}}));
+  const next=await tool('wait_for_my_tasks').handler({after:initial.structured.next_cursor,timeout_s:0},h.ctx);
+  assert.equal((next.structured.tasks as Row[]).filter(t=>t.notice).length,1);
+  tables.agent_events.push(event('late','2026-10-27T10:00:05Z',{type:'task.updated',payload:{environment_release:[],subtask_id:'delivery'}}));
+  const late=await tool('wait_for_my_tasks').handler({after:next.structured.next_cursor,timeout_s:0},h.ctx);
+  assert.deepEqual((late.structured.tasks as Row[]).filter(t=>t.notice).map(t=>(t.notice as Row).event_id),['late']);
+  const repeat=await tool('wait_for_my_tasks').handler({after:late.structured.next_cursor,timeout_s:0},h.ctx);
+  assert.equal((repeat.structured.tasks as Row[]).filter(t=>t.notice).length,0);
+});
+
+Deno.test('event overlap paginates a burst larger than one page without dropping or repeating notices', async () => {
+  const h=harness({agent_tasks:[task()],agent_events:Array.from({length:105},(_,i)=>event(`burst-${i}`,'2026-10-27T10:00:03Z',{type:'task.updated',payload:{verdict:'approved',review_of:'delivery'}}))});
+  const result=await tool('wait_for_my_tasks').handler({after:encodeTaskCursor({t:normTs('2026-10-27T10:00:02Z'),k:[]}),timeout_s:0},h.ctx);
+  assert.equal((result.structured.tasks as Row[]).filter(t=>t.notice).length,105);
+  const repeat=await tool('wait_for_my_tasks').handler({after:result.structured.next_cursor,timeout_s:0},h.ctx);
+  assert.equal((repeat.structured.tasks as Row[]).filter(t=>t.notice).length,0);
+});
+
+Deno.test('a newly committed undelivered notice survives even outside the overlap window', async () => {
+  const h=harness({agent_tasks:[task()],agent_events:[event('slow','2026-10-27T09:00:00Z',{status:'queued',type:'task.updated',payload:{verdict:'approved',review_of:'delivery'}})]});
+  const result=await tool('wait_for_my_tasks').handler({after:encodeTaskCursor({t:normTs('2026-10-27T10:00:02Z'),k:[]}),timeout_s:0},h.ctx);
+  assert.equal((result.structured.tasks as Row[]).filter(t=>t.notice).length,1);
+});
+
+Deno.test('notice fetch is recoverable; acknowledgement covers only the delivered recipient event and never advances the scan', async () => {
+  const tables = { agent_tasks:[task()], agent_events:['one','two'].map(id => event(id,'2026-10-27T10:00:03Z',
+    {status:'queued',type:'task.updated',payload:{environment_release:[],subtask_id:id}})) };
+  const h=harness(tables);
+  const first=await tool('wait_for_my_tasks').handler({timeout_s:0},h.ctx);
+  const notices=(first.structured.tasks as Row[]).filter(t=>t.notice).map(t=>t.notice as Row);
+  assert.equal(notices.length,2);
+  assert.deepEqual(tables.agent_events.map(e=>e.status),['queued','queued'],'a lost response or stopped consumer must not lose notices');
+  const lost=await tool('wait_for_my_tasks').handler({timeout_s:0},h.ctx);
+  assert.equal((lost.structured.tasks as Row[]).filter(t=>t.notice).length,2);
+  const selects=h.selects.length;
+  const ack=await tool('wait_for_my_tasks').handler({after:notices[0].ack_cursor,timeout_s:0},h.ctx);
+  assert.equal(h.selects.length,selects,'acknowledgement does not read or consume a new batch');
+  assert.equal(ack.structured.next_cursor,undefined,'the original scan cursor remains authoritative');
+  assert.deepEqual(tables.agent_events.map(e=>e.status),['delivered','queued']);
+  const next=await tool('wait_for_my_tasks').handler({after:first.structured.next_cursor,timeout_s:0},h.ctx);
+  assert.deepEqual((next.structured.tasks as Row[]).filter(t=>t.notice).map(t=>(t.notice as Row).event_id),['two']);
+  h.ctx.principal.agentId='other-agent';
+  await tool('wait_for_my_tasks').handler({after:notices[1].ack_cursor,timeout_s:0},h.ctx);
+  assert.equal(tables.agent_events[1].status,'queued','another agent cannot acknowledge the recipient event');
+  h.ctx.principal.agentId=null;
+  await assert.rejects(()=>tool('wait_for_my_tasks').handler({after:notices[1].ack_cursor,timeout_s:0},h.ctx),/agent/i);
 });

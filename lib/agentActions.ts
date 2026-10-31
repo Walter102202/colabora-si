@@ -5,7 +5,7 @@ import type { MetricsResult } from "@/lib/agentMetrics";
 import { useStore } from "@/lib/store";
 import { stripHtml } from "@/lib/utils";
 import { agentErrorMessage, getAgentClient } from "@/lib/agentClient";
-import { pendingApprovalFor, taskForPage, useAgentTasks } from "@/lib/agentTasks";
+import { pendingApprovalFor, taskForPage, useAgentTasks, type TaskRow } from "@/lib/agentTasks";
 
 // Control actions a person takes on a task. Every call is a SECURITY DEFINER
 // RPC: the server decides, the client only asks.
@@ -135,6 +135,20 @@ export async function updateBrief(
   const version = await rpc<number>("update_brief", { p_task_id: taskId, p_patch: patch });
   await refresh(taskId);
   return version;
+}
+
+export async function releaseEnvironment(taskId: string): Promise<void> {
+  await rpc<{ released: number }>("release_environment", { p_task_id: taskId });
+  await refresh(taskId);
+}
+
+export type MergeCondition = "review_approved" | "ci_green";
+
+/** The server permits trusted rules only from a direct human session. */
+export async function setMergeRule(task: TaskRow, conditions: MergeCondition[] | null): Promise<TaskAutonomy> {
+  const autonomy = await rpc<TaskAutonomy>("set_merge_rule", { p_task_id: task.id, p_conditions: conditions });
+  await refresh(task.id);
+  return autonomy;
 }
 
 export function getTaskAutonomy(taskId: string): Promise<TaskAutonomy> {

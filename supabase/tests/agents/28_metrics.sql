@@ -29,8 +29,12 @@ select public.create_agent_task('page_M5', '{"objective":"Idle"}'::jsonb, (:'idl
 select public.create_agent_task('page_B', '{"objective":"Not granted to the agent"}'::jsonb) ->> 'task_id' as hidden \gset
 select public.create_agent_task('page_M6', '{"objective":"Led"}'::jsonb, (:'lead'::jsonb->>'agent')::uuid) ->> 'task_id' as p \gset
 select tests.reset_role();
+-- Reuse this active parent run in the metric fixture below; child creation now requires it.
+insert into public.agent_runs(workspace_id,task_id,agent_id,harness,brief_version,status)
+values((:'f'::jsonb->>'ws')::uuid,:'p'::uuid,(:'lead'::jsonb->>'agent')::uuid,'custom',1,'running') returning id as lead_run \gset
+update public.agent_tasks set active_run_id=:'lead_run'::uuid,state='working' where id=:'p'::uuid;
 -- The Lead creates a subtask for the second agent: create_agent_task writes its start prompt as the Lead, without a
--- run, at the moment the subtask is created. That prompt is not a signal.
+-- subtask run, at the moment the subtask is created. That prompt is not a signal.
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
 select public.create_agent_task('page_M7', '{"objective":"Sub of the lead"}'::jsonb, (:'second'::jsonb->>'agent')::uuid, :'p'::uuid) ->> 'task_id' as s2 \gset
 select tests.reset_role();
@@ -61,9 +65,10 @@ select (:'f'::jsonb->>'ws')::uuid, v.id, v.agent, 'custom', 1, 'completed', v.co
                (:'t3'::uuid, (:'f'::jsonb->>'agent')::uuid, 0.30, 'estimated', :'t0'::timestamptz, :'t0'::timestamptz + interval '1000 seconds'),
                (:'s1'::uuid, (:'f'::jsonb->>'agent')::uuid, 0.60, 'measured', :'t0'::timestamptz, :'t0'::timestamptz + interval '1 hour'),
                (:'t3'::uuid, (:'second'::jsonb->>'agent')::uuid, 0.20, 'measured', :'t0'::timestamptz + interval '1300 seconds', :'t0'::timestamptz + interval '1 hour'),
-               (:'p'::uuid, (:'lead'::jsonb->>'agent')::uuid, 0.00, 'unknown', :'n0'::timestamptz + interval '100 seconds', :'n0'::timestamptz + interval '1 hour'),
                (:'s2'::uuid, (:'second'::jsonb->>'agent')::uuid, 0.00, 'unknown', :'n0'::timestamptz + interval '600 seconds', :'n0'::timestamptz + interval '1 hour')
        ) as v(id, agent, cost, kind, started, ended);
+update public.agent_runs set status='completed',cost_usd=0,cost_kind='unknown',
+  started_at=:'n0'::timestamptz+interval '100 seconds',ended_at=:'n0'::timestamptz+interval '1 hour' where id=:'lead_run'::uuid;
 select id as r3a from public.agent_runs where task_id = :'t3'::uuid and started_at = :'t0'::timestamptz \gset
 select id as r3b from public.agent_runs where task_id = :'t3'::uuid and started_at > :'t0'::timestamptz \gset
 

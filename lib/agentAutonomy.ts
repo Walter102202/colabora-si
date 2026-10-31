@@ -17,6 +17,7 @@ export interface TaskAutonomy {
   // Whether this caller may set the task's level (a workspace owner, from the app). Without it the select
   // stays enabled and the server decides.
   can_edit?: boolean;
+  merge_rule?: { enabled: boolean };
 }
 export interface AutonomyPolicy {
   level: AutonomyLevel;

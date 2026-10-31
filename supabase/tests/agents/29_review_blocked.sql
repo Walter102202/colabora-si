@@ -56,7 +56,7 @@ select public.add_artifact((select active_run_id from public.agent_tasks where i
 select public.submit_for_review((select active_run_id from public.agent_tasks where id = :'sub'::uuid), 'v2', array[:'art2'::uuid]);
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
-select public.create_subtask(:'parent'::uuid, 'page_A3',
+select tests.make_review_subtask(:'parent'::uuid, 'page_A3',
   format('{"objective":"Review the report","done_when":[{"id":"r1","text":"One finding per criterion","check":"lead"}],"policies":{"review_of":"%s"}}', :'sub')::jsonb,
   (:'rev'::jsonb->>'agent')::uuid) ->> 'task_id' as rtask \gset
 select tests.reset_role();

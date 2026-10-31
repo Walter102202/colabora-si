@@ -3,7 +3,7 @@ import { type Filter, must } from '../db.ts';
 import type { ToolContext, ToolDef } from '../mcp.ts';
 import { CARD_OUTPUT, CARD_TOOL_META, loadTaskCard } from './card.ts';
 import { bool, num, object, output, plural, READ, str, WRITE, WRITE_IDEMPOTENT } from './common.ts';
-import type { Row } from './taskData.ts';
+import { loadEnvironment, type Row } from './taskData.ts';
 import { openDependencies } from './wait.ts';
 
 const TASK_STATES = ['queued', 'working', 'input_required', 'ready_for_review', 'done', 'failed', 'cancelled'];
@@ -149,7 +149,7 @@ const claimTask: ToolDef = {
   inputSchema: object({
     task_id: { type: 'string' },
     harness: { type: 'string', minLength: 1, maxLength: 60, description: 'claude_code, codex, chatgpt, claude_ai, custom…' },
-    external_session_id: { type: 'string', maxLength: 200 },
+    external_session_id: { type: 'string', maxLength: 200, description: 'Your harness session id. Codex: the value of the CODEX_THREAD_ID environment variable. It lets corrections reach this same session.' },
     resume: { type: 'boolean', description: 'Continue from the last checkpoint: returns it, classified by the server.' },
   }, ['harness']),
   outputSchema: output({
@@ -160,6 +160,7 @@ const claimTask: ToolDef = {
     brief: { type: ['object', 'null'] },
     artifacts: { type: 'array', items: { type: 'object' } },
     recent_activities: { type: 'array', items: { type: 'object' } },
+    environment: { type: 'array', items: { type: 'object' } },
     resume: { type: ['object', 'null'] },
   }),
   annotations: WRITE,
@@ -171,6 +172,7 @@ const claimTask: ToolDef = {
       p_resume: bool(args.resume) ?? false,
     })) ?? { task_id: null };
     if (!data.task_id) return { text: 'No queued task to claim.', structured: { task_id: null } };
+    data.environment = await loadEnvironment(ctx.db, String(data.task_id));
     return {
       text: `Claimed task ${String(data.task_id)}: run ${String(data.run_id)} on page ${String(data.row_page_id)}. Read the brief before writing.` + (data.resume ? ` ${String((data.resume as Row).summary)}` : ''),
       structured: data,
@@ -408,13 +410,13 @@ const submitForReview: ToolDef = {
     'Delivers the run: needs at least one artifact and an artifact for every "done when" criterion that is not checked by a person. ' +
     'Ends the run and cancels your questions still open. While a request still blocks (after await_questions, every open question ' +
     'does) it fails with waiting_on_human and the ids of those requests: wait for their answers first. ' +
-    'A person (or the Lead) reviews; you never mark the task done.',
+    'A policy reviewer, person or Lead reviews; you never mark the task done.',
   inputSchema: object({
     run_id: { type: 'string', minLength: 1 },
     summary: { type: 'string', minLength: 1, maxLength: 10_000 },
     artifact_ids: { type: 'array', items: { type: 'string' }, minItems: 1 },
   }, ['run_id', 'summary', 'artifact_ids']),
-  outputSchema: output({ task_state: { type: 'string' } }),
+  outputSchema: output({ task_state: { type: 'string' }, review_task_id: { type: ['string', 'null'] } }),
   annotations: WRITE,
   async handler(args, ctx) {
     const data = await must(ctx.db.rpc<Row>('submit_for_review', {
@@ -422,7 +424,7 @@ const submitForReview: ToolDef = {
       p_summary: args.summary,
       p_artifact_ids: args.artifact_ids,
     })) ?? {};
-    return { text: `Submitted for review (task ${String(data.task_state)}). Wait with wait_for_task if you stay in the session.`, structured: data };
+    return { text: `Submitted for review (task ${String(data.task_state)}). ${data.review_task_id ? 'A reviewer has it. End your turn.' : 'Wait with wait_for_task if you stay in the session.'}`, structured: data };
   },
 };
 

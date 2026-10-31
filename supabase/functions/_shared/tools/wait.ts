@@ -129,23 +129,40 @@ function activityView(a: Row) {
   return out;
 }
 
+function isLeadEvent(event: Row): boolean {
+    const payload = event.payload as Row | null;
+    return Boolean(payload && ((event.type === 'task.continue' && typeof payload.review_of === 'string')
+      || (event.type === 'task.updated' && (payload.environment_release || payload.verdict || payload.minor_findings || payload.review_timeout))));
+}
+
+
 interface EventMark { t: string; k: string[] }
 /** Events addressed to the calling agent after the mark: one indexed select (agent_events_agent_idx). Humans get none. */
-async function newEvents(ctx: ToolContext, mark: EventMark): Promise<{ fresh: Row[]; mark: EventMark }> {
+async function newEvents(ctx: ToolContext, mark: EventMark, withPending = false): Promise<{ fresh: Row[]; mark: EventMark }> {
   if (!ctx.principal.agentId) return { fresh: [], mark };
-  const rows = await must(ctx.db.select<Row>({
-    table: 'agent_events',
-    columns: 'event_id,task_id,type,created_at',
-    filters: [{ col: 'agent_id', op: 'eq', value: ctx.principal.agentId }, { col: 'created_at', op: 'gte', value: mark.t }],
-    order: [{ column: 'created_at', ascending: true }],
-    limit: 100, // a cursor, not a cap: the mark moves to the last fresh row; only 100+ events sharing one created_at could stall
-  })) ?? [];
+  // Re-read one minute of event time: commit order can differ from created_at order.
+  const lower = new Date(Date.parse(mark.t) - 60_000).toISOString();
+  const rows: Row[] = [];
+  for (let offset = 0;; offset += 100) {
+    const page = await must(ctx.db.select<Row>({ table: 'agent_events', columns: 'event_id,task_id,run_id,type,payload,created_at,status',
+      filters: [{ col: 'agent_id', op: 'eq', value: ctx.principal.agentId }, { col: 'created_at', op: 'gte', value: lower }],
+      order: [{ column: 'created_at', ascending: true }, { column: 'event_id', ascending: true }], limit: 100, offset })) ?? [];
+    rows.push(...page);
+    if (page.length < 100) break;
+  }
+  // A transaction can remain open longer than the overlap. Unreturned Lead events are retained as pending.
+  if (withPending) for (let offset = 0;; offset += 100) {
+    const page = await must(ctx.db.select<Row>({ table: 'agent_events', columns: 'event_id,task_id,run_id,type,payload,created_at,status',
+      filters: [{ col: 'agent_id', op: 'eq', value: ctx.principal.agentId }, { col: 'status', op: 'in', value: ['queued','leased'] }],
+      order: [{ column: 'created_at', ascending: true }, { column: 'event_id', ascending: true }], limit: 100, offset })) ?? [];
+    for (const event of page) if (isLeadEvent(event) && !rows.some(row => row.event_id === event.event_id)) rows.push(event);
+    if (page.length < 100) break;
+  }
   const seen = new Set(mark.k);
-  const fresh = rows.filter((e) => { const ts = normTs(String(e.created_at)); return ts > mark.t || (ts === mark.t && !seen.has(`e:${String(e.event_id)}`)); });
-  if (!fresh.length) return { fresh, mark };
-  const t = fresh.map((e) => normTs(String(e.created_at))).sort().at(-1)!;
-  const atT = fresh.filter((e) => normTs(String(e.created_at)) === t).map((e) => `e:${String(e.event_id)}`);
-  return { fresh, mark: { t, k: t === mark.t ? [...new Set([...mark.k, ...atT])] : atT } };
+  const fresh = rows.filter(e => !seen.has(`e:${String(e.event_id)}`) ||
+    (withPending && isLeadEvent(e) && ['queued','leased'].includes(String(e.status))));
+  const t = [mark.t, ...rows.map(e => normTs(String(e.created_at)))].sort().at(-1)!;
+  return { fresh, mark: { t, k: rows.map(e => `e:${String(e.event_id)}`) } };
 }
 /** Latest event timestamp for the agent, so a wait only reacts to events created after it started. */
 async function latestEventMark(ctx: ToolContext): Promise<EventMark> {
@@ -265,13 +282,17 @@ const waitForTask: ToolDef = {
 // wait_for_my_tasks
 // ---------------------------------------------------------------------------
 
-export type Reason = 'handover' | 'queued' | 'feedback' | 'brief' | 'approval_decided' | 'stop' | 'closed';
+export type Reason = 'handover' | 'queued' | 'feedback' | 'brief' | 'approval_decided' | 'stop' | 'closed' | 'under_review' | 'ready_for_review' | 'updated';
 
 interface Cursor {
   /** High-water timestamp (normalized, microseconds, UTC). */
   t: string;
   /** Keys already delivered exactly at `t`. */
   k: string[];
+  /** Independent event position: never skips a late task/prompt transaction. */
+  e?: EventMark;
+  /** Delivery acknowledgement only: never a new scan position. */
+  a?: string[];
 }
 
 /** Postgres timestamps -> "YYYY-MM-DDTHH:MM:SS.ffffffZ", comparable as strings. */
@@ -293,7 +314,9 @@ export function decodeTaskCursor(raw: string): Cursor {
   try {
     const json = atob(raw.replace(/-/g, '+').replace(/_/g, '/'));
     const c = JSON.parse(json);
-    if (typeof c?.t === 'string' && Array.isArray(c.k)) return { t: c.t, k: c.k.map(String) };
+    if (typeof c?.t === 'string' && Array.isArray(c.k)) return { t: c.t, k: c.k.map(String),
+      ...(typeof c.e?.t === 'string' && Array.isArray(c.e.k) ? { e: { t: c.e.t, k: c.e.k.map(String) } } : {}),
+      ...(Array.isArray(c.a) ? { a: c.a.map(String) } : {}) };
   } catch {
     // fall through
   }
@@ -386,9 +409,28 @@ async function waitingOnPerson(ctx: ToolContext, tasks: Row[]): Promise<Set<stri
   return new Set(ids.filter((id) => review.has(id) && (!run.has(id) || review.get(id)! > run.get(id)!)));
 }
 
-function myTaskView(task: Row, reason: Reason, prompts: number, blockedBy: string[] = []) {
+async function lastSessions(ctx: ToolContext, ids: string[]): Promise<Map<string, string | null>> {
+  const sessions = new Map<string, string | null>();
+  if (!ids.length || !ctx.principal.agentId) return sessions;
+  const select = (filter: Filter, limit: number) => must(ctx.db.select<Row>({
+    table: 'agent_runs', columns: 'task_id,external_session_id,started_at',
+    filters: [filter, { col: 'agent_id', op: 'eq', value: ctx.principal.agentId }],
+    order: [{ column: 'started_at', ascending: false }], limit,
+  }));
+  const rows = await select({ col: 'task_id', op: 'in', value: ids }, LATEST_PAGE) ?? [];
+  const add = (row: Row) => { if (!sessions.has(String(row.task_id))) sessions.set(String(row.task_id), typeof row.external_session_id === 'string' ? row.external_session_id : null); };
+  rows.forEach(add);
+  if (rows.length === LATEST_PAGE) {
+    const extra = await Promise.all(ids.filter((id) => !sessions.has(id)).map((id) => select({ col: 'task_id', op: 'eq', value: id }, 1)));
+    for (const page of extra) if (page?.[0]) add(page[0]);
+  }
+  return sessions;
+}
+
+function myTaskView(task: Row, reason: Reason, prompts: number, blockedBy: string[] = [], sessionId: string | null = null) {
   return {
     task_id: task.id,
+    session_id: sessionId,
     title: task.title,
     state: task.state,
     review_state: task.review_state,
@@ -400,6 +442,23 @@ function myTaskView(task: Row, reason: Reason, prompts: number, blockedBy: strin
     request_kind: task.request_kind ?? null,
     reason,
   };
+}
+
+/** Addressed Lead notices are data even when the parent row itself did not change. */
+async function leadNotices(ctx: ToolContext, events: Row[]): Promise<ReturnType<typeof myTaskView>[]> {
+  const notices = events.filter(isLeadEvent);
+  if (!notices.length || !ctx.principal.agentId) return [];
+  const parents = await must(ctx.db.select<Row>({ table:'agent_tasks',columns:TASK_FIELDS,
+    filters:[myTasksFilter(ctx),{col:'id',op:'in',value:[...new Set(notices.map(event=>String(event.task_id)))]}] })) ?? [];
+  const sessions = await lastSessions(ctx, parents.map(task=>String(task.id)));
+  return notices.flatMap((event) => {
+    const task = parents.find(parent=>parent.id===event.task_id);
+    if (!task) return [];
+    const payload=event.payload as Row;
+    const reason: Reason=event.type==='task.continue' ? payload.review_task_id ? 'under_review' : 'ready_for_review' : 'updated';
+    return [{ ...myTaskView(task,reason,0,[],sessions.get(String(task.id))??null), notice:{event_id:event.event_id,type:event.type,payload,
+      ack_cursor:encodeTaskCursor({t:normTs(String(event.created_at)),k:[],a:[String(event.event_id)]})} }];
+  });
 }
 
 /** Tasks that need the agent right now (no cursor yet), and a cursor at the current high-water mark. */
@@ -428,8 +487,9 @@ async function initialState(ctx: ToolContext) {
       limit: 1,
     })),
   ]);
-  const waiting = await waitingOnPerson(ctx, open ?? []);
-  const blocked = await openDependencies(ctx, open ?? []);
+  const [waiting, blocked] = await Promise.all([
+    waitingOnPerson(ctx, open ?? []), openDependencies(ctx, open ?? []),
+  ]);
   const tasks = (open ?? []).flatMap((t) => {
     // review_state outlives the round it describes: on a task waiting without a run, only the reviews and runs tell.
     const idle = t.state === 'input_required' && !t.active_run_id;
@@ -439,6 +499,8 @@ async function initialState(ctx: ToolContext) {
     const blockedBy = blocked.get(String(t.id)) ?? [];
     return reason && !(reason === 'queued' && blockedBy.length) ? [myTaskView(t, reason, 0, blockedBy)] : [];
   });
+  const sessions = await lastSessions(ctx, tasks.map((task) => String(task.task_id)));
+  for (const task of tasks) task.session_id = sessions.get(String(task.task_id)) ?? null;
   const marks = [
     ...(latest ?? []).map((t) => normTs(String(t.updated_at))),
     ...(latestPrompt ?? []).map((a) => normTs(String(a.created_at))),
@@ -505,8 +567,9 @@ async function changesSince(ctx: ToolContext, cursor: Cursor): Promise<Delta> {
   }
 
   const out: ReturnType<typeof myTaskView>[] = [];
-  const waiting = await waitingOnPerson(ctx, [...tasks.values()]);
-  const blocked = await openDependencies(ctx, [...tasks.values()]);
+  const [waiting, blocked] = await Promise.all([
+    waitingOnPerson(ctx, [...tasks.values()]), openDependencies(ctx, [...tasks.values()]),
+  ]);
   for (const [id, task] of tasks) {
     const list = newPrompts.get(id) ?? [];
     const latest = list.length ? list.reduce((a, b) => (Number(b.seq) > Number(a.seq) ? b : a)) : undefined;
@@ -514,6 +577,8 @@ async function changesSince(ctx: ToolContext, cursor: Cursor): Promise<Delta> {
     const blockedBy = blocked.get(id) ?? [];
     if (reason && !(reason === 'queued' && blockedBy.length)) out.push(myTaskView(task, reason, list.length, blockedBy));
   }
+  const sessions = await lastSessions(ctx, out.map((task) => String(task.task_id)));
+  for (const task of out) task.session_id = sessions.get(String(task.task_id)) ?? null;
 
   let next = cursor;
   if (items.length) {
@@ -530,7 +595,7 @@ const waitForMyTasks: ToolDef = {
   description:
     'Without `after`: answers at once with your pending tasks and a cursor. With `after` (the next_cursor of the previous ' +
     'call): holds until a task assigned to you is queued, gets feedback, a new brief, an approval decision, a stop, or is ' +
-    'closed; or until timeout_s (default 50, max 120). On changed:false call again with the same cursor.',
+    'closed; or until timeout_s (default 50, max 120). Lead notices also carry reviews in progress, verdicts, minor findings and environment releases. After delivering a notice to its model/session, acknowledge only it with after:notice.ack_cursor and timeout_s:0. Acknowledgements return no new scan cursor. On changed:false call again with the same scan cursor.',
   inputSchema: object({
     after: { type: 'string' },
     timeout_s: { type: 'integer', minimum: 0, maximum: MAX_WAIT_S, default: DEFAULT_WAIT_S },
@@ -543,13 +608,15 @@ const waitForMyTasks: ToolDef = {
         type: 'object',
         properties: {
           task_id: { type: 'string' },
+          session_id: { type: ['string', 'null'] },
           title: { type: 'string' },
           state: { type: 'string' },
           review_state: { type: 'string' },
           waiting_on: { type: ['string', 'null'] },
           brief_version: { type: 'integer' },
           pending_prompts: { type: 'integer' },
-          reason: { type: 'string', enum: ['handover', 'queued', 'feedback', 'brief', 'approval_decided', 'stop', 'closed'] },
+          notice: { type: 'object', description: 'An addressed review, verdict, minor-findings or environment-release event. payload carries subject ids and data; ack_cursor acknowledges only this notice after delivery, using the existing after parameter.' },
+          reason: { type: 'string', enum: ['handover', 'queued', 'feedback', 'brief', 'approval_decided', 'stop', 'closed', 'under_review', 'ready_for_review', 'updated'] },
         },
       },
     },
@@ -561,17 +628,28 @@ const waitForMyTasks: ToolDef = {
   async handler(args, ctx) {
     const after = str(args.after);
     if (!after) {
+      const baseline = await latestEventMark(ctx);
       const { tasks, cursor } = await initialState(ctx);
-      if (tasks.length) await markDelivered(ctx);
+      const notices = await newEvents(ctx, { ...baseline, k: [] }, true);
+      // Without a cursor, return undelivered notices; retained delivered history is only a baseline for deduplication.
+      tasks.push(...await leadNotices(ctx, notices.fresh.filter(e => ['queued','leased'].includes(String(e.status)) || normTs(String(e.created_at)) > baseline.t)));
+      cursor.e = notices.mark;
+      if (tasks.length) {
+        await markDelivered(ctx);
+      }
       return {
         text: tasks.length ? `${plural(tasks.length, 'task')} need you.` : 'Nothing pending. Wait again with next_cursor.',
         structured: { changed: tasks.length > 0, tasks, next_cursor: encodeTaskCursor(cursor) },
       };
     }
     let cursor = decodeTaskCursor(after);
-    // The event mark stays local: the cursor moves only with what changesSince saw, so an event for another task never
-    // carries it past a task updated a moment earlier in a transaction that committed later.
-    let mark: EventMark = { t: cursor.t, k: cursor.k };
+    if (cursor.a?.length) {
+      if (!ctx.principal.agentId) throw new ToolError('forbidden','Only the recipient agent can acknowledge a notice.');
+      await must(ctx.db.rpc('mark_events_delivered',{p_event_ids:cursor.a}));
+      return {text:'Notice delivery acknowledged. Continue with your previous scan cursor.',structured:{changed:false,tasks:[]}};
+    }
+    // Event and task positions advance independently, preserving late task/prompt commits.
+    let mark: EventMark = cursor.e ?? { t: cursor.t, k: cursor.k };
     let delay = POLL_MS;
     let lastFull = -Infinity;
     const timeoutS = timeoutOf(args);
@@ -579,12 +657,13 @@ const waitForMyTasks: ToolDef = {
     const deadline = started + timeoutS * 1000;
     let lastProgress = started;
     for (;;) {
-      const signal = await newEvents(ctx, mark);
+      const signal = await newEvents(ctx, mark, true);
       mark = signal.mark;
       const full = lastFull === -Infinity || signal.fresh.length > 0 || ctx.now() - lastFull >= SLOW_POLL_MS;
       if (full) {
         const delta = await changesSince(ctx, cursor);
-        cursor = delta.cursor;
+        cursor = { ...delta.cursor, ...(signal.fresh.length ? {e:signal.mark} : cursor.e ? {e:cursor.e} : {}) };
+        delta.tasks.push(...await leadNotices(ctx,signal.fresh));
         lastFull = ctx.now();
         if (delta.tasks.length) {
           await markDelivered(ctx);

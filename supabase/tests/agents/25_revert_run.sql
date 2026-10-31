@@ -19,7 +19,7 @@ select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_R1', 'page_DB2', jsonb_
 select tests.make_user('outsider@test.local') as outsider \gset
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.create_agent_task('page_A1', '{"objective":"Write three paragraphs","policies":{"preapproved":["test_effect"]}}'::jsonb, (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as task \gset
-select public.create_agent_task('page_R1', '{"objective":"Another task"}'::jsonb, (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as other_task \gset
+-- Keep the database row standalone while this run edits it; its separate task starts afterwards.
 
 -- The agent appends three blocks on the row page, edits a block a person wrote on page_A, ticks a to-do on page_A2,
 -- appends one block on page_A2 and renames a row while moving its stage.
@@ -60,6 +60,11 @@ select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent
 select is(tests.error_of(format('select public.revert_run(%L::uuid, %L::text[])', :'run', array['block:page_A1:' || :'b1'])), 'humans_only',
           'an agent cannot call revert_run');
 select public.end_run(:'run'::uuid, 'completed');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.create_agent_task('page_R1', '{"objective":"Another task"}'::jsonb, (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as other_task \gset
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
 select public.claim_task(:'other_task'::uuid, 'codex') ->> 'run_id' as other_run \gset
 
 -- After the run: a person edits Beta and deletes Gamma; an old-style activity has no after_revs.

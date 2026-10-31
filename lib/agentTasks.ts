@@ -79,7 +79,7 @@ export interface ApprovalRow {
   // false: asked with request_input blocking false; the task keeps working.
   blocking?: boolean;
   // Set when the autonomy level or the brief approved it without a person.
-  auto_by?: "preset" | "brief" | null;
+  auto_by?: "preset" | "brief" | "condition" | null;
 }
 
 export interface ReviewRow {
@@ -92,7 +92,7 @@ export interface ReviewRow {
   artifact_version: number;
   brief_version: number;
   verdict: "approved" | "changes_requested" | "blocked";
-  findings: { criterion_id: string; status: "verified" | "not_found" | "contradicted" | "unverified"; note?: string; evidence_ref?: string }[];
+  findings: { criterion_id?: string; severity?: "blocking" | "minor"; status: "verified" | "not_found" | "contradicted" | "unverified"; note?: string; evidence_ref?: string }[];
   evidence: { kind: string; ref: string; hash?: string }[];
   outdated_by: "artifact" | "brief" | null;
   outdated_at: string | null;
@@ -143,6 +143,12 @@ export interface ActivityRow {
   created_at: string;
 }
 
+export interface EnvironmentResource {
+  kind: "ports" | "stack" | "worktree" | "branch" | "migration";
+  value: string;
+  status: "held" | "releasing" | "released";
+}
+
 type ById<T> = Record<string, T>;
 type Client = NonNullable<ReturnType<typeof getAgentClient>>;
 type ClosedCursor = { updated_at: string; id: string };
@@ -158,6 +164,7 @@ export interface AgentTasksState {
   artifacts: ById<ArtifactRow>; // per task, loaded with the detail
   briefs: ById<BriefRow>; // key `${task_id}:${version}`
   ciChecks: ById<CiCheckRow[]>;
+  environments: ById<EnvironmentResource[]>;
   activities: ById<ActivityRow[]>; // by task id, ordered by seq (loaded on demand)
   closedCursor: ClosedCursor | null; // keyset of the oldest closed task loaded
   closedExhausted: boolean;
@@ -248,6 +255,7 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
   artifacts: {},
   briefs: {},
   ciChecks: {},
+  environments: {},
   activities: {},
   closedCursor: null,
   closedExhausted: false,
@@ -259,7 +267,7 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
     if (!client) return;
     const reset = get().workspaceId === workspaceId
       ? {}
-      : { tasks: {}, runs: {}, approvals: {}, reviews: {}, artifacts: {}, ciChecks: {}, closedCursor: null, closedExhausted: false };
+      : { tasks: {}, runs: {}, approvals: {}, reviews: {}, artifacts: {}, ciChecks: {}, environments: {}, closedCursor: null, closedExhausted: false };
     set({ status: "loading", error: null, workspaceId, ...reset });
     try {
       const [open, closed, runs, approvals] = await Promise.all([
@@ -333,10 +341,11 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
     const request = ++detailRequestSequence;
     detailRequests.set(taskId, request);
     const workspaceId = get().workspaceId;
-    const [, artifacts, reviews] = await Promise.all([
+    const [, artifacts, reviews, environment] = await Promise.all([
       get().loadBriefs(taskId),
       client.from("agent_artifacts").select("*").eq("task_id", taskId),
       client.from("agent_reviews").select("*").eq("task_id", taskId).order("created_at", { ascending: false }).limit(REVIEWS_LIMIT),
+      client.from("agent_resources").select("kind,value,status").eq("task_id", taskId).neq("status", "released").order("created_at", { ascending: true }),
     ]);
     const task = get().tasks[taskId];
     const brief = task ? get().briefs[`${taskId}:${task.brief_version}`] : undefined;
@@ -347,6 +356,7 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
     detailRequests.delete(taskId);
     set({
       ciChecks: { ...s.ciChecks, [taskId]: ci && !ci.error ? (ci.data ?? []) as CiCheckRow[] : [] },
+      ...(environment.error ? {} : { environments: { ...s.environments, [taskId]: (environment.data ?? []) as EnvironmentResource[] } }),
       ...(artifacts.error ? {} : { artifacts: mergeRows(s.artifacts, artifacts.data as ArtifactRow[]) }),
       ...(reviews.error ? {} : { reviews: mergeRows(s.reviews, reviews.data as ReviewRow[]) }),
     });

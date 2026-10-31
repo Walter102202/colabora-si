@@ -62,10 +62,12 @@ export function oneLine(text) {
  */
 export function eventToChannel(event) {
   const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
-  const reviewOf = typeof payload.review_of === "string" ? payload.review_of : null;
+  // Only the delivery notification to the Lead redirects from parent to child.
+  // A reviewer's start must claim its review task; a verdict updates the parent.
+  const reviewOf = event.type === "task.continue" && typeof payload.review_of === "string" ? payload.review_of : null;
   // A decision with no run waiting for it was taken after a handover: the session claims the task, it has no run to continue.
   const handover = payload.handover === true || (event.type === "approval.decided" && event.run_id == null);
-  const reason = handover ? "handover" : reviewOf ? "ready_for_review" : (REASON_BY_TYPE[event.type] ?? event.type.replace(/\W+/g, "_"));
+  const reason = handover ? "handover" : reviewOf && payload.review_task_id ? "under_review" : reviewOf ? "ready_for_review" : (REASON_BY_TYPE[event.type] ?? event.type.replace(/\W+/g, "_"));
   const taskId = reviewOf ?? event.task_id;
   const ref = payload.task_ref ?? payload.review_of_ref;
   const label = typeof ref === "string" && META_VALUE.test(ref) ? ref : taskId;
@@ -74,12 +76,23 @@ export function eventToChannel(event) {
   const free = untrustedText(payload.summary ?? payload.text ?? payload.title ?? "");
   // Free text from the workspace is quoted as data; the session reads the task itself before acting.
   const detail = free ? `untrusted text: "${free}"` : (decision ?? artifacts);
-  const content = oneLine(`${label} ${reason}${detail ? `: ${detail}` : ""}`);
+  const environment = Array.isArray(payload.environment_release) && payload.environment_release.length
+    ? `; environment_release (untrusted text): "${untrustedText(payload.environment_release.map((item) => `${item?.kind}: ${item?.value}`).join(", "))}"` : "";
+  const minors = Array.isArray(payload.minor_findings) && payload.minor_findings.length ? `; ${payload.minor_findings.length} minor finding(s)` : "";
+  const subtask = typeof payload.subtask_id === "string" && META_VALUE.test(payload.subtask_id) ? payload.subtask_id : null;
+  const subject = typeof payload.review_of === "string" && META_VALUE.test(payload.review_of) ? payload.review_of : null;
+  const verdict = typeof payload.verdict === "string" && META_VALUE.test(payload.verdict) ? payload.verdict : null;
+  const prefix = environment && subtask ? `${subtask} environment_release; get_task(${subtask}) has the full environment`
+    : verdict && subject ? `${subject} ${verdict}; get_task(${subject}) has the full review` : `${label} ${reason}`;
+  const content = oneLine(`${prefix}${minors}${environment}${detail ? `: ${detail}` : ""}`);
   return {
     content,
     meta: sanitizeMeta({
       task_id: taskId,
       parent_task_id: reviewOf ? event.task_id : undefined,
+      subtask_id: subtask ?? undefined,
+      review_of: verdict ? subject ?? undefined : undefined,
+      verdict: verdict ?? undefined,
       run_id: event.run_id ?? undefined,
       reason,
       state: payload.state,
@@ -90,9 +103,11 @@ export function eventToChannel(event) {
 
 /**
  * Converts one task of a `wait_for_my_tasks` answer into a channel event.
- * @param {{ task_id: string, title?: string, state?: string, reason?: string, pending_prompts?: number, active_run_id?: string }} task
+ * @param {{ task_id: string, title?: string, state?: string, reason?: string, pending_prompts?: number, active_run_id?: string, notice?: { type: string, payload?: any, event_id?: string } }} task
  */
 export function taskToChannel(task) {
+  if (task.notice) return eventToChannel({ type: task.notice.type, task_id: task.task_id, run_id: task.active_run_id,
+    payload: task.notice.payload, event_id: task.notice.event_id });
   const reason = typeof task.reason === "string" && META_VALUE.test(task.reason) ? task.reason : "changed";
   const cleanTitle = untrustedText(task.title);
   const title = cleanTitle ? ` "${cleanTitle}"` : "";
@@ -136,25 +151,56 @@ export function createChannel(options) {
   /** @type {any} */ let subscription = null;
   /** @type {Set<string>} */ const seenEvents = new Set();
   /** @type {Map<string, string>} */ const lastTaskSignature = new Map();
+  const acknowledging = new Map();
+  const acknowledge = (id, after) => {
+    if (acknowledging.has(id)) return acknowledging.get(id);
+    // Realtime supplies the event UUID directly; this is the same opaque acknowledgement envelope as polling.
+    after ??= btoa(JSON.stringify({ t: "1970-01-01T00:00:00Z", k: [], a: [id] })).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const pending = remote.callTool("wait_for_my_tasks", { after, timeout_s: 0 }).finally(() => acknowledging.delete(id));
+    acknowledging.set(id, pending);
+    return pending;
+  };
 
   /** @param {any} event */
   function handleEvent(event) {
     if (!event || event.agent_id !== agentId) return;            // another agent's event: ignore
-    if (event.event_id) {
-      if (seenEvents.has(event.event_id)) return;
-      seenEvents.add(event.event_id);
-      if (seenEvents.size > 1000) seenEvents.delete(seenEvents.values().next().value);
+    try {
+      if (!event.event_id || !seenEvents.has(event.event_id)) {
+        emit(eventToChannel(event));
+        if (event.event_id) seenEvents.add(event.event_id);
+      }
+    } catch (error) {
+      log(`channel: delivery failed (${error.message})`);
+      fallBack("delivery failed");
+      return;
     }
-    emit(eventToChannel(event));
+    if (seenEvents.size > 1000) seenEvents.delete(seenEvents.values().next().value);
+    const payload = event.payload ?? {};
+    if (event.event_id && ((event.type === "task.continue" && payload.review_of) ||
+        (event.type === "task.updated" && ["verdict", "minor_findings", "environment_release", "review_timeout"].some(key => key in payload)))) {
+      void acknowledge(event.event_id).catch(error => {
+        log(`channel: notice acknowledgement failed (${error.message})`);
+        fallBack("notice acknowledgement failed");
+      });
+    }
   }
 
   /** @param {any} task */
-  function handleTask(task) {
+  async function handleTask(task) {
     if (!task?.task_id) return;
-    const signature = [task.reason, task.state, task.review_state, task.brief_version, task.pending_prompts].join("|");
+    if (task.notice?.event_id) {
+      if (!seenEvents.has(task.notice.event_id)) {
+        emit(taskToChannel(task));
+        seenEvents.add(task.notice.event_id);
+      }
+      if (task.notice.ack_cursor) await acknowledge(task.notice.event_id, task.notice.ack_cursor);
+      return;
+    }
+    const signature = [task.reason, task.state, task.review_state, task.brief_version, task.pending_prompts, task.notice?.event_id].join("|");
     if (lastTaskSignature.get(task.task_id) === signature) return;
-    lastTaskSignature.set(task.task_id, signature);
     emit(taskToChannel(task));
+    lastTaskSignature.set(task.task_id, signature);
+    if (task.notice?.event_id) seenEvents.add(task.notice.event_id);
   }
 
   async function pollLoop() {
@@ -169,7 +215,7 @@ export function createChannel(options) {
         if (cursor) args.after = cursor;
         const result = await remote.callTool("wait_for_my_tasks", args);
         if (stopped) break;
-        for (const task of result?.tasks ?? []) handleTask(task);
+        for (const task of result?.tasks ?? []) await handleTask(task);
         if (typeof result?.next_cursor === "string") cursor = result.next_cursor;
         failures = 0;
       } catch (error) {

@@ -1,5 +1,7 @@
 # Reference agent
 
+Lead notices are acknowledged only after a successful model response. Undelivered notices survive process interruption on the server. The CLI keeps delivered-but-unacknowledged notice ids beside its environment file as `<env-file>.notices.json`, so restarting retries acknowledgement without sending the same notice to the model again. Run one consumer per agent/configuration; local state-write failures are reported and retain progress in memory.
+
 A small worker process that takes tasks delegated to it in the workspace, does them with any OpenAI-compatible model, and hands the result to a person for review. Plain Node 22, no dependencies.
 
 ## How it works

@@ -3,6 +3,7 @@
 import { type Db, must, ToolError } from '../db.ts';
 import type { AgentBlockInput } from '../lib/agentInput.ts';
 import type { ToolContext, ToolDef } from '../mcp.ts';
+import { validate } from '../jsonSchema.ts';
 import { num, object, output, plural, READ, str, WRITE } from './common.ts';
 import type { Row } from './taskData.ts';
 
@@ -86,6 +87,8 @@ const createTask: ToolDef = {
       sources: { type: 'array', items: { type: 'string' }, maxItems: 30, description: 'Page ids or URLs' },
     }, ['goal', 'done_when']),
     worker: { type: 'string', description: 'Agent id to delegate the task to' },
+    reviewer: { type: 'string', description: 'Agent id that reviews every delivery under this task' },
+    lease_minutes: { type: 'integer', minimum: 30, maximum: 1440, description: 'Minutes without a signal before a run loses its task; defaults to 120' },
     database: { type: 'string', description: 'Page id of the tasks database' },
     claim: { type: 'boolean', default: true },
     harness: { type: 'string', maxLength: 60, default: 'custom' },
@@ -108,6 +111,10 @@ const createTask: ToolDef = {
         done_when: brief.done_when.map((text, i) => ({ id: `c${i + 1}`, text, check: 'human' })),
         constraints: brief.constraints ?? '',
         sources: (brief.sources ?? []).map(sourceRef),
+        ...(args.reviewer !== undefined || args.lease_minutes !== undefined ? { policies: {
+          ...(args.reviewer !== undefined ? { reviewer_agent_id: args.reviewer } : {}),
+          ...(args.lease_minutes !== undefined ? { lease_minutes: args.lease_minutes } : {}),
+        } } : {}),
       },
       p_delegate_agent_id: worker ?? ctx.principal.agentId,
       p_idempotency_key: key,
@@ -127,6 +134,39 @@ const createTask: ToolDef = {
   },
 };
 
+async function createOneSubtask(ctx: ToolContext, args: Record<string, unknown>) {
+  const brief = args.brief as { objective: string; constraints?: string; done_when: { text: string }[]; sources?: { ref: string }[] };
+  const key = str(args.idempotency_key);
+  let rowPageId = str(args.row_page_id);
+  if (!rowPageId) {
+    const parents = await must(ctx.db.select<{ db_page_id: string | null }>({
+      table: 'agent_tasks',
+      columns: 'db_page_id',
+      filters: [{ col: 'id', op: 'eq', value: args.parent_task_id }],
+      limit: 1,
+    }));
+    const parent = parents?.[0];
+    if (!parent) throw new ToolError('not_found', `Task ${String(args.parent_task_id)} was not found, or you have no access to it.`);
+    if (!parent.db_page_id) throw new ToolError('invalid_input', 'The parent task is not in a database: pass row_page_id.');
+    const title = str(args.title) || brief.objective.slice(0, 120);
+    const row = await addTaskRow(ctx, parent.db_page_id, title, briefBlocks(
+      brief.objective, brief.done_when.map((d) => d.text), brief.constraints, (brief.sources ?? []).map((s) => s.ref),
+    ), key);
+    rowPageId = row.page_id;
+  }
+  const data = await must(ctx.db.rpc<Row>('create_subtask', {
+    p_parent_task_id: args.parent_task_id,
+    p_row_page_id: rowPageId,
+    p_brief: args.brief,
+    p_delegate_agent_id: str(args.delegate_agent_id),
+    p_reference_task_ids: args.reference_task_ids,
+    p_depends_on_task_ids: args.depends_on_task_ids,
+    p_idempotency_key: key,
+  })) ?? {};
+  const structured = { task_id: data.task_id, context_id: data.context_id, row_page_id: rowPageId };
+  return { text: `Subtask ${String(data.task_id)} created on page ${rowPageId}. Wait for it with wait_for_task.`, structured };
+}
+
 const createSubtask: ToolDef = {
   name: 'create_subtask',
   title: 'Delegate a subtask',
@@ -144,7 +184,7 @@ const createSubtask: ToolDef = {
       done_when: { type: 'array', items: doneWhenItem, minItems: 1, maxItems: 30 },
       sources: { type: 'array', items: sourceItem, maxItems: 30 },
       next_step: { type: 'string', maxLength: 2000 },
-      policies: { type: 'object', description: 'Optional. require_approval: actions that always ask (a list of action names; any shape the server cannot read is refused); preapproved: actions the parent task already allows (a subtask never gets more than its parent). The autonomy level is set by a workspace owner in the app, never in the brief.' },
+      policies: { type: 'object', description: 'Optional. require_approval: actions that always ask (a list of action names; any shape the server cannot read is refused). Protected preapprovals and the autonomy level are set by a workspace owner directly in the app, never by the Lead. A subtask never gets more than its parent.' },
     }, ['objective', 'done_when']),
     reference_task_ids: { type: 'array', items: { type: 'string' } },
     depends_on_task_ids: { type: 'array', items: { type: 'string' } },
@@ -152,37 +192,70 @@ const createSubtask: ToolDef = {
   }, ['parent_task_id', 'brief']),
   outputSchema: output({ task_id: { type: 'string' }, context_id: { type: 'string' }, row_page_id: { type: 'string' } }),
   annotations: WRITE,
+  handler: (args, ctx) => createOneSubtask(ctx, args),
+};
+
+const importPlan: ToolDef = {
+  name: 'import_plan',
+  title: 'Import a plan as subtasks',
+  description:
+    'Lead only, on a task you lead. Creates up to 30 subtasks in dependency order. Each has a key; depends_on names other keys. ' +
+    'Nothing is created when the plan does not validate. A retry with the same idempotency_key resumes.',
+  inputSchema: object({
+    parent_task_id: { type: 'string', minLength: 1 },
+    idempotency_key: { type: 'string', minLength: 1, maxLength: 160 },
+    subtasks: { type: 'array', minItems: 1, maxItems: 30, items: object({
+      key: { type: 'string', minLength: 1, maxLength: 30 },
+      title: { type: 'string', maxLength: 300 },
+      delegate_agent_id: { type: 'string' },
+      depends_on: { type: 'array', items: { type: 'string' } },
+      brief: { type: 'object' },
+    }, ['key', 'brief']) },
+  }, ['parent_task_id', 'idempotency_key', 'subtasks']),
+  outputSchema: output({ created: { type: 'object' } }),
+  annotations: WRITE,
   async handler(args, ctx) {
-    const brief = args.brief as { objective: string; constraints?: string; done_when: { text: string }[]; sources?: { ref: string }[] };
-    const key = str(args.idempotency_key);
-    let rowPageId = str(args.row_page_id);
-    if (!rowPageId) {
-      const parents = await must(ctx.db.select<{ db_page_id: string | null }>({
-        table: 'agent_tasks',
-        columns: 'db_page_id',
-        filters: [{ col: 'id', op: 'eq', value: args.parent_task_id }],
-        limit: 1,
-      }));
-      const parent = parents?.[0];
-      if (!parent) throw new ToolError('not_found', `Task ${String(args.parent_task_id)} was not found, or you have no access to it.`);
-      if (!parent.db_page_id) throw new ToolError('invalid_input', 'The parent task is not in a database: pass row_page_id.');
-      const title = str(args.title) || brief.objective.slice(0, 120);
-      const row = await addTaskRow(ctx, parent.db_page_id, title, briefBlocks(
-        brief.objective, brief.done_when.map((d) => d.text), brief.constraints, (brief.sources ?? []).map((s) => s.ref),
-      ), key);
-      rowPageId = row.page_id;
+    type Subtask = { key: string; title?: string; delegate_agent_id?: string; depends_on?: string[]; brief: Row };
+    const subtasks = args.subtasks as Subtask[];
+    const pending = new Map<string, Subtask>();
+    for (const subtask of subtasks) {
+      if (pending.has(subtask.key)) throw new ToolError('invalid_input', `Duplicate subtask key: ${subtask.key}`);
+      const errors = validate(createSubtask.inputSchema.properties!.brief, subtask.brief);
+      if (errors.length) throw new ToolError('invalid_input', `Invalid brief for ${subtask.key}.`, errors);
+      pending.set(subtask.key, subtask);
     }
-    const data = await must(ctx.db.rpc<Row>('create_subtask', {
-      p_parent_task_id: args.parent_task_id,
-      p_row_page_id: rowPageId,
-      p_brief: args.brief,
-      p_delegate_agent_id: str(args.delegate_agent_id),
-      p_reference_task_ids: args.reference_task_ids,
-      p_depends_on_task_ids: args.depends_on_task_ids,
-      p_idempotency_key: key,
-    })) ?? {};
-    const structured = { task_id: data.task_id, context_id: data.context_id, row_page_id: rowPageId };
-    return { text: `Subtask ${String(data.task_id)} created on page ${rowPageId}. Wait for it with wait_for_task.`, structured };
+    for (const subtask of subtasks) for (const dependency of subtask.depends_on ?? []) {
+      if (!pending.has(dependency)) throw new ToolError('invalid_input', `Unknown dependency: ${dependency}`);
+    }
+    // Kahn's algorithm: resolve the whole graph before the first write.
+    const ordered: Subtask[] = [];
+    while (pending.size) {
+      const ready = [...pending.values()].filter((subtask) => (subtask.depends_on ?? []).every((key) => !pending.has(key)));
+      if (!ready.length) throw new ToolError('invalid_input', 'The plan has a dependency cycle.');
+      for (const subtask of ready) { ordered.push(subtask); pending.delete(subtask.key); }
+    }
+    const created = new Map<string, string>();
+    for (const subtask of ordered) {
+      const identity = JSON.stringify([args.parent_task_id, args.idempotency_key, subtask.key]);
+      const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(identity)));
+      const receiptKey = 'import-plan:v1:' + [...hash].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+      try {
+        const result = await createOneSubtask(ctx, {
+          parent_task_id: args.parent_task_id,
+          title: subtask.title,
+          delegate_agent_id: subtask.delegate_agent_id,
+          brief: subtask.brief,
+          depends_on_task_ids: (subtask.depends_on ?? []).map((key) => created.get(key)!),
+          idempotency_key: receiptKey,
+        });
+        created.set(subtask.key, String(result.structured.task_id));
+      } catch (error) {
+        throw new ToolError(error instanceof ToolError ? error.code : 'internal',
+          error instanceof Error ? error.message : 'The plan could not be imported.',
+          { created: Object.fromEntries(created), cause: error instanceof ToolError ? error.detail : null });
+      }
+    }
+    return { text: `${plural(created.size, 'subtask')} imported.`, structured: { created: Object.fromEntries(created) } };
   },
 };
 
@@ -195,7 +268,8 @@ const reviewTask: ToolDef = {
     'the worker; past the round limit it escalates to a person. blocked means a person must decide: the task waits on ' +
     'them and the worker resumes only after their answer. approved does not close the task: a person closes it ' +
     '(close_task), or the Lead with close_subtask when the policy allows.' +
-    ' As the reviewer agent, call it from your run on the review task delegated to you (its brief policy review_of names task_id); recording the review closes your review task.',
+    ' As the reviewer agent, call it from your run on the review task delegated to you (its brief policy review_of names task_id); recording the review closes your review task. ' +
+    'Minor findings never send work back and do not count a round; the Lead hears about them.',
   inputSchema: object({
     task_id: { type: 'string', minLength: 1 },
     run_id: { type: 'string', minLength: 1, description: 'Agents: your active run, on the parent task as Lead or on the review task as reviewer. People omit it.' },
@@ -205,10 +279,11 @@ const reviewTask: ToolDef = {
       type: 'array',
       items: object({
         criterion_id: { type: 'string', minLength: 1 },
+        severity: { type: 'string', enum: ['blocking', 'minor'] },
         status: { type: 'string', enum: ['verified', 'not_found', 'contradicted', 'unverified'] },
         note: { type: 'string', maxLength: 4000 },
         evidence_ref: { type: 'string' },
-      }, ['criterion_id', 'status']),
+      }, ['status']),
     },
     evidence: {
       type: 'array',
@@ -237,7 +312,7 @@ const closeSubtask: ToolDef = {
   name: 'close_subtask',
   title: 'Close a reviewed subtask',
   description:
-    'Lead, or the reviewer with an active run on its review task. Closes a subtask in ready_for_review when the parent brief allows it (policies.subtask_close = lead) or ' +
+    'Lead with an active parent run. A reviewer records review_task and ends its turn; the Lead or a person closes the delivery. Closes a subtask in ready_for_review when the parent brief allows it (policies.subtask_close = lead) or ' +
     'every deterministic criterion is verified with evidence; CI criteria require a current verified review and a passing GitHub check on the delivered commit. Otherwise policy_denied and a person decides.',
   inputSchema: object({
     task_id: { type: 'string', minLength: 1 },
@@ -253,6 +328,35 @@ const closeSubtask: ToolDef = {
       p_evidence: args.evidence ?? [],
     })) ?? {};
     return { text: `Subtask ${String(args.task_id)} closed (${String(data.task_state)}).`, structured: data };
+  },
+};
+
+const updateSubtask: ToolDef = {
+  name: 'update_subtask',
+  title: 'Correct or reassign a subtask',
+  description:
+    'Lead: change the goal, criteria, constraints, sources, next step, policies, delegate or dependencies of a subtask of your task. ' +
+    'Delegate: record decisions, open questions and the next step on your own task. A worker on the task is told the brief changed.',
+  inputSchema: object({
+    task_id: { type: 'string', minLength: 1 },
+    objective: { type: 'string', minLength: 1, maxLength: 10_000 },
+    constraints: { type: 'string', maxLength: 10_000 },
+    done_when: { type: 'array', items: doneWhenItem, minItems: 1, maxItems: 30 },
+    sources: { type: 'array', items: sourceItem, maxItems: 30 },
+    next_step: { type: 'string', maxLength: 2000 },
+    decisions: { type: 'array', items: { type: 'object' } },
+    open_questions: { type: 'array', items: { type: 'object' } },
+    policies: { type: 'object' },
+    delegate_agent_id: { type: 'string' },
+    depends_on_task_ids: { type: 'array', items: { type: 'string' } },
+  }, ['task_id']),
+  outputSchema: output({ brief_version: { type: 'integer' } }),
+  annotations: WRITE,
+  async handler(args, ctx) {
+    const { task_id, ...patch } = args;
+    if (Object.keys(patch).length === 0) throw new ToolError('invalid_input', 'Pass at least one field to change.');
+    const version = await must(ctx.db.rpc<number>('update_brief', { p_task_id: task_id, p_patch: patch }));
+    return { text: `Brief of ${String(task_id)} is now v${String(version)}.`, structured: { brief_version: version } };
   },
 };
 
@@ -288,4 +392,46 @@ const listSubtasks: ToolDef = {
   },
 };
 
-export const leadTools: ToolDef[] = [createTask, createSubtask, reviewTask, closeSubtask, listSubtasks];
+const reserveEnvironment: ToolDef = {
+  name: 'reserve_environment', title: 'Reserve a task environment',
+  description: 'Lead or person: reserve ports, stack, worktree, branch or migration numbers for a task. Check list_environments first. resource_taken identifies the task holding a conflicting resource.',
+  inputSchema: object({
+    task_id: { type: 'string', minLength: 1 },
+    items: { type: 'array', minItems: 1, maxItems: 20, items: object({
+      kind: { type: 'string', enum: ['ports', 'stack', 'worktree', 'branch', 'migration'] },
+      value: { type: 'string', minLength: 1, maxLength: 300 },
+    }, ['kind', 'value']) },
+  }, ['task_id', 'items']),
+  outputSchema: output({ environment: { type: 'array', items: { type: 'object' } } }),
+  annotations: WRITE,
+  async handler(args, ctx) {
+    const environment = await must(ctx.db.rpc<Row[]>('reserve_environment', { p_task_id: args.task_id, p_items: args.items })) ?? [];
+    return { text: `${plural(environment.length, 'resource')} reserved.`, structured: { environment } };
+  },
+};
+
+const releaseEnvironment: ToolDef = {
+  name: 'release_environment', title: 'Confirm an environment was stopped',
+  description: 'Lead or person: after stopping the processes, confirm the task environment can be reserved again. This tool does not stop processes.',
+  inputSchema: object({ task_id: { type: 'string', minLength: 1 } }, ['task_id']),
+  outputSchema: output({ released: { type: 'integer' } }), annotations: WRITE,
+  async handler(args, ctx) {
+    const data = await must(ctx.db.rpc<Row>('release_environment', { p_task_id: args.task_id })) ?? {};
+    return { text: `${String(data.released)} resources released.`, structured: data };
+  },
+};
+
+const listEnvironments: ToolDef = {
+  name: 'list_environments', title: 'List environments in use',
+  description: 'Resources held or waiting for shutdown confirmation, visible to you. Check before reserving an environment.',
+  inputSchema: object({}), outputSchema: output({ environments: { type: 'array', items: { type: 'object' } } }),
+  annotations: READ, cacheTtlMs: 0,
+  async handler(_args, ctx) {
+    const environments = await must(ctx.db.select<Row>({ table: 'agent_resources', columns: 'kind,value,status,task_id',
+      filters: [{ col: 'status', op: 'neq', value: 'released' }], order: [{ column: 'created_at', ascending: true }] })) ?? [];
+    return { text: `${plural(environments.length, 'resource')} in use.`, structured: { environments } };
+  },
+};
+
+export const leadTools: ToolDef[] = [createTask, createSubtask, updateSubtask, importPlan, reviewTask, closeSubtask, listSubtasks,
+  reserveEnvironment, releaseEnvironment, listEnvironments];

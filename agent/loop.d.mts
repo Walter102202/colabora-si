@@ -42,4 +42,5 @@ export function runAgent(opts: {
   signal?: AbortSignal;
   waitTimeoutS?: number;
   log?: (msg: string) => void;
+  noticeState?: { load(): { delivered?: Record<string,string> }; save(state: { delivered: Record<string,string> }): void };
 }): Promise<{ tasks: TaskOutcome[] }>;

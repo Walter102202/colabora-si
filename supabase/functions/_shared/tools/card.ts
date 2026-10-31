@@ -11,7 +11,7 @@ import { taskUrl } from '../lib/routes.ts';
 import { approvalPath } from '../lib/agentLinks.ts';
 import type { JsonSchema } from '../jsonSchema.ts';
 import { num, object, output, plural, READ, str, WRITE } from './common.ts';
-import { answeredQuestions, loadTask, loadTaskBundle, type Row, TASK_COLUMNS, type TaskBundle } from './taskData.ts';
+import { answeredQuestions, loadTask, loadTaskBundle, loadEnvironment, type Row, TASK_COLUMNS, type TaskBundle } from './taskData.ts';
 
 export const CARD_URI = 'ui://colabora/task-card.html';
 export const CARD_MIME = 'text/html;profile=mcp-app';
@@ -29,6 +29,7 @@ export const CARD_RESOURCE_META: Record<string, unknown> = { ui: { prefersBorder
 /** Output schema of the card data (TaskCardData in lib/agentCard.ts). */
 export const CARD_OUTPUT: Record<string, JsonSchema> = {
   kind: { type: 'string', enum: ['task'] },
+  environment: { type: 'array', items: { type: 'object' } },
   continuity: { type: ['object', 'null'] },
   autonomy: { type: ['object', 'null'] },
   diff: { type: ['object', 'null'] },
@@ -60,6 +61,7 @@ const REASON_LABEL: Record<WaitingReason, string> = {
 };
 
 export interface TaskCard extends TaskBundle {
+  environment: Row[];
   continuity: Row | null;
   autonomy?: Row | null;
   diff: Row | null;
@@ -111,7 +113,7 @@ export async function loadTaskCard(
 ): Promise<TaskCard> {
   const bundle = await loadTaskBundle(db, taskId, opts);
   const task = bundle.task;
-  const [runs, reviews, subtaskRows, checkpoints, answered] = await Promise.all([
+  const [runs, reviews, subtaskRows, checkpoints, answered, environment] = await Promise.all([
     typeof task.active_run_id === 'string' ? selectIn(db, 'agent_runs', RUN_COLUMNS, 'id', [task.active_run_id]) : Promise.resolve([]),
     must(db.select<Row>({
       table: 'agent_reviews',
@@ -133,6 +135,7 @@ export async function loadTaskCard(
       order: [{ column: 'seq', ascending: false }], limit: 1,
     })),
     answeredQuestions(db, taskId),
+    loadEnvironment(db, taskId),
   ]);
   const subtasks = subtaskRows ?? [];
   const review = reviews?.[0] ?? null;
@@ -164,6 +167,7 @@ export async function loadTaskCard(
   return {
     kind: 'task',
     ...bundle,
+    environment: environment ?? [],
     continuity,
     ...(opts.autonomy ? { autonomy } : {}),
     run: runs[0] ?? null,

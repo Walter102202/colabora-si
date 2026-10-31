@@ -45,7 +45,7 @@ const client = {
   from() {
     const chain: Record<string, unknown> = {};
     const resolved = Promise.resolve({ data: [], error: null });
-    for (const m of ["select", "eq", "in", "gt", "lt", "or", "order", "limit", "is"]) chain[m] = () => chain;
+    for (const m of ["select", "eq", "neq", "in", "gt", "lt", "or", "order", "limit", "is"]) chain[m] = () => chain;
     chain.then = resolved.then.bind(resolved);
     return chain as { select: () => typeof chain };
   },

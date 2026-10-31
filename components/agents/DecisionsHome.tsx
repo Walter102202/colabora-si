@@ -6,6 +6,7 @@ import { useAgentTasks } from "@/lib/agentTasks";
 import { useAgentsStore } from "@/lib/agentsStore";
 import { useAuthStore } from "@/lib/auth";
 import { useStore } from "@/lib/store";
+import { decideApproval } from "@/lib/agentActions";
 
 // Agent layer plug for the Home: what waits on the signed-in person and what agents are doing for them.
 // Hidden without a backend or a session. Track B mounts it in app/(workspace)/page.tsx.
@@ -51,6 +52,8 @@ export function DecisionsHome() {
   return (
     <DecisionsHomeView
       home={home}
+      approvals={Object.values(approvals)}
+      onDecide={(id, decision, response) => decideApproval(id, decision, response).then(() => undefined)}
       loading={(status === "idle" || status === "loading") && Object.keys(tasks).length === 0}
       error={status === "error" ? error ?? "Unknown error" : null}
       onRetry={() => void load(workspaceId)}

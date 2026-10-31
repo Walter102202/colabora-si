@@ -25,6 +25,7 @@ export declare function taskToChannel(task: {
   reason?: string;
   pending_prompts?: number;
   active_run_id?: string;
+  notice?: Pick<AgentEventRow, "type" | "payload" | "event_id">;
 }): ChannelEvent;
 export interface Channel {
   start(): Promise<void>;

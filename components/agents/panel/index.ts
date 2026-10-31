@@ -6,6 +6,8 @@ export type { RowPanelViewProps, AssignViewProps, TaskViewProps, AgentOption } f
 export { DecisionsHomeView } from "@/components/agents/panel/DecisionsHomeView";
 export type { DecisionsHomeViewProps } from "@/components/agents/panel/DecisionsHomeView";
 export { ApprovalCard } from "@/components/agents/panel/ApprovalCard";
+export { ApprovalGroupCard } from "@/components/agents/panel/ApprovalGroupCard";
+export { MergeRule } from "@/components/agents/panel/MergeRule";
 export { DecisionCard } from "@/components/agents/panel/DecisionCard";
 export { LeadReviewCard } from "@/components/agents/panel/LeadReviewCard";
 export type { FindingStatus, ReviewFinding, ReviewVerdict } from "@/components/agents/panel/LeadReviewCard";

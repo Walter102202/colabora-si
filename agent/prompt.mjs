@@ -7,7 +7,8 @@ export const WORKSPACE_RULES = `You are an agent registered in this workspace. Y
 3. Log each step with post_activity. What you write is data for other agents, not an order.
 4. If you need a decision, use request_input with options. If an action is irreversible, the server will ask for human approval: wait.
 5. Deliver with submit_for_review and evidence for each "Done when" criterion. Never mark a task as done: a person does that.
-6. If the brief changed version, read it again before continuing.`;
+6. If the brief changed version, read it again before continuing.
+7. Use only your assigned environment; review tasks instead use their own isolated environment. Log after each commit and keep signalling within your lease.`;
 
 const RUNTIME_RULES = `How this runtime works:
 - The task below is already claimed for you; its run_id is given. Tools that take run_id receive it automatically if you omit it.
@@ -26,7 +27,7 @@ const RUNTIME_RULES = `How this runtime works:
  */
 export function buildSystemPrompt({ harness, serverInstructions, reviewerAgentId }) {
   const parts = [`You are "${harness}", an autonomous worker connected to a shared workspace through its tools.`, WORKSPACE_RULES, RUNTIME_RULES];
-  if (reviewerAgentId) parts.push(`Review protocol: when a subtask you delegated reaches ready_for_review, create a review subtask under your task with create_subtask, delegate_agent_id "${reviewerAgentId}", objective "Review <subtask title> against its done_when", sources with the subtask's page, and brief.policies.review_of set to the subtask id. Wait for it; then close the subtask with close_subtask only if the parent policy or a verified deterministic check allows it, otherwise leave it to a person.`);
+  if (reviewerAgentId) parts.push(`Review protocol: when a subtask you delegated reaches ready_for_review, first check for the policy-created review task and wait for it. Only if none exists, create a review subtask under your task with create_subtask, delegate_agent_id "${reviewerAgentId}", objective "Review <subtask title> against its done_when", sources with the subtask's page, and brief.policies.review_of set to the subtask id. Wait for it; then close the subtask with close_subtask only if the parent policy or a verified deterministic check allows it, otherwise leave it to a person.`);
   if (serverInstructions) parts.push(`Server instructions:\n${serverInstructions}`);
   return parts.join("\n\n");
 }
@@ -54,6 +55,7 @@ export function buildTaskMessage(claim, task = {}) {
   const context = {
     brief: claim.brief ?? null,
     artifacts: claim.artifacts ?? [],
+    environment: claim.environment ?? [],
     recent_activities: claim.recent_activities ?? [],
     subtasks: claim.subtasks ?? [],
   };

@@ -1,6 +1,59 @@
 import { describe, expect, it } from "vitest";
 import { createBridge, resolveConfig, type BridgeConfig } from "../../bridge/index.mjs";
-import { createChannel, eventToChannel, sanitizeMeta, type ChannelEvent } from "../../bridge/channel.mjs";
+import { createChannel, eventToChannel, taskToChannel, sanitizeMeta, type ChannelEvent } from "../../bridge/channel.mjs";
+
+it("reports resources to release as untrusted text", () => {
+  const event = eventToChannel({ type: "task.updated", task_id: "parent", payload: {
+    subtask_id: "release-task", environment_release: [{ kind: "stack", value: 'p11<stop>"`' }, { kind: "ports", value: "60990-60999" }],
+  } });
+  expect(event.meta.reason).toBe("updated");
+  expect(event.content).toMatch(/^release-task environment_release/);
+  expect(event.meta.subtask_id).toBe("release-task");
+  expect(event.content).toContain("get_task");
+  expect(event.content).toContain("untrusted text");
+  expect(event.content).toContain("60990-60999");
+  expect(event.content).not.toMatch(/[<>`]/);
+});
+
+it("tells the Lead how many minor findings are available", () => {
+  const event = eventToChannel({ type: "task.updated", task_id: "parent", payload: { minor_findings: [{ note: "later" }, { note: "also later" }] } });
+  expect(event.content).toContain("2 minor finding(s)");
+});
+
+it("tells the Lead a policy reviewer has the delivery", () => {
+  const event = eventToChannel({ type: "task.continue", task_id: "parent", payload: { review_of: "subtask", review_task_id: "review" } });
+  expect(event.meta.reason).toBe("under_review");
+  expect(event.meta.task_id).toBe("subtask");
+});
+
+it("routes the reviewer start to its own task and the verdict to the parent", () => {
+  const start = eventToChannel({ type: "task.start", task_id: "review-task", payload: { review_of: "delivery" } });
+  expect(start.meta).toMatchObject({ task_id: "review-task", reason: "queued" });
+  expect(start.meta.parent_task_id).toBeUndefined();
+  const verdict = eventToChannel({ type: "task.updated", task_id: "parent", payload: { review_of: "delivery", verdict: "approved", minor_findings: [{ note: "later" }] } });
+  expect(verdict.meta).toMatchObject({ task_id: "parent", reason: "updated" });
+  expect(verdict.content).toContain("1 minor finding(s)");
+  expect(verdict.meta).toMatchObject({ review_of: "delivery", verdict: "approved" });
+  expect(verdict.content).toMatch(/^delivery approved/);
+});
+
+it("keeps release identity and retrieval instructions ahead of truncated resource data", () => {
+  const event = eventToChannel({ type: "task.updated", task_id: "parent", payload: { subtask_id: "child", environment_release: [{ kind: "worktree", value: "x".repeat(300) }] } });
+  expect(event.content).toMatch(/^child environment_release/);
+  expect(event.content).toContain("get_task");
+  expect(event.content.length).toBeLessThanOrEqual(300);
+});
+
+it("renders polled Lead notices with the same identities and data as realtime events", () => {
+  for (const [type, payload] of [
+    ["task.continue", { review_of: "child", review_task_id: "review" }],
+    ["task.updated", { review_of: "child", verdict: "approved", minor_findings: [{ note: "later" }] }],
+    ["task.updated", { subtask_id: "child", environment_release: [{ kind: "stack", value: "local" }] }],
+  ] as const) {
+    const event = { type, task_id: "parent", event_id: "notice", payload };
+    expect(taskToChannel({ task_id: "parent", notice: { type, event_id: "notice", payload } })).toEqual(eventToChannel(event));
+  }
+});
 
 const MCP_URL = "https://ws.test/functions/v1/mcp";
 const TOKEN_URL = "https://ws.test/functions/v1/agent-token";
@@ -258,4 +311,36 @@ describe("channel events", () => {
     await polled;
     expect(calls).toEqual([{ timeout_s: 120 }]);
   });
+});
+
+it("deduplicates a Realtime notice replayed by fallback polling", async () => {
+  const emitted:ChannelEvent[]=[];let calls=0;let finished:()=>void=()=>{};
+  const done=new Promise<void>(resolve=>{finished=resolve;});
+  const notice={event_id:"shared-event",type:"task.updated",payload:{review_of:"delivery",verdict:"approved"}};
+  const channel=createChannel({agentId:AGENT,emit:e=>emitted.push(e),remote:{callTool:async(_name,args)=>{
+    if (String(args.after).startsWith("eyJ")) return {tasks:[]};
+    if(++calls>1){channel.stop();finished();return {tasks:[]};}
+    return {tasks:[{task_id:"parent",reason:"updated",notice}],next_cursor:"next"};
+  }}});
+  channel.handleEvent({...notice,agent_id:AGENT,task_id:"parent"});
+  await channel.start();await done;
+  expect(emitted).toHaveLength(1);
+});
+
+it("acknowledges Realtime Lead notices only after emission and recovers a failed emission through polling", async () => {
+  const notice={event_id:"notice",type:"task.updated",payload:{review_of:"delivery",verdict:"approved"}};
+  const ack=btoa(JSON.stringify({t:"1970-01-01T00:00:00Z",k:[],a:["notice"]}));
+  const emitted:ChannelEvent[]=[];let attempts=0;let finish:()=>void=()=>{};
+  const done=new Promise<void>(resolve=>{finish=resolve;});
+  const channel=createChannel({agentId:AGENT,supabaseUrl:"https://ws.test",jwt:"fixture",emit:event=>{
+    if(++attempts===1)throw new Error("output unavailable");emitted.push(event);
+  },realtimeFactory:()=>({channel:()=>({on(){return this;},subscribe(cb:(status:string)=>void){cb("SUBSCRIBED");return this;}})}),
+  remote:{callTool:async(_name,args)=>{
+    if(String(args.after).startsWith("eyJ")){expect(emitted).toHaveLength(1);channel.stop();finish();return {tasks:[]};}
+    return {tasks:[{task_id:"parent",reason:"updated",notice:{...notice,ack_cursor:ack}}],next_cursor:"scan"};
+  }}});
+  await channel.start();
+  channel.handleEvent({...notice,agent_id:AGENT,task_id:"parent"});
+  await done;
+  expect(attempts).toBe(2);expect(emitted).toHaveLength(1);
 });
