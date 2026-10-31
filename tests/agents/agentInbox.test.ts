@@ -297,3 +297,18 @@ it("webhook transport acknowledges only after successful inbox delivery and neve
   expect(fetchImpl).not.toHaveBeenCalled();
   expect(call).toHaveBeenLastCalledWith("take_channel_updates", { ack_update_id: 4 });
 });
+
+it.each([
+  { chat: { id: -10, type: "group" }, from: { id: 5 } },
+  { chat: { id: 5, type: "private" }, from: { id: 6 } },
+])("polling status does not reveal person work to an unverified sender: %j", async (sender) => {
+  const stop = new AbortController(); let first = true;
+  const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+    if (String(url).endsWith("getUpdates") && first) { first = false; return Response.json({ ok: true, result: [{ update_id: 1, message: { message_id: 1, ...sender, text: "/status" } }] }); }
+    stop.abort(); return Response.json({ ok: true, result: [] });
+  });
+  const call = vi.fn(async () => ({ running_work: [] }));
+  const channel = createTelegramChannel({ token: "fake", ownerChatId: String(sender.chat.id), fetchImpl, channelRpc: call });
+  await channel.start({ signal: stop.signal });
+  expect(call).not.toHaveBeenCalled();
+});

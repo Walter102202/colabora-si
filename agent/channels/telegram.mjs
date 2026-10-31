@@ -132,6 +132,7 @@ export function createTelegramChannel({ token, ownerChatId, fetchImpl = globalTh
             const text = String(msg.text ?? "").trim();
             if (text.startsWith("/status")) {
               if (channelRpc) {
+                if (msg.chat?.type !== "private" || String(msg.from?.id) !== String(ownerChatId) || msg.from?.is_bot) continue;
                 const data = await channelRpc("person_work_status", { chat_id: String(msg.chat.id) });
                 await send((data.running_work ?? []).map((t) => `${t.title}: ${t.state}; subtasks ${t.subtasks_done}/${t.subtasks_total}`).join("\n") || "No open work is visible for you.");
               } else await send(`Status: ${status()}`);
