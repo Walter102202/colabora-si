@@ -67,6 +67,7 @@ await runAgent({
   noticeState: fileState(`${resolve(envPath)}.notices.json`),
   channel,
   harness: config.harness,
+  displayName: config.displayName,
   reviewerAgentId: config.reviewerAgentId,
   resume: config.resume,
   modelVision: config.modelVision,

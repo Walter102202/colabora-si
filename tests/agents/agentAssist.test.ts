@@ -21,6 +21,16 @@ describe("the model and the channel tools", () => {
     return { mcp, model, reply, opts: { call: mcp.callTool, model, reply, appUrl: "https://app.test", task: { task_id: "t", request_kind: "assist" }, runId: "run", log: () => {} } };
   }
   const saves = (h: ReturnType<typeof assist>) => h.mcp.calls.filter((c: { name: string }) => c.name === "save_to_notes");
+  it.each([true, false])("proposes only the authorized message (matching=%s)", async (matching) => {
+    const request = { kind: "assist", messages: [{ id: ID, from: "person", text: "Prepare this page" }], through_seq: 7,
+      page: { id: "page", text: "Untrusted page" }, selection: "Selected", waiting_on_you: ["Decision"], proposal_message_id: ID };
+    const h = assist(request, {}, [{ tool_calls: [toolCall("propose_work", { message_id: matching ? ID : "00000000-0000-4000-8000-000000000002" })] }, { content: "Ready when you are." }]);
+    await runRequest(h.opts);
+    expect(h.model.requests[0].tools!.map((t: { function: { name: string } }) => t.function.name)).toEqual(["propose_work"]);
+    expect(JSON.parse(String(h.model.requests[0].messages[1].content))).toMatchObject({ page: request.page, selection: "Selected", waiting_on_you: ["Decision"] });
+    expect(h.mcp.calls.find((c) => c.name === "reply_person_message")?.args.propose_message_id).toBe(matching ? ID : undefined);
+    expect(saves(h)).toEqual([]);
+  });
   it("offers no tool when nobody asked to save", async () => {
     const h = assist({ kind: "assist", task_id: "t", messages: [{ id: ID, from: "person", text: "hola" }], through_seq: 7 });
     await runRequest(h.opts);

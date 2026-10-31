@@ -33,6 +33,7 @@ export function runAgent(opts: {
   maxTurns?: number;
   maxTasks?: number;
   harness?: string;
+  displayName?: string;
   reviewerAgentId?: string;
   resume?: boolean;
   modelVision?: boolean;

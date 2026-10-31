@@ -63,7 +63,7 @@ function answerText(p) {
  * Runs the agent until `maxTasks` tasks were handled or `signal` aborts.
  * @param {{
  *   mcp: McpClient, model: Model, channel?: Channel, clock?: Clock,
- *   maxTurns?: number, maxTasks?: number, harness?: string, reviewerAgentId?: string, resume?: boolean,
+ *   maxTurns?: number, maxTasks?: number, displayName?: string, harness?: string, reviewerAgentId?: string, resume?: boolean,
  *   prices?: {input: number, output: number}, appUrl?: string,
  *   signal?: AbortSignal, waitTimeoutS?: number, log?: (msg: string) => void, modelVision?: boolean, modelPdf?: boolean,
  *   noticeState?: { load: () => { delivered?: Record<string, string> }, save: (state: { delivered: Record<string, string> }) => void },
@@ -79,6 +79,7 @@ export async function runAgent(opts) {
     maxTurns = 40,
     maxTasks = Infinity,
     harness = "reference-agent",
+    displayName = "",
     reviewerAgentId = "",
     resume = true,
     prices = { input: 0, output: 0 },
@@ -94,7 +95,7 @@ export async function runAgent(opts) {
   const allTools = await mcp.listTools();
   const toolSchemas = new Map(allTools.map((t) => [t.name, t.inputSchema ?? {}]));
   const tools = toOpenAiTools(allTools.filter((t) => !RUNTIME_TOOLS.has(t.name) && !REQUEST_TOOLS.has(t.name)));
-  const system = buildSystemPrompt({ harness, serverInstructions: mcp.instructions, reviewerAgentId });
+  const system = buildSystemPrompt({ harness, displayName, serverInstructions: mcp.instructions, reviewerAgentId });
 
   /** @param {ChannelEvent} event */
   const notify = async (event) => {

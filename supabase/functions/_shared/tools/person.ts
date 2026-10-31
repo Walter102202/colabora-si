@@ -41,13 +41,13 @@ const reply: ToolDef = {
   name: 'reply_person_message', title: 'Answer a person',
   description: 'Platform loop tool: answers everything up to through_seq and closes the request.',
   inputSchema: object({
-    run_id: { type: 'string', minLength: 1 }, text: { type: 'string', minLength: 1, maxLength: 4000 }, through_seq: { type: 'integer', minimum: 0 }, usage,
+    run_id: { type: 'string', minLength: 1 }, text: { type: 'string', minLength: 1, maxLength: 4000 }, through_seq: { type: 'integer', minimum: 0 }, usage, propose_message_id: { type: 'string', minLength: 1 },
   }, ['run_id', 'text', 'through_seq']),
   outputSchema: output({ channel: { type: 'string' }, chat_id: { type: 'string' }, text: { type: 'string' }, message_id: { type: 'string' }, note_page_id: { type: 'string' } }),
   annotations: WRITE, cacheTtlMs: 0,
   async handler(args, ctx) {
     const data = await must(ctx.db.rpc<Record<string, unknown>>('reply_person_message', {
-      p_run_id: str(args.run_id), p_text: str(args.text), p_through_seq: num(args.through_seq), p_usage: args.usage,
+      p_run_id: str(args.run_id), p_text: str(args.text), p_through_seq: num(args.through_seq), p_usage: args.usage, ...(args.propose_message_id ? { p_propose_message_id: str(args.propose_message_id) } : {}),
     }));
     return { text: 'Answered.', structured: data ?? {} };
   },

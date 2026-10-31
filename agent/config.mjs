@@ -12,6 +12,7 @@ import { readFile } from "node:fs/promises";
  * @property {string} mcpUrl            remote MCP endpoint of the workspace
  * @property {string} agentPat          personal access token of this agent (agt_...)
  * @property {string} tokenUrl          PAT -> JWT exchange endpoint
+ * @property {string} displayName       optional public agent identity
  * @property {string} harness           harness name reported on claim_task
  * @property {boolean} resume          resume from checkpoints when the server supports it
  * @property {boolean} modelVision     the model accepts image input
@@ -87,6 +88,7 @@ export function readConfig(env) {
     mcpUrl,
     agentPat: /** @type {string} */ (env.WORKSPACE_AGENT_PAT),
     tokenUrl: env.WORKSPACE_AGENT_TOKEN_URL || `${new URL(mcpUrl).origin}/functions/v1/agent-token`,
+    displayName: env.AGENT_DISPLAY_NAME ?? "",
     harness: env.AGENT_HARNESS_NAME || "reference-agent",
     resume: env.AGENT_RESUME !== "0",
     modelVision: env.WORKSPACE_MODEL_VISION === "1",

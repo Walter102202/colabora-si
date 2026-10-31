@@ -100,7 +100,7 @@ export function AgentsSettingsTab() {
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-text-secondary">Agents work on the pages you give them access to and show up as authors.</p>
         {!agents.some((a) => a.is_platform && !a.revoked_at) && (
-          <button type="button" className="shrink-0 rounded border border-border px-3 py-1 text-sm hover:bg-bg-secondary disabled:opacity-50" disabled={busy} onClick={onEnablePlatform}>Enable the Colabora agent</button>
+          <button type="button" className="shrink-0 rounded border border-border px-3 py-1 text-sm hover:bg-bg-secondary disabled:opacity-50" disabled={busy} onClick={onEnablePlatform}>Enable Trama</button>
         )}
         <button type="button" className="shrink-0 rounded bg-accent px-3 py-1 text-sm text-white" onClick={() => setView({ kind: "new" })}>New agent</button>
       </div>
