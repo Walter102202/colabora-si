@@ -212,3 +212,15 @@ When Trama proposes work, **Do it** creates a normal task with your original mes
 Voice is transcribed through `voice-transcribe`; browser clips are reviewed before sending. Audio stays in memory and is not stored by colabora.si. Meta receives it for transcription; Telegram retains its own copy. Limits are five minutes in the app, ten minutes for Telegram voice notes, plus person, workspace-agent budget and global quotas enforced by the server before calling Meta. Telegram requires `ffmpeg` on the agent host.
 
 Explicit requests such as “save in notes: buy bread” are verified from the original person message before the agent can save. Pasted or forwarded text cannot authorize saving. Notes are private by default; Undo and `/undo` or `/deshacer` remove a saved note. The platform runtime must be running to answer and save; messages remain queued while it is unavailable.
+
+## Workspace connection (P14)
+
+`/functions/v1/workspace-mcp` is the compact, 23-tool connection for direct page and database work without tasks. `/functions/v1/mcp` retains its tool list for tasks, reviews and handovers. Connect both when needed. The same bearer verification, OAuth session links, caller client, RLS and write core apply.
+
+Create a database in one call with `create_database`: parent, title, properties, views and up to 100 initial rows. Properties/options/views accept names or ids. `query_database` with `limit: 0` returns properties, options and views. Writes require `idempotency_key` on the workspace endpoint. Archive/restore retain data; moving returns the previous parent. Agents need write access on a parent; only human sessions create at the root. Private pages stay inaccessible to other identities through workspace tools, including when published.
+
+Set the Edge Function secret `MCP_WORKSPACE_RESOURCE_URL` to the external workspace endpoint URL. Metadata lives at `<workspace endpoint>/.well-known/oauth-protected-resource`; keep `MCP_RESOURCE_URL` for tasks and `MCP_AUTH_SERVER_URL` for the shared issuer. The existing bridge accepts either `WORKSPACE_MCP_URL`; use `--no-channel` for workspace-only work.
+
+Migrations 0047-0048 and pgTAP 57-58 implement these operations. Merge after P12b (0044-0046); no P12b migration is needed at runtime. Calculated properties (`formula`, `relation`, `rollup`, `ai`, agent properties) are not created here. A hosted OAuth conversation is verified after deployment.
+
+Local checks: `node tests/agents/workspace-mcp-smoke.mjs` exercises the served P14 runtime. `node tests/agents/workspace-agent-check.mjs` sends fictitious local tasks to Muse using the authorized credential file, without printing it. Use the isolated `colabora-si-p14` stack on 60990-60999.

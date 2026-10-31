@@ -109,3 +109,15 @@ For Desktop, `node connect/codex/watch.mjs` replaces the Stop hook and forwards 
 - The branch prefix decides which track you are on; follow the ownership rules in `AGENTS.md`. On `main` you act for the maintainer and may touch infra files.
 - `tests/infra/migrationOrder.test.ts` judges gaps by the target: `main` and pull requests into it take none; a branch may skip only the numbers `OWNERS.json` reserves for a part that is not merged yet.
 - Private working context lives in gitignored files (`CLAUDE.local.md`, `CONTEXTO.md`). Nothing from them goes into versioned files, commits or the README.
+
+## Workspace connection (P14)
+
+`/functions/v1/workspace-mcp` is the compact, 23-tool connection for direct page and database work without tasks. `/functions/v1/mcp` retains its tool list for tasks, reviews and handovers. Connect both when needed. The same bearer verification, OAuth session links, caller client, RLS and write core apply.
+
+Create a database in one call with `create_database`: parent, title, properties, views and up to 100 initial rows. Properties/options/views accept names or ids. `query_database` with `limit: 0` returns properties, options and views. Writes require `idempotency_key` on the workspace endpoint. Archive/restore retain data; moving returns the previous parent. Agents need write access on a parent; only human sessions create at the root. Private pages stay inaccessible to other identities through workspace tools, including when published.
+
+Set the Edge Function secret `MCP_WORKSPACE_RESOURCE_URL` to the external workspace endpoint URL. Metadata lives at `<workspace endpoint>/.well-known/oauth-protected-resource`; keep `MCP_RESOURCE_URL` for tasks and `MCP_AUTH_SERVER_URL` for the shared issuer. The existing bridge accepts either `WORKSPACE_MCP_URL`; use `--no-channel` for workspace-only work.
+
+Migrations 0047-0048 and pgTAP 57-58 implement these operations. Merge after P12b (0044-0046); no P12b migration is needed at runtime. Calculated properties (`formula`, `relation`, `rollup`, `ai`, agent properties) are not created here. A hosted OAuth conversation is verified after deployment.
+
+Local checks: `node tests/agents/workspace-mcp-smoke.mjs` exercises the served P14 runtime. `node tests/agents/workspace-agent-check.mjs` sends fictitious local tasks to Muse using the authorized credential file, without printing it. Use the isolated `colabora-si-p14` stack on 60990-60999.
