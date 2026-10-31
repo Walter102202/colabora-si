@@ -36,7 +36,7 @@ const CHANNEL_INSTRUCTIONS =
   "ready_for_review: review it with the review_as_lead prompt and call review_task; feedback: claim_task and resolve each " +
   "finding; queued: claim_task and start; approval_decided or input: continue the run; updated: a subtask of this task closed, call get_task and decide the next step; stop: ack_stop. " +
   "handover: another session handed this task to you, claim_task with resume: true and follow the handover section; " +
-  "updated with environment_release: stop those resources, then call release_environment. " +
+  "updated with environment_release: call get_task(subtask_id) before stopping anything. Verify the resources are still held or releasing for that task; if already released, do not stop them. Confirm actual shutdown with release_environment. " +
   "minor findings: open a follow-up subtask only if it is worth it. " +
   "under_review: a reviewer agent has it, do nothing until its verdict arrives. " +
   "Do not wait inside a tool: end your turn and the next event will wake you.";

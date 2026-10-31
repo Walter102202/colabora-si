@@ -54,7 +54,7 @@ const ok = (step) => { steps++; console.log(`ok ${step}`); };
 let ownedEnvironment = null;
 
 /** Run the actual watcher and execFile boundary against HTTP, with Node standing in for the Codex CLI. */
-async function watchCorrection(taskId, cursor, blocking, minor) {
+async function watchCorrection(taskId, cursor, blocking, minor, agentName = "CODEX") {
   const directory = fileURLToPath(rootFile(`.local/loop-${randomUUID()}/`));
   mkdirSync(directory, { recursive: true });
   const preload = `${directory}/fake-codex.cjs`;
@@ -69,11 +69,11 @@ appendFileSync(process.env.P11_CAPTURE_PATH,JSON.stringify(args)+"\n"); process.
 `);
   const disk = fileState(`${directory}/state.json`);
   disk.save({ cursor });
-  const env = { WORKSPACE_MCP_URL: mcp.href, WORKSPACE_AGENT_PAT: tokenFor("CODEX") };
+  const env = { WORKSPACE_MCP_URL: mcp.href, WORKSPACE_AGENT_PAT: tokenFor(agentName) };
   const send = codexQueue(() => process.execPath, undefined, {
     SystemRoot: process.env.SystemRoot ?? process.env.SYSTEMROOT,
     NODE_OPTIONS: `--require ${JSON.stringify(preload)}`,
-    P11_CAPTURE_PATH: capture, P11_TEST_THREAD_ID: session, WORKSPACE_AGENT_PAT: tokenFor("CODEX"),
+    P11_CAPTURE_PATH: capture, P11_TEST_THREAD_ID: session, WORKSPACE_AGENT_PAT: tokenFor(agentName),
   });
   for (let pass = 0; pass < 2; pass++) {
     const controller = new AbortController();
@@ -93,7 +93,7 @@ appendFileSync(process.env.P11_CAPTURE_PATH,JSON.stringify(args)+"\n"); process.
   const calls = readFileSync(capture, "utf8").trim().split("\n").map(line => JSON.parse(line));
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].slice(0, 4), ["queue", "--thread", session, "--message"]);
-  assert.ok(calls[0][4].includes(blocking)); assert.ok(!calls[0][4].includes(minor));
+  assert.ok(calls[0][4].includes(blocking)); if (minor) assert.ok(!calls[0][4].includes(minor));
   console.log(`watcher evidence: ${capture}`);
 }
 
@@ -114,8 +114,9 @@ async function main() {
   };
   let leadCursor = (await lead.callTool("wait_for_my_tasks", { timeout_s: 0 })).next_cursor;
   const workerCursor = (await worker.callTool("wait_for_my_tasks", { timeout_s: 0 })).next_cursor;
-  const parent = await lead.callTool("create_task", { title: "P11 whole loop", reviewer: reviewerId,
+  const parent = await lead.callTool("create_task", { title: "P11 whole loop", reviewer: reviewerId, claim: false,
     brief: { goal: "Complete two dependent test deliveries", done_when: ["The local loop completes"] } });
+  parent.run_id = (await lead.callTool("claim_task", { task_id: parent.task_id, harness: "codex", external_session_id: session })).run_id;
   const notices = [];
   const leadNotice = async (predicate) => {
     for (let page = 0; page < 20; page++) {
@@ -159,6 +160,7 @@ async function main() {
   run = await worker.callTool("claim_task", { task_id: first, harness: "codex", external_session_id: session, resume: true });
   ok("3a active reassignment fences the former executor and both replacements can resume");
   const artifact = await worker.callTool("add_artifact", { run_id: run.run_id, kind: "diff", ref: `${repo}@${"a".repeat(40)}`, title: "First commit", satisfies: ["ci"] });
+  let watchLeadCursor = (await lead.callTool("wait_for_my_tasks", { timeout_s: 0 })).next_cursor;
   const delivered = await worker.callTool("submit_for_review", { run_id: run.run_id, summary: "First delivery", artifact_ids: [artifact.artifact_id] });
   ok("3 only the first task is claimable; worker delivers");
 
@@ -167,6 +169,7 @@ async function main() {
   assert.equal(eventToChannel(deliveryEvent).meta.reason, "under_review");
   assert.equal((await leadNotice(task => task.reason === "under_review" && task.notice.payload.review_of === first)).review_task_id, delivered.review_task_id);
   const reviewRun = await reviewer.callTool("claim_task", { task_id: delivered.review_task_id, harness: "claude_code" });
+  await watchCorrection(parent.task_id, watchLeadCursor, "under_review", null, "LEAD");
   ok("4 review task opens automatically and Lead receives under_review");
 
   const blocking = "Fix the missing assertion";
@@ -190,6 +193,7 @@ async function main() {
   assert.match(reviewTask.brief.constraints, /round 2.*Confirm only/s);
   assert.ok(reviewTask.brief.constraints.includes(blocking)); assert.ok(!reviewTask.brief.constraints.includes(minor));
   const secondReview = await reviewer.callTool("claim_task", { task_id: redelivered.review_task_id, harness: "claude_code" });
+  watchLeadCursor = (await lead.callTool("wait_for_my_tasks", { timeout_s: 0 })).next_cursor;
   await reviewer.callTool("review_task", { task_id: first, run_id: secondReview.run_id, artifact_id: fixed.artifact_id, verdict: "approved", findings: [
     { criterion_id: "ci", status: "verified", note: "The requested correction is present" }, { severity: "minor", status: "unverified", note: minor },
   ] });
@@ -200,7 +204,8 @@ async function main() {
   assert.equal(eventToChannel(verdictEvent).meta.reason, "updated");
   assert.ok(eventToChannel(verdictEvent).content.includes("1 minor finding(s)"));
   assert.equal((await leadNotice(task => task.notice.payload.verdict === "approved" && task.notice.payload.review_of === first)).minor_findings.length, 1);
-  ok("8 the Lead receives minor findings");
+  await watchCorrection(parent.task_id, watchLeadCursor, "minor finding", null, "LEAD");
+  ok("8 the Lead receives minor findings through the watcher");
 
   await human("set_merge_rule", { p_task_id: parent.task_id, p_conditions: ["review_approved", "ci_green"] });
   const ci = { id: Date.now(), name: "check", head_sha: "b".repeat(40), conclusion: "success", html_url: "https://github.com/p11/local-loop/actions/runs/1", head_branch: "a/p11", completed_at: new Date().toISOString() };
@@ -239,6 +244,7 @@ async function main() {
   assert.equal(freshDenied.status, "pending");
   ok("9b green CI on a new unreviewed commit still waits for a person");
 
+  watchLeadCursor = (await lead.callTool("wait_for_my_tasks", { timeout_s: 0 })).next_cursor;
   await lead.callTool("close_subtask", { task_id: first });
   const after = await worker.callTool("list_my_tasks", {});
   assert.deepEqual(after.tasks.find((t) => t.task_id === second).blocked_by, []);
@@ -247,6 +253,7 @@ async function main() {
   assert.ok(eventToChannel(released).content.includes("environment_release"));
   const polledRelease = await leadNotice(task => task.notice.payload.environment_release && task.notice.payload.subtask_id === first);
   assert.equal(polledRelease.environment_release.length, 2);
+  await watchCorrection(parent.task_id, watchLeadCursor, "before stopping anything", null, "LEAD");
   ok("10 closing the task releases its dependent and requests environment shutdown");
 
   // These are synthetic resource records; the real test stack stays up until its caller stops it.

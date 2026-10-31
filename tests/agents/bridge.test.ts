@@ -312,3 +312,16 @@ describe("channel events", () => {
     expect(calls).toEqual([{ timeout_s: 120 }]);
   });
 });
+
+it("deduplicates a Realtime notice replayed by fallback polling", async () => {
+  const emitted:ChannelEvent[]=[];let calls=0;let finished:()=>void=()=>{};
+  const done=new Promise<void>(resolve=>{finished=resolve;});
+  const notice={event_id:"shared-event",type:"task.updated",payload:{review_of:"delivery",verdict:"approved"}};
+  const channel=createChannel({agentId:AGENT,emit:e=>emitted.push(e),remote:{callTool:async()=>{
+    if(++calls>1){channel.stop();finished();return {tasks:[]};}
+    return {tasks:[{task_id:"parent",reason:"updated",notice}],next_cursor:"next"};
+  }}});
+  channel.handleEvent({...notice,agent_id:AGENT,task_id:"parent"});
+  await channel.start();await done;
+  expect(emitted).toHaveLength(1);
+});

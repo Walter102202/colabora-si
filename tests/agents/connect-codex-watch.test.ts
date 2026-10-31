@@ -166,3 +166,17 @@ describe("Codex watcher", () => {
       { timeout: 60_000, windowsHide: true, env: {} }, expect.any(Function));
   });
 });
+
+it("delivers every distinct Lead notice, including terminal release, once", async () => {
+  const notices=[{review_of:"delivery",review_task_id:"review"},{review_of:"delivery",verdict:"approved",minor_findings:[{note:"Follow up"}]},{subtask_id:"delivery",environment_release:[{kind:"stack",value:"synthetic"}]}]
+    .map((payload,i)=>task({reason:i===0?"under_review":"updated",state:"done",notice:{event_id:`notice-${i}`,type:i===0?"task.continue":"task.updated",payload}}));
+  const result=await exercise([answer(notices),answer(notices)],{detail:{task:{state:"done"}}});
+  expect(result.queue).toHaveBeenCalledTimes(3);
+  expect(result.queue.mock.calls[2][1]).toMatch(/get_task.*before.*stop/i);
+});
+it("retains an undelivered Lead notice without confirming its cursor", async () => {
+  const notice=task({reason:"updated",notice:{event_id:"verdict",type:"task.updated",payload:{review_of:"delivery",verdict:"approved"}}});
+  const result=await exercise([answer([notice],"after")],{cursor:"before",queue:async()=>{throw new Error("offline");}});
+  expect(result.saves.at(-1)?.cursor).toBe("before");
+  expect(Object.values(result.saves.at(-1)?.pending??{})).toHaveLength(1);
+});

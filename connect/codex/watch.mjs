@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRemote } from "../../bridge/remote.mjs";
-import { CONTINUE_REASONS, FINISHED_STATES, buildReason, feedbackExcerpt } from "./on-stop.mjs";
+import { CONTINUE_REASONS, FINISHED_STATES, isLeadNotice, buildReason, feedbackExcerpt } from "./on-stop.mjs";
 
 const THREAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const SESSION_HINT = " When you call claim_task, pass external_session_id with the value of the CODEX_THREAD_ID environment variable.";
@@ -58,8 +58,8 @@ export function fileState(path) {
   };
 }
 
-const eligible = (task) => Boolean(task?.task_id) && CONTINUE_REASONS.has(task.reason) && !FINISHED_STATES.has(task.state)
-  && (task.reason === "handover" || task.waiting_on !== "human");
+const eligible = (task) => Boolean(task?.task_id) && (isLeadNotice(task) || (CONTINUE_REASONS.has(task.reason) && !FINISHED_STATES.has(task.state)
+  && (task.reason === "handover" || task.waiting_on !== "human")));
 
 export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, now = Date.now, log = () => {} }) {
   const pause = sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -87,7 +87,7 @@ export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, 
     try { state.save({ cursor, sent: Object.fromEntries([...sent].map(([id, keys]) => [id, [...keys]])), pending: Object.fromEntries(pending) }); }
     catch (error) { log(`state save failed; retaining progress in memory: ${error instanceof Error ? error.message : String(error)}`); }
   };
-  const identity = (task) => JSON.stringify([task.reason, task.brief_version, task.session_id]);
+  const identity = (task) => JSON.stringify([task.reason, task.brief_version, task.session_id, task.notice?.event_id]);
   let failures = 0;
   while (!signal?.aborted) {
     let result;
@@ -108,8 +108,9 @@ export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, 
         if (FINISHED_STATES.has(task.state) || task.reason === "stop" || task.waiting_on === "human") pending.delete(task.task_id);
         continue;
       }
-      const previous = pending.get(task.task_id);
-      pending.set(task.task_id, previous && identity(previous.task) === identity(task)
+      const pendingId = task.notice?.event_id ? `${task.task_id}:${task.notice.event_id}` : task.task_id;
+      const previous = pending.get(pendingId);
+      pending.set(pendingId, previous && identity(previous.task) === identity(task)
         ? { ...previous, task } : { task, failures: 0, quarantined: false, nextAttemptAt: 0 });
     }
     for (const [id, entry] of pending) {
@@ -124,11 +125,11 @@ export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, 
       }
       entry.awaitingDestination = false;
       try {
-        const detail = await remote.callTool("get_task", { task_id: id, activities_limit: 10 });
-        if (FINISHED_STATES.has(detail?.task?.state)) { pending.delete(id); continue; }
+        const detail = await remote.callTool("get_task", { task_id: task.task_id, activities_limit: 10 });
+        if (!isLeadNotice(task) && FINISHED_STATES.has(detail?.task?.state)) { pending.delete(id); continue; }
         const prompts = (Array.isArray(detail?.activities) ? detail.activities : []).filter((a) => a?.type === "prompt");
         const promptSeq = Math.max(0, ...prompts.map((a) => Number(a.seq) || 0));
-        const key = [thread, task.reason, task.brief_version, promptSeq].join("|");
+        const key = isLeadNotice(task) ? `${thread}|notice|${task.notice.event_id}` : [thread, task.reason, task.brief_version, promptSeq].join("|");
         if (!sent.get(id)?.has(key)) {
           const excerpt = task.reason === "feedback" ? feedbackExcerpt(detail) : "";
           await queue(thread, `${buildReason(task, excerpt)}${SESSION_HINT}`);
@@ -148,7 +149,7 @@ export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, 
         log(`task ${id}: ${entry.lastError}${entry.quarantined ? "; quarantined after 5 failures" : `; retry ${entry.failures} scheduled`}`);
       }
     }
-    const retrying = [...pending.values()].some((entry) => entry.failures && !entry.quarantined);
+    const retrying = [...pending.values()].some((entry) => (entry.failures && !entry.quarantined) || isLeadNotice(entry.task));
     if (!retrying && typeof result?.next_cursor === "string") cursor = result.next_cursor;
     persist();
     if (pending.size && !signal?.aborted) {

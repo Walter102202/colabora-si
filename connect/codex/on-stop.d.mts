@@ -1,10 +1,11 @@
 export declare const MAX_REASON_CHARS: number;
 export declare const DEFAULT_WAIT_MIN: number;
 export declare const CONTINUE_REASONS: Set<string>;
+export declare function isLeadNotice(task: unknown): boolean;
 export declare const FINISHED_STATES: Set<string>;
 export declare function feedbackExcerpt(detail: unknown): string;
 export declare function buildReason(
-  task: { task_id: string; title?: string; reason?: string; brief_version?: number },
+  task: { task_id: string; title?: string; reason?: string; brief_version?: number; notice?: { event_id: string; type: string; payload?: Record<string, unknown> } },
   excerpt: string,
 ): string;
 export declare function runStopHook(options: {

@@ -129,23 +129,39 @@ function activityView(a: Row) {
   return out;
 }
 
+function isLeadEvent(event: Row): boolean {
+    const payload = event.payload as Row | null;
+    return Boolean(payload && ((event.type === 'task.continue' && typeof payload.review_of === 'string')
+      || (event.type === 'task.updated' && (payload.environment_release || payload.verdict || payload.minor_findings || payload.review_timeout))));
+}
+
+
 interface EventMark { t: string; k: string[] }
 /** Events addressed to the calling agent after the mark: one indexed select (agent_events_agent_idx). Humans get none. */
-async function newEvents(ctx: ToolContext, mark: EventMark): Promise<{ fresh: Row[]; mark: EventMark }> {
+async function newEvents(ctx: ToolContext, mark: EventMark, withPending = false): Promise<{ fresh: Row[]; mark: EventMark }> {
   if (!ctx.principal.agentId) return { fresh: [], mark };
-  const rows = await must(ctx.db.select<Row>({
-    table: 'agent_events',
-    columns: 'event_id,task_id,run_id,type,payload,created_at',
-    filters: [{ col: 'agent_id', op: 'eq', value: ctx.principal.agentId }, { col: 'created_at', op: 'gte', value: mark.t }],
-    order: [{ column: 'created_at', ascending: true }],
-    limit: 100, // a cursor, not a cap: the mark moves to the last fresh row; only 100+ events sharing one created_at could stall
-  })) ?? [];
+  // Re-read one minute of event time: commit order can differ from created_at order.
+  const lower = new Date(Date.parse(mark.t) - 60_000).toISOString();
+  const rows: Row[] = [];
+  for (let offset = 0;; offset += 100) {
+    const page = await must(ctx.db.select<Row>({ table: 'agent_events', columns: 'event_id,task_id,run_id,type,payload,created_at,status',
+      filters: [{ col: 'agent_id', op: 'eq', value: ctx.principal.agentId }, { col: 'created_at', op: 'gte', value: lower }],
+      order: [{ column: 'created_at', ascending: true }, { column: 'event_id', ascending: true }], limit: 100, offset })) ?? [];
+    rows.push(...page);
+    if (page.length < 100) break;
+  }
+  // A transaction can remain open longer than the overlap. Unreturned Lead events are retained as pending.
+  if (withPending) for (let offset = 0;; offset += 100) {
+    const page = await must(ctx.db.select<Row>({ table: 'agent_events', columns: 'event_id,task_id,run_id,type,payload,created_at,status',
+      filters: [{ col: 'agent_id', op: 'eq', value: ctx.principal.agentId }, { col: 'status', op: 'in', value: ['queued','leased'] }],
+      order: [{ column: 'created_at', ascending: true }, { column: 'event_id', ascending: true }], limit: 100, offset })) ?? [];
+    for (const event of page) if (isLeadEvent(event) && !rows.some(row => row.event_id === event.event_id)) rows.push(event);
+    if (page.length < 100) break;
+  }
   const seen = new Set(mark.k);
-  const fresh = rows.filter((e) => { const ts = normTs(String(e.created_at)); return ts > mark.t || (ts === mark.t && !seen.has(`e:${String(e.event_id)}`)); });
-  if (!fresh.length) return { fresh, mark };
-  const t = fresh.map((e) => normTs(String(e.created_at))).sort().at(-1)!;
-  const atT = fresh.filter((e) => normTs(String(e.created_at)) === t).map((e) => `e:${String(e.event_id)}`);
-  return { fresh, mark: { t, k: t === mark.t ? [...new Set([...mark.k, ...atT])] : atT } };
+  const fresh = rows.filter(e => !seen.has(`e:${String(e.event_id)}`));
+  const t = [mark.t, ...rows.map(e => normTs(String(e.created_at)))].sort().at(-1)!;
+  return { fresh, mark: { t, k: rows.map(e => `e:${String(e.event_id)}`) } };
 }
 /** Latest event timestamp for the agent, so a wait only reacts to events created after it started. */
 async function latestEventMark(ctx: ToolContext): Promise<EventMark> {
@@ -426,11 +442,7 @@ function myTaskView(task: Row, reason: Reason, prompts: number, blockedBy: strin
 
 /** Addressed Lead notices are data even when the parent row itself did not change. */
 async function leadNotices(ctx: ToolContext, events: Row[]): Promise<ReturnType<typeof myTaskView>[]> {
-  const notices = events.filter((event) => {
-    const payload = event.payload as Row | null;
-    return payload && ((event.type === 'task.continue' && typeof payload.review_of === 'string')
-      || (event.type === 'task.updated' && (payload.environment_release || payload.verdict || payload.minor_findings || payload.review_timeout)));
-  });
+  const notices = events.filter(isLeadEvent);
   if (!notices.length || !ctx.principal.agentId) return [];
   const parents = await must(ctx.db.select<Row>({ table:'agent_tasks',columns:TASK_FIELDS,
     filters:[myTasksFilter(ctx),{col:'id',op:'in',value:[...new Set(notices.map(event=>String(event.task_id)))]}] })) ?? [];
@@ -611,11 +623,16 @@ const waitForMyTasks: ToolDef = {
   async handler(args, ctx) {
     const after = str(args.after);
     if (!after) {
+      const baseline = await latestEventMark(ctx);
       const { tasks, cursor } = await initialState(ctx);
-      const notices = await newEvents(ctx,{t:'1970-01-01T00:00:00.000000Z',k:[]});
-      tasks.push(...await leadNotices(ctx,notices.fresh));
-      if (notices.fresh.length) cursor.e=notices.mark;
-      if (tasks.length) await markDelivered(ctx);
+      const notices = await newEvents(ctx, { ...baseline, k: [] }, true);
+      // Without a cursor, return undelivered notices; retained delivered history is only a baseline for deduplication.
+      tasks.push(...await leadNotices(ctx, notices.fresh.filter(e => ['queued','leased'].includes(String(e.status)) || normTs(String(e.created_at)) > baseline.t)));
+      cursor.e = notices.mark;
+      if (tasks.length) {
+        await markDelivered(ctx);
+        await markDelivered(ctx, tasks.flatMap(task => 'notice' in task ? [String((task.notice as Row).event_id)] : []));
+      }
       return {
         text: tasks.length ? `${plural(tasks.length, 'task')} need you.` : 'Nothing pending. Wait again with next_cursor.',
         structured: { changed: tasks.length > 0, tasks, next_cursor: encodeTaskCursor(cursor) },
@@ -631,7 +648,7 @@ const waitForMyTasks: ToolDef = {
     const deadline = started + timeoutS * 1000;
     let lastProgress = started;
     for (;;) {
-      const signal = await newEvents(ctx, mark);
+      const signal = await newEvents(ctx, mark, true);
       mark = signal.mark;
       const full = lastFull === -Infinity || signal.fresh.length > 0 || ctx.now() - lastFull >= SLOW_POLL_MS;
       if (full) {
@@ -641,6 +658,7 @@ const waitForMyTasks: ToolDef = {
         lastFull = ctx.now();
         if (delta.tasks.length) {
           await markDelivered(ctx);
+          await markDelivered(ctx, delta.tasks.flatMap(task => 'notice' in task ? [String((task.notice as Row).event_id)] : []));
           return {
             text: delta.tasks.map((t) => `${String(t.task_id)} ${t.reason} (${String(t.state)})`).join('; '),
             structured: { changed: true, tasks: delta.tasks, next_cursor: encodeTaskCursor(cursor) },

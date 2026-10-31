@@ -165,3 +165,13 @@ describe("Codex stop hook", () => {
     expect(await runStopHook({ input: {}, env: {}, sleep })).toEqual({ exitCode: 0 });
   });
 });
+
+it("passes all Lead notices to the model, including terminal environment release", async () => {
+  const notices=[{review_of:"delivery",verdict:"approved",minor_findings:[{note:"Follow up"}]},{subtask_id:"delivery",environment_release:[{kind:"stack",value:"synthetic"}]}]
+    .map((payload,i)=>({task_id:TASK,state:"done",reason:"updated",notice:{event_id:`notice-${i}`,type:"task.updated",payload}}));
+  const {fetchImpl}=fakeRemote([{tasks:notices,next_cursor:"after"}]);
+  const result=await runStopHook({input:{},env:ENV,fetchImpl,now:clock(60_000),sleep});
+  const reason=JSON.parse(result.output??"{}").reason??"";
+  expect(reason).toContain("approved"); expect(reason).toContain("minor");
+  expect(reason).toMatch(/get_task.*before.*stop/i);
+});

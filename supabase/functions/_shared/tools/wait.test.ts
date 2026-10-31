@@ -50,6 +50,7 @@ function harness(tables: Record<string, Row[]>, onSleep: (n: number) => void = (
           return o.ascending === false ? -cmp : cmp;
         });
       }
+      if (spec.offset) rows = rows.slice(spec.offset);
       if (spec.limit !== undefined) rows = rows.slice(0, spec.limit);
       return Promise.resolve({ data: rows.map((r) => ({ ...r })) as T[], error: null });
     },
@@ -611,4 +612,33 @@ Deno.test('a completed dependency hidden by RLS releases the assigned task', asy
   h.ctx.db.rpc = <T>(fn: string) => Promise.resolve({ data: (fn === 'open_dependencies' ? { b: [] } : null) as T, error: null });
   const out = await tool('wait_for_my_tasks').handler({ timeout_s: 0 }, h.ctx);
   assert.deepEqual((out.structured.tasks as Row[]).map(t => t.task_id), ['b']);
+});
+
+Deno.test('cursorless polls do not replay Lead history, but overlapping cursors recover late commits once', async () => {
+  const tables={agent_tasks:[task()],agent_events:[event('old','2026-10-27T10:00:04Z',{type:'task.updated',payload:{verdict:'approved',review_of:'delivery'}})]};
+  const h=harness(tables);
+  const initial=await tool('wait_for_my_tasks').handler({timeout_s:0},h.ctx);
+  assert.equal((initial.structured.tasks as Row[]).filter(t=>t.notice).length,0,'no cursor starts at the current event baseline');
+  tables.agent_events.push(event('new','2026-10-27T10:00:06Z',{type:'task.updated',payload:{verdict:'approved',review_of:'delivery'}}));
+  const next=await tool('wait_for_my_tasks').handler({after:initial.structured.next_cursor,timeout_s:0},h.ctx);
+  assert.equal((next.structured.tasks as Row[]).filter(t=>t.notice).length,1);
+  tables.agent_events.push(event('late','2026-10-27T10:00:05Z',{type:'task.updated',payload:{environment_release:[],subtask_id:'delivery'}}));
+  const late=await tool('wait_for_my_tasks').handler({after:next.structured.next_cursor,timeout_s:0},h.ctx);
+  assert.deepEqual((late.structured.tasks as Row[]).filter(t=>t.notice).map(t=>(t.notice as Row).event_id),['late']);
+  const repeat=await tool('wait_for_my_tasks').handler({after:late.structured.next_cursor,timeout_s:0},h.ctx);
+  assert.equal((repeat.structured.tasks as Row[]).filter(t=>t.notice).length,0);
+});
+
+Deno.test('event overlap paginates a burst larger than one page without dropping or repeating notices', async () => {
+  const h=harness({agent_tasks:[task()],agent_events:Array.from({length:105},(_,i)=>event(`burst-${i}`,'2026-10-27T10:00:03Z',{type:'task.updated',payload:{verdict:'approved',review_of:'delivery'}}))});
+  const result=await tool('wait_for_my_tasks').handler({after:encodeTaskCursor({t:normTs('2026-10-27T10:00:02Z'),k:[]}),timeout_s:0},h.ctx);
+  assert.equal((result.structured.tasks as Row[]).filter(t=>t.notice).length,105);
+  const repeat=await tool('wait_for_my_tasks').handler({after:result.structured.next_cursor,timeout_s:0},h.ctx);
+  assert.equal((repeat.structured.tasks as Row[]).filter(t=>t.notice).length,0);
+});
+
+Deno.test('a newly committed undelivered notice survives even outside the overlap window', async () => {
+  const h=harness({agent_tasks:[task()],agent_events:[event('slow','2026-10-27T09:00:00Z',{status:'queued',type:'task.updated',payload:{verdict:'approved',review_of:'delivery'}})]});
+  const result=await tool('wait_for_my_tasks').handler({after:encodeTaskCursor({t:normTs('2026-10-27T10:00:02Z'),k:[]}),timeout_s:0},h.ctx);
+  assert.equal((result.structured.tasks as Row[]).filter(t=>t.notice).length,1);
 });

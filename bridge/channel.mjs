@@ -157,19 +157,22 @@ export function createChannel(options) {
     if (!event || event.agent_id !== agentId) return;            // another agent's event: ignore
     if (event.event_id) {
       if (seenEvents.has(event.event_id)) return;
-      seenEvents.add(event.event_id);
-      if (seenEvents.size > 1000) seenEvents.delete(seenEvents.values().next().value);
+
     }
     emit(eventToChannel(event));
+    if (event.event_id) seenEvents.add(event.event_id);
+    if (seenEvents.size > 1000) seenEvents.delete(seenEvents.values().next().value);
   }
 
   /** @param {any} task */
   function handleTask(task) {
     if (!task?.task_id) return;
+    if (task.notice?.event_id && seenEvents.has(task.notice.event_id)) return;
     const signature = [task.reason, task.state, task.review_state, task.brief_version, task.pending_prompts, task.notice?.event_id].join("|");
     if (lastTaskSignature.get(task.task_id) === signature) return;
-    lastTaskSignature.set(task.task_id, signature);
     emit(taskToChannel(task));
+    lastTaskSignature.set(task.task_id, signature);
+    if (task.notice?.event_id) seenEvents.add(task.notice.event_id);
   }
 
   async function pollLoop() {

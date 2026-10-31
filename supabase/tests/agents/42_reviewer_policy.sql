@@ -1,5 +1,5 @@
 begin;
-select plan(37);
+select plan(40);
 select tests.fixture() as f \gset
 -- A real database page: the review task gets its own row, as a task a Lead creates by hand does.
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_DB', 'page_A', jsonb_build_object('id', 'page_DB', 'title', 'Tasks', 'parentId', 'page_A', 'blocks', '[]'::jsonb,
@@ -159,6 +159,23 @@ select tests.reset_role();
 select is((select state from public.agent_tasks where id=:'fault_review'::uuid),'cancelled','human closure cancels the queued review');
 select tests.set_agent((:'rev'::jsonb->>'user')::uuid,(:'rev'::jsonb->>'agent')::uuid);
 select is(tests.error_of(format('select public.claim_task(%L::uuid,%L)',:'fault_review','reviewer')),'task_unavailable','a cancelled review cannot be repeatedly reclaimed');
+select tests.reset_role();
+
+
+-- A broad pull acknowledgement must not swallow a Lead notice that was never returned.
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select public.mark_events_delivered();
+select tests.reset_role();
+insert into public.agent_events(workspace_id,task_id,agent_id,type,payload,seq)
+select workspace_id,id,delegate_agent_id,'task.updated','{"environment_release":[],"subtask_id":"fixture"}',private.next_event_seq(id) from public.agent_tasks where id=:'parent'::uuid returning event_id as unread \gset
+insert into public.agent_events(workspace_id,task_id,agent_id,type,payload,seq)
+select workspace_id,id,delegate_agent_id,'brief.updated','{}',private.next_event_seq(id) from public.agent_tasks where id=:'parent'::uuid returning event_id as ordinary \gset
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select public.mark_events_delivered();
+select is((select status from public.agent_events where event_id=:'unread'::uuid),'queued','unreturned Lead notice remains available');
+select is((select status from public.agent_events where event_id=:'ordinary'::uuid),'delivered','ordinary dispatch acknowledgement still works');
+select public.mark_events_delivered(array[:'unread'::uuid]);
+select is((select status from public.agent_events where event_id=:'unread'::uuid),'delivered','explicitly delivered Lead notice can be acknowledged');
 select tests.reset_role();
 
 select * from finish();

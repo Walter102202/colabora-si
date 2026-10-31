@@ -303,3 +303,28 @@ begin
     perform private.cancel_review_task(v_id);
   end loop;
 end $$;
+
+-- Broad task reads acknowledge ordinary dispatch only; Lead notices require the returned event ids.
+create or replace function public.mark_events_delivered(p_event_ids uuid[] default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_agent uuid; v_out jsonb;
+begin
+  v_agent := private.task_actor_agent_id();
+  if v_agent is null then raise exception using errcode = 'PT403', message = 'agent_disabled'; end if;
+  perform private.check_rate(v_agent);
+  with done as (
+    update public.agent_events set status = 'delivered', delivered_at = now(), lease_until = null
+     where agent_id = v_agent and status in ('queued','leased') and (p_event_ids is null or event_id = any (p_event_ids))
+       and (p_event_ids is not null or not (
+         (type='task.continue' and payload ? 'review_of')
+         or (type='task.updated' and payload ?| array['environment_release','verdict','minor_findings','review_timeout'])))
+    returning event_id, task_id, run_id, type, payload, seq, created_at
+  )
+  select coalesce(jsonb_agg(to_jsonb(done) order by created_at), '[]'::jsonb) into v_out from done;
+  if private.has_pgmq() and jsonb_array_length(v_out) > 0 then
+    execute 'select count(pgmq.delete($1, q.msg_id)) from pgmq.q_agent_dispatch q
+              where (q.message->>''event_id'') in (select e->>''event_id'' from jsonb_array_elements($2) e)'
+      using 'agent_dispatch', v_out;
+  end if;
+  return v_out;
+end $$;

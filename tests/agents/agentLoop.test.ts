@@ -670,3 +670,14 @@ describe("reference agent loop", () => {
     expect(tasks[0].outcome).toBe("ended");
   });
 });
+
+it("delivers a terminal Lead environment notice to the model without trying to claim the closed task", async () => {
+  const abort=new AbortController();let polls=0;
+  const notice={task_id:"parent",state:"done",reason:"updated",notice:{event_id:"release",type:"task.updated",payload:{subtask_id:"delivery",environment_release:[{kind:"stack",value:"synthetic"}]}}};
+  const mcp=createStubMcp({handlers:{wait_for_my_tasks:()=>{if(++polls>1)abort.abort();return {tasks:polls===1?[notice]:[],next_cursor:"after"};}}});
+  const model=createStubModel([{content:"Check the current reservation before stopping anything."}]);
+  await runAgent({mcp,model,clock:fakeClock(),maxTasks:1,signal:abort.signal});
+  expect(model.requests).toHaveLength(1);
+  expect(JSON.stringify(model.requests[0].messages)).toContain("environment_release");
+  expect(mcp.calls.some(c=>c.name==="claim_task")).toBe(false);
+});

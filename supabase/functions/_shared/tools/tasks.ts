@@ -26,10 +26,11 @@ export function myTasksFilter(ctx: ToolContext): Filter {
  * Pull delivery (§IV.7.4): once the agent has seen its tasks, its pending dispatch events are marked delivered.
  * Best effort: a failure here never hides the tasks from the agent.
  */
-export async function markDelivered(ctx: ToolContext): Promise<void> {
+export async function markDelivered(ctx: ToolContext, eventIds?: string[]): Promise<void> {
   if (!ctx.principal.agentId) return;
   try {
-    await ctx.db.rpc('mark_events_delivered', {});
+    if (eventIds?.length === 0) return;
+    await ctx.db.rpc('mark_events_delivered', eventIds ? { p_event_ids: eventIds } : {});
   } catch {
     // ignored
   }
