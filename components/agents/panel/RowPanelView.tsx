@@ -161,7 +161,6 @@ export function TaskView({ task, agent, run, approval, actionApprovals, onDecide
 
   const agentLike = agent ? { name: agent.name, capabilities: agent.capabilities } : null;
   const terminal = isTerminal(task.state);
-  const mergeConditions = (brief?.policies.preapproved_if as Record<string, unknown> | undefined)?.["git.merge"];
   const handOverOthers = handOverAgents.filter((a) => a.id !== agent?.id);
   // Without a delegate there is no "same agent": the first other agent is preselected.
   const handoverTarget = handoverAgent || (agent ? "" : (handOverOthers[0]?.id ?? ""));
@@ -222,7 +221,7 @@ export function TaskView({ task, agent, run, approval, actionApprovals, onDecide
 
       <EnvironmentCard environment={environment} />
       {!task.parent_task_id && !terminal && onSetMergeRule && <MergeRule
-        enabled={Array.isArray(mergeConditions) && mergeConditions.includes("review_approved") && mergeConditions.includes("ci_green")}
+        enabled={autonomy?.merge_rule?.enabled === true}
         onChange={onSetMergeRule} />}
 
       <section className="space-y-1">

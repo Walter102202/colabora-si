@@ -140,17 +140,10 @@ export async function updateBrief(
 export type MergeCondition = "review_approved" | "ci_green";
 
 /** The server permits trusted rules only from a direct human session. */
-export async function setMergeRule(task: TaskRow, conditions: MergeCondition[] | null): Promise<number> {
-  await useAgentTasks.getState().loadTask(task.id);
-  await useAgentTasks.getState().loadBriefs(task.id);
-  const state = useAgentTasks.getState();
-  const current = state.tasks[task.id] ?? task;
-  const brief = state.briefs[`${task.id}:${current.brief_version}`];
-  if (!brief) throw new Error("The current brief is unavailable. Refresh the task and try again.");
-  const rules = { ...(brief.policies.preapproved_if as Record<string, unknown> | undefined) };
-  if (conditions) rules["git.merge"] = conditions;
-  else delete rules["git.merge"];
-  return updateBrief(task.id, { policies: { ...brief.policies, preapproved_if: rules } });
+export async function setMergeRule(task: TaskRow, conditions: MergeCondition[] | null): Promise<TaskAutonomy> {
+  const autonomy = await rpc<TaskAutonomy>("set_merge_rule", { p_task_id: task.id, p_conditions: conditions });
+  await refresh(task.id);
+  return autonomy;
 }
 
 export function getTaskAutonomy(taskId: string): Promise<TaskAutonomy> {

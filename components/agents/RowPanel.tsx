@@ -195,7 +195,7 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
       approval={approval}
       actionApprovals={actionApprovals}
       onDecideApproval={(id, decision, response) => decideApproval(id, decision, response).then(() => undefined)}
-      onSetMergeRule={autonomy?.taskId === task.id && autonomy.value?.can_edit ? (conditions) => setMergeRule(task, conditions).then(() => undefined) : undefined}
+      onSetMergeRule={autonomy?.taskId === task.id && autonomy.value?.can_edit ? (conditions) => setMergeRule(task, conditions).then((value) => { setAutonomy({ taskId: task.id, value }); }) : undefined}
       openQuestions={openQuestions}
       autonomy={autonomy?.taskId === task.id ? autonomy.value : null}
       onSetAutonomy={onSetAutonomy}

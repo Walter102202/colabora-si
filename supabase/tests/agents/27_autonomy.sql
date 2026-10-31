@@ -2,7 +2,7 @@
 -- exceeds the parent, a workspace at ask that caps every task, recorded automatic approvals, and questions and
 -- payments that always reach a person.
 begin;
-select plan(81);
+select plan(83);
 
 select tests.fixture() as f \gset
 -- Match the explicit As-you consent link required by the HTTP session hook.
@@ -119,13 +119,16 @@ select ok(exists (select 1 from public.audit_events where action = 'autonomy.tas
                    and target->>'task_id' = :'parent' and target->>'to' = 'balanced'), 'the task level change is audited');
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
 select public.claim_task(:'parent'::uuid, 'claude_code') ->> 'run_id' as lr \gset
-select public.create_subtask(:'parent'::uuid, 'page_A4', '{"objective":"Send the emails","policies":{"preapproved":["send_email"]}}'::jsonb,
+select is(tests.error_of(format('select public.create_subtask(%L::uuid, %L, %L::jsonb, %L::uuid)', :'parent', 'page_A4', '{"objective":"Send the emails","policies":{"preapproved":["send_email"]}}', (:'f'::jsonb->>'agent'))), 'owner_required', 'a Lead cannot create protected subtask preapprovals');
+select public.create_subtask(:'parent'::uuid, 'page_A4', '{"objective":"Send the emails"}'::jsonb,
                              (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as sub \gset
 select is(tests.error_of(format('select public.set_task_autonomy(%L::uuid, %L)', :'sub', 'autonomous')), 'humans_only',
           'a Lead cannot raise the level of its subtask');
 select is(public.task_autonomy(:'sub'::uuid) ->> 'level', 'balanced', 'a subtask under a balanced parent stays balanced');
 select is(public.task_autonomy(:'sub'::uuid) ->> 'source', 'parent', 'and says the parent limits it');
 select tests.reset_role();
+-- Legacy agent-authored preapproval remains ineffective.
+update public.task_briefs set policies = '{"preapproved":["send_email"]}'::jsonb where task_id = :'sub'::uuid;
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
 select public.claim_task(:'sub'::uuid, 'custom') ->> 'run_id' as sr \gset
 select is(public.request_approval(:'sr'::uuid, 'send_email', '{"to":"list@b.test"}'::jsonb) ->> 'status', 'pending',
@@ -151,9 +154,12 @@ select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'mcp-client-1');
 select is(tests.error_of(format('select public.set_task_autonomy(%L::uuid, %L)', :'t5', 'autonomous')), 'direct_session_required',
           'a chat session cannot set a task level');
-select public.create_agent_task('page_A7', '{"objective":"Email the press","policies":{"preapproved":["send_email"]}}'::jsonb,
+select is(tests.error_of(format('select public.create_agent_task(%L, %L::jsonb, %L::uuid)', 'page_A7', '{"objective":"Email the press","policies":{"preapproved":["send_email"]}}', (:'f'::jsonb->>'agent'))), 'direct_session_required', 'chat cannot write preapprovals');
+select public.create_agent_task('page_A7', '{"objective":"Email the press"}'::jsonb,
                                 (:'f'::jsonb->>'agent')::uuid) ->> 'task_id' as t7 \gset
 select tests.reset_role();
+-- Preserve a legacy chat-authored policy to prove unrelated edits cannot trust it.
+update public.task_briefs set policies = '{"preapproved":["send_email"]}'::jsonb where task_id = :'t7'::uuid;
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select is(tests.error_of(format('select public.set_task_autonomy(%L::uuid, %L)', :'t5', 'reckless')), 'invalid_input',
           'an unknown task level is invalid_input');
@@ -264,10 +270,8 @@ select is(public.request_approval(:'r11'::uuid, 'http_request', '{"url":"https:/
           'a web request preapproved from the app runs without asking');
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
-select public.update_brief(:'sub'::uuid, '{"policies":{"preapproved":["send_email","publish_page"]}}'::jsonb);
+select is(tests.error_of(format('select public.update_brief(%L::uuid, %L::jsonb)', :'sub', '{"policies":{"preapproved":["send_email","publish_page"]}}')), 'owner_required', 'a Lead cannot change subtask preapprovals');
 select tests.reset_role();
-select is((select preapproved_trusted from public.task_briefs where task_id = :'sub'::uuid and version = 2), false,
-          'a Lead that changes the preapproved list of its subtask leaves it untrusted');
 
 -- K. A require_approval the server cannot read is refused when written, and makes every action ask when stored.
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_A11', 'page_A');

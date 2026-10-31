@@ -5,6 +5,111 @@
 alter table public.agent_approvals drop constraint agent_approvals_auto_by_check;
 alter table public.agent_approvals add constraint agent_approvals_auto_by_check check (auto_by in ('preset','brief','condition'));
 
+-- Trust is an attestation for an individual action and its current value, not for a whole brief.
+alter table public.task_briefs add column trusted_preapprovals jsonb not null default '{"preapproved":[],"preapproved_if":{}}';
+
+create or replace function private.next_preapproval_trust(p_old jsonb, p_trust jsonb, p_new jsonb, p_owner_write boolean)
+returns jsonb language plpgsql immutable set search_path = '' as $$
+declare v_action text; v_entry record; v_list jsonb := '[]'; v_rules jsonb := '{}';
+begin
+  for v_action in select jsonb_array_elements_text(case when jsonb_typeof(p_new->'preapproved')='array' then p_new->'preapproved' else '[]'::jsonb end) loop
+    if ((coalesce(p_old->'preapproved','[]') ? v_action) and (coalesce(p_trust->'preapproved','[]') ? v_action))
+       or (p_owner_write and not (coalesce(p_old->'preapproved','[]') ? v_action)) then
+      v_list := v_list || to_jsonb(v_action);
+    end if;
+  end loop;
+  for v_entry in select key,value from jsonb_each(case when jsonb_typeof(p_new->'preapproved_if')='object' then p_new->'preapproved_if' else '{}'::jsonb end) loop
+    if (v_entry.value is not distinct from p_old->'preapproved_if'->v_entry.key
+        and v_entry.value is not distinct from p_trust->'preapproved_if'->v_entry.key)
+       or (p_owner_write and v_entry.value is distinct from p_old->'preapproved_if'->v_entry.key) then
+      v_rules := v_rules || jsonb_build_object(v_entry.key,v_entry.value);
+    end if;
+  end loop;
+  return jsonb_build_object('preapproved',v_list,'preapproved_if',v_rules);
+end $$;
+revoke all on function private.next_preapproval_trust(jsonb,jsonb,jsonb,boolean) from public;
+
+-- Recover entry provenance from version history; a later human edit of a sibling cannot promote old agent entries.
+do $$
+declare v_b public.task_briefs%rowtype; v_old public.task_briefs%rowtype;
+begin
+  for v_b in select * from public.task_briefs order by task_id,version loop
+    select * into v_old from public.task_briefs where task_id=v_b.task_id and version<v_b.version order by version desc limit 1;
+    update public.task_briefs set trusted_preapprovals=private.next_preapproval_trust(coalesce(v_old.policies,'{}'),coalesce(v_old.trusted_preapprovals,'{}'),v_b.policies,
+      v_b.author_type='human' and v_b.preapproved_trusted) where task_id=v_b.task_id and version=v_b.version;
+  end loop;
+end $$;
+
+create or replace function private.track_preapproval_trust()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_old public.task_briefs%rowtype; v_changed boolean; v_owner boolean;
+begin
+  select * into v_old from public.task_briefs where task_id=new.task_id and version<new.version order by version desc limit 1;
+  v_changed := coalesce(new.policies->'preapproved','[]') is distinct from coalesce(v_old.policies->'preapproved','[]')
+    or coalesce(new.policies->'preapproved_if','{}') is distinct from coalesce(v_old.policies->'preapproved_if','{}');
+  v_owner := private.principal_type()='human' and private.jwt_client_id() is null and private.is_workspace_owner(new.workspace_id);
+  if v_changed and not v_owner then
+    if private.jwt_client_id() is not null then raise exception using errcode='PT403',message='direct_session_required'; end if;
+    raise exception using errcode='PT403',message='owner_required';
+  end if;
+  new.trusted_preapprovals := private.next_preapproval_trust(coalesce(v_old.policies,'{}'),coalesce(v_old.trusted_preapprovals,'{}'),new.policies,v_owner);
+  return new;
+end $$;
+revoke all on function private.track_preapproval_trust() from public;
+create trigger task_briefs_preapproval_trust before insert on public.task_briefs for each row execute function private.track_preapproval_trust();
+
+create or replace function private.policy_action_trusted(p_b public.task_briefs,p_action text,p_conditional boolean default false)
+returns boolean language sql stable security definer set search_path = '' as $$
+  select case when p_conditional then
+    jsonb_typeof(p_b.policies->'preapproved_if'->p_action)='array'
+    and p_b.trusted_preapprovals->'preapproved_if'->p_action = p_b.policies->'preapproved_if'->p_action
+  else coalesce(p_b.trusted_preapprovals->'preapproved','[]') ? p_action
+    and coalesce(p_b.policies->'preapproved','[]') ? p_action end is true;
+$$;
+revoke all on function private.policy_action_trusted(public.task_briefs,text,boolean) from public;
+
+create or replace function private.merge_rule_state(p_task_id uuid)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare v_b public.task_briefs%rowtype; v_up uuid:=p_task_id; v_depth int:=0; v_required text[]; v_enabled boolean;
+begin
+  select b.* into v_b from public.task_briefs b join public.agent_tasks t on t.id=b.task_id and t.brief_version=b.version where t.id=p_task_id;
+  v_enabled := private.policy_action_trusted(v_b,'git.merge',true)
+    and v_b.policies->'preapproved_if'->'git.merge' @> '["review_approved","ci_green"]'::jsonb;
+  while v_up is not null and v_depth<10 loop
+    select private.required_actions(b.policies),t.parent_task_id into v_required,v_up from public.agent_tasks t join public.task_briefs b on b.task_id=t.id and b.version=t.brief_version where t.id=v_up;
+    if v_required is null or 'git.merge'=any(v_required) then v_enabled:=false; end if;
+    v_depth:=v_depth+1;
+  end loop;
+  if v_up is not null then v_enabled:=false; end if;
+  return jsonb_build_object('enabled',coalesce(v_enabled,false));
+end $$;
+revoke all on function private.merge_rule_state(uuid) from public;
+
+create or replace function public.set_merge_rule(p_task_id uuid,p_conditions text[] default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_t public.agent_tasks%rowtype; v_b public.task_briefs%rowtype; v_rules jsonb; v_version int;
+begin
+  select * into v_t from public.agent_tasks where id=p_task_id for update;
+  if not found then raise exception using errcode='PT404',message='not_found'; end if;
+  if private.jwt_client_id() is not null then raise exception using errcode='PT403',message='direct_session_required'; end if;
+  if private.principal_type()<>'human' or not private.is_workspace_owner(v_t.workspace_id) then raise exception using errcode='PT403',message='owner_required'; end if;
+  if p_conditions is not null and (cardinality(p_conditions)<>2 or not p_conditions @> array['review_approved','ci_green']) then
+    raise exception using errcode='PT400',message='invalid_input';
+  end if;
+  select * into v_b from public.task_briefs where task_id=v_t.id and version=v_t.brief_version;
+  v_rules := coalesce(v_b.policies->'preapproved_if','{}') - 'git.merge';
+  if p_conditions is not null then v_rules:=v_rules || '{"git.merge":["review_approved","ci_green"]}'::jsonb; end if;
+  v_version:=public.update_brief(v_t.id,jsonb_build_object('policies',v_b.policies || jsonb_build_object('preapproved_if',v_rules)));
+  -- This narrow human action explicitly attests git.merge even when legacy untrusted JSON had the same value.
+  update public.task_briefs set trusted_preapprovals=jsonb_set(trusted_preapprovals,'{preapproved_if}',
+    (coalesce(trusted_preapprovals->'preapproved_if','{}')-'git.merge') || case when p_conditions is null then '{}'::jsonb else '{"git.merge":["review_approved","ci_green"]}'::jsonb end)
+   where task_id=v_t.id and version=v_version;
+  perform private.audit(v_t.workspace_id,'task.merge_rule_set',jsonb_build_object('task_id',v_t.id,'enabled',p_conditions is not null));
+  return public.task_autonomy(v_t.id);
+end $$;
+revoke all on function public.set_merge_rule(uuid,text[]) from public,anon;
+grant execute on function public.set_merge_rule(uuid,text[]) to authenticated;
+
 -- p_params.subtask_id names the delivery a Lead acts on, from its run on the parent; without it, the run's own task.
 create or replace function private.conditional_allowed(p_action text, p_run public.agent_runs, p_params jsonb)
 returns boolean language plpgsql stable security definer set search_path = '' as $$
@@ -15,7 +120,7 @@ begin
   select * into v_t from public.agent_tasks where id = p_run.task_id;
   select * into v_b from public.task_briefs where task_id = v_t.id and version = v_t.brief_version;
   -- Only a list a person wrote from the app counts, and require_approval anywhere up the chain still asks.
-  if not coalesce(v_b.preapproved_trusted, false) then return false; end if;
+  if not private.policy_action_trusted(v_b,p_action,true) then return false; end if;
   v_conds := v_b.policies->'preapproved_if'->p_action;
   if jsonb_typeof(v_conds) is distinct from 'array' or jsonb_array_length(v_conds) = 0 then return false; end if;
   v_up := v_t.id;
@@ -151,7 +256,7 @@ begin
      and (p_patch -> 'policies') is distinct from v_b.policies then
     raise exception using errcode = 'PT403', message = 'direct_session_required';
   end if;
-  v_new := (to_jsonb(v_b) - 'task_id' - 'version' - 'workspace_id' - 'author_id' - 'author_type' - 'created_at' - 'preapproved_trusted')
+  v_new := (to_jsonb(v_b) - 'task_id' - 'version' - 'workspace_id' - 'author_id' - 'author_type' - 'created_at' - 'preapproved_trusted' - 'trusted_preapprovals')
            || (p_patch - 'delegate_agent_id' - 'depends_on_task_ids');
   perform private.validate_brief(v_new);
   if v_author_type = 'agent' and exists (
@@ -344,4 +449,58 @@ begin
   values (v_r.workspace_id, v_r.task_id, v_r.id, p_provider, p_action, v_hash, p_params, gen_random_uuid()::text, v_approval)
   returning * into v_op;
   return jsonb_build_object('op_id', v_op.op_id, 'idempotency_key', v_op.idempotency_key, 'status', v_op.status);
+end $$;
+
+-- Full current definitions from 0020; trust is now per action.
+create or replace function private.action_allowed(p_action text, p_task_id uuid, p_depth int default 0)
+returns text language plpgsql stable security definer set search_path = '' as $$
+declare v_t public.agent_tasks%rowtype; v_b public.task_briefs%rowtype; v_required text[];
+begin
+  if p_action = 'payment' then return null; end if;
+  if p_depth >= 10 or coalesce(p_action, '') = '' then return null; end if;
+  select * into v_t from public.agent_tasks where id = p_task_id;
+  if not found then return null; end if;
+  select * into v_b from public.task_briefs where task_id = v_t.id and version = v_t.brief_version;
+  -- Fails closed: an action it names asks, and a shape it cannot read makes every action ask.
+  v_required := private.required_actions(v_b.policies);
+  if v_required is null or p_action = any (v_required) then return null; end if;
+  if v_t.parent_task_id is not null and private.action_allowed(p_action, v_t.parent_task_id, p_depth + 1) is null then
+    return null;
+  end if;
+  if p_action = any (private.autonomy_preset(private.task_autonomy_level(v_t.id))) then return 'preset'; end if;
+  if jsonb_typeof(v_b.policies -> 'preapproved') = 'array' and (v_b.policies -> 'preapproved') ? p_action
+     and private.policy_action_trusted(v_b,p_action) then
+    return 'brief';
+  end if;
+  return null;
+end $$;
+
+create or replace function public.task_autonomy(p_task_id uuid)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare v_t public.agent_tasks%rowtype; v_b public.task_briefs%rowtype; v_req text; v_own text; v_level text; v_auto text[];
+        v_candidates text[];
+begin
+  select * into v_t from public.agent_tasks where id = p_task_id;
+  if not found or not private.can_read_task(p_task_id) then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+  select * into v_b from public.task_briefs where task_id = v_t.id and version = v_t.brief_version;
+  select autonomy into v_req from public.agent_task_policies where task_id = v_t.id;
+  v_own := private.own_autonomy_level(v_t.id);
+  v_level := private.task_autonomy_level(v_t.id);
+  -- The actions that can ever run without asking: the highest preset and what the brief preapproves.
+  select coalesce(array_agg(s.a order by s.a), '{}') into v_candidates
+    from (select distinct x as a
+            from unnest(private.autonomy_preset('autonomous')
+                        || coalesce(array(select jsonb_array_elements_text(case when jsonb_typeof(v_b.policies->'preapproved') = 'array'
+                                                                                 then v_b.policies->'preapproved' else '[]'::jsonb end)), '{}')) x) s;
+  select coalesce(array_agg(c order by c), '{}') into v_auto from unnest(v_candidates) c where private.action_allowed(c, v_t.id) is not null;
+  return jsonb_build_object(
+    'level', v_level, 'requested', v_req,
+    'source', case when v_level <> v_own then 'parent' when v_req is not null and v_own = v_req then 'task' else 'workspace' end,
+    'workspace_level', private.workspace_autonomy(v_t.workspace_id),
+    'auto_approved', to_jsonb(v_auto),
+    'merge_rule', private.merge_rule_state(v_t.id),
+    -- What the brief makes ask, always as a list; for a shape the server cannot read, every action that could run alone.
+    'require_approval', to_jsonb(coalesce(private.required_actions(v_b.policies), v_candidates)),
+    -- Whether set_task_autonomy would let the caller change the level: the workspace owner, from the app itself.
+    'can_edit', private.is_workspace_owner(v_t.workspace_id) and private.jwt_client_id() is null);
 end $$;

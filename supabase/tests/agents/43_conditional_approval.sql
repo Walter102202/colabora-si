@@ -109,8 +109,7 @@ select tests.reset_role();
 
 -- 13-15. Trust: only a person writing from the app.
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
-select public.update_brief(:'sub'::uuid, '{"policies":{"preapproved_if":{"git.merge":["review_approved"]}}}'::jsonb);
-select is((select preapproved_trusted from public.task_briefs where task_id = :'sub'::uuid order by version desc limit 1), false, 'a Lead writing the rule on a subtask is not trusted');
+select is(tests.error_of(format('select public.update_brief(%L::uuid, %L::jsonb)', :'sub', '{"policies":{"preapproved_if":{"git.merge":["review_approved"]}}}')), 'owner_required', 'a Lead cannot write a conditional rule');
 select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'try', 'lead'), null, 'Merge?'))->>'status', 'pending', 'and that rule grants nothing');
 select tests.reset_role();
 -- Match the explicit As-you consent link required by the HTTP session hook.

@@ -40,13 +40,9 @@ describe("autonomyLine", () => {
     try {
       rpc.mockReset().mockResolvedValue({ data: 2, error: null });
       await agentActions.setMergeRule(data.task, ["review_approved", "ci_green"]);
-      expect(rpc).toHaveBeenLastCalledWith("update_brief", { p_task_id: data.task.id, p_patch: { policies: {
-        ...policies, preapproved_if: { ...policies.preapproved_if, "git.merge": ["review_approved", "ci_green"] },
-      } } });
+      expect(rpc).toHaveBeenLastCalledWith("set_merge_rule", { p_task_id: data.task.id, p_conditions: ["review_approved", "ci_green"] });
       await agentActions.setMergeRule(data.task, null);
-      expect(rpc).toHaveBeenLastCalledWith("update_brief", { p_task_id: data.task.id, p_patch: { policies: {
-        ...policies, preapproved_if: { deploy: ["review_approved"] },
-      } } });
+      expect(rpc).toHaveBeenLastCalledWith("set_merge_rule", { p_task_id: data.task.id, p_conditions: null });
       rpc.mockResolvedValue({ data: null, error: { message: "direct_session_required" } });
       await expect(agentActions.setMergeRule(data.task, ["review_approved", "ci_green"])).rejects.toThrow("direct_session_required");
     } finally { useAgentTasks.setState(original); }
@@ -106,6 +102,16 @@ describe("autonomy in the task panel", () => {
     expect(container.querySelector('input[type="checkbox"]')).toBeNull();
     await act(async () => root.render(view({ task: { ...data.task, parent_task_id: null } })));
     expect(container.querySelector('input[type="checkbox"]')).toBeNull();
+  });
+  it("shows the server's trusted rule even when the raw brief claims approval", async () => {
+    const data = mockCard("1") as TaskCardData;
+    const props = { task: { ...data.task, parent_task_id: null },
+      brief: { ...data.brief!, policies: { preapproved_if: { "git.merge": ["review_approved", "ci_green"] } } },
+      onSetMergeRule: noop };
+    await act(async () => root.render(view({ ...props, autonomy: { ...balanced, merge_rule: { enabled: false } } })));
+    expect((container.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(false);
+    await act(async () => root.render(view({ ...props, autonomy: { ...balanced, merge_rule: { enabled: true } } })));
+    expect((container.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true);
   });
   it("shows the line and sets this task's level, or goes back to the workspace default", async () => {
     const set = vi.fn(noop);
