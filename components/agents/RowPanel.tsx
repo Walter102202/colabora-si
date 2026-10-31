@@ -1,5 +1,8 @@
 "use client";
 
+import { TramaAvatar } from "@/components/agents/TramaAvatar";
+import { isTrama } from "@/lib/tramaIdentity";
+
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 import { pageUrl, taskUrl } from "@/lib/routes";
@@ -188,6 +191,7 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
       task={task}
       metrics={metrics}
       agent={agent}
+      agentAvatar={isTrama(agent) ? <TramaAvatar size={28} decorative /> : undefined}
       continuity={continuityFrom(agent, activities && lastCheckpointFor(activities))}
       diff={["ready_for_review", "input_required", "done"].includes(task.state) && diff?.task_id === task.id ? diff : null}
       onRevert={(runId, keys) => revertRun(task.id, runId, keys).then(() => { setRevertedAt((n) => n + 1); }).finally(reloadDiff)}
