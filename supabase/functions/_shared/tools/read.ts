@@ -125,6 +125,7 @@ const readPage: ToolDef = {
     include_comments: { type: 'boolean' },
   }, ['page_id']),
   outputSchema: output({
+    changed_sources: { type: 'integer' }, open_discrepancies: { type: 'integer' },
     page_id: { type: 'string' },
     title: { type: 'string' },
     revision: { type: ['integer', 'null'] },
@@ -170,8 +171,11 @@ const readPage: ToolDef = {
     if (md.unknown_block_ids.length) structured.unknown_block_ids = md.unknown_block_ids;
     if (args.include_comments === true) structured.comments = commentsOf(bundle.page);
     const more = md.next_cursor ? ' More blocks follow: call again with next_cursor.' : '';
+    const state = await ctx.db.rpc<{ changed: number; discrepancies: number }>('page_source_state', { p_page_id: pageId }).catch(() => null);
+    const changed = state?.data?.changed ?? 0, stale = changed ? ` ${plural(changed, 'source')} of this page changed after it was written.` : '';
+    if (changed) { structured.changed_sources = changed; structured.open_discrepancies = state?.data?.discrepancies ?? 0; }
     return {
-      text: `Page "${md.title}", revision ${row.revision ?? '?'}, ${plural(md.blocks.length, 'block')} shown of ${md.total_blocks}.${more}`,
+      text: `Page "${md.title}", revision ${row.revision ?? '?'}, ${plural(md.blocks.length, 'block')} shown of ${md.total_blocks}.${more}${stale}`,
       structured,
     };
   },

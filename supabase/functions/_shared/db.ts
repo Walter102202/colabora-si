@@ -109,6 +109,8 @@ const SQLSTATE_CODES: Record<string, string> = {
 };
 
 const MESSAGES: Record<string, string> = {
+  source_cycle: 'That source already depends on this page.',
+  block_not_found: 'The block was not found on that page.',
   lesson_not_delivered: 'That lesson did not come with this run. Read get_context_package.',
   no_correction: 'This run has no correction to learn from.',
   too_many_proposals: 'This run already proposed three lessons.',
