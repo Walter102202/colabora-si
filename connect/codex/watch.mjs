@@ -93,7 +93,8 @@ export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, 
     let result;
     try {
       // A pending retry must not sit behind a two-minute long poll.
-      const timeout = pending.size ? 0 : cursor ? 120 : 0;
+      const retryingNow = [...pending.values()].some(entry => !entry.awaitingDestination && !entry.quarantined);
+      const timeout = retryingNow ? 0 : cursor ? 120 : 0;
       result = await remote.callTool("wait_for_my_tasks", { timeout_s: timeout, ...(cursor ? { after: cursor } : {}) });
       failures = 0;
     } catch (error) {
@@ -102,6 +103,7 @@ export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, 
       await pause(Math.min(60_000, 2000 * 2 ** failures));
       continue;
     }
+    const details = new Map();
     for (const task of Array.isArray(result?.tasks) ? result.tasks : []) {
       if (!task?.task_id) continue;
       if (!eligible(task)) {
@@ -110,11 +112,20 @@ export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, 
       }
       const pendingId = task.notice?.event_id ? `${task.task_id}:${task.notice.event_id}` : task.task_id;
       const previous = pending.get(pendingId);
-      pending.set(pendingId, previous && identity(previous.task) === identity(task)
+      let newPrompt = false;
+      if (previous?.failures && previous.promptSeq !== undefined) {
+        try {
+          const detail = await remote.callTool("get_task", { task_id: task.task_id, activities_limit: 10 });
+          details.set(pendingId, detail);
+          const prompts = (Array.isArray(detail?.activities) ? detail.activities : []).filter(a => a?.type === "prompt");
+          newPrompt = Math.max(0, ...prompts.map(a => Number(a.seq) || 0)) > previous.promptSeq;
+        } catch { /* A failing read keeps the existing retry schedule. */ }
+      }
+      pending.set(pendingId, previous && !newPrompt && identity(previous.task) === identity(task)
         ? { ...previous, task } : { task, failures: 0, quarantined: false, nextAttemptAt: 0 });
     }
     for (const [id, entry] of pending) {
-      if (entry.quarantined || entry.nextAttemptAt > now()) continue;
+      if (entry.nextAttemptAt > now()) continue;
       const task = entry.task;
       const thread = targetThread(task, env.WORKSPACE_CODEX_THREAD);
       if (!thread) {
@@ -125,10 +136,11 @@ export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, 
       }
       entry.awaitingDestination = false;
       try {
-        const detail = await remote.callTool("get_task", { task_id: task.task_id, activities_limit: 10 });
+        const detail = details.get(id) ?? await remote.callTool("get_task", { task_id: task.task_id, activities_limit: 10 });
         if (!isLeadNotice(task) && FINISHED_STATES.has(detail?.task?.state)) { pending.delete(id); continue; }
         const prompts = (Array.isArray(detail?.activities) ? detail.activities : []).filter((a) => a?.type === "prompt");
         const promptSeq = Math.max(0, ...prompts.map((a) => Number(a.seq) || 0));
+        entry.promptSeq = promptSeq;
         const key = isLeadNotice(task) ? `${thread}|notice|${task.notice.event_id}` : [thread, task.reason, task.brief_version, promptSeq].join("|");
         if (!sent.get(id)?.has(key)) {
           const excerpt = task.reason === "feedback" ? feedbackExcerpt(detail) : "";
@@ -143,18 +155,18 @@ export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, 
         persist();
       } catch (error) {
         entry.failures++;
-        entry.nextAttemptAt = now() + Math.min(60_000, 2000 * 2 ** (entry.failures - 1));
         entry.quarantined = entry.failures >= 5;
+        entry.nextAttemptAt = now() + (entry.quarantined ? 300_000 : Math.min(60_000, 2000 * 2 ** (entry.failures - 1)));
         entry.lastError = (error instanceof Error ? error.message : String(error)).replaceAll(pat, "[redacted]").slice(0, 500);
         log(`task ${id}: ${entry.lastError}${entry.quarantined ? "; quarantined after 5 failures" : `; retry ${entry.failures} scheduled`}`);
       }
     }
-    const retrying = [...pending.values()].some((entry) => (entry.failures && !entry.quarantined) || isLeadNotice(entry.task));
+    const retrying = [...pending.values()].some((entry) => entry.failures && !entry.quarantined);
     if (!retrying && typeof result?.next_cursor === "string") cursor = result.next_cursor;
     persist();
     if (pending.size && !signal?.aborted) {
-      const due = [...pending.values()].filter((entry) => !entry.quarantined).map((entry) => entry.nextAttemptAt);
-      await pause(due.length ? Math.max(1000, Math.min(60_000, Math.min(...due) - now())) : 30_000);
+      const due = [...pending.values()].filter((entry) => !entry.awaitingDestination).map((entry) => entry.nextAttemptAt);
+      if (due.length) await pause(Math.max(1000, Math.min(60_000, Math.min(...due) - now())));
     }
   }
 }

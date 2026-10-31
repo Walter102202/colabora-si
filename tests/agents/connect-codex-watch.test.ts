@@ -12,6 +12,7 @@ const answer = (tasks: Record<string, unknown>[], next_cursor = "next"): Answer 
 async function exercise(waits: Answer[], options: {
   env?: Record<string, string | undefined>; cursor?: string; detail?: unknown; details?: unknown[]; saved?: WatchSnapshot; saveError?: boolean;
   queue?: (thread: string, message: string) => Promise<void>;
+  detailForWait?: (poll: number) => unknown;
 } = {}) {
   const controller = new AbortController();
   const calls: { name: string; args: Record<string, unknown> }[] = [];
@@ -28,6 +29,7 @@ async function exercise(waits: Answer[], options: {
     const { name, arguments: args } = body.params;
     calls.push({ name, args });
     let result: unknown = options.detail ?? { activities: [] };
+    if (name === "get_task" && options.detailForWait) result = options.detailForWait(index);
     if (name === "get_task" && options.details) result = options.details[Math.min(detailIndex++, options.details.length - 1)];
     if (name === "get_task" && result instanceof Error) return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32000, message: result.message } });
     if (name === "wait_for_my_tasks") {
@@ -39,7 +41,7 @@ async function exercise(waits: Answer[], options: {
   const queue = vi.fn(options.queue ?? (async () => {}));
   await runWatcher({ env: options.env ?? ENV, queue, state: { load: () => options.saved ?? ({ cursor: options.cursor }), save: (s) => { if (options.saveError) throw new Error("state disk unavailable"); saves.push(structuredClone(s)); } },
     fetchImpl: fetchImpl as typeof fetch, signal: controller.signal, now: () => time, sleep: async (ms) => { time += ms; }, log: (line) => logs.push(line) });
-  return { calls, queue, saves, logs, fetchImpl };
+  return { calls, queue, saves, logs, fetchImpl, elapsed: time };
 }
 
 describe("Codex watcher", () => {
@@ -179,4 +181,27 @@ it("retains an undelivered Lead notice without confirming its cursor", async () 
   const result=await exercise([answer([notice],"after")],{cursor:"before",queue:async()=>{throw new Error("offline");}});
   expect(result.saves.at(-1)?.cursor).toBe("before");
   expect(Object.values(result.saves.at(-1)?.pending??{})).toHaveLength(1);
+});
+
+it("automatically retries quarantined work slowly after the CLI recovers", async () => {
+  let attempts=0;
+  const result=await exercise(Array.from({length:20},()=>answer([task()])),{queue:async()=>{if(++attempts<=5)throw new Error("temporary outage");}});
+  expect(result.queue).toHaveBeenCalledTimes(6);
+  expect(result.elapsed).toBeGreaterThanOrEqual(300_000);
+  expect(result.saves.some(s=>Object.values(s.pending??{}).some(v=>Boolean(v && typeof v === "object" && "quarantined" in v && v.quarantined)))).toBe(true);
+});
+it("a new prompt immediately resets a quarantined entry", async () => {
+  let attempts=0;
+  const result=await exercise(Array.from({length:7},()=>answer([task()])),{
+    detailForWait:poll=>({activities:[{type:"prompt",seq:poll>=6?9:2,body:{signal:"feedback",text:poll>=6?"New correction":"Old correction"}}]}),
+    queue:async()=>{if(++attempts<=5)throw new Error("temporary outage");},
+  });
+  expect(result.queue).toHaveBeenCalledTimes(6);
+  expect(result.queue.mock.calls[5][1]).toContain("New correction");
+  expect(result.elapsed).toBeLessThan(300_000);
+});
+it("destinationless notices return to the normal long poll", async () => {
+  const result=await exercise([answer([task({session_id:null})]),answer([])],{cursor:"saved"});
+  expect(result.calls.filter(c=>c.name==="wait_for_my_tasks")[1].args.timeout_s).toBe(120);
+  expect(result.queue).not.toHaveBeenCalled();
 });
