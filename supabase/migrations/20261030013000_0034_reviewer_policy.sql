@@ -298,7 +298,7 @@ begin
   for v_id in select rt.id from public.agent_tasks rt join public.task_briefs b on b.task_id=rt.id and b.version=rt.brief_version
     left join public.agent_tasks subject on subject.id::text=b.policies->>'review_of'
     where rt.state not in ('done','failed','cancelled') and b.policies ? 'review_of'
-      and (subject.id is null or subject.state<>'ready_for_review'
+      and (subject.id is null or subject.state<>'ready_for_review' or subject.parent_task_id is null
         or subject.workspace_id<>rt.workspace_id or subject.parent_task_id is distinct from rt.parent_task_id) loop
     perform private.cancel_review_task(v_id);
   end loop;
