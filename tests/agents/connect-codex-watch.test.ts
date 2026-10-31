@@ -10,7 +10,7 @@ type Answer = { tasks: Record<string, unknown>[]; next_cursor: string };
 const answer = (tasks: Record<string, unknown>[], next_cursor = "next"): Answer => ({ tasks, next_cursor });
 
 async function exercise(waits: Answer[], options: {
-  env?: Record<string, string | undefined>; cursor?: string; detail?: unknown;
+  env?: Record<string, string | undefined>; cursor?: string; detail?: unknown; details?: unknown[];
   queue?: (thread: string, message: string) => Promise<void>;
 } = {}) {
   const controller = new AbortController();
@@ -18,6 +18,7 @@ async function exercise(waits: Answer[], options: {
   const saves: { cursor: string }[] = [];
   const logs: string[] = [];
   let index = 0;
+  let detailIndex = 0;
   const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     if (String(input).endsWith("/agent-token")) return Response.json({ access_token: "test-jwt", expires_in: 3600 });
     const body = JSON.parse(String(init?.body));
@@ -26,6 +27,7 @@ async function exercise(waits: Answer[], options: {
     const { name, arguments: args } = body.params;
     calls.push({ name, args });
     let result = options.detail ?? { activities: [] };
+    if (name === "get_task" && options.details) result = options.details[Math.min(detailIndex++, options.details.length - 1)];
     if (name === "wait_for_my_tasks") {
       result = waits[index++];
       if (index >= waits.length) controller.abort();
@@ -59,6 +61,17 @@ describe("Codex watcher", () => {
   });
   it("delivers a repeated task and reason once", async () => {
     expect((await exercise([answer([task()], "one"), answer([task()], "two")])).queue).toHaveBeenCalledTimes(1);
+  });
+  it("deduplicates snapshot/cursor copies by the prompt, and delivers a later feedback round", async () => {
+    const detail = (seq: number) => ({ activities: [{ seq, type: "prompt", body: { signal: "feedback", text: seq === 2 ? "Initial finding" : "New finding" } }] });
+    const result = await exercise([
+      answer([task({ pending_prompts: 0 })], "initial"),
+      answer([task({ pending_prompts: 1 })], "repeat"),
+      answer([task({ pending_prompts: 1 })], "new-round"),
+    ], { details: [detail(2), detail(2), detail(8)] });
+    expect(result.queue).toHaveBeenCalledTimes(2);
+    expect(result.queue.mock.calls[1][1]).toContain("New finding");
+    expect(result.calls.filter((c) => c.name === "get_task")).toHaveLength(3);
   });
   it.each([
     { reason: "stop" }, { reason: "approval_decided" }, { reason: null },

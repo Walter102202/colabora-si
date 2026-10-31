@@ -77,7 +77,7 @@ export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, 
     clientInfo: { name: "colabora-codex-watch", version: "0.1.0" },
   });
   let cursor = state.load().cursor;
-  const sent = new Set();
+  const sent = new Map();
   let failures = 0;
   while (!signal?.aborted) {
     let result;
@@ -92,18 +92,25 @@ export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, 
     }
     let retry = false;
     for (const task of (Array.isArray(result?.tasks) ? result.tasks : []).filter(eligible)) {
-      const key = [task.task_id, task.reason, task.brief_version, task.pending_prompts].join("|");
-      if (sent.has(key)) continue;
       const thread = targetThread(task, env.WORKSPACE_CODEX_THREAD);
       if (!thread) { log(`no session for task ${task.task_id}; not sending`); continue; }
-      let excerpt = "";
-      if (task.reason === "feedback") {
-        try { excerpt = feedbackExcerpt(await remote.callTool("get_task", { task_id: task.task_id, activities_limit: 10 })); }
-        catch (error) { log(`get_task failed: ${error instanceof Error ? error.message : String(error)}`); }
+      let detail;
+      try { detail = await remote.callTool("get_task", { task_id: task.task_id, activities_limit: 10 }); }
+      catch (error) {
+        retry = true;
+        log(`get_task failed: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
       }
+      // Snapshot and cursor answers count prompts differently. Identify the prompt itself,
+      // so a later review round in the same session still delivers even with the same count.
+      const prompts = (Array.isArray(detail?.activities) ? detail.activities : []).filter((a) => a?.type === "prompt");
+      const promptSeq = Math.max(0, ...prompts.map((a) => Number(a.seq) || 0));
+      const key = [thread, task.reason, task.brief_version, promptSeq].join("|");
+      if (sent.get(task.task_id) === key) continue;
+      const excerpt = task.reason === "feedback" ? feedbackExcerpt(detail) : "";
       try {
         await queue(thread, `${buildReason(task, excerpt)}${SESSION_HINT}`);
-        sent.add(key);
+        sent.set(task.task_id, key);
         log(`task ${task.task_id} (${task.reason}) sent to ${thread}`);
       } catch (error) {
         retry = true;
