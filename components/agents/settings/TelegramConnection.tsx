@@ -5,6 +5,10 @@ import { safeHref } from "@/lib/utils";
 
 export function TelegramConnection({ workspaceId }: { workspaceId: string }) {
   const userId = useAuthStore((s) => s.user?.id);
+  return userId ? <TelegramConnectionSession key={workspaceId + ":" + userId} workspaceId={workspaceId} userId={userId} /> : null;
+}
+
+function TelegramConnectionSession({ workspaceId, userId }: { workspaceId: string; userId: string }) {
   const [connected, setConnected] = useState<boolean | null>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -12,14 +16,13 @@ export function TelegramConnection({ workspaceId }: { workspaceId: string }) {
   const generation = useRef(0);
   useEffect(() => {
     const version = ++generation.current;
-    setConnected(null); setUrl(null); setError(null); setBusy(false);
     const refresh = () => {
       if (userId) void telegramLink(workspaceId, userId).then((linked) => {
         if (version === generation.current) { setConnected(linked); if (linked) setUrl(null); }
       }).catch(() => { if (version === generation.current) setError("Could not read your Telegram connection."); });
     };
     refresh(); window.addEventListener("focus", refresh);
-    return () => { generation.current++; window.removeEventListener("focus", refresh); };
+    return () => { generation.current = version + 1; window.removeEventListener("focus", refresh); };
   }, [workspaceId, userId]);
   const change = async () => {
     const version = generation.current;
