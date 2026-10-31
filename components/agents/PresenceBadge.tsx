@@ -1,5 +1,7 @@
 "use client";
 
+import { TramaAvatar } from "@/components/agents/TramaAvatar";
+import { isTrama } from "@/lib/tramaIdentity";
 import { SourcesBadge } from "@/components/agents/SourcesBadge";
 import { useAgentsStore } from "@/lib/agentsStore";
 import { activeRunFor, taskForPage, useAgentTasks } from "@/lib/agentTasks";
@@ -27,6 +29,7 @@ function RunBadge({ pageId }: PresenceBadgeProps) {
       className="hidden items-center gap-1.5 whitespace-nowrap rounded-full border border-border px-2 py-0.5 text-xs text-text-secondary md:inline-flex"
       title={`Run started ${formatRelative(Date.parse(run.started_at))}${run.stale_at ? " · no signals lately" : ""}`}
     >
+      {isTrama(agent) && <TramaAvatar size={24} decorative />}
       <span className={"h-2 w-2 rounded-full " + (waiting ? "bg-yellow-500" : run.stale_at ? "bg-text-tertiary" : "animate-pulse bg-green-500")} />
       {waiting ? `${name} is waiting for you` : `${name} is working`}
     </span>

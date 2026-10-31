@@ -6,6 +6,7 @@ import { argsHash, buildCheckpoint, guardFor, guardsFromResume, parseCheckpoint,
 import { McpError, toOpenAiTools } from "./mcpClient.mjs";
 import { buildSystemPrompt, buildTaskMessage } from "./prompt.mjs";
 import { extractFile, runRequest } from "./requests.mjs";
+import { flushPersonReplies } from "./inbox.mjs";
 
 /**
  * @typedef {import("./mcpClient.mjs").McpClient} McpClient
@@ -18,7 +19,7 @@ import { extractFile, runRequest } from "./requests.mjs";
 
 /** Tools the runtime drives itself; the model never sees them. */
 export const RUNTIME_TOOLS = new Set(["wait_for_my_tasks", "list_my_tasks", "claim_task", "heartbeat", "wait_for_task", "end_run", "ack_stop", "save_checkpoint", "hand_over", "await_questions"]);
-export const REQUEST_TOOLS = new Set(["get_ai_request", "fill_ai_cells", "complete_ai_request", "complete_lesson_request", "report_source_check", "apply_ai_rewrite", "save_file_text"]);
+export const REQUEST_TOOLS = new Set(["relay_person_message", "reply_person_message", "deliver_person_replies", "save_to_notes", "get_ai_request", "fill_ai_cells", "complete_ai_request", "complete_lesson_request", "report_source_check", "apply_ai_rewrite", "save_file_text"]);
 /** wait_for_my_tasks reasons that mean "there is work to claim". */
 const CLAIM_REASONS = new Set(["queued", "feedback", "brief", "handover"]);
 /** Activity signals that answer a pending human decision. */
@@ -62,7 +63,7 @@ function answerText(p) {
  * Runs the agent until `maxTasks` tasks were handled or `signal` aborts.
  * @param {{
  *   mcp: McpClient, model: Model, channel?: Channel, clock?: Clock,
- *   maxTurns?: number, maxTasks?: number, harness?: string, reviewerAgentId?: string, resume?: boolean,
+ *   maxTurns?: number, maxTasks?: number, displayName?: string, harness?: string, reviewerAgentId?: string, resume?: boolean,
  *   prices?: {input: number, output: number}, appUrl?: string,
  *   signal?: AbortSignal, waitTimeoutS?: number, log?: (msg: string) => void, modelVision?: boolean, modelPdf?: boolean,
  *   noticeState?: { load: () => { delivered?: Record<string, string> }, save: (state: { delivered: Record<string, string> }) => void },
@@ -78,6 +79,7 @@ export async function runAgent(opts) {
     maxTurns = 40,
     maxTasks = Infinity,
     harness = "reference-agent",
+    displayName = "",
     reviewerAgentId = "",
     resume = true,
     prices = { input: 0, output: 0 },
@@ -93,7 +95,7 @@ export async function runAgent(opts) {
   const allTools = await mcp.listTools();
   const toolSchemas = new Map(allTools.map((t) => [t.name, t.inputSchema ?? {}]));
   const tools = toOpenAiTools(allTools.filter((t) => !RUNTIME_TOOLS.has(t.name) && !REQUEST_TOOLS.has(t.name)));
-  const system = buildSystemPrompt({ harness, serverInstructions: mcp.instructions, reviewerAgentId });
+  const system = buildSystemPrompt({ harness, displayName, serverInstructions: mcp.instructions, reviewerAgentId });
 
   /** @param {ChannelEvent} event */
   const notify = async (event) => {
@@ -140,6 +142,7 @@ export async function runAgent(opts) {
     }
   };
   while (handled.length < maxTasks && !signal?.aborted) {
+    if (channel?.reply) await flushPersonReplies({ call, reply: channel.reply, appUrl: channel.appUrl });
     await acknowledgeNotices();
     const waited = await call("wait_for_my_tasks", cursor ? { after: cursor, timeout_s: waitTimeoutS } : { timeout_s: waitTimeoutS });
     if (waited.isError) {
@@ -246,7 +249,7 @@ export async function runAgent(opts) {
     const runId = String(claim.run_id);
     if (task.request_kind) {
       try {
-        const outcome = await runRequest({ call, model, task, runId, log, prices, signal });
+        const outcome = await runRequest({ call, model, task, runId, log, prices, signal, reply: channel?.reply, appUrl: channel?.appUrl });
         await notify({ kind: outcome.status === "failed" ? "error" : "delivered", task_id: taskId, text: outcome.summary });
         return { task_id: taskId, run_id: runId, outcome: outcome.status === "failed" ? "error" : "submitted", usage: outcome.usage };
       } catch (error) {

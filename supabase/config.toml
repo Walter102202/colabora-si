@@ -63,3 +63,7 @@ verify_jwt = false
 [functions.github-webhook]
 # GitHub signs each delivery; the function checks the signature.
 verify_jwt = false
+
+[functions.voice-transcribe]
+# Signed-in people and the platform agent. The function reads the raw WAV.
+verify_jwt = true

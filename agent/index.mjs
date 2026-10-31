@@ -6,9 +6,11 @@
 import { createConsoleChannel } from "./channels/console.mjs";
 import { createTelegramChannel } from "./channels/telegram.mjs";
 import { loadEnvFile, readConfig } from "./config.mjs";
+import { createInbox } from "./inbox.mjs";
 import { runAgent } from "./loop.mjs";
 import { createMcpClient } from "./mcpClient.mjs";
 import { createModel } from "./model.mjs";
+import { createVoiceClient } from "./voice.mjs";
 import { resolve } from "node:path";
 import { fileState } from "../connect/codex/state.mjs";
 
@@ -41,13 +43,22 @@ const base = config.telegramBotToken
   ? createTelegramChannel({ token: config.telegramBotToken, ownerChatId: config.telegramOwnerChatId, log })
   : createConsoleChannel();
 const channel = {
+  appUrl: config.appUrl,
+  reply: (/** @type {string} */ chatId, /** @type {string} */ text) => ("reply" in base ? base.reply(chatId, text) : Promise.resolve()),
   /** @param {import("./loop.mjs").ChannelEvent} event */
   notify(event) {
     status = event.kind === "claimed" ? `working on ${event.task_id}` : event.kind === "approval_pending" || event.kind === "input_requested" ? `waiting for a person on ${event.task_id}` : "waiting for tasks";
     return base.notify(event);
   },
 };
-void base.start({ signal: controller.signal, status: () => status });
+const inbox = config.inbox && "reply" in base
+  ? createInbox({
+    call: mcp.callTool,
+    transcribe: createVoiceClient({ url: config.voiceUrl, accessToken: mcp.accessToken, download: base.download, ffmpeg: config.ffmpegPath }),
+    send: base.reply, typing: base.typing, appUrl: config.appUrl, timezone: config.timezone, log,
+  })
+  : null;
+void base.start({ signal: controller.signal, status: () => status, ...(inbox ? { onMessage: inbox.deliver } : {}) });
 
 log(`${config.harness} started: model ${config.modelName}, workspace ${new URL(config.mcpUrl).host}`);
 await runAgent({
@@ -56,6 +67,7 @@ await runAgent({
   noticeState: fileState(`${resolve(envPath)}.notices.json`),
   channel,
   harness: config.harness,
+  displayName: config.displayName,
   reviewerAgentId: config.reviewerAgentId,
   resume: config.resume,
   modelVision: config.modelVision,

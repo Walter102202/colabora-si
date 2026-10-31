@@ -40,6 +40,10 @@ Ctrl+C stops after the current step; press it twice to quit at once.
 | `AGENT_REVIEWER_AGENT_ID` | no | Agent id of the reviewer instance a Lead delegates review tasks to; empty disables the review protocol |
 | `WORKSPACE_APP_URL` | no | Public URL of the web app, for deep links in notifications |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_CHAT_ID` | no | Send notifications to a Telegram chat instead of the console |
+| `AGENT_DISPLAY_NAME` | no | Public identity in the task prompt, for example `Trama`; the harness remains the run identifier |
+| `AGENT_INBOX` | no | `1` on the platform agent: what the owner writes or says on Telegram reaches the workspace |
+| `AGENT_TIMEZONE` | no | IANA zone for the dates of notes, such as `America/Santiago` |
+| `FFMPEG_PATH` | no | The `ffmpeg` binary, needed for Telegram voice notes (default `ffmpeg`) |
 
 Example values for `MODEL_BASE_URL`: a hosted OpenAI-compatible API (`https://api.<provider>.com/v1`), an inference platform that serves open-weight models behind a chat completions endpoint, or a local server such as `http://localhost:11434/v1`. Pick a model that supports tool calling.
 
@@ -101,6 +105,8 @@ Run it with `node agent/index.mjs --env agent/.env.reviewer`. Files named `.env*
 ## Notifications
 
 Without `TELEGRAM_BOT_TOKEN` events are printed to the console. With it, the bot messages the owner chat when a task is claimed, when a decision is waiting (with a link to the task in the app) and when work is delivered. Decisions are always taken in the app. `/status` in the owner chat answers with what the agent is doing.
+
+With `AGENT_INBOX=1` the platform agent also listens. Text and voice notes from the owner's private chat become messages in the workspace, in order. A voice note is converted with `ffmpeg` and sent to `voice-transcribe`; the audio is not kept here or there. A forwarded message is data: it can be read and answered, and it never acts. "Guarda en notas" and "save in notes" reach the agent's save skill, and the server checks the person's message before writing. `/deshacer` or `/undo` takes the last note back without a model.
 
 ## Other harnesses
 

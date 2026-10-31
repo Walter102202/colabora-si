@@ -58,7 +58,7 @@ values
    'Codex','acp_local','pull','worker','00000000-0000-4000-8000-000000000001',
    '{"start":true,"continue":true,"cancel":true,"approval":true,"resume":true}','{"harness":"codex"}','00000000-0000-4000-8000-000000000001', false, null),
   ('00000000-0000-4000-8000-000000000023','00000000-0000-4000-8000-000000000010','00000000-0000-4000-8000-000000000033',
-   'Colabora','managed','pull','lead','00000000-0000-4000-8000-000000000001',
+   'Trama','managed','pull','lead','00000000-0000-4000-8000-000000000001',
    '{"start":true,"continue":true,"cancel":true,"approval":true,"cost":true,"resume":true}','{"harness":"agent","model":"muse-spark-1.3","platform":true}','00000000-0000-4000-8000-000000000001', true, 20),
   ('00000000-0000-4000-8000-000000000024','00000000-0000-4000-8000-000000000010','00000000-0000-4000-8000-000000000034',
    'Colabora Reviewer','managed','pull','worker','00000000-0000-4000-8000-000000000001',

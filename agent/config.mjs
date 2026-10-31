@@ -12,6 +12,7 @@ import { readFile } from "node:fs/promises";
  * @property {string} mcpUrl            remote MCP endpoint of the workspace
  * @property {string} agentPat          personal access token of this agent (agt_...)
  * @property {string} tokenUrl          PAT -> JWT exchange endpoint
+ * @property {string} displayName       optional public agent identity
  * @property {string} harness           harness name reported on claim_task
  * @property {boolean} resume          resume from checkpoints when the server supports it
  * @property {boolean} modelVision     the model accepts image input
@@ -21,6 +22,10 @@ import { readFile } from "node:fs/promises";
  * @property {string} telegramBotToken  "" selects the console channel
  * @property {string} telegramOwnerChatId
  * @property {number} maxTurns          model turns per run before giving up
+ * @property {boolean} inbox           the platform agent reads what its owner sends on Telegram
+ * @property {string} voiceUrl          voice-transcribe endpoint
+ * @property {string} timezone          IANA zone for the dates of notes ("" means UTC)
+ * @property {string} ffmpegPath        ffmpeg binary, needed for Telegram voice notes
  */
 
 /**
@@ -83,6 +88,7 @@ export function readConfig(env) {
     mcpUrl,
     agentPat: /** @type {string} */ (env.WORKSPACE_AGENT_PAT),
     tokenUrl: env.WORKSPACE_AGENT_TOKEN_URL || `${new URL(mcpUrl).origin}/functions/v1/agent-token`,
+    displayName: env.AGENT_DISPLAY_NAME ?? "",
     harness: env.AGENT_HARNESS_NAME || "reference-agent",
     resume: env.AGENT_RESUME !== "0",
     modelVision: env.WORKSPACE_MODEL_VISION === "1",
@@ -92,5 +98,9 @@ export function readConfig(env) {
     telegramBotToken: env.TELEGRAM_BOT_TOKEN ?? "",
     telegramOwnerChatId: env.TELEGRAM_OWNER_CHAT_ID ?? "",
     maxTurns: num(env.AGENT_MAX_TURNS, 40),
+    inbox: env.AGENT_INBOX === "1",
+    voiceUrl: env.WORKSPACE_VOICE_URL || `${new URL(mcpUrl).origin}/functions/v1/voice-transcribe`,
+    timezone: env.AGENT_TIMEZONE ?? "",
+    ffmpegPath: env.FFMPEG_PATH || "ffmpeg",
   };
 }

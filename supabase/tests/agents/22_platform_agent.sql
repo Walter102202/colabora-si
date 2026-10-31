@@ -25,7 +25,7 @@ select public.ensure_platform_agent((:'f'::jsonb->>'ws')::uuid, (:'f'::jsonb->>'
 select is(:'r1'::jsonb ->> 'created', 'true', 'first call creates the agent');
 select is((select count(*)::int from public.agents where workspace_id = (:'f'::jsonb->>'ws')::uuid and is_platform), 1, 'one platform row');
 select results_eq(format($$ select name, kind, role, monthly_budget_usd::text, capabilities->>'cost', sponsor_user_id::text from public.agents where id = %L::uuid $$, :'r1'::jsonb->>'agent_id'),
-          format($$ values ('Colabora', 'managed', 'lead', '20.0000', 'true', %L) $$, :'f'::jsonb->>'owner'), 'platform row has the agreed values');
+          format($$ values ('Trama', 'managed', 'lead', '20.0000', 'true', %L) $$, :'f'::jsonb->>'owner'), 'platform row has the agreed values');
 
 -- second call returns the same row and creates nothing
 select public.ensure_platform_agent((:'f'::jsonb->>'ws')::uuid, (:'f'::jsonb->>'owner')::uuid, :'pu2'::uuid) as r2 \gset

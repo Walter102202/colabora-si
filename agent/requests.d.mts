@@ -8,6 +8,8 @@ export interface RequestOptions {
   log: (message: string) => void;
   prices?: { input: number; output: number };
   signal?: AbortSignal;
+  reply?: (chatId: string, text: string) => Promise<unknown>;
+  appUrl?: string;
 }
 export interface RequestOutcome {
   status: "completed" | "completed_with_errors" | "failed";

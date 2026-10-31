@@ -23,7 +23,7 @@ supabase/migrations  0001 core, 0002 agents, 0003 core RPCs, 0004 tasks, 0005 pa
                      0024 claim dependencies, 0025 AI properties, 0026 AI rewrite, 0027 mention tasks, 0028 file texts, 0029 OAuth session links, 0030 CI evidence,
                      0031 run lease, 0032 task environment, 0033 finding severity, 0034 reviewer policy, 0035 conditional approval, 0036 lessons, 0037 context package,
                      0038 page sources
-supabase/functions   mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, github-webhook, pub-html, send-reminders, send-email; _shared/ holds the MCP server and its tools
+supabase/functions   mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, github-webhook, voice-transcribe, pub-html, send-reminders, send-email; _shared/ holds the MCP server and its tools
 supabase/tests       pgTAP suites (clone/, agents/)
 supabase/seeds       demo workspace (01) and demo agents (02)
 tests/               Vitest suites (clone/, agents/, infra/)
