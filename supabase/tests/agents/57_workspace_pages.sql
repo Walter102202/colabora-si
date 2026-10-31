@@ -68,5 +68,10 @@ select tests.set_human((:'f'::jsonb->>'viewer')::uuid);
 select is(public.workspace_page_bundle('private_P'),null,'published private page stays out of workspace reads');
 select is((select count(*) from public.workspace_visible_pages where id='private_P'),0::bigint,'published private page stays out of lists');
 select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.workspace_comment('page_A','Retry-safe comment',null,null,'comment') as comment \gset
+select is(public.workspace_comment('page_A','Retry-safe comment',null,null,'comment'),:'comment'::jsonb,'comment retries return same result');
+select is((select count(*) from public.pages p,lateral jsonb_array_elements(p.data->'comments') c where p.id='page_A' and c->>'body'='Retry-safe comment'),1::bigint,'comment retry never duplicates');
+select tests.reset_role();
 select * from finish();
 rollback;
