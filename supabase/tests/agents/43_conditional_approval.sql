@@ -1,5 +1,5 @@
 begin;
-select plan(37);
+select plan(39);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_S','page_O','page_X']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+condlead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -205,7 +205,11 @@ select tests.reset_role();
 
 -- 17. A payment never runs on a condition.
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
-select public.update_brief(:'parent'::uuid, '{"policies":{"subtask_close":"lead","preapproved_if":{"payment":["review_approved"]}}}'::jsonb);
+select is(tests.error_of(format('select public.update_brief(%L::uuid,%L::jsonb)',:'parent','{"policies":{"preapproved_if":{"payment":["review_approved"]}}}')),'invalid_input','payment conditions are rejected on brief update');
+select tests.reset_role();
+select tests.make_page((:'f'::jsonb->>'ws')::uuid,'page_payment','page_A');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('select public.create_agent_task(%L,%L::jsonb,%L::uuid)','page_payment','{"objective":"Pay","policies":{"preapproved_if":{"payment":["ci_green"]}}}',:'lead'::jsonb->>'agent')),'invalid_input','payment conditions are rejected on task creation');
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
 select is((public.request_approval(:'lr'::uuid, 'payment', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40)), null, 'Pay?'))->>'status', 'pending', 'a payment always waits for a person');

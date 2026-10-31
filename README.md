@@ -57,7 +57,9 @@ Delivery opens the policy review automatically. Blocking findings return to the 
 
 For Codex Desktop, run [`connect/codex/watch.mjs`](connect/codex/README.md#waking-a-codex-desktop-session) outside the session. It carries feedback to the `external_session_id` recorded by that agent's latest run, without copying text between windows. Use the watcher or the Stop hook, never both. An idle Desktop test is covered; busy threads and closed Desktop require separate verification.
 
-With a seeded, served local stack and its public key in `.env.local`, run `node tests/agents/loop-e2e.mjs`. It checks all eleven handoffs over real MCP HTTP and SQL, using four seed agents and the seed owner. CI evidence and resource reservations are synthetic test data; it performs no merge, deployment, GitHub call or Codex queue operation. `P11_TEST_THREAD_ID` optionally supplies the disposable session id recorded by the worker. The script refuses hosted endpoints and uses only the database container configured by this checkout.
+Conditional merges require `repo` and `head_sha` in both `request_approval` and `begin_external_op`, matching the newest reviewed delivery and its green CI. The executor must use `gh pr merge --match-head-commit <sha>` so a changed remote head cannot be merged using an older approval. Chat reviews and self-reviews never authorize conditional effects.
+
+With a seeded, served local stack and its public key in `.env.local`, set `P11_TEST_THREAD_ID` to a dedicated disposable Codex test chat, then run `node tests/agents/loop-e2e.mjs`. Its fifteen checks use four seed agents and the seed owner over real MCP HTTP and SQL, including active reassignment and a Lead without a bridge. The real watcher runs through a Node-based fake CLI, captures exactly one correction and checks restart deduplication; it never queues a real Codex message. Self-review and a new unreviewed green commit both wait for a person. The final step opens an external operation for the exact reviewed commit. CI evidence and reservations are synthetic; no merge, deployment or GitHub call is performed.
 
 ## Tools exposed over MCP
 
@@ -76,7 +78,7 @@ With a seeded, served local stack and its public key in `.env.local`, run `node 
 | Wait | `wait_for_task`, `wait_for_my_tasks` (the server holds the call up to 120 s and answers on the first change) |
 | People (chat hosts) | `list_waiting_on_me`, `decide_approval`, `close_task`; with `get_task`, each renders the task card in hosts that support MCP Apps |
 
-Prompts: `continue_task`, `review_as_lead`. Resources: `workspace://page/<id>` (Markdown) and `workspace://task/<id>/brief` (JSON).
+Prompts: `continue_task`, `review_as_lead`, `review_delivery`. Resources: `workspace://page/<id>` (Markdown) and `workspace://task/<id>/brief` (JSON).
 
 Writes are partial and idempotent: an agent appends blocks or edits one block by its current text, never the whole page. Content reaches the database as block operations applied in order; a conflict is reported on the block, the person's version wins, and the agent re-reads.
 
@@ -184,5 +186,3 @@ See [`AGENTS.md`](AGENTS.md) for how the repository is organized, built and veri
 ## License
 
 MIT
-
-Conditional merges require `repo` and `head_sha` in both `request_approval` and `begin_external_op`, matching the newest reviewed delivery and its green CI. The executor must use `gh pr merge --match-head-commit <sha>` so a changed remote head cannot be merged using an older approval. Chat reviews and self-reviews never authorize conditional effects.

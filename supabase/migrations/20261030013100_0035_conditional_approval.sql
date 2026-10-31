@@ -201,6 +201,9 @@ begin
      or (p_brief->'policies'->>'lease_minutes') !~ '^[0-9]{2,4}$' or (p_brief->'policies'->>'lease_minutes')::int not between 30 and 1440) then
     raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'policies.lease_minutes is a whole number from 30 to 1440';
   end if;
+  if p_brief->'policies'->'preapproved_if' ? 'payment' then
+    raise exception using errcode='PT400',message='invalid_input',detail='payment always requires a person and cannot have conditional preapproval';
+  end if;
   if p_brief->'policies' ? 'preapproved_if' and (jsonb_typeof(p_brief->'policies'->'preapproved_if') <> 'object' or exists (
        select 1 from jsonb_each(p_brief->'policies'->'preapproved_if') e
         where jsonb_typeof(e.value) <> 'array' or jsonb_array_length(e.value) = 0
