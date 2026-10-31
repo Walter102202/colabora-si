@@ -149,8 +149,12 @@ export function TaskView({ task, agent, run, approval, actionApprovals, onDecide
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [closing, setClosing] = useState<"accepted" | "rejected" | null>(null);
-  const [closeNote, setCloseNote] = useState("");
+  const decisionIdentity = JSON.stringify([task.id, task.state, task.brief_version, brief?.version, artifact?.id, artifact?.version]);
+  const [closeDraft, setCloseDraft] = useState<{ identity: string; decision: "accepted" | "rejected"; note: string } | null>(null);
+  const closing = closeDraft?.identity === decisionIdentity ? closeDraft.decision : null;
+  const closeNote = closing ? closeDraft!.note : "";
+  const setClosing = (decision: "accepted" | "rejected" | null) => setCloseDraft(decision ? { identity: decisionIdentity, decision, note: "" } : null);
+  const setCloseNote = (note: string) => setCloseDraft((current) => current?.identity === decisionIdentity ? { ...current, note } : current);
   const [handingOver, setHandingOver] = useState(false);
   const [handoverAgent, setHandoverAgent] = useState("");
   const [handoverNote, setHandoverNote] = useState("");
@@ -285,7 +289,7 @@ export function TaskView({ task, agent, run, approval, actionApprovals, onDecide
 
       <section className="space-y-1">
         <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Verification</h4>
-        <LeadReviewCard task={task} review={review} brief={brief} ciChecks={ciChecks} artifact={artifact} reviewerName={reviewerName} onReview={onReview} />
+        <LeadReviewCard key={decisionIdentity} task={task} review={review} brief={brief} ciChecks={ciChecks} artifact={artifact} reviewerName={reviewerName} onReview={onReview} />
       </section>
 
       <SubtaskList subtasks={subtasks} onOpenTask={onOpenTask} />

@@ -24,6 +24,22 @@ const props = (state: TaskState, withDeliverable = true): TaskViewProps => {
 const button = (text: string) => [...container.querySelectorAll("button")].find((b) => b.textContent === text);
 
 describe("accept and close", () => {
+  it.each(["artifact", "brief"])("drops prepared review findings and closure when the %s changes", (change) => {
+    const original = props("ready_for_review");
+    const next = change === "artifact" ? { ...original, artifact: { ...original.artifact!, id: "new-artifact", version: 2 } }
+      : { ...original, task: { ...original.task, brief_version: original.task.brief_version + 1 } };
+    act(() => root.render(createElement(TaskView, original)));
+    act(() => button("Review it yourself")!.click());
+    const select = container.querySelector('select[id*="-status-"]') as HTMLSelectElement;
+    act(() => { select.value = "verified"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    act(() => button("Accept and close")!.click());
+    expect(container.textContent).toContain("Accept the deliverable and close the task.");
+    act(() => root.render(createElement(TaskView, next)));
+    expect(container.textContent).not.toContain("Accept the deliverable and close the task.");
+    expect(button("Review it yourself")).toBeDefined();
+    act(() => button("Review it yourself")!.click());
+    expect((container.querySelector('select[id*="-status-"]') as HTMLSelectElement).value).toBe("unverified");
+  });
   it("a person accepts a deliverable that waits on them after a blocked or escalated review, as close_task allows", () => {
     act(() => root.render(createElement(TaskView, props("input_required"))));
     expect(button("Accept and close")!.disabled).toBe(false);

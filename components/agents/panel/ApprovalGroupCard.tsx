@@ -37,7 +37,7 @@ export function ApprovalGroupCard({ approvals, onDecide, focusApprovalId }: Appr
   // Keep failed rows visible when successful siblings disappear through Realtime.
   if (pending.length === 1 && !busy && !errors[pending[0].id]) {
     const approval = pending[0];
-    return <ApprovalCard approval={approval} focus={focusApprovalId === approval.id}
+    return <ApprovalCard key={approval.id} approval={approval} focus={focusApprovalId === approval.id}
       onDecide={(decision, response) => onDecide(approval.id, decision, response)} />;
   }
   const chosen = pending.filter((a) => selected.has(a.id));

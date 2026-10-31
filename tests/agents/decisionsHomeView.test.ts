@@ -39,6 +39,23 @@ it("uses the existing approval card for one item and groups actions by task on H
   expect(onDecide).toHaveBeenCalledExactlyOnceWith("one", "reject", null);
 });
 
+it("never carries edited parameters from one singleton approval into the next", async () => {
+  const { ApprovalGroupCard } = await import("@/components/agents/panel/ApprovalGroupCard");
+  const rows = approvals().slice(0, 2).map((approval, i) => ({ ...approval, options: ["approve", "edit", "reject"] as ApprovalRow["options"], params: { target: `target-${i}` } }));
+  const onDecide = vi.fn(async () => {});
+  const button = (text: string) => [...container.querySelectorAll("button")].find((b) => b.textContent === text)!;
+  await act(async () => root.render(createElement(ApprovalGroupCard, { approvals: [rows[0]], onDecide })));
+  act(() => button("Edit").click());
+  const box = container.querySelector("textarea")!;
+  act(() => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(box, '{"target":"edited-old"}'); box.dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => root.render(createElement(ApprovalGroupCard, { approvals: [rows[1]], onDecide })));
+  expect(container.querySelector("textarea")).toBeNull();
+  act(() => button("Edit").click());
+  expect(JSON.parse(container.querySelector("textarea")!.value)).toEqual(rows[1].params);
+  await act(async () => button("Approve with these changes").click());
+  expect(onDecide).toHaveBeenCalledExactlyOnceWith("two", "edit", { params: rows[1].params });
+});
+
 const item = (over: Partial<HomeItem>): HomeItem => ({
   key: "k", section: "waiting", taskId: "t1", rowPageId: "row-1", title: "Task", detail: "Detail", agentName: "Codex",
   href: "/p/row-1?task=t1", at: "2026-10-30T10:00:00Z", nonBlocking: false, stale: false, ...over,
