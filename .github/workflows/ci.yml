@@ -38,6 +38,15 @@ jobs:
           git fetch origin main:refs/remotes/origin/main || true
           node scripts/check-ownership.mjs --base origin/main
 
+      # Hosted Postgres applies each migration version once, so an edit to a migration that is
+      # already on main never reaches production (0023 was edited on main three times). A branch
+      # may still change the migrations it adds; on a push to main there is nothing to compare.
+      - name: Migrations on main are append-only
+        run: |
+          base=$(git merge-base origin/main HEAD 2>/dev/null || echo HEAD)
+          changed=$(git diff --diff-filter=MDR --name-only "$base" HEAD -- supabase/migrations)
+          if [ -n "$changed" ]; then echo "::error::a migration on main was changed: $changed"; exit 1; fi
+
       - run: npm run lint
 
       # Vitest does not check types, so this catches type errors in tests before the slow steps.
