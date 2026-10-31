@@ -184,3 +184,5 @@ See [`AGENTS.md`](AGENTS.md) for how the repository is organized, built and veri
 ## License
 
 MIT
+
+Conditional merges require `repo` and `head_sha` in both `request_approval` and `begin_external_op`, matching the newest reviewed delivery and its green CI. The executor must use `gh pr merge --match-head-commit <sha>` so a changed remote head cannot be merged using an older approval. Chat reviews and self-reviews never authorize conditional effects.

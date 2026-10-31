@@ -2,6 +2,9 @@
 -- round, never send work back and never stop an approval; they reach the Lead, which opens a follow-up if it wants one.
 -- A deterministic close still reads only verified findings on a criterion, so a minor one proves nothing.
 
+-- Existing reviews have no provable session provenance, so cannot authorize conditional effects.
+alter table public.agent_reviews add column direct_session boolean not null default false;
+
 -- Full copy of review_task (0022).
 create or replace function public.review_task(p_task_id uuid, p_verdict text, p_findings jsonb default '[]'::jsonb,
   p_evidence jsonb default '[]'::jsonb, p_artifact_id uuid default null, p_run_id uuid default null)
@@ -24,7 +27,8 @@ begin
       select task_id into v_review_task from public.agent_runs where id = v_review_run;
     elsif private.lead_of(v_t.parent_task_id) is null or v_run is null or not exists (
          select 1 from public.agent_runs r where r.id = v_run and r.agent_id = v_agent and r.task_id = v_t.parent_task_id
-            and r.status in ('running','waiting')) then
+            and r.status in ('running','waiting') and r.stop_requested_at is null
+            and exists (select 1 from public.agent_tasks p where p.id=r.task_id and p.active_run_id=r.id)) then
       raise exception using errcode = 'PT403', message = 'forbidden', detail = 'review from your own run on the parent task, or from your run on the review task';
     end if;
     v_reviewer := v_agent; v_reviewer_type := 'agent';
@@ -73,14 +77,18 @@ begin
   if p_artifact_id is not null then
     select * into v_art from public.agent_artifacts where id = p_artifact_id and task_id = v_t.id;
   else
-    select * into v_art from public.agent_artifacts where task_id = v_t.id and superseded_by is null order by created_at desc limit 1;
+    select * into v_art from public.agent_artifacts where task_id = v_t.id and superseded_by is null order by created_at desc, id desc limit 1;
   end if;
   if v_art.id is null then raise exception using errcode = 'PT422', message = 'artifact_required'; end if;
 
+  if v_art.author_type=v_reviewer_type and v_art.author_id=v_reviewer then
+    raise exception using errcode='PT403',message='self_review';
+  end if;
+
   insert into public.agent_reviews (workspace_id, task_id, run_id, reviewer_type, reviewer_id, artifact_id, artifact_version,
-                                    brief_version, verdict, findings, evidence)
+                                    brief_version, verdict, findings, evidence, direct_session)
   values (v_t.workspace_id, v_t.id, v_run, v_reviewer_type, v_reviewer, v_art.id, v_art.version, v_t.brief_version,
-          p_verdict, coalesce(p_findings, '[]'::jsonb), coalesce(p_evidence, '[]'::jsonb))
+          p_verdict, coalesce(p_findings, '[]'::jsonb), coalesce(p_evidence, '[]'::jsonb), private.jwt_client_id() is null)
   returning id into v_id;
 
   v_rounds := v_t.review_rounds;
@@ -159,7 +167,7 @@ returns boolean language sql stable security definer set search_path = '' as $$
        where t.id = p_task_id and c->>'check' in ('deterministic','ci')
          and not exists (
            select 1 from public.agent_reviews r, jsonb_array_elements(r.findings) f
-            where r.task_id = t.id and r.outdated_by is null
+            where r.task_id = t.id and r.outdated_by is null and r.direct_session
               and f->>'criterion_id' = c->>'id' and f->>'status' = 'verified'
               and coalesce(f->>'severity', 'blocking') = 'blocking'
               -- A new commit has a different ref, so it does not supersede the old artifact or its review.
@@ -170,6 +178,7 @@ returns boolean language sql stable security definer set search_path = '' as $$
                      select a.id, a.version from public.agent_artifacts a, private.ci_commit(a.ref) k
                       where a.task_id = t.id and a.kind = 'diff' and a.superseded_by is null
                         and (c->>'id') = any(a.satisfies)
+                        and a.id=(select newest.id from public.agent_artifacts newest where newest.task_id=t.id and newest.kind='diff' and newest.superseded_by is null order by newest.created_at desc,newest.id desc limit 1)
                       order by a.created_at desc, a.id desc limit 1)))
               and (c->>'check' = 'ci' or (jsonb_array_length(r.evidence) > 0
                    and (c->>'command' is null or exists (
@@ -178,4 +187,20 @@ returns boolean language sql stable security definer set search_path = '' as $$
       select 1 from public.agent_tasks t join public.task_briefs b on b.task_id = t.id and b.version = t.brief_version,
              jsonb_array_elements(b.done_when) c
        where t.id = p_task_id and c->>'check' = 'ci' and private.ci_criterion(t, c)->>'state' <> 'passed');
+$$;
+
+create or replace function private.reviewer_run_of(p_subtask_id uuid, p_run_id uuid default null)
+returns uuid language sql stable security definer set search_path = '' as $$
+  select r.id
+    from public.agent_tasks s
+    join public.agent_tasks rt on rt.workspace_id = s.workspace_id and rt.parent_task_id = s.parent_task_id
+                                 and rt.delegate_agent_id = private.current_agent_id()
+    join public.task_briefs b on b.task_id = rt.id and b.version = rt.brief_version
+    join public.agent_runs r on r.task_id = rt.id and r.agent_id = private.current_agent_id() and r.status in ('running','waiting')
+   where s.id = p_subtask_id
+     and rt.state not in ('done','cancelled') and rt.active_run_id=r.id and r.stop_requested_at is null
+     and b.policies->>'review_of' = s.id::text
+     and (p_run_id is null or r.id = p_run_id)
+   order by r.started_at desc
+   limit 1;
 $$;

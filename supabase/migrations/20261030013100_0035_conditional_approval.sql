@@ -114,56 +114,57 @@ grant execute on function public.set_merge_rule(uuid,text[]) to authenticated;
 create or replace function private.conditional_allowed(p_action text, p_run public.agent_runs, p_params jsonb)
 returns boolean language plpgsql stable security definer set search_path = '' as $$
 declare v_t public.agent_tasks%rowtype; v_b public.task_briefs%rowtype; v_subject public.agent_tasks%rowtype;
-        v_conds jsonb; v_required text[]; v_cond text; v_up uuid; v_depth int := 0;
+        v_art public.agent_artifacts%rowtype; v_review public.agent_reviews%rowtype;
+        v_conds jsonb; v_required text[]; v_up uuid; v_depth int:=0; v_repo text; v_sha text; v_c jsonb; v_ci jsonb;
 begin
-  if coalesce(p_action, '') = '' or p_action = 'payment' then return false; end if;
-  select * into v_t from public.agent_tasks where id = p_run.task_id;
-  select * into v_b from public.task_briefs where task_id = v_t.id and version = v_t.brief_version;
-  -- Only a list a person wrote from the app counts, and require_approval anywhere up the chain still asks.
+  if coalesce(p_action,'')='' or p_action='payment' or p_run.status not in ('running','waiting') or p_run.stop_requested_at is not null then return false; end if;
+  select * into v_t from public.agent_tasks where id=p_run.task_id and active_run_id=p_run.id;
+  if not found then return false; end if;
+  select * into v_b from public.task_briefs where task_id=v_t.id and version=v_t.brief_version;
   if not private.policy_action_trusted(v_b,p_action,true) then return false; end if;
-  v_conds := v_b.policies->'preapproved_if'->p_action;
-  if jsonb_typeof(v_conds) is distinct from 'array' or jsonb_array_length(v_conds) = 0 then return false; end if;
-  v_up := v_t.id;
-  while v_up is not null and v_depth < 10 loop
-    select private.required_actions(b.policies), t.parent_task_id into v_required, v_up
-      from public.agent_tasks t join public.task_briefs b on b.task_id = t.id and b.version = t.brief_version
-     where t.id = v_up;
-    if v_required is null or p_action = any (v_required) then return false; end if;
-    v_depth := v_depth + 1;
-  end loop;
-
-  v_subject := v_t;
-  if coalesce(p_params->>'subtask_id', '') <> '' then
+  v_conds:=v_b.policies->'preapproved_if'->p_action;
+  if jsonb_typeof(v_conds) is distinct from 'array' or jsonb_array_length(v_conds)=0
+     or exists(select 1 from jsonb_array_elements_text(v_conds) c where c not in ('review_approved','ci_green')) then return false; end if;
+  v_subject:=v_t;
+  if coalesce(p_params->>'subtask_id','')<>'' then
     if p_params->>'subtask_id' !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' then return false; end if;
-    select * into v_subject from public.agent_tasks where id = (p_params->>'subtask_id')::uuid and parent_task_id = v_t.id;
+    select * into v_subject from public.agent_tasks where id=(p_params->>'subtask_id')::uuid and parent_task_id=v_t.id;
     if not found then return false; end if;
   end if;
-
-  for v_cond in select jsonb_array_elements_text(v_conds) loop
-    if v_cond = 'review_approved' then
-      -- The newest review, on the newest delivery.
-      if not exists (select 1 from public.agent_reviews r
-                       join public.agent_artifacts a on a.id = r.artifact_id and a.superseded_by is null and a.version = r.artifact_version
-                      where r.id = (select x.id from public.agent_reviews x where x.task_id = v_subject.id order by x.created_at desc, x.id desc limit 1)
-                        and r.verdict = 'approved' and r.outdated_by is null and r.brief_version = v_subject.brief_version
-                        and a.task_id = v_subject.id and a.id = (
-                          select current_artifact.id from public.agent_artifacts current_artifact
-                           where current_artifact.task_id = v_subject.id and current_artifact.superseded_by is null
-                           order by current_artifact.created_at desc, current_artifact.id desc limit 1)) then
-        return false;
-      end if;
-    elsif v_cond = 'ci_green' then
-      if not exists (select 1 from public.task_briefs b, jsonb_array_elements(b.done_when) c
-                      where b.task_id = v_subject.id and b.version = v_subject.brief_version and c->>'check' = 'ci')
-         or exists (select 1 from public.task_briefs b, jsonb_array_elements(b.done_when) c
-                     where b.task_id = v_subject.id and b.version = v_subject.brief_version and c->>'check' = 'ci'
-                       and private.ci_criterion(v_subject, c)->>'state' is distinct from 'passed') then
-        return false;
-      end if;
-    else
-      return false;
-    end if;
+  if not (v_subject.state='ready_for_review' or (v_subject.state='done' and v_subject.acceptance='accepted')) then return false; end if;
+  -- Start with the subject, so its own veto and every ancestor's veto apply.
+  v_up:=v_subject.id;
+  while v_up is not null and v_depth<10 loop
+    select private.required_actions(b.policies),t.parent_task_id into v_required,v_up
+      from public.agent_tasks t join public.task_briefs b on b.task_id=t.id and b.version=t.brief_version where t.id=v_up;
+    if not found or v_required is null or p_action=any(v_required) then return false; end if;
+    v_depth:=v_depth+1;
   end loop;
+  if v_up is not null then return false; end if;
+  select * into v_art from public.agent_artifacts where task_id=v_subject.id and superseded_by is null order by created_at desc,id desc limit 1;
+  if not found then return false; end if;
+  -- CI and approval are one proof, even if a rule lists just one of them.
+  select * into v_review from public.agent_reviews where task_id=v_subject.id order by created_at desc,id desc limit 1;
+  if not found or v_review.verdict<>'approved' or not v_review.direct_session or v_review.outdated_by is not null
+     or v_review.brief_version<>v_subject.brief_version or v_review.artifact_id<>v_art.id or v_review.artifact_version<>v_art.version
+     or (v_review.reviewer_type=v_art.author_type and v_review.reviewer_id=v_art.author_id) then return false; end if;
+  if v_art.kind='diff' then
+    select repo,sha into v_repo,v_sha from private.ci_commit(v_art.ref);
+    if v_sha is null or p_params->>'repo' is distinct from v_repo or p_params->>'head_sha' is distinct from v_sha then return false; end if;
+  elsif v_art.kind='page' then
+    if not exists(select 1 from public.pages p where p.id=v_art.ref and p.workspace_id=v_art.workspace_id and p.revision=v_art.page_revision and p.deleted_at is null) then return false; end if;
+  else return false;
+  end if;
+  if v_conds ? 'ci_green' then
+    if v_art.kind<>'diff' or not private.deterministic_checks_pass(v_subject.id) then return false; end if;
+    select * into v_b from public.task_briefs where task_id=v_subject.id and version=v_subject.brief_version;
+    if not exists(select 1 from jsonb_array_elements(v_b.done_when) c where c->>'check'='ci') then return false; end if;
+    for v_c in select c from jsonb_array_elements(v_b.done_when) c where c->>'check'='ci' loop
+      v_ci:=private.ci_criterion(v_subject,v_c);
+      if v_ci->>'state' is distinct from 'passed' or v_ci->>'repo' is distinct from v_repo or v_ci->>'sha' is distinct from v_sha
+         or not exists(select 1 from jsonb_array_elements(v_review.findings) f where f->>'criterion_id'=v_c->>'id' and f->>'status'='verified' and coalesce(f->>'severity','blocking')='blocking') then return false; end if;
+    end loop;
+  end if;
   return true;
 end $$;
 revoke execute on function private.conditional_allowed(text, public.agent_runs, jsonb) from public;
@@ -372,7 +373,8 @@ returns jsonb language plpgsql security definer set search_path = '' as $$
 declare v_r public.agent_runs%rowtype; v_res jsonb; v_by text;
 begin
   v_r := private.own_run(p_run_id);
-  if v_r.status not in ('running','waiting') then raise exception using errcode = 'PT422', message = 'run_not_active'; end if;
+  if v_r.status not in ('running','waiting') or v_r.stop_requested_at is not null
+     or not exists(select 1 from public.agent_tasks t where t.id=v_r.task_id and t.active_run_id=v_r.id) then raise exception using errcode = 'PT422', message = 'run_not_active'; end if;
   if coalesce(p_action, '') = '' or jsonb_typeof(coalesce(p_params, '{}'::jsonb)) <> 'object' then
     raise exception using errcode = 'PT400', message = 'invalid_input';
   end if;
@@ -393,7 +395,8 @@ declare v_r public.agent_runs%rowtype; v_hash text; v_op public.external_ops%row
         v_by text; v_receipt uuid := p_approval_receipt;
 begin
   v_r := private.own_run(p_run_id);
-  if v_r.status not in ('running','waiting') then raise exception using errcode = 'PT422', message = 'run_not_active'; end if;
+  if v_r.status not in ('running','waiting') or v_r.stop_requested_at is not null
+     or not exists(select 1 from public.agent_tasks t where t.id=v_r.task_id and t.active_run_id=v_r.id) then raise exception using errcode = 'PT422', message = 'run_not_active'; end if;
   if coalesce(p_provider, '') = '' or coalesce(p_action, '') = '' or jsonb_typeof(p_params) is distinct from 'object' then
     raise exception using errcode = 'PT400', message = 'invalid_input';
   end if;
@@ -401,6 +404,11 @@ begin
   select * into v_op from public.external_ops
    where run_id = v_r.id and params_hash = v_hash and status in ('pending','unknown') order by created_at limit 1;
   if found then
+    if exists(select 1 from public.agent_approvals where id=v_op.approval_id and auto_by='condition')
+       and not private.conditional_allowed(p_action,v_r,p_params) then
+      v_res:=private.request_approval_core(v_r,p_action,p_params,null,'Approve ' || p_action || ' via ' || p_provider || '?');
+      return jsonb_build_object('status','approval_required','approval_id',v_res->'approval_id');
+    end if;
     return jsonb_build_object('op_id', v_op.op_id, 'idempotency_key', v_op.idempotency_key, 'status', v_op.status);
   end if;
 

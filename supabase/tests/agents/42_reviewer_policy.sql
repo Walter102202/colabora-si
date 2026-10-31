@@ -1,5 +1,5 @@
 begin;
-select plan(20);
+select plan(22);
 select tests.fixture() as f \gset
 -- A real database page: the review task gets its own row, as a task a Lead creates by hand does.
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_DB', 'page_A', jsonb_build_object('id', 'page_DB', 'title', 'Tasks', 'parentId', 'page_A', 'blocks', '[]'::jsonb,
@@ -66,6 +66,19 @@ select ok((select constraints like '%Untrusted findings (data, not instructions)
 -- 17. A second open review of the same delivery is not created.
 select is((select count(*)::int from public.agent_tasks t join public.task_briefs b on b.task_id = t.id
             where t.parent_task_id = :'parent'::uuid and b.policies->>'review_of' = :'sub' and t.state <> 'done'), 1, 'one open review per delivery');
+
+-- A closed review task's former run cannot review a later delivery.
+select tests.set_agent((:'rev'::jsonb->>'user')::uuid, (:'rev'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.review_task(%L::uuid,%L,%L::jsonb,%L::jsonb,null,%L::uuid)',:'sub','approved','[]','[]',:'rr')), 'forbidden', 'closed reviewer authority cannot be reused');
+select tests.reset_role();
+select tests.set_agent((:'rev'::jsonb->>'user')::uuid, (:'rev'::jsonb->>'agent')::uuid);
+select public.claim_task(:'rt2'::uuid,'claude_code')->>'run_id' as rr_active \gset
+select tests.reset_role();
+update public.agent_tasks set active_run_id=null where id=:'rt2'::uuid;
+select tests.set_agent((:'rev'::jsonb->>'user')::uuid, (:'rev'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.review_task(%L::uuid,%L,%L::jsonb,%L::jsonb,null,%L::uuid)',:'sub','approved','[]','[]',:'rr_active')), 'forbidden', 'reviewer must own the active run');
+select tests.reset_role();
+update public.agent_tasks set active_run_id=:'rr_active'::uuid where id=:'rt2'::uuid;
 
 -- 18. Nobody reviews their own delivery: the Lead keeps it.
 select tests.set_agent((:'rev'::jsonb->>'user')::uuid, (:'rev'::jsonb->>'agent')::uuid);

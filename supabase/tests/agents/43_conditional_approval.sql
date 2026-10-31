@@ -1,5 +1,5 @@
 begin;
-select plan(21);
+select plan(37);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_S','page_O','page_X']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+condlead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -35,11 +35,11 @@ select public.claim_task(:'other'::uuid, 'claude_code') ->> 'run_id' as or_run \
 select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', repeat('-', 36)), null, 'Merge?'))->>'status', 'pending', 'a malformed subject cannot satisfy a conditional approval');
 
 -- 2. Nothing proved yet: a person decides.
-select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub'), null, 'Merge?'))->>'status', 'pending', 'no review and no CI: a person decides');
+select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40)), null, 'Merge?'))->>'status', 'pending', 'no review and no CI: a person decides');
 
 -- 3. A review alone is not enough for a rule that also asks for CI.
 select public.review_task(:'sub'::uuid, 'approved', '[{"criterion_id":"c1","status":"verified","note":"reads right"}]'::jsonb, '[]'::jsonb, null, :'lr'::uuid);
-select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'try', 2), null, 'Merge?'))->>'status', 'pending', 'review without CI: a person decides');
+select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40), 'try', 2), null, 'Merge?'))->>'status', 'pending', 'review without CI: a person decides');
 select tests.reset_role();
 
 -- 4. A failed run: still a person.
@@ -48,7 +48,7 @@ select public.record_ci_check(:'conn'::uuid, 'acme/app', jsonb_build_object('id'
   'html_url', 'https://github.com/acme/app/runs/1', 'head_branch', 'a/x', 'completed_at', now()));
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
-select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'try', 3), null, 'Merge?'))->>'status', 'pending', 'a red run: a person decides');
+select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40), 'try', 3), null, 'Merge?'))->>'status', 'pending', 'a red run: a person decides');
 select tests.reset_role();
 
 -- 5-7. Green and approved: granted, recorded as a condition.
@@ -57,19 +57,76 @@ select public.record_ci_check(:'conn'::uuid, 'acme/app', jsonb_build_object('id'
   'html_url', 'https://github.com/acme/app/runs/2', 'head_branch', 'a/x', 'completed_at', now() + interval '1 second'));
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
-select public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub'), null, 'Merge?') as res \gset
+select public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40)), null, 'Merge?') as res \gset
 select is(:'res'::jsonb->>'status', 'approved', 'approved and green: granted');
 select is(:'res'::jsonb->'auto_approved'->>'by', 'condition', 'recorded as a condition');
 select ok(:'res'::jsonb ? 'receipt', 'with a receipt');
 
+-- Review binding regressions: each mutation breaks one fact of the same proof.
+select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub'), null, 'Merge?'))->>'status', 'pending', 'the action must name its commit');
+select is((public.begin_external_op(:'lr'::uuid, 'github', 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo','acme/other','head_sha',repeat('f',40))))->>'status', 'approval_required', 'a different repository and commit ask a person');
+select tests.reset_role();
+update public.agent_reviews set findings='[]' where task_id=:'sub'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is((public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40),'case','no-findings')))->>'status','pending','approved without a verified CI finding proves nothing');
+select tests.reset_role();
+update public.agent_reviews set findings='[{"criterion_id":"c1","status":"verified","note":"checked"}]' where task_id=:'sub'::uuid;
+update public.agent_tasks set state='done',acceptance='rejected' where id=:'sub'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is((public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40),'case','rejected')))->>'status','pending','human rejection overrides approved evidence');
+select tests.reset_role();
+update public.agent_tasks set state='cancelled' where id=:'sub'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is((public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40),'case','cancelled')))->>'status','pending','cancellation overrides approved evidence');
+select tests.reset_role();
+update public.agent_tasks set state='ready_for_review',acceptance='pending' where id=:'sub'::uuid;
+update public.task_briefs set policies=policies || '{"require_approval":["git.merge"]}' where task_id=:'sub'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is((public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40),'case','required')))->>'status','pending','subject require_approval overrides the parent rule');
+select tests.reset_role();
+update public.task_briefs set policies=policies-'require_approval' where task_id=:'sub'::uuid;
+update public.agent_artifacts set author_id=(:'lead'::jsonb->>'agent')::uuid where id=:'art'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.review_task(%L::uuid,%L,%L::jsonb,%L::jsonb,null,%L::uuid)',:'sub','approved','[{"criterion_id":"c1","status":"verified"}]','[]',:'lr')),'self_review','the author cannot review their own artifact');
+select is((public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40),'case','self')))->>'status','pending','legacy self approval also proves nothing');
+select tests.reset_role();
+update public.agent_artifacts set author_id=(:'f'::jsonb->>'agent')::uuid where id=:'art'::uuid;
+update public.agent_reviews set created_at=now()-interval '1 minute' where task_id=:'sub'::uuid;
+insert into public.agent_oauth_links(user_id,client_id,as_human) values ((:'f'::jsonb->>'owner')::uuid,'g2-chat',true);
+select tests.set_human((:'f'::jsonb->>'owner')::uuid,'g2-chat');
+select public.review_task(:'sub'::uuid,'approved','[{"criterion_id":"c1","status":"verified"}]');
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is((public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40),'case','chat')))->>'status','pending','a chat review cannot authorize an outside action');
+select tests.reset_role();
+-- Restore the independent review as latest without deleting the chat review.
+update public.agent_reviews set created_at=now()+interval '1 second' where task_id=:'sub'::uuid and reviewer_type='agent';
+update public.agent_runs set stop_requested_at=now() where id=:'lr'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.request_approval(%L::uuid,%L,%L::jsonb)',:'lr','git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40)))),'run_not_active','stop fences approval requests');
+select is(tests.error_of(format('select public.begin_external_op(%L::uuid,%L,%L,%L::jsonb)',:'lr','github','git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40)))),'run_not_active','stop fences external operations');
+select tests.reset_role();
+update public.agent_runs set stop_requested_at=null where id=:'lr'::uuid;
+-- A newer delivery without satisfies cannot borrow CI from an older commit.
+insert into public.agent_artifacts(workspace_id,task_id,run_id,kind,ref,title,version,satisfies,author_type,author_id,created_at)
+select workspace_id,task_id,run_id,kind,'acme/app@'||repeat('d',40),title,1,'{}',author_type,author_id,now()+interval '3 seconds'
+from public.agent_artifacts where id=:'art'::uuid returning id as unmatched_art \gset
+update public.agent_reviews set artifact_id=:'unmatched_art'::uuid where task_id=:'sub'::uuid and reviewer_type='agent';
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is((public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('d',40),'case','unmatched')))->>'status','pending','review and green CI must prove the same newest commit');
+select tests.reset_role();
+update public.agent_artifacts set superseded_by=:'art'::uuid where id=:'unmatched_art'::uuid;
+update public.agent_reviews set artifact_id=:'art'::uuid,outdated_by=null,outdated_at=null where task_id=:'sub'::uuid and reviewer_type='agent';
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+
 -- 8. The act goes through with its receipt.
-select isnt((public.begin_external_op(:'lr'::uuid, 'github', 'git.merge', jsonb_build_object('subtask_id', :'sub'), (:'res'::jsonb->>'receipt')::uuid))->>'status', 'approval_required', 'the receipt opens the operation');
+select isnt((public.begin_external_op(:'lr'::uuid, 'github', 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40)), (:'res'::jsonb->>'receipt')::uuid))->>'status', 'approval_required', 'the receipt opens the operation');
 
 -- 9. require_approval wins over a condition.
-select is((public.request_approval(:'lr'::uuid, 'deploy', jsonb_build_object('subtask_id', :'sub'), null, 'Deploy?'))->>'status', 'pending', 'require_approval still asks');
+select is((public.request_approval(:'lr'::uuid, 'deploy', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40)), null, 'Deploy?'))->>'status', 'pending', 'require_approval still asks');
 
 -- 10. The subject must be a subtask of this task.
-select is((public.request_approval(:'or_run'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub'), null, 'Merge?'))->>'status', 'pending', 'a subtask of another parent proves nothing');
+select is((public.request_approval(:'or_run'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40)), null, 'Merge?'))->>'status', 'pending', 'a subtask of another parent proves nothing');
 
 -- 11. No ci criterion means ci_green is not proved.
 select public.review_task(:'noci'::uuid, 'approved', '[{"criterion_id":"c1","status":"verified","note":"fine"}]'::jsonb, '[]'::jsonb, null, :'lr'::uuid);
@@ -77,7 +134,7 @@ select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object(
 
 -- 12. A commit delivered after the approval: the check at the moment of acting sends it to a person.
 -- A different commit ref leaves the old artifact unsuperseded, as add_artifact does.
-select public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'try', 'freshness'), null, 'Merge?') as fresh_receipt \gset
+select public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40), 'try', 'freshness'), null, 'Merge?') as fresh_receipt \gset
 select tests.reset_role();
 insert into public.agent_artifacts (workspace_id, task_id, run_id, kind, ref, title, version, satisfies, author_type, author_id, created_at)
 select workspace_id, task_id, run_id, kind, 'acme/app@' || repeat('c', 40), title, 1, satisfies, author_type, author_id, now() + interval '2 seconds'
@@ -87,15 +144,16 @@ select public.record_ci_check(:'conn'::uuid, 'acme/app', jsonb_build_object('id'
   'html_url', 'https://github.com/acme/app/runs/3', 'head_branch', 'a/x', 'completed_at', now() + interval '2 seconds'));
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
-select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'try', 'unreviewed'), null, 'Merge?'))->>'status', 'pending', 'green CI on a new unsuperseded commit still needs a current review');
-select is((public.begin_external_op(:'lr'::uuid, 'github', 'git.merge', jsonb_build_object('subtask_id', :'sub', 'try', 'freshness'), (:'fresh_receipt'::jsonb->>'receipt')::uuid))->>'status', 'approval_required', 'a conditional receipt cannot authorize a newer unreviewed commit');
+select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40), 'try', 'unreviewed'), null, 'Merge?'))->>'status', 'pending', 'green CI on a new unsuperseded commit still needs a current review');
+select is((public.begin_external_op(:'lr'::uuid, 'github', 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40), 'try', 'freshness'), (:'fresh_receipt'::jsonb->>'receipt')::uuid))->>'status', 'approval_required', 'a conditional receipt cannot authorize a newer unreviewed commit');
+select is((public.begin_external_op(:'lr'::uuid,'github','git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40))))->>'status','approval_required','retrying a pending conditional operation rechecks the latest proof');
 select tests.reset_role();
 update public.agent_artifacts set superseded_by = :'art'::uuid where id = :'fresh_art'::uuid;
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.update_brief(:'sub'::uuid, '{"objective":"Changed acceptance context"}'::jsonb);
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
-select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'try', 'stale-brief'), null, 'Merge?'))->>'status', 'pending', 'a review of an older brief cannot approve a merge');
+select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40), 'try', 'stale-brief'), null, 'Merge?'))->>'status', 'pending', 'a review of an older brief cannot approve a merge');
 select tests.reset_role();
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
 select tests.reset_role();
@@ -104,13 +162,33 @@ select workspace_id, task_id, run_id, kind, 'acme/app@' || repeat('b', 40), titl
 returning id as art2 \gset
 update public.agent_artifacts set superseded_by = :'art2'::uuid where id = :'art'::uuid;
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
-select is((public.begin_external_op(:'lr'::uuid, 'github', 'git.merge', jsonb_build_object('subtask_id', :'sub', 'try', 'after')))->>'status', 'approval_required', 'a newer commit sends it to a person');
+select is((public.begin_external_op(:'lr'::uuid, 'github', 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40), 'try', 'after')))->>'status', 'approval_required', 'a newer commit sends it to a person');
+select tests.reset_role();
+
+-- Page proofs and ancestor bounds fail closed as well.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.update_brief(:'parent'::uuid, '{"policies":{"preapproved_if":{"publish_page":["review_approved"]}}}');
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is((public.request_approval(:'lr'::uuid,'publish_page',jsonb_build_object('subtask_id',:'noci','page_id','page_O')))->>'status','approved','the current reviewed page is authorized');
+select tests.reset_role();
+-- A cyclic legacy ancestor chain also exceeds the bounded traversal, even with no veto in the first ten hops.
+update public.agent_tasks set parent_task_id=:'other'::uuid where id=:'parent'::uuid;
+update public.agent_tasks set parent_task_id=:'parent'::uuid where id=:'other'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is((public.request_approval(:'lr'::uuid,'publish_page',jsonb_build_object('subtask_id',:'noci','page_id','page_O','case','depth')))->>'status','pending','an unbounded ancestor chain never authorizes an effect');
+select tests.reset_role();
+update public.agent_tasks set parent_task_id=null where id in (:'parent'::uuid,:'other'::uuid);
+select set_config('app.ops_write','1',true);
+update public.pages set data=jsonb_set(data,'{title}','"Changed since review"') where id='page_O';
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is((public.begin_external_op(:'lr'::uuid,'workspace','publish_page',jsonb_build_object('subtask_id',:'noci','page_id','page_O','case','edited')))->>'status','approval_required','a page edited after its review asks a person');
 select tests.reset_role();
 
 -- 13-15. Trust: only a person writing from the app.
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
 select is(tests.error_of(format('select public.update_brief(%L::uuid, %L::jsonb)', :'sub', '{"policies":{"preapproved_if":{"git.merge":["review_approved"]}}}')), 'owner_required', 'a Lead cannot write a conditional rule');
-select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'try', 'lead'), null, 'Merge?'))->>'status', 'pending', 'and that rule grants nothing');
+select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40), 'try', 'lead'), null, 'Merge?'))->>'status', 'pending', 'and that rule grants nothing');
 select tests.reset_role();
 -- Match the explicit As-you consent link required by the HTTP session hook.
 insert into public.agent_oauth_links (user_id, client_id, as_human)
@@ -130,8 +208,9 @@ select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.update_brief(:'parent'::uuid, '{"policies":{"subtask_close":"lead","preapproved_if":{"payment":["review_approved"]}}}'::jsonb);
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
-select is((public.request_approval(:'lr'::uuid, 'payment', jsonb_build_object('subtask_id', :'sub'), null, 'Pay?'))->>'status', 'pending', 'a payment always waits for a person');
+select is((public.request_approval(:'lr'::uuid, 'payment', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40)), null, 'Pay?'))->>'status', 'pending', 'a payment always waits for a person');
 select tests.reset_role();
 
 select * from finish();
 rollback;
+

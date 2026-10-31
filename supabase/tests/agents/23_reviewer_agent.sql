@@ -1,5 +1,5 @@
 begin;
-select plan(20);
+select plan(21);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_A2','page_A3','page_A4','page_A5','page_A6','page_A7']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+lead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -60,7 +60,7 @@ select is((select reviewer_id::text from public.agent_reviews where id = (:'rv':
 select is((select run_id::text from public.agent_reviews where id = (:'rv'::jsonb->>'review_id')::uuid), :'rr', 'the review carries the reviewer run');
 select tests.reset_role();
 select is((select state || '/' || acceptance from public.agent_tasks where id = :'rtask'::uuid), 'done/accepted', 'recording the review closes the review task');
-select is((select status from public.agent_runs where id = :'rr'::uuid), 'running', 'the reviewer run stays active for close_subtask');
+select is((select status from public.agent_runs where id = :'rr'::uuid), 'running', 'the reviewer run remains until end_run or housekeeping');
 select ok(exists (select 1 from public.agent_activities where task_id = :'rtask'::uuid and type = 'response' and body->>'review_of' = :'sub'), 'the review task logs the review');
 select ok(exists (select 1 from public.agent_events where task_id = :'parent'::uuid and type = 'task.updated' and payload->>'subtask_id' = :'rtask' and payload->>'subtask_state' = 'done'),
           'the Lead is told that the review task closed');
@@ -71,14 +71,17 @@ select is(tests.error_of(format('select public.submit_for_review(%L::uuid, %L, a
           'the reviewer run cannot submit its closed review task');
 select tests.reset_role();
 
--- 10-11. The reviewer closes the subtask by the parent policy.
+-- Closing the review task ends its authority; the Lead closes the delivery by policy.
 select tests.set_agent((:'rev'::jsonb->>'user')::uuid, (:'rev'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.close_subtask(%L::uuid)',:'sub')),'lead_only','a closed review task cannot authorize closure');
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
 select public.close_subtask(:'sub'::uuid);
 select tests.reset_role();
-select is((select state from public.agent_tasks where id = :'sub'::uuid), 'done', 'the reviewer closes the subtask by policy');
-select ok(exists (select 1 from public.agent_activities where task_id = :'sub'::uuid and body->>'text' = 'Closed by the reviewer.'), 'the closing activity names the reviewer');
+select is((select state from public.agent_tasks where id = :'sub'::uuid), 'done', 'the Lead closes the reviewed subtask by policy');
+select ok(exists (select 1 from public.agent_activities where task_id = :'sub'::uuid and body->>'text' = 'Closed by the lead.'), 'the closing activity names the Lead');
 select is((select payload->>'closed_by' from public.agent_events where task_id = :'parent'::uuid and type = 'task.updated' and payload->>'subtask_id' = :'sub' order by seq desc limit 1),
-          'reviewer', 'the close event names the reviewer');
+          'lead', 'the close event names the Lead');
 
 -- 12-14. Once its review run ended, the reviewer is refused like any worker (lead_only comes before invalid_state,
 -- 0009:163-167); only the Lead gets invalid_state.
@@ -114,10 +117,12 @@ select public.claim_task(:'rtask2'::uuid, 'reference-agent') ->> 'run_id' as rr2
 select is(tests.error_of(format('select public.close_subtask(%L::uuid)', :'sub2')), 'policy_denied', 'no policy and no verified check: the reviewer cannot close');
 select public.review_task(:'sub2'::uuid, 'approved', '[{"criterion_id":"d1","status":"verified","note":"npm test green"}]'::jsonb,
                           '[{"kind":"capture","ref":"npm test"}]'::jsonb, null, :'rr2'::uuid);
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
 select public.close_subtask(:'sub2'::uuid, 'accepted', '[{"kind":"capture","ref":"npm test"}]'::jsonb);
 select tests.reset_role();
-select is((select state from public.agent_tasks where id = :'sub2'::uuid), 'done', 'the reviewer closes by a verified deterministic check');
-select is((select body->>'rule' from public.agent_activities where task_id = :'sub2'::uuid and body->>'text' = 'Closed by the reviewer.'), 'deterministic', 'the closing activity records the deterministic rule');
+select is((select state from public.agent_tasks where id = :'sub2'::uuid), 'done', 'the Lead closes by the independent verified deterministic check');
+select is((select body->>'rule' from public.agent_activities where task_id = :'sub2'::uuid and body->>'text' = 'Closed by the lead.'), 'deterministic', 'the closing activity records the deterministic rule');
 
 select * from finish();
 rollback;

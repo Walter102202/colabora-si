@@ -1,5 +1,5 @@
 begin;
-select plan(50);
+select plan(52);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_S','page_F','page_O']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+cilead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -184,7 +184,7 @@ select public.record_ci_check(:'conn2'::uuid, 'acme/other', jsonb_build_object('
   'conclusion', 'success', 'html_url', 'https://github.com/acme/other/runs/10', 'completed_at', now()));
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
-select public.review_task(:'self_task'::uuid, 'approved', '[{"criterion_id":"c1","status":"verified"}]'::jsonb, '[]'::jsonb, :'self_art'::uuid, :'lr'::uuid);
+select is(tests.error_of(format('select public.review_task(%L::uuid,%L,%L::jsonb,%L::jsonb,%L::uuid,%L::uuid)',:'self_task','approved','[{"criterion_id":"c1","status":"verified"}]','[]',:'self_art',:'lr')),'self_review','the artifact author is rejected before recording a review');
 select is(tests.error_of(format('do $b$ begin perform public.close_subtask(%L::uuid); raise exception ''unexpected_success''; end $b$', :'self_task')),
           'policy_denied', 'the artifact author cannot supply the CI review key as Lead');
 select public.create_subtask(:'parent'::uuid, 'page_ci_worker',
@@ -199,7 +199,7 @@ select public.claim_task(:'worker_self_task'::uuid, 'worker')->>'run_id' as work
 select public.add_artifact(:'worker_self_run'::uuid, 'diff', 'acme/other@dddddddddddddddddddddddddddddddddddddddd', 'Worker commit', array['c1'])->>'artifact_id' as worker_self_art \gset
 select public.submit_for_review(:'worker_self_run'::uuid, 'done', array[:'worker_self_art'::uuid]);
 select public.claim_task(:'self_review_task'::uuid, 'reviewer')->>'run_id' as self_review_run \gset
-select public.review_task(:'worker_self_task'::uuid, 'approved', '[{"criterion_id":"c1","status":"verified"}]'::jsonb, '[]'::jsonb, :'worker_self_art'::uuid, :'self_review_run'::uuid);
+select is(tests.error_of(format('select public.review_task(%L::uuid,%L,%L::jsonb,%L::jsonb,%L::uuid,%L::uuid)',:'worker_self_task','approved','[{"criterion_id":"c1","status":"verified"}]','[]',:'worker_self_art',:'self_review_run')),'self_review','the artifact author is rejected before recording a review');
 select is(tests.error_of(format('do $b$ begin perform public.close_subtask(%L::uuid); raise exception ''unexpected_success''; end $b$', :'worker_self_task')),
           'policy_denied', 'a review task cannot let the artifact author supply the CI review key');
 select tests.reset_role();
