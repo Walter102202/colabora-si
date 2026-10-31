@@ -134,7 +134,7 @@ export const useAgentConversation = create<AgentConversationState>()((set, get) 
     const client = getAgentClient();
     const workspaceId = get().workspaceId;
     if (!client || !workspaceId) return null;
-    const { data } = await client.rpc("my_notes_page", { p_workspace_id: workspaceId, p_lang: navigator.language.startsWith("en") ? "en" : "es" });
+    const { data } = await client.rpc("my_notes_page", { p_workspace_id: workspaceId, p_lang: "en" });
     return (data as { page_id?: string } | null)?.page_id ?? null;
   },
 }));

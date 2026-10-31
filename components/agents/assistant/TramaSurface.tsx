@@ -4,12 +4,13 @@ import { X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { TramaAvatar } from "@/components/agents/TramaAvatar";
 import { isTrama } from "@/lib/tramaIdentity";
-import { tramaSuggestions } from "@/lib/tramaSuggestions";
+import { TRAMA_GREETING, tramaSuggestions } from "@/lib/tramaSuggestions";
 import { useStore } from "@/lib/store";
 import { useAgentsStore } from "@/lib/agentsStore";
-import { useAgentTasks, waitingOnYou } from "@/lib/agentTasks";
+import { buildDecisionsHome } from "@/lib/agentHome";
+import { useAgentTasks } from "@/lib/agentTasks";
 import { createTask } from "@/lib/agentActions";
-import { type ClipboardEvent, useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { type ClipboardEvent, type FocusEvent, type PointerEvent, useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { AssistantThreadView } from "@/components/agents/assistant/AssistantThreadView";
 import { VoiceButton } from "@/components/agents/assistant/VoiceButton";
@@ -37,22 +38,46 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const agentWorkspace = useAgentsStore((s) => s.workspaceId);
   const loadAgents = useAgentsStore((s) => s.load);
   const tasks = useAgentTasks((s) => s.tasks);
+  const approvals = useAgentTasks((s) => s.approvals);
+  const runs = useAgentTasks((s) => s.runs);
+  const subscribeTasks = useAgentTasks((s) => s.subscribe);
   const currentPage = useStore((s) => pageId ? s.pages[pageId] : undefined);
   const trama = agentWorkspace === workspaceId ? agents.find((a) => isTrama(a) && !a.revoked_at) : undefined;
-  const waiting = waitingOnYou({ tasks } as Parameters<typeof waitingOnYou>[0]).filter((t) => t.workspace_id === workspaceId && t.owner_user_id === userId).length;
   const [folded, setFolded] = useState(() => { try { return localStorage.getItem("trama-folded") === "1"; } catch { return false; } });
   const [selected, setSelected] = useState(false);
   const [now, setNow] = useState(Date.now);
+  const home = useMemo(() => buildDecisionsHome({ tasks: Object.values(tasks).filter((t) => t.workspace_id === workspaceId), approvals: Object.values(approvals), runs, agents, userId, now }), [tasks, workspaceId, approvals, runs, agents, userId, now]);
+  const waiting = home.waiting.length;
+  const [revealed, setRevealed] = useState(false);
+  const descriptionId = useId();
+  const body = useRef<HTMLSpanElement>(null);
+  const revealTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastJump = useRef(-Infinity);
+  const suppressFocus = useRef(false);
   const [proposing, setProposing] = useState<string | null>(null);
   const [proposalError, setProposalError] = useState<string | null>(null);
   const proposalLock = useRef(false);
   const trigger = useRef<HTMLButtonElement>(null);
-  const suggestions = tramaSuggestions({ kind: new URLSearchParams(search).has("task") ? "task" : currentPage?.database ? "database" : pageId ? "text" : "home", selection: selected, decisions: waiting, lang: navigator.language.startsWith("es") ? "es" : "en" });
+  const suggestions = tramaSuggestions({ kind: new URLSearchParams(search).has("task") ? "task" : currentPage?.database ? "database" : pageId ? "text" : "home", selection: selected, decisions: waiting });
   const pending = messages.findLast((m) => m.direction === "in" && m.needs_reply);
   const missing = agentWorkspace === workspaceId && agentStatus === "ready" && !trama;
   const status = pending ? now - Date.parse(pending.created_at) >= 60_000 ? "Trama is not answering right now. Your message stays here." : "Trama is thinking…" : null;
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
+  const expanded = revealed && !open;
+  const countText = waiting === 1 ? "1 decision waits for you" : `${waiting} decisions wait for you`;
+  const preview = waiting ? home.waiting[0] : home.working[0];
+  const previewText = preview ? `${waiting ? "First" : "In progress"}: ${preview.title}` : "";
+  const hidePreview = useCallback(() => {
+    if (revealTimer.current) clearTimeout(revealTimer.current);
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    revealTimer.current = null; hideTimer.current = null; setRevealed(false);
+  }, []);
+  useEffect(() => () => {
+    if (revealTimer.current) clearTimeout(revealTimer.current);
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+  }, []);
   const [voice, dispatch] = useReducer(voiceReducer, { phase: "idle" });
   const [elapsed, setElapsed] = useState(0);
   const recorder = useRef<Recorder | null>(null);
@@ -64,9 +89,16 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const pasted = useRef(false);
   const selection = useRef<string>("");
   const ref = useRef<HTMLDivElement>(null);
+  const leaveFocus = (event: FocusEvent<HTMLElement>) => {
+    if (!ref.current?.contains(event.relatedTarget as Node | null)) hidePreview();
+  };
 
   useEffect(() => subscribe(workspaceId, userId), [workspaceId, userId, subscribe]);
-  useEffect(() => { void loadAgents(workspaceId); }, [workspaceId, userId, loadAgents]);
+  useEffect(() => {
+    if (!getAgentClient() || !workspaceId || !userId) return;
+    void loadAgents(workspaceId);
+    return subscribeTasks(workspaceId);
+  }, [workspaceId, userId, loadAgents, subscribeTasks]);
   useEffect(() => {
     if (!pending) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -83,15 +115,20 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
       captureVersion.current += 1; recorder.current?.cancel(); recorder.current = null;
       captureBusy.current = false; wav.current = null; dispatch({ type: "reset" });
     }
-    setOpen(false); trigger.current?.focus();
-  }, []);
+    hidePreview(); setOpen(false);
+    suppressFocus.current = true; trigger.current?.focus(); suppressFocus.current = false;
+  }, [hidePreview]);
   useEffect(() => {
     if (!open) return;
     ref.current?.querySelector("textarea")?.focus();
-    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); close(); } };
+  }, [open]);
+  useEffect(() => {
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && (open || revealed || revealTimer.current)) { event.preventDefault(); if (open) close(); else hidePreview(); }
+    };
     document.addEventListener("keydown", escape);
     return () => document.removeEventListener("keydown", escape);
-  }, [open, close]);
+  }, [open, revealed, close, hidePreview]);
   const fold = () => { setFolded(true); try { localStorage.setItem("trama-folded", "1"); } catch { /* optional preference */ } };
   async function propose(message: PersonMessage) {
     const original = messages.find((m) => m.id === message.outcome?.message_id && m.direction === "in");
@@ -109,10 +146,27 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
     void submit({ clientId: crypto.randomUUID(), body, context: { ...(pageId ? { page_id: pageId } : {}), ...(pageId && selection.current ? { selection: { page_id: pageId, text: selection.current } } : {}) } });
   };
 
-  // The selection is read when the panel opens: a click inside the panel clears it.
-  const toggle = () => {
+  // Capture the selection before moving focus into the conversation.
+  const openConversation = () => {
     if (!open) selection.current = window.getSelection()?.toString().trim() ?? "";
-    setOpen((o) => !o);
+    hidePreview(); setOpen(true);
+  };
+  const toggle = () => { if (open) close(); else openConversation(); };
+  const enterTrama = (event: PointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType !== "mouse" || open) return;
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    if (revealTimer.current) clearTimeout(revealTimer.current);
+    revealTimer.current = setTimeout(() => { revealTimer.current = null; setRevealed(true); }, 350);
+    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches && Date.now() - lastJump.current >= 3000) {
+      lastJump.current = Date.now();
+      body.current?.animate?.([
+        { offset: 0, transform: "none", easing: "cubic-bezier(.33,0,.67,1)" },
+        { offset: .2, transform: "scale(1.04,.94)", easing: "cubic-bezier(.2,.7,.4,1)" },
+        { offset: .5, transform: "translateY(-2px) scale(.98,1.04)", easing: "cubic-bezier(.6,0,.8,.4)" },
+        { offset: .74, transform: "scale(1.02,.98)", easing: "cubic-bezier(.2,.7,.4,1)" },
+        { offset: 1, transform: "none" },
+      ], { duration: 360 });
+    }
   };
 
   useEffect(() => {
@@ -230,7 +284,16 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   }, [open, close]);
 
   return createPortal(
-    <div ref={ref} className="fixed bottom-4 right-4 z-30 flex max-w-[calc(100vw-2rem)] flex-col items-end gap-2" data-trama-surface>
+    <div ref={ref} role="group" aria-label="Trama assistant"
+      onPointerEnter={(event) => { if (event.pointerType === "mouse" && hideTimer.current) clearTimeout(hideTimer.current); }}
+      onPointerLeave={(event) => {
+        if (event.pointerType !== "mouse") return;
+        if (revealTimer.current) clearTimeout(revealTimer.current);
+        revealTimer.current = null;
+        if (hideTimer.current) clearTimeout(hideTimer.current);
+        hideTimer.current = setTimeout(hidePreview, 500);
+      }}
+      className="fixed bottom-4 right-4 z-30 flex max-w-[calc(100vw-2rem)] flex-col items-end gap-2" data-trama-surface>
       {open && <section role="dialog" aria-label="Trama conversation" className="rounded-md border border-border bg-bg shadow-lg w-96 max-w-[calc(100vw-1.5rem)] max-h-[70vh] overflow-auto p-3">
         <div className="flex justify-end"><button type="button" aria-label="Close Trama" className="icon-button" onClick={close}><X size={16} /></button></div>
         <AssistantThreadView messages={messages} draft={draft} busy={voiceBusy} reviewing={voice.phase === "review"}
@@ -246,13 +309,25 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
         <div className="mt-2 flex flex-wrap gap-1">{suggestions.map((text) => <button type="button" key={text} disabled={voiceBusy} onClick={() => suggest(text)} className="rounded border border-border px-2 py-1 text-left text-xs hover:bg-bg-secondary">{text}</button>)}</div>
       </section>}
       {status && <p role="status" className="max-w-72 rounded border border-border bg-bg px-3 py-2 text-xs text-text-secondary">{status}</p>}
-      {waiting > 0 && <a href={HOME_URL} className="rounded bg-bg px-2 py-1 text-xs text-accent">{waiting} decisions wait for you</a>}
+      {(waiting > 0 || (expanded && preview)) && <div className="relative max-w-72 rounded-xl border border-border bg-bg px-2.5 py-1.5 text-xs">
+        {waiting > 0 && <a href={HOME_URL} onBlur={leaveFocus} className="block text-accent">{countText}</a>}
+        {expanded && preview && <a href={preview.href} onBlur={leaveFocus} className="block truncate text-text-secondary">{previewText}</a>}
+        <span aria-hidden="true" className="absolute -bottom-1 right-3 h-2 w-2 rotate-45 border-b border-r border-border bg-bg" />
+      </div>}
+      <span id={descriptionId} className="sr-only">{[waiting > 0 ? countText : "", expanded ? previewText : ""].filter(Boolean).join(". ")}</span>
       <div className="flex items-center gap-2">
         {!folded && <div className="flex max-w-64 items-center gap-1 rounded-full border border-border bg-bg px-3 py-2 text-sm shadow-sm">
-          {missing ? <a href={settingsUrl("agents", pathname)} className="text-accent">Enable Trama</a> : <button type="button" className="text-left" onClick={() => suggest(suggestions[0])}>{suggestions[0]}</button>}
+          {missing ? <a href={settingsUrl("agents", pathname)} className="text-accent">Enable Trama</a> : <button type="button" className="text-left" onClick={openConversation}>{TRAMA_GREETING}</button>}
           <button type="button" aria-label="Hide suggestion" className="icon-button shrink-0" onClick={fold}><X size={14} /></button>
         </div>}
-        <button ref={trigger} type="button" aria-label="Talk to Trama" aria-expanded={open} className="shrink-0 focus-visible:outline-2 focus-visible:outline-accent" onClick={toggle}><TramaAvatar size={40} /></button>
+        <button ref={trigger} type="button" aria-label="Talk to Trama" aria-expanded={open} aria-describedby={descriptionId} onBlur={leaveFocus}
+          style={{ background: "transparent" }} className="shrink-0 focus-visible:outline-2 focus-visible:outline-accent" onClick={toggle}
+          onPointerEnter={enterTrama}
+          onPointerLeave={() => { if (revealTimer.current) clearTimeout(revealTimer.current); revealTimer.current = null; }}
+          onPointerDown={() => { suppressFocus.current = true; }} onPointerUp={() => { suppressFocus.current = false; }} onPointerCancel={() => { suppressFocus.current = false; }}
+          onFocus={(event) => { if (!open && !suppressFocus.current && event.currentTarget.matches(":focus-visible")) setRevealed(true); }}>
+          <span ref={body} className="block origin-[49%_96%]"><TramaAvatar size={40} /></span>
+        </button>
       </div>
     </div>, document.body,
   );
