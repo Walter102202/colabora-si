@@ -9,6 +9,12 @@ import { useAgentSources } from "@/lib/agentSources";
 import { DiscrepancyCard } from "@/components/agents/panel/DiscrepancyCard";
 import { openDiscrepancies, parseSourceInput, sourcesOfPage, type DiscrepancyRow, type PageSourceRow } from "@/lib/agentSources";
 
+// These are view tests; store loading and Realtime are covered with controlled clients in agentLessonsViews.
+vi.mock("@/lib/agentClient", async (original) => ({
+  ...await original<typeof import("@/lib/agentClient")>(),
+  getAgentClient: () => null,
+}));
+
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 afterEach(() => { document.body.replaceChildren(); });
 
