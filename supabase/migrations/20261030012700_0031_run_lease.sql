@@ -56,7 +56,7 @@ revoke execute on function private.release_expired_run(uuid) from public;
 -- Full copy of agent_housekeeping (0007); only the lease pass and its count are new.
 create or replace function private.agent_housekeeping()
 returns jsonb language plpgsql security definer set search_path = '' as $$
-declare v_stale int; v_cancelled int; v_expired int; v_receipts int; v_released int;
+declare v_stale int; v_cancelled int; v_expired int; v_receipts int; v_released int; v_review_timeouts int;
 begin
   -- AI requests have no manual worker recovery path: expire after fifteen idle minutes.
   -- Lock runs before tasks like request writes; skip busy rows instead of racing a heartbeat/write.
@@ -127,7 +127,8 @@ begin
   delete from private.write_receipts where created_at < now() - interval '48 hours';
   get diagnostics v_receipts = row_count;
 
-  return jsonb_build_object('stale', v_stale, 'cancelled', v_cancelled, 'released', v_released, 'approvals_expired', v_expired, 'receipts_deleted', v_receipts);
+  v_review_timeouts:=private.notify_review_queue_timeouts();
+  return jsonb_build_object('review_timeouts',v_review_timeouts,'stale', v_stale, 'cancelled', v_cancelled, 'released', v_released, 'approvals_expired', v_expired, 'receipts_deleted', v_receipts);
 end $$;
 
 -- Full copy from 0006: an expired agent run cannot supersede the resumed session artifacts.
@@ -225,7 +226,7 @@ create or replace function public.create_subtask(p_parent_task_id uuid, p_row_pa
   p_delegate_agent_id uuid default null, p_reference_task_ids uuid[] default '{}', p_depends_on_task_ids uuid[] default '{}',
   p_idempotency_key text default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
-declare v_lead uuid; v_parent public.agent_tasks%rowtype; v_max int; v_count int;
+declare v_lead uuid; v_parent public.agent_tasks%rowtype;
 begin
   if not private.is_agent() or private.current_agent_id() is null then
     raise exception using errcode = 'PT403', message = 'lead_only';
@@ -235,14 +236,6 @@ begin
   v_lead := private.lead_of(p_parent_task_id);
   if v_lead is null then raise exception using errcode = 'PT403', message = 'lead_only'; end if;
   perform private.require_active_task(v_parent.id);
-  select (b.policies->>'team_size_max')::int into v_max
-    from public.task_briefs b where b.task_id = v_parent.id and b.version = v_parent.brief_version;
-  if v_max is not null then
-    select count(*) into v_count from public.agent_tasks where parent_task_id = v_parent.id and state <> 'cancelled';
-    if v_count >= v_max then
-      raise exception using errcode = 'PT422', message = 'team_size_exceeded', detail = jsonb_build_object('max', v_max)::text;
-    end if;
-  end if;
   return public.create_agent_task(p_row_page_id, p_brief, p_delegate_agent_id, p_parent_task_id,
                                   p_reference_task_ids, p_depends_on_task_ids, p_idempotency_key);
 end $$;
@@ -338,7 +331,7 @@ create or replace function public.create_agent_task(p_row_page_id text, p_brief 
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare v_uid uuid := (select auth.uid()); v_page public.pages%rowtype; v_parent public.agent_tasks%rowtype;
         v_agent uuid; v_a public.agents%rowtype; v_d public.agents%rowtype; v_owner uuid; v_author uuid; v_author_type text;
-        v_id uuid := gen_random_uuid(); v_ctx uuid; v_db text; v_receipt jsonb; v_spent numeric;
+        v_id uuid := gen_random_uuid(); v_ctx uuid; v_db text; v_receipt jsonb; v_spent numeric; v_max int; v_count int;
 begin
   if v_uid is null then raise exception using errcode = 'PT403', message = 'forbidden'; end if;
   if p_idempotency_key is not null then
@@ -352,7 +345,7 @@ begin
   if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
 
   if p_parent_task_id is not null then
-    select * into v_parent from public.agent_tasks where id = p_parent_task_id;
+    select * into v_parent from public.agent_tasks where id = p_parent_task_id for update;
     if not found then raise exception using errcode = 'PT404', message = 'parent_not_found'; end if;
     if v_parent.workspace_id <> v_page.workspace_id then raise exception using errcode = 'PT422', message = 'cross_workspace'; end if;
   end if;
@@ -404,7 +397,15 @@ begin
   end if;
   select p.id into v_db from public.pages p where p.id = v_page.parent_id and p.data ? 'database';
 
-  if private.is_agent() and p_parent_task_id is not null then perform private.require_active_task(p_parent_task_id); end if;
+  if private.is_agent() and p_parent_task_id is not null then
+    perform private.require_active_task(p_parent_task_id);
+    select (policies->>'team_size_max')::int into v_max from public.task_briefs where task_id=v_parent.id and version=v_parent.brief_version;
+    if v_max is not null and not (coalesce(p_brief->'policies','{}') ? 'review_of') then
+      select count(*) into v_count from public.agent_tasks t join public.task_briefs b on b.task_id=t.id and b.version=t.brief_version
+        where t.parent_task_id=v_parent.id and t.state<>'cancelled' and not (b.policies ? 'review_of');
+      if v_count>=v_max then raise exception using errcode='PT422',message='team_size_exceeded',detail=jsonb_build_object('max',v_max)::text; end if;
+    end if;
+  end if;
   insert into public.agent_tasks (id, workspace_id, context_id, db_page_id, row_page_id, title, delegate_agent_id, owner_user_id,
                                   parent_task_id, reference_task_ids, depends_on_task_ids, brief_version, created_by, created_by_type)
   values (v_id, v_page.workspace_id, v_ctx, v_db, p_row_page_id, coalesce(v_page.data->>'title', ''), p_delegate_agent_id, v_owner,

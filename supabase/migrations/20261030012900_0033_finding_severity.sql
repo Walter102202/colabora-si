@@ -91,6 +91,27 @@ begin
           p_verdict, coalesce(p_findings, '[]'::jsonb), coalesce(p_evidence, '[]'::jsonb), private.jwt_client_id() is null)
   returning id into v_id;
 
+  if v_review_task is not null then
+    -- The review is the deliverable of the review task: close it; the run stays active (end_run leaves done tasks alone, 0006:941-942).
+    update public.agent_tasks set state = 'done', acceptance = 'accepted', closed_at = now(), closed_by = null, active_run_id = null,
+           waiting_on = null, updated_at = now()
+     where id = v_review_task;
+    insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, author_type, author_id)
+    values (v_t.workspace_id, v_review_task, v_review_run, private.next_seq(v_review_task), 'response',
+            jsonb_build_object('text', 'Review recorded: ' || p_verdict, 'review_id', v_id, 'review_of', v_t.id, 'verdict', p_verdict, 'submit', true),
+            'agent', v_agent);
+    -- The Lead waiting on the parent learns at once that the review task closed (0014 wakes waits from agent_events).
+    insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
+    select p.workspace_id, p.id, p.active_run_id, p.delegate_agent_id, 'task.updated',
+           jsonb_build_object('subtask_id', v_review_task, 'subtask_state', 'done', 'acceptance', 'accepted', 'closed_by', 'reviewer',
+                              'review_of', v_t.id, 'review_id', v_id, 'verdict', p_verdict, 'minor_findings', v_minor),
+           private.next_event_seq(p.id)
+      from public.agent_tasks p
+     where p.id = v_t.parent_task_id and p.delegate_agent_id is not null;
+    perform private.release_dependents(v_review_task);
+  end if;
+
+
   v_rounds := v_t.review_rounds;
   v_state := v_t.state;
   if p_verdict = 'changes_requested' then
@@ -130,25 +151,6 @@ begin
     update public.agent_tasks set review_state = p_verdict, updated_at = now() where id = v_t.id;
   end if;
 
-  if v_review_task is not null then
-    -- The review is the deliverable of the review task: close it; the run stays active (end_run leaves done tasks alone, 0006:941-942).
-    update public.agent_tasks set state = 'done', acceptance = 'accepted', closed_at = now(), closed_by = null, active_run_id = null,
-           waiting_on = null, updated_at = now()
-     where id = v_review_task;
-    insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, author_type, author_id)
-    values (v_t.workspace_id, v_review_task, v_review_run, private.next_seq(v_review_task), 'response',
-            jsonb_build_object('text', 'Review recorded: ' || p_verdict, 'review_id', v_id, 'review_of', v_t.id, 'verdict', p_verdict, 'submit', true),
-            'agent', v_agent);
-    -- The Lead waiting on the parent learns at once that the review task closed (0014 wakes waits from agent_events).
-    insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
-    select p.workspace_id, p.id, p.active_run_id, p.delegate_agent_id, 'task.updated',
-           jsonb_build_object('subtask_id', v_review_task, 'subtask_state', 'done', 'acceptance', 'accepted', 'closed_by', 'reviewer',
-                              'review_of', v_t.id, 'review_id', v_id, 'verdict', p_verdict, 'minor_findings', v_minor),
-           private.next_event_seq(p.id)
-      from public.agent_tasks p
-     where p.id = v_t.parent_task_id and p.delegate_agent_id is not null;
-    perform private.release_dependents(v_review_task);
-  end if;
 
   perform private.audit(v_t.workspace_id, 'review.add', jsonb_build_object('task_id', v_t.id, 'review_id', v_id, 'verdict', p_verdict));
   return jsonb_build_object('review_id', v_id, 'task_state', v_state, 'rounds', v_rounds, 'minor_findings', v_minor);
