@@ -56,6 +56,9 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const [voice, dispatch] = useReducer(voiceReducer, { phase: "idle" });
   const [elapsed, setElapsed] = useState(0);
   const recorder = useRef<Recorder | null>(null);
+  const captureBusy = useRef(false);
+  const captureVersion = useRef(0);
+  const voiceBusy = ["asking", "recording", "sending", "transcribing"].includes(voice.phase);
   const wav = useRef<ArrayBuffer | null>(null);
   const clip = useRef<string | null>(null);
   const pasted = useRef(false);
@@ -74,8 +77,14 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
     document.addEventListener("selectionchange", changed);
     return () => document.removeEventListener("selectionchange", changed);
   }, []);
-  useEffect(() => () => { recorder.current?.cancel(); }, []);
-  const close = useCallback(() => { setOpen(false); trigger.current?.focus(); }, []);
+  useEffect(() => () => { captureVersion.current += 1; recorder.current?.cancel(); recorder.current = null; captureBusy.current = false; }, []);
+  const close = useCallback(() => {
+    if (captureBusy.current) {
+      captureVersion.current += 1; recorder.current?.cancel(); recorder.current = null;
+      captureBusy.current = false; wav.current = null; dispatch({ type: "reset" });
+    }
+    setOpen(false); trigger.current?.focus();
+  }, []);
   useEffect(() => {
     if (!open) return;
     ref.current?.querySelector("textarea")?.focus();
@@ -117,46 +126,64 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   });
 
   const upload = useCallback(async () => {
-    const session = (await getAgentClient()?.auth.getSession())?.data.session;
-    if (!session || !wav.current) return dispatch({ type: "fail", reason: "network", canRetry: false });
+    const version = captureVersion.current;
+    captureBusy.current = true;
     try {
+      const session = (await getAgentClient()?.auth.getSession())?.data.session;
+      if (version !== captureVersion.current) return;
+      if (!session || !wav.current) return dispatch({ type: "fail", reason: "network", canRetry: false });
       const out = await uploadWav({
         url: `${voiceUrl()}?workspace_id=${encodeURIComponent(workspaceId)}&lang=${navigator.language.startsWith("en") ? "en" : "es"}`,
         token: session.access_token, apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY, wav: wav.current,
-        onSent: () => dispatch({ type: "sent" }),
+        onSent: () => { if (version === captureVersion.current) dispatch({ type: "sent" }); },
       });
+      if (version !== captureVersion.current) return;
       wav.current = null;
       if (!out.transcript) return dispatch({ type: "fail", reason: "no_speech", canRetry: false });
       clip.current = out.clip_id;
-      setDraft(out.transcript);
-      pasted.current = false;
+      setDraft(out.transcript); pasted.current = false;
       dispatch({ type: "heard", clipId: out.clip_id, transcript: out.transcript });
     } catch (error) {
-      dispatch({ type: "fail", ...voiceFailure(error instanceof Error ? error.message : "voice_failed") });
-    }
+      if (version === captureVersion.current) dispatch({ type: "fail", ...voiceFailure(error instanceof Error ? error.message : "voice_failed") });
+    } finally { if (version === captureVersion.current) captureBusy.current = false; }
   }, [workspaceId]);
 
   async function finish() {
     const active = recorder.current;
     if (!active) return;
-    recorder.current = null;
-    dispatch({ type: "stop" });
-    wav.current = await active.stop();
-    await upload();
+    const version = captureVersion.current;
+    recorder.current = null; dispatch({ type: "stop" });
+    try {
+      const audio = await active.stop();
+      if (version !== captureVersion.current) return;
+      wav.current = audio;
+      await upload();
+    } catch {
+      active.cancel();
+      if (version === captureVersion.current) { captureBusy.current = false; dispatch({ type: "fail", reason: "voice_failed", canRetry: false }); }
+    }
   }
 
   async function press() {
-    dispatch({ type: "press" });
-    setElapsed(0);
+    if (captureBusy.current) return;
+    captureBusy.current = true;
+    const version = ++captureVersion.current;
+    dispatch({ type: "press" }); setElapsed(0);
     try {
-      recorder.current = await startRecorder();
+      const active = await startRecorder();
+      if (version !== captureVersion.current) { active.cancel(); return; }
+      recorder.current = active;
       dispatch({ type: "granted", at: Date.now() });
     } catch (error) {
-      dispatch({ type: "fail", ...voiceFailure(error instanceof Error ? error.message : "unsupported") });
+      if (version === captureVersion.current) {
+        captureBusy.current = false;
+        dispatch({ type: "fail", ...voiceFailure(error instanceof Error ? error.message : "unsupported") });
+      }
     }
   }
 
   function cancel() {
+    captureVersion.current += 1; captureBusy.current = false;
     recorder.current?.cancel();
     recorder.current = null;
     wav.current = null;
@@ -174,6 +201,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   }
 
   async function submit(from?: Draft) {
+    if (captureBusy.current) return;
     const body = (from?.body ?? draft).trim();
     if (!body) return;
     const out: Draft = from ?? {
@@ -205,7 +233,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
     <div ref={ref} className="fixed bottom-4 right-4 z-30 flex max-w-[calc(100vw-2rem)] flex-col items-end gap-2" data-trama-surface>
       {open && <section role="dialog" aria-label="Trama conversation" className="rounded-md border border-border bg-bg shadow-lg w-96 max-w-[calc(100vw-1.5rem)] max-h-[70vh] overflow-auto p-3">
         <div className="flex justify-end"><button type="button" aria-label="Close Trama" className="icon-button" onClick={close}><X size={16} /></button></div>
-        <AssistantThreadView messages={messages} draft={draft} reviewing={voice.phase === "review"}
+        <AssistantThreadView messages={messages} draft={draft} busy={voiceBusy} reviewing={voice.phase === "review"}
           error={proposalError ?? failed?.error ?? null} avatar={<TramaAvatar size={28} decorative />}
           empty={<span className="flex flex-col items-center gap-3 py-5"><TramaAvatar size={96} decorative /><span>Connects, coordinates, stays with you.</span></span>}
           onRetrySend={failed ? () => void submit(failed) : null}
@@ -215,7 +243,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
           onOpenNotes={() => { void openNotes().then((id) => { if (id) { close(); void navigate(pageUrl(id)); } }); }}
           voice={<VoiceButton state={voice} elapsedMs={elapsed} onPress={() => void press()} onStop={() => void finish()} onCancel={cancel} onRetry={retry} />}
         />
-        <div className="mt-2 flex flex-wrap gap-1">{suggestions.map((text) => <button type="button" key={text} onClick={() => suggest(text)} className="rounded border border-border px-2 py-1 text-left text-xs hover:bg-bg-secondary">{text}</button>)}</div>
+        <div className="mt-2 flex flex-wrap gap-1">{suggestions.map((text) => <button type="button" key={text} disabled={voiceBusy} onClick={() => suggest(text)} className="rounded border border-border px-2 py-1 text-left text-xs hover:bg-bg-secondary">{text}</button>)}</div>
       </section>}
       {status && <p role="status" className="max-w-72 rounded border border-border bg-bg px-3 py-2 text-xs text-text-secondary">{status}</p>}
       {waiting > 0 && <a href={HOME_URL} className="rounded bg-bg px-2 py-1 text-xs text-accent">{waiting} decisions wait for you</a>}

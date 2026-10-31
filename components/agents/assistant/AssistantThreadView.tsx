@@ -9,6 +9,7 @@ export interface AssistantThreadViewProps {
   messages: PersonMessage[];
   draft: string;
   reviewing: boolean;
+  busy?: boolean;
   error: string | null;
   voice: ReactNode;
   avatar?: ReactNode;
@@ -24,7 +25,7 @@ export interface AssistantThreadViewProps {
 }
 
 // Pure view of the conversation with the workspace agent. P12 mounts it in its own surface.
-export function AssistantThreadView({ messages, draft, reviewing, error, voice, avatar, empty, onPropose, proposing, onDraft, onPaste, onSend, onRetrySend, onUndo, onOpenNotes }: AssistantThreadViewProps) {
+export function AssistantThreadView({ messages, draft, reviewing, busy = false, error, voice, avatar, empty, onPropose, proposing, onDraft, onPaste, onSend, onRetrySend, onUndo, onOpenNotes }: AssistantThreadViewProps) {
   return (
     <div className="flex min-h-0 h-96 max-h-[60vh] w-full flex-col gap-2 text-sm">
       <div className="flex items-center justify-between gap-2 px-1">
@@ -66,12 +67,12 @@ export function AssistantThreadView({ messages, draft, reviewing, error, voice, 
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              onSend();
+              if (!busy) onSend();
             }
           }}
         />
         {voice}
-        <button type="button" className="icon-button" aria-label="Send" disabled={!draft.trim()} onClick={onSend}><Send size={16} /></button>
+        <button type="button" className="icon-button" aria-label="Send" disabled={busy || !draft.trim()} onClick={onSend}><Send size={16} /></button>
       </div>
     </div>
   );

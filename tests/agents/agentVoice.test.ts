@@ -171,3 +171,7 @@ it.each(["account", "workspace"])("discards old conversation data after switchin
     expect(useAgentConversation.getState().messages).toEqual([]);
   } finally { release(); spy.mockRestore(); }
 });
+
+it("starts a new recording from transcript review with stop and cancel state", () => {
+  expect(run([{ type: "press" }, { type: "granted", at: 9 }], { phase: "review", clipId: "old", transcript: "previous" })).toEqual({ phase: "recording", startedAt: 9 });
+});

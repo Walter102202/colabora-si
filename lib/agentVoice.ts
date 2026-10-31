@@ -31,6 +31,7 @@ export type VoiceEvent =
 export function voiceReducer(state: VoiceState, event: VoiceEvent): VoiceState {
   if (event.type === "reset") return { phase: "idle" };
   switch (state.phase) {
+    case "review":
     case "idle": return event.type === "press" ? { phase: "asking" } : state;
     case "asking":
       if (event.type === "granted") return { phase: "recording", startedAt: event.at };

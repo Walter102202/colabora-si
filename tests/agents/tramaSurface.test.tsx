@@ -7,10 +7,12 @@ import { TramaSurface } from "@/components/agents/assistant/TramaSurface";
 import { useAgentConversation, type PersonMessage } from "@/lib/agentConversation";
 import { useAgentsStore, type AgentRow } from "@/lib/agentsStore";
 import { useAgentTasks } from "@/lib/agentTasks";
+import { startRecorder, uploadWav } from "@/lib/agentVoice";
 import { createTask } from "@/lib/agentActions";
 
 vi.mock("@/lib/agentActions", () => ({ createTask: vi.fn() }));
 vi.mock("@/lib/agentClient", () => ({ getAgentClient: () => null, agentErrorMessage: String }));
+vi.mock("@/lib/agentVoice", async (original) => ({ ...(await original<typeof import("@/lib/agentVoice")>()), startRecorder: vi.fn(), uploadWav: vi.fn() }));
 let root: Root;
 let host: HTMLDivElement;
 const message = (over: Partial<PersonMessage>): PersonMessage => ({ id: "m", seq: 1, workspace_id: "w", direction: "in", channel: "surface", kind: "text", body: "The exact person's words", forwarded: false, outcome: null, created_at: new Date().toISOString(), ...over });
@@ -60,4 +62,22 @@ it("creates work only on the click using the original words and a stable retry k
   const start = [...document.querySelectorAll("button")].find((b) => b.textContent === "Do it")!;
   await act(async () => { start.click(); start.click(); });
   expect(createTask).toHaveBeenCalledExactlyOnceWith("page", { objective: original.body }, "trama", { idempotencyKey: "proposal:original" });
+});
+
+it("can record again after review, blocks sending during capture, and cancels on close", async () => {
+  const api = await import("@/lib/agentClient");
+  const session = vi.spyOn(api, "getAgentClient").mockReturnValue({ auth: { getSession: async () => ({ data: { session: { access_token: "local" } } }) } } as unknown as ReturnType<typeof api.getAgentClient>);
+  const cancel = vi.fn();
+  vi.mocked(startRecorder).mockResolvedValue({ stop: async () => new ArrayBuffer(8), cancel });
+  vi.mocked(uploadWav).mockResolvedValue({ clip_id: "clip", transcript: "Reviewed text", duration_ms: 1000 });
+  mount(); act(() => button("Talk to Trama").click());
+  await act(async () => button("Talk to the agent").click());
+  await act(async () => button("Stop and transcribe").click());
+  expect(document.querySelector("textarea")?.value).toBe("Reviewed text");
+  await act(async () => button("Talk to the agent").click());
+  expect(button("Stop and transcribe")).not.toBeNull();
+  expect(button("Send").disabled).toBe(true);
+  act(() => button("Close Trama").click());
+  expect(cancel).toHaveBeenCalledOnce();
+  session.mockRestore();
 });
