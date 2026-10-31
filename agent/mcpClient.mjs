@@ -8,6 +8,7 @@
  * @typedef {object} McpClient
  * @property {() => Promise<void>} initialize
  * @property {() => Promise<McpTool[]>} listTools
+ * @property {(fresh?: boolean) => Promise<string>} accessToken  the agent's JWT, for a workspace function that is not MCP
  * @property {(name: string, args: Record<string, unknown>) => Promise<ToolResult>} callTool
  * @property {string} [instructions]
  */
@@ -163,6 +164,10 @@ export function createMcpClient({ url, pat, tokenUrl, fetchImpl = globalThis.fet
         initializing = null;
       });
       return initializing;
+    },
+    async accessToken(fresh = false) {
+      if (fresh) token = null;
+      return token ?? (await exchange());
     },
     async listTools() {
       await client.initialize();

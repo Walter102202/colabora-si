@@ -21,6 +21,10 @@ import { readFile } from "node:fs/promises";
  * @property {string} telegramBotToken  "" selects the console channel
  * @property {string} telegramOwnerChatId
  * @property {number} maxTurns          model turns per run before giving up
+ * @property {boolean} inbox           the platform agent reads what its owner sends on Telegram
+ * @property {string} voiceUrl          voice-transcribe endpoint
+ * @property {string} timezone          IANA zone for the dates of notes ("" means UTC)
+ * @property {string} ffmpegPath        ffmpeg binary, needed for Telegram voice notes
  */
 
 /**
@@ -92,5 +96,9 @@ export function readConfig(env) {
     telegramBotToken: env.TELEGRAM_BOT_TOKEN ?? "",
     telegramOwnerChatId: env.TELEGRAM_OWNER_CHAT_ID ?? "",
     maxTurns: num(env.AGENT_MAX_TURNS, 40),
+    inbox: env.AGENT_INBOX === "1",
+    voiceUrl: env.WORKSPACE_VOICE_URL || `${new URL(mcpUrl).origin}/functions/v1/voice-transcribe`,
+    timezone: env.AGENT_TIMEZONE ?? "",
+    ffmpegPath: env.FFMPEG_PATH || "ffmpeg",
   };
 }
