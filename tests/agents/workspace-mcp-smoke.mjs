@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createRemote } from "../../bridge/remote.mjs";
 
@@ -22,6 +23,33 @@ export async function discover(client) {
   const listed = await client.call({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
   return { tools: listed.messages[0].result.tools, instructions: messages[0].result.instructions };
 }
+// Two independent SQL sessions reproduce the stale-schema race deterministically.
+export async function concurrentSchema(databaseId) {
+  assert.match(databaseId, /^[a-zA-Z0-9]+$/);
+  const quote = value => "'" + value.replaceAll("'", "''") + "'";
+  const run = randomUUID();
+  const claims = JSON.stringify({ sub: "00000000-0000-4000-8000-000000000001", role: "authenticated" });
+  const prefix = `begin; set local role authenticated; set local request.jwt.claims=${quote(claims)};`;
+  const change = name => `select public.update_database(${quote(JSON.stringify({ database_id: databaseId, properties: [{ name: "Stage", options: [name] }] }))}::jsonb,${quote(run + name)});`;
+  const launch = sql => {
+    const child = spawn("docker", ["exec", "-i", "supabase_db_colabora-si-p14", "psql", "-U", "postgres", "-d", "postgres", "-qAt", "-v", "ON_ERROR_STOP=1"], { windowsHide: true });
+    let output = "", error = "";
+    let ready;
+    const locked = new Promise(resolve => { ready = resolve; });
+    child.stdout.on("data", chunk => { output += chunk; if (output.includes("lock-held")) ready(); });
+    child.stderr.on("data", chunk => { error += chunk; });
+    const done = new Promise((resolve, reject) => { child.on("error", reject); child.on("exit", code => code === 0 ? resolve(output) : reject(new Error(error))); });
+    child.stdin.end(sql);
+    return { locked, done };
+  };
+  const first = launch(`${prefix} select pg_advisory_xact_lock(hashtextextended('00000000-0000-4000-8000-000000000010',47)); select 'lock-held'; select pg_sleep(1); ${change("Concurrent A")} commit;`);
+  await first.locked;
+  const second = launch(`${prefix} ${change("Concurrent B")} commit;`);
+  await Promise.all([first.done, second.done]);
+  const schema = await localClient().callTool("query_database", { database_id: databaseId, limit: 0 });
+  const names = schema.properties.find(p => p.name === "Stage").options.map(o => o.name);
+  assert.ok(names.includes("Concurrent A") && names.includes("Concurrent B"), "Concurrent schema edits must preserve both options");
+}
 export async function smoke() {
   const unauth = await fetch(endpoint, { method: "POST", body: "{}" });
   assert.equal(unauth.status, 401);
@@ -38,6 +66,7 @@ export async function smoke() {
   const db = await call("create_database", { parent_id: "market-research", title: "P14 runtime CRM", properties: [{ name: "Stage", type: "select" }],
     views: [{ name: "Table", type: "table" }, { name: "Board", type: "board", group_by: "Stage" }],
     rows: ["Acme", "Birch", "Cedar", "Delta", "Elm"].map(name => ({ cells: { Name: { text: name }, Stage: { select: "New" } } })) });
+  await concurrentSchema(db.id);
   const schema = await client.callTool("query_database", { database_id: db.id, limit: 0 });
   assert.equal(schema.rows.length, 0); assert.equal(schema.views.length, 2);
   assert.equal(schema.properties.find(p => p.name === "Stage").options[0].name, "New");
