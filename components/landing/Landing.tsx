@@ -1,4 +1,4 @@
-import { useRef, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { LandingDemo } from "./LandingDemo";
 import { LoginDialog } from "./LoginDialog";
 import { TramaImage } from "./TramaImage";
@@ -21,6 +21,11 @@ export default function Landing() {
   const loginEmail = useRef<HTMLInputElement>(null);
   const waitlistEmail = useRef<HTMLInputElement>(null);
   const [email, setEmail] = useState("");
+
+  // The page renders after the browser looked for the anchor of a shared link.
+  useEffect(() => {
+    if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView();
+  }, []);
 
   function goToWaitlist(prefill = "") {
     const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;

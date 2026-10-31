@@ -7,7 +7,7 @@ export function WaitlistForm({ emailRef, email, onEmail }: { emailRef: RefObject
   const [touched, setTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [joined, setJoined] = useState(false);
-  const company = useRef<HTMLInputElement>(null);
+  const trap = useRef<HTMLInputElement>(null);
   const confirmation = useRef<HTMLDivElement>(null);
 
   async function join(event: FormEvent) {
@@ -18,7 +18,7 @@ export function WaitlistForm({ emailRef, email, onEmail }: { emailRef: RefObject
     setProblem(found);
     if (found) { emailRef.current?.focus(); return; }
     setBusy(true);
-    const result = await joinWaitlist(import.meta.env.VITE_SUPABASE_URL, email, company.current?.value ?? "");
+    const result = await joinWaitlist(import.meta.env.VITE_SUPABASE_URL, email, trap.current?.value ?? "");
     setBusy(false);
     if (result === "joined") {
       flushSync(() => setJoined(true));
@@ -38,7 +38,7 @@ export function WaitlistForm({ emailRef, email, onEmail }: { emailRef: RefObject
           onChange={(event) => { onEmail(event.target.value); if (touched) setProblem(emailProblem(event.target.value)); }}
           onBlur={() => { if (email.trim()) { setTouched(true); setProblem(emailProblem(email)); } }} />
         <button type="submit" className="cs-primary" disabled={busy}>{busy ? "Joining…" : "Join the waitlist →"}</button>
-        <div className="cs-hp" aria-hidden="true"><label htmlFor="cs-co">Company</label><input ref={company} id="cs-co" name="company" tabIndex={-1} autoComplete="off" /></div>
+        <div className="cs-hp" aria-hidden="true"><label htmlFor="cs-hp">Leave this empty</label><input ref={trap} id="cs-hp" name="hp_field" tabIndex={-1} autoComplete="off" /></div>
       </form>
       <p className="cs-err" id="cs-email-err" role="alert">{problem}</p>
       <p className="cs-privacy" id="cs-waitlist-note">We use your email for your invite. We don’t sell it.</p>
