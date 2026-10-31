@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { taskUrl } from "@/lib/routes";
 import { Inbox } from "lucide-react";
-import { AssistantDock } from "@/components/agents/assistant/AssistantDock";
+import { TramaSurface } from "@/components/agents/assistant/TramaSurface";
 import { useStore } from "@/lib/store";
 import { useAuthStore } from "@/lib/auth";
 import { notificationHref, notificationText, useAgentNotifications } from "@/lib/agentNotifications";
@@ -49,7 +49,7 @@ export function InboxBell() {
 
   return (
     <>
-    {workspaceId && <AssistantDock workspaceId={workspaceId} userId={userId} />}
+    {workspaceId && <TramaSurface key={`${workspaceId}:${userId}`} workspaceId={workspaceId} userId={userId} />}
     <div className="relative" ref={ref}>
       <button type="button" className="icon-button relative" aria-label={count ? `${count} waiting on you` : "Inbox"} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <Inbox size={17} />

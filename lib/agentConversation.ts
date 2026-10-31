@@ -13,7 +13,8 @@ export interface PersonMessage {
   kind: "text" | "voice" | "system";
   body: string;
   forwarded: boolean;
-  outcome: { kind?: string; note_id?: string; page_id?: string } | null;
+  needs_reply?: boolean;
+  outcome: { kind?: string; note_id?: string; page_id?: string; message_id?: string } | null;
   created_at: string;
 }
 
@@ -55,7 +56,7 @@ export function mergeMessages(current: PersonMessage[], incoming: PersonMessage[
   return [...byId.values()].sort((a, b) => a.seq - b.seq);
 }
 
-const COLUMNS = "id,seq,workspace_id,direction,channel,kind,body,forwarded,outcome,created_at";
+const COLUMNS = "id,seq,workspace_id,direction,channel,kind,body,forwarded,needs_reply,outcome,created_at";
 
 export const useAgentConversation = create<AgentConversationState>()((set, get) => ({
   workspaceId: null,
