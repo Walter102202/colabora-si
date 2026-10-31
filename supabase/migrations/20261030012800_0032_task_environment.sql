@@ -50,9 +50,33 @@ revoke execute on function private.can_manage_environment(public.agent_tasks) fr
 
 -- Resource identity follows Windows worktree/branch spelling rules; display and audit use the canonical value.
 create or replace function private.environment_key(p_kind text,p_value text)
-returns text language sql immutable set search_path = '' as $$
-  select case when p_kind in ('worktree','branch') then lower(rtrim(regexp_replace(replace(btrim(p_value),E'\\','/'),'/+','/','g'),'/')) else btrim(p_value) end;
-$$;
+returns text language plpgsql immutable set search_path = '' as $$
+declare v_path text:=lower(replace(btrim(p_value),E'\\','/')); v_prefix text:=''; v_parts text[]:='{}';
+        v_part text; v_floor int:=0; v_absolute boolean:=false;
+begin
+  if p_kind not in ('worktree','branch') then return btrim(p_value); end if;
+  if p_kind='branch' then return rtrim(regexp_replace(v_path,'/+','/','g'),'/'); end if;
+  if left(v_path,2)='//' then
+    v_prefix:='//'; v_path:=substr(v_path,3); v_floor:=2; v_absolute:=true;
+  elsif v_path ~ '^[a-z]:/' then
+    v_prefix:=left(v_path,3); v_path:=substr(v_path,4); v_absolute:=true;
+  elsif left(v_path,1)='/' then
+    v_prefix:='/'; v_path:=substr(v_path,2); v_absolute:=true;
+  elsif v_path ~ '^[a-z]:' then
+    v_prefix:=left(v_path,2); v_path:=substr(v_path,3);
+  end if;
+  foreach v_part in array regexp_split_to_array(v_path,'/+') loop
+    if v_part in ('','.') then continue; end if;
+    if v_part='..' then
+      if cardinality(v_parts)>v_floor and v_parts[cardinality(v_parts)]<>'..' then
+        v_parts:=v_parts[1:cardinality(v_parts)-1];
+      elsif not v_absolute then v_parts:=array_append(v_parts,v_part);
+      end if;
+    else v_parts:=array_append(v_parts,v_part);
+    end if;
+  end loop;
+  return coalesce(nullif(v_prefix||array_to_string(v_parts,'/'),''),case when btrim(p_value)='' then '' else '.' end);
+end $$;
 revoke all on function private.environment_key(text,text) from public;
 
 create or replace function public.reserve_environment(p_task_id uuid, p_items jsonb)

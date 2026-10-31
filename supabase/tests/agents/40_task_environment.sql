@@ -1,5 +1,5 @@
 begin;
-select plan(34);
+select plan(42);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_1','page_2','page_3']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+envlead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -42,6 +42,16 @@ select is(tests.error_of(format('select public.reserve_environment(%L::uuid, %L:
 select is((select count(*)::int from public.agent_resources where task_id = :'two'::uuid), 0, 'and nothing of that list stays held');
 
 select is(tests.error_of(format('select public.reserve_environment(%L::uuid,%L::jsonb)',:'two','[{"kind":"worktree","value":"c:\\dev\\a\\"}]')),'resource_taken','worktree slash, case and trailing slash aliases collide');
+
+select is(tests.error_of(format('select public.reserve_environment(%L::uuid,%L::jsonb)',:'two',jsonb_build_array(jsonb_build_object('kind','worktree','value',p)))),'resource_taken','dot-segment worktree alias collides: '||p)
+ from unnest(array['C:/dev/other/../a','c:\DEV\other\..\a\.\','C:/dev/./a']) p;
+select is(jsonb_array_length(public.reserve_environment(:'one'::uuid,'[{"kind":"worktree","value":"C:/dev/other/../a"}]')),4,'same-task dot alias is idempotent');
+select is(tests.error_of(format('select public.reserve_environment(%L::uuid,%L::jsonb)',:'two','[{"kind":"worktree","value":"C:/dev/other/../distinct"}]')),'','a genuinely distinct worktree remains available');
+select tests.reset_role();
+select is(private.environment_key('worktree','C:/dev/other/../shared'),'c:/dev/shared','the reported shared-directory alias is canonical');
+select is(private.environment_key('worktree','//SERVER/share/a/../../b'),'//server/share/b','UNC traversal cannot escape the share root');
+select is(private.environment_key('worktree','C:/../../shared'),'c:/shared','drive-root traversal remains at its root');
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
 select public.reserve_environment(:'two'::uuid,'[{"kind":"branch","value":"A/Feature/"}]');
 select is(tests.error_of(format('select public.reserve_environment(%L::uuid,%L::jsonb)',:'one','[{"kind":"branch","value":"a/feature"}]')),'resource_taken','branch aliases collide');
 select is(tests.error_of(format('select public.reserve_environment(%L::uuid,%L::jsonb)',:'one','[{"kind":"stack","value":"postgres://user:fixture-password@localhost/db"}]')),'invalid_input','credential-bearing resource values are refused');
