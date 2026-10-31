@@ -5,6 +5,7 @@ import { useStore } from "@/lib/store";
 import { useAgentsStore, type NewAgentInput } from "@/lib/agentsStore";
 import { AutonomySettings } from "@/components/agents/settings/AutonomySettings";
 import { LessonsList } from "@/components/agents/settings/LessonsList";
+import { TelegramConnection } from "@/components/agents/settings/TelegramConnection";
 import { AgentList } from "@/components/agents/settings/AgentList";
 import { ConnectedApps } from "@/components/agents/settings/ConnectedApps";
 import { CiConnections } from "@/components/agents/settings/CiConnections";
@@ -107,6 +108,7 @@ export function AgentsSettingsTab() {
       <AutonomySettings key={syncWorkspaceId} workspaceId={syncWorkspaceId} />
       <AgentList agents={agents} onOpen={(id) => setView({ kind: "detail", id })} />
       {syncWorkspaceId && <LessonsList workspaceId={syncWorkspaceId} />}
+      {syncWorkspaceId && <TelegramConnection workspaceId={syncWorkspaceId} />}
       <ConnectedApps />
       <CiConnections key={syncWorkspaceId} workspaceId={syncWorkspaceId} />
       <EnvironmentList key={`environment-${syncWorkspaceId}`} workspaceId={syncWorkspaceId} />
