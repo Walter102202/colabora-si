@@ -148,12 +148,16 @@ begin
   select * into v_review from public.agent_reviews where task_id=v_subject.id order by created_at desc,id desc limit 1;
   if not found or v_review.verdict<>'approved' or not v_review.direct_session or v_review.outdated_by is not null
      or v_review.brief_version<>v_subject.brief_version or v_review.artifact_id<>v_art.id or v_review.artifact_version<>v_art.version
-     or (v_review.reviewer_type=v_art.author_type and v_review.reviewer_id=v_art.author_id) then return false; end if;
+     or exists(select 1 from public.agent_artifacts a where a.task_id=v_subject.id and a.ref=v_art.ref
+       and a.author_type=v_review.reviewer_type and a.author_id=v_review.reviewer_id) then return false; end if;
+  if exists(select 1 from public.agent_reviews r where r.task_id=v_subject.id and r.reviewer_type='human'
+    and r.artifact_id=v_art.id and r.artifact_version=v_art.version and r.verdict<>'approved') then return false; end if;
   if v_art.kind='diff' then
     select repo,sha into v_repo,v_sha from private.ci_commit(v_art.ref);
     if v_sha is null or p_params->>'repo' is distinct from v_repo or p_params->>'head_sha' is distinct from v_sha then return false; end if;
   elsif v_art.kind='page' then
-    if not exists(select 1 from public.pages p where p.id=v_art.ref and p.workspace_id=v_art.workspace_id and p.revision=v_art.page_revision and p.deleted_at is null) then return false; end if;
+    if p_params->>'page_id' is distinct from v_art.ref
+       or not exists(select 1 from public.pages p where p.id=v_art.ref and p.workspace_id=v_art.workspace_id and p.revision=v_art.page_revision and p.deleted_at is null) then return false; end if;
   else return false;
   end if;
   if v_conds ? 'ci_green' then
@@ -336,6 +340,11 @@ begin
          updated_at = now()
    where id = v_t.id;
 
+  -- A withdrawn brief authorization cannot leave reusable unconsumed automatic receipts behind.
+  update public.agent_approvals a set status='cancelled'
+    where a.task_id=v_t.id and a.status='decided' and a.auto_by='brief'
+      and private.action_allowed(a.action,v_t.id) is distinct from 'brief';
+
   if v_reassign then
     perform private.release_for_handover(v_t.id,(p_patch->>'delegate_agent_id')::uuid,'Reassigned from the task brief.',p_patch->>'delegate_agent_id' is null);
   end if;
@@ -368,7 +377,7 @@ begin
   end if;
   if not p_consumed then
     select * into v_a from public.agent_approvals
-     where task_id = v_t.id and auto_by is not null and status = 'decided' and action_hash = v_hash and receipt_expires_at > now()
+     where task_id = v_t.id and auto_by = p_by and status = 'decided' and action_hash = v_hash and receipt_expires_at > now()
      order by decided_at desc limit 1;
     if found then
       return jsonb_build_object('approval_id', v_a.id, 'action_hash', v_hash, 'status', 'approved', 'receipt', v_a.receipt,
@@ -437,19 +446,20 @@ begin
   v_hash := encode(extensions.digest(convert_to(p_provider || '|' || p_action || '|' || p_params::text, 'utf8'), 'sha256'), 'hex');
   select * into v_op from public.external_ops
    where run_id = v_r.id and params_hash = v_hash and status in ('pending','unknown') order by created_at limit 1;
-  if found then
-    if not exists(select 1 from public.agent_approvals where id=v_op.approval_id and auto_by='condition')
-       or private.conditional_allowed(p_action,v_r,p_params) then
-      return jsonb_build_object('op_id',v_op.op_id,'idempotency_key',v_op.idempotency_key,'status',v_op.status);
-    end if;
-    -- Reauthorize the existing operation through the same human/policy path as a new one.
-    -- Keep its provider idempotency key; a stale automatic receipt cannot override the current proof.
-    if exists(select 1 from public.agent_approvals where receipt=v_receipt and auto_by is not null) then v_receipt:=null; end if;
+  if found and exists(select 1 from public.agent_approvals where id=v_op.approval_id and auto_by is null
+      and status='consumed' and decision in ('approve','edit') and receipt_expires_at>now()) then
+    return jsonb_build_object('op_id',v_op.op_id,'idempotency_key',v_op.idempotency_key,'status',v_op.status);
   end if;
+  -- Every other retry reauthorizes against current policy and proof, regardless of its historical auto_by.
 
   v_by := private.action_allowed(p_action, v_r.task_id);
   -- Checked again here: a new commit or a red run between the approval and the act sends it to a person.
   if v_by is null and private.conditional_allowed(p_action, v_r, p_params) then v_by := 'condition'; end if;
+  if exists(select 1 from public.agent_approvals where receipt=v_receipt and auto_by is not null
+      and auto_by is distinct from v_by) then v_receipt:=null; end if;
+  if v_op.op_id is not null and v_by is not null then
+    return jsonb_build_object('op_id',v_op.op_id,'idempotency_key',v_op.idempotency_key,'status',v_op.status);
+  end if;
   if v_by is null then
     -- The action asks a person. An approval the level granted earlier no longer counts: the level stopped allowing it.
     if v_receipt is not null and exists (select 1 from public.agent_approvals where receipt = v_receipt and auto_by is not null) then
@@ -458,6 +468,7 @@ begin
     if v_receipt is null then
       select receipt into v_auto from public.agent_approvals
        where task_id = v_r.task_id and kind = 'action' and status = 'decided' and decision in ('approve','edit') and auto_by is null
+         and (auto_by is null or auto_by=v_by)
          and receipt is not null and receipt_expires_at > now() and action_hash = private.action_hash(p_action, v_r.task_id, null, p_params)
        order by decided_at desc limit 1;
       if v_auto is null then
@@ -478,6 +489,7 @@ begin
     else
       select receipt into v_auto from public.agent_approvals
        where task_id = v_r.task_id and kind = 'action' and status = 'decided' and decision in ('approve','edit')
+         and (auto_by is null or auto_by=v_by)
          and receipt is not null and receipt_expires_at > now() and action_hash = private.action_hash(p_action, v_r.task_id, null, p_params)
        order by decided_at desc limit 1;
       if v_auto is not null then

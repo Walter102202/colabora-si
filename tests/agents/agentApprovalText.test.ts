@@ -16,6 +16,9 @@ describe("describeApproval", () => {
       effect: "Anyone with the link can read it until it is unpublished.",
     });
   });
+  it("publish_page requires the canonical page_id", () => {
+    expect(describeApproval("publish_page", { ref: "other", page: "other" }).what).toBe("Publish page (page missing)");
+  });
   it("http_request names method and URL", () => {
     expect(describeApproval("http_request", { url: "https://api.example.com/v1/send" }).what).toBe("Call POST https://api.example.com/v1/send");
     expect(describeApproval("http_request", { method: "delete", url: "https://api.example.com/x" }).what).toBe("Call DELETE https://api.example.com/x");

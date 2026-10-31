@@ -1,5 +1,5 @@
 begin;
-select plan(41);
+select plan(57);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_S','page_O','page_X']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+condlead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -61,6 +61,59 @@ select public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('sub
 select is(:'res'::jsonb->>'status', 'approved', 'approved and green: granted');
 select is(:'res'::jsonb->'auto_approved'->>'by', 'condition', 'recorded as a condition');
 select ok(:'res'::jsonb ? 'receipt', 'with a receipt');
+
+
+-- Historical authorship and human veto are facts of the delivered object, not the latest author label.
+select tests.reset_role();
+insert into public.agent_artifacts(workspace_id,task_id,run_id,kind,ref,title,version,satisfies,author_type,author_id,superseded_by)
+select workspace_id,task_id,run_id,kind,ref,title,99,satisfies,'agent',(:'lead'::jsonb->>'agent')::uuid,id from public.agent_artifacts where id=:'art'::uuid returning id as authored_before \gset
+select is(private.deterministic_checks_pass(:'sub'::uuid),false,'redeclaring a commit does not make its author independent for deterministic close');
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.review_task(%L::uuid,%L,%L::jsonb,%L::jsonb,null,%L::uuid)',:'sub','approved','[{"criterion_id":"c1","status":"verified"}]','[]',:'lr')),'self_review','all versions of the ref retain authorship');
+select is(public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40),'case','history'))->>'status','pending','a superseded authorship record denies conditional authority');
+select tests.reset_role();
+update public.agent_artifacts set ref='acme/app@'||repeat('e',40) where id=:'authored_before'::uuid;
+select is(private.deterministic_checks_pass(:'sub'::uuid),true,'an independent reviewer still satisfies deterministic close');
+insert into public.agent_reviews(workspace_id,task_id,reviewer_type,reviewer_id,artifact_id,artifact_version,brief_version,verdict,findings,evidence,direct_session,created_at)
+select workspace_id,task_id,'human',(:'f'::jsonb->>'owner')::uuid,artifact_id,artifact_version,brief_version,'changes_requested','[]','[]',true,now()-interval '1 minute'
+from public.agent_reviews where task_id=:'sub'::uuid limit 1 returning id as veto \gset
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40),'case','human-veto'))->>'status','pending','a later Lead review cannot override human rejection of the same delivery');
+select tests.reset_role();
+update public.agent_reviews set verdict='approved' where id=:'veto'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40),'case','human-approval'))->>'status','approved','human approval does not veto an otherwise valid independent proof');
+
+-- Authorization changes cannot be bypassed by an old receipt or a pending operation label.
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.update_brief(:'parent'::uuid,'{"policies":{"preapproved":["git.merge","send_email"]}}');
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40),'case','old-receipt')) as old_receipt \gset
+select public.begin_external_op(:'lr'::uuid,'smtp','send_email','{"to":"fixture@example.test"}') as brief_op \gset
+select is(public.begin_external_op(:'lr'::uuid,'smtp','send_email','{"to":"fixture@example.test"}')->>'op_id',:'brief_op'::jsonb->>'op_id','current brief authorization resumes the same operation');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.update_brief(:'parent'::uuid,'{"policies":{"preapproved":[]}}');
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40),'case','old-receipt')) as current_receipt \gset
+select is(:'current_receipt'::jsonb->'auto_approved'->>'by','condition','an automatic receipt is reused only under its current authorization');
+select isnt(:'current_receipt'::jsonb->>'receipt',:'old_receipt'::jsonb->>'receipt','the stale brief receipt is not reused as a conditional receipt');
+select public.begin_external_op(:'lr'::uuid,'smtp','send_email','{"to":"fixture@example.test"}') as revoked_op \gset
+select is(:'revoked_op'::jsonb->>'status','approval_required','a pending brief-approved operation rechecks a withdrawn authorization');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.decide_approval((:'revoked_op'::jsonb->>'approval_id')::uuid,'approve') as permit \gset
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(public.begin_external_op(:'lr'::uuid,'smtp','send_email','{"to":"fixture@example.test"}',(:'permit'::jsonb->>'receipt')::uuid)->>'op_id',:'brief_op'::jsonb->>'op_id','human reauthorization preserves the provider idempotency key');
+select is(public.begin_external_op(:'lr'::uuid,'smtp','send_email','{"to":"fixture@example.test"}')->>'op_id',:'brief_op'::jsonb->>'op_id','the live consumed human receipt still authorizes retry');
+select tests.reset_role();
+update public.agent_approvals set receipt_expires_at=now()-interval '1 second' where receipt=(:'permit'::jsonb->>'receipt')::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(public.begin_external_op(:'lr'::uuid,'smtp','send_email','{"to":"fixture@example.test"}')->>'status','approval_required','an expired human receipt does not authorize retry');
 
 -- Review binding regressions: each mutation breaks one fact of the same proof.
 select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub'), null, 'Merge?'))->>'status', 'pending', 'the action must name its commit');
@@ -181,6 +234,13 @@ select public.update_brief(:'parent'::uuid, '{"policies":{"preapproved_if":{"pub
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
 select is((public.request_approval(:'lr'::uuid,'publish_page',jsonb_build_object('subtask_id',:'noci','page_id','page_O')))->>'status','approved','the current reviewed page is authorized');
+select tests.reset_role();
+
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(public.request_approval(:'lr'::uuid,'publish_page',jsonb_build_object('subtask_id',:'noci','page_id','page_X'))->>'status','pending','a reviewed page does not authorize a different page');
+select is(public.request_approval(:'lr'::uuid,'publish_page',jsonb_build_object('subtask_id',:'noci','ref','page_O'))->>'status','pending','page_id is mandatory; aliases cannot name the proof');
+select is(public.begin_external_op(:'lr'::uuid,'workspace','publish_page',jsonb_build_object('subtask_id',:'noci'))->>'status','approval_required','the act cannot omit page_id');
+
 select tests.reset_role();
 -- A cyclic legacy ancestor chain also exceeds the bounded traversal, even with no veto in the first ten hops.
 update public.agent_tasks set parent_task_id=:'other'::uuid where id=:'parent'::uuid;

@@ -81,7 +81,8 @@ begin
   end if;
   if v_art.id is null then raise exception using errcode = 'PT422', message = 'artifact_required'; end if;
 
-  if v_art.author_type=v_reviewer_type and v_art.author_id=v_reviewer then
+  if exists(select 1 from public.agent_artifacts a where a.task_id=v_t.id and a.ref=v_art.ref
+    and a.author_type=v_reviewer_type and a.author_id=v_reviewer) then
     raise exception using errcode='PT403',message='self_review';
   end if;
 
@@ -172,10 +173,12 @@ returns boolean language sql stable security definer set search_path = '' as $$
             where r.task_id = t.id and r.outdated_by is null and r.direct_session
               and f->>'criterion_id' = c->>'id' and f->>'status' = 'verified'
               and coalesce(f->>'severity', 'blocking') = 'blocking'
+                   and not exists (select 1 from public.agent_artifacts authored
+                     where authored.task_id=t.id and authored.ref=(select ref from public.agent_artifacts where id=r.artifact_id)
+                       and authored.author_type = r.reviewer_type and authored.author_id = r.reviewer_id)
               -- A new commit has a different ref, so it does not supersede the old artifact or its review.
               and (c->>'check' <> 'ci' or (r.brief_version = t.brief_version
-                   and not exists (select 1 from public.agent_artifacts authored
-                     where authored.id = r.artifact_id and authored.author_type = r.reviewer_type and authored.author_id = r.reviewer_id)
+
                    and (r.artifact_id, r.artifact_version) = (
                      select a.id, a.version from public.agent_artifacts a, private.ci_commit(a.ref) k
                       where a.task_id = t.id and a.kind = 'diff' and a.superseded_by is null
