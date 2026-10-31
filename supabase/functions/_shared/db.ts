@@ -119,6 +119,8 @@ const MESSAGES: Record<string, string> = {
   delegate_not_found: 'That agent does not exist in this workspace or is not enabled.',
   not_found: 'Not found, or you have no access to it.',
   forbidden: 'You are not allowed to do this.',
+  owner_required: 'Only the workspace owner can change this authorization, directly in the app.',
+  team_size_exceeded: 'The parent task has reached team_size_max. Reuse an existing subtask or ask the owner to raise the limit.',
   agent_disabled: 'This agent is paused or disabled, or agents are turned off. Stop working and end the run if you can.',
   rate_limited: 'Too many calls in the last minute. Wait about a minute and retry.',
   budget_exceeded: "The agent's monthly budget is spent. Stop and tell the person.",

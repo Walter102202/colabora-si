@@ -75,6 +75,7 @@ appendFileSync(process.env.P11_CAPTURE_PATH,JSON.stringify(args)+"\n"); process.
     NODE_OPTIONS: `--require ${JSON.stringify(preload)}`,
     P11_CAPTURE_PATH: capture, P11_TEST_THREAD_ID: session, WORKSPACE_AGENT_PAT: tokenFor(agentName),
   });
+  let queueCalls = 0;
   for (let pass = 0; pass < 2; pass++) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
@@ -83,6 +84,7 @@ appendFileSync(process.env.P11_CAPTURE_PATH,JSON.stringify(args)+"\n"); process.
         state: { load: () => ({ ...disk.load(), cursor }), save: (value) => { disk.save(value); if (pass === 1) controller.abort(); } },
         fetchImpl: (input, init) => fetch(input, { ...init, signal: controller.signal }),
         queue: async (thread, message) => {
+          queueCalls++;
           assert.equal(pass, 0, "Restart must not resend the acknowledged correction");
           assert.equal(thread, session); assert.ok(message.includes(taskId));
           await send(thread, message); controller.abort();
@@ -90,6 +92,7 @@ appendFileSync(process.env.P11_CAPTURE_PATH,JSON.stringify(args)+"\n"); process.
       });
     } finally { clearTimeout(timeout); }
   }
+  assert.equal(queueCalls, 1, "Restart must not invoke queue again, including a swallowed callback failure");
   const calls = readFileSync(capture, "utf8").trim().split("\n").map(line => JSON.parse(line));
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].slice(0, 4), ["queue", "--thread", session, "--message"]);

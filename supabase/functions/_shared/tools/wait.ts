@@ -590,7 +590,7 @@ const waitForMyTasks: ToolDef = {
   description:
     'Without `after`: answers at once with your pending tasks and a cursor. With `after` (the next_cursor of the previous ' +
     'call): holds until a task assigned to you is queued, gets feedback, a new brief, an approval decision, a stop, or is ' +
-    'closed; or until timeout_s (default 50, max 120). On changed:false call again with the same cursor.',
+    'closed; or until timeout_s (default 50, max 120). Lead notices also carry reviews in progress, verdicts, minor findings and environment releases. On changed:false call again with the same cursor.',
   inputSchema: object({
     after: { type: 'string' },
     timeout_s: { type: 'integer', minimum: 0, maximum: MAX_WAIT_S, default: DEFAULT_WAIT_S },

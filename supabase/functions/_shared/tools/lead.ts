@@ -184,7 +184,7 @@ const createSubtask: ToolDef = {
       done_when: { type: 'array', items: doneWhenItem, minItems: 1, maxItems: 30 },
       sources: { type: 'array', items: sourceItem, maxItems: 30 },
       next_step: { type: 'string', maxLength: 2000 },
-      policies: { type: 'object', description: 'Optional. require_approval: actions that always ask (a list of action names; any shape the server cannot read is refused); preapproved: actions the parent task already allows (a subtask never gets more than its parent). The autonomy level is set by a workspace owner in the app, never in the brief.' },
+      policies: { type: 'object', description: 'Optional. require_approval: actions that always ask (a list of action names; any shape the server cannot read is refused). Protected preapprovals and the autonomy level are set by a workspace owner directly in the app, never by the Lead.' },
     }, ['objective', 'done_when']),
     reference_task_ids: { type: 'array', items: { type: 'string' } },
     depends_on_task_ids: { type: 'array', items: { type: 'string' } },
@@ -312,7 +312,7 @@ const closeSubtask: ToolDef = {
   name: 'close_subtask',
   title: 'Close a reviewed subtask',
   description:
-    'Lead, or the reviewer with an active run on its review task. Closes a subtask in ready_for_review when the parent brief allows it (policies.subtask_close = lead) or ' +
+    'Lead with an active parent run. A reviewer records review_task and ends its turn; the Lead or a person closes the delivery. Closes a subtask in ready_for_review when the parent brief allows it (policies.subtask_close = lead) or ' +
     'every deterministic criterion is verified with evidence; CI criteria require a current verified review and a passing GitHub check on the delivered commit. Otherwise policy_denied and a person decides.',
   inputSchema: object({
     task_id: { type: 'string', minLength: 1 },

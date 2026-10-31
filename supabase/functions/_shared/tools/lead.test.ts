@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { briefBlocks, BRIEF_KEYS, leadTools } from './lead.ts';
-import { type Db, type DbResult, type SelectSpec, ToolError } from '../db.ts';
+import { type Db, type DbResult, type SelectSpec, ToolError, messageFor } from '../db.ts';
 import type { ToolContext } from '../mcp.ts';
 import { validate } from '../jsonSchema.ts';
 
@@ -191,4 +191,9 @@ Deno.test('review_task says that blocked waits on a person before the worker res
   const review = leadTools.find((t) => t.name === 'review_task')!;
   assert.match(review.description, /blocked means a person must decide/);
   assert.match(review.description, /worker resumes only after their answer/);
+});
+
+Deno.test('owner and team capacity errors explain the legitimate next action', () => {
+  assert.match(messageFor('owner_required'),/workspace owner.*app/);
+  assert.match(messageFor('team_size_exceeded'),/team_size_max.*existing subtask/);
 });
