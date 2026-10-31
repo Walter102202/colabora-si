@@ -319,6 +319,7 @@ create or replace function private.workspace_root_order(p_ws uuid,p_id text,p_ro
 returns void language plpgsql security definer set search_path='' as $$
 declare a jsonb; n integer;
 begin
+  perform 1 from public.workspaces where id=p_ws for update;
   select coalesce(jsonb_agg(value order by ordinality),'[]') into a from public.workspaces w,
     lateral jsonb_array_elements(w.root_order) with ordinality where w.id=p_ws and value<>to_jsonb(p_id);
   if p_root then
@@ -545,3 +546,21 @@ returns jsonb language sql stable security invoker set search_path='' as $$
 $$;
 revoke all on function public.workspace_search_pages(text,integer,text) from public,anon;
 grant execute on function public.workspace_search_pages(text,integer,text) to authenticated;
+
+create or replace function public.workspace_comment(p_page_id text,p_body text,p_block_id text,p_parent_id text,p_idempotency_key text)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare p public.pages%rowtype; r jsonb; status text;
+begin
+  p:=private.workspace_page(p_page_id);
+  if coalesce(length(p_idempotency_key),0) not between 1 and 200 then raise exception using errcode='PT400',message='invalid_input'; end if;
+  perform pg_advisory_xact_lock(hashtextextended(auth.uid()::text||':comment:'||p_idempotency_key,47));
+  select result into r from private.write_receipts where actor_id=auth.uid() and scope='workspace:comment' and key=p_idempotency_key;
+  if found then return r; end if;
+  status:=public.add_page_comment(p_page_id,p_body,p_block_id,null,p_parent_id);
+  if not exists(select 1 from public.pages p,lateral jsonb_array_elements(p.data->'comments') c where p.id=p_page_id and c->>'id'=status) then raise exception using errcode='PT422',message='invalid_input',detail=status; end if;
+  select jsonb_build_object('id',p_page_id,'revision',revision,'comment_id',data->'comments'->-1->>'id') into r from public.pages where id=p_page_id;
+  insert into private.write_receipts(scope,key,actor_id,result) values('workspace:comment',p_idempotency_key,auth.uid(),r);
+  return r;
+end $$;
+revoke all on function public.workspace_comment(text,text,text,text,text) from public,anon;
+grant execute on function public.workspace_comment(text,text,text,text,text) to authenticated;

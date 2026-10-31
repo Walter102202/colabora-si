@@ -95,6 +95,7 @@ export interface ResourceProvider {
 }
 
 export interface McpServer {
+  requireWriteKey?: boolean;
   name: string;
   title: string;
   version: string;
@@ -283,7 +284,15 @@ async function callTool(state: RequestState, params: Record<string, unknown>) {
 
   const budget = abortAfter(tool.budgetMs?.(args) ?? DEFAULT_TOOL_BUDGET_MS, state.signal);
   try {
+    if (state.server.requireWriteKey && !tool.annotations.readOnlyHint &&
+      (typeof args.idempotency_key !== 'string' || !args.idempotency_key.trim())) {
+      throw new ToolError('invalid_input', 'A write needs idempotency_key.', null, 'Supply a unique key; reuse it only to retry this write.');
+    }
     const out = await tool.handler(args, makeContext(state, budget.signal));
+    if (state.server.requireWriteKey && !tool.annotations.readOnlyHint) {
+      const id = out.structured.id ?? args.database_id ?? args.page_id ?? out.structured.page_id;
+      if (typeof id === 'string') out.structured = { ...out.structured, id, url: `${state.appUrl}/p/${encodeURIComponent(id)}` };
+    }
     state.code = 'ok';
     const result: Record<string, unknown> = toolResult(out);
     if (state.era === '2026') {

@@ -301,6 +301,7 @@ const addComment: ToolDef = {
   description: 'Adds a comment to a page, or to one block with block_id; with parent_id it replies in that thread. A person\'s mention of an agent on a page with no open task creates a task for that agent; an agent\'s mention never does.',
   inputSchema: object({
     page_id: { type: 'string', minLength: 1 },
+    idempotency_key: idempotencyKey,
     body: { type: 'string', minLength: 1, maxLength: 10_000 },
     block_id: { type: 'string' },
     parent_id: { type: 'string' },
@@ -309,6 +310,13 @@ const addComment: ToolDef = {
   annotations: WRITE,
   async handler(args, ctx) {
     const pageId = String(args.page_id);
+    if (typeof args.idempotency_key === 'string') {
+      const result = await must(ctx.db.rpc<Record<string, unknown>>('workspace_comment', {
+        p_page_id: pageId, p_body: args.body, p_block_id: str(args.block_id) ?? null,
+        p_parent_id: str(args.parent_id) ?? null, p_idempotency_key: args.idempotency_key,
+      }));
+      return { text: `Comment added to page ${pageId}.`, structured: result ?? {} };
+    }
     // add_page_comment returns 'ok' or a human-readable refusal, and no id.
     const status = await must(ctx.db.rpc<string>('add_page_comment', {
       p_page_id: pageId,
