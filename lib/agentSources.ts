@@ -97,6 +97,7 @@ export function parseSourceInput(value: string, origin: string): { page_id: stri
 }
 
 const MESSAGES: Record<string, string> = {
+  task_exists: "Finish or close the current task on this page before requesting an update. The difference is still open.",
   direct_session_required: "Open the workspace to decide this: a chat session cannot.",
   discrepancy_resolved: "Someone already settled this.",
   source_cycle: "That page already depends on this one.",

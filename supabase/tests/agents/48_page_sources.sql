@@ -1,7 +1,7 @@
 -- Page sources: a change marks what depends on it and opens one check, a check never writes a page, a contradiction waits
 -- for a person, and neither the watcher nor the artifact hook can fail the write that fired it.
 begin;
-select plan(58);
+select plan(60);
 
 select tests.fixture() as f \gset
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+platform@agents.invalid', 'lead', 'page_B') as pl \gset
@@ -160,6 +160,20 @@ select public.add_artifact(:'r2'::uuid, 'page', 'page_B1', 'Brief');
 select tests.reset_role();
 select is((select created_by_type || ':' || status from public.page_sources where page_id = 'page_B1' and source_page_id = 'page_S'), 'agent:current', 'a delivery declares the page sources of its brief');
 select is((select count(*) from public.page_sources where page_id = 'page_B1' and source_kind = 'url'), 0::bigint, 'and only pages');
+
+-- A person must not lose a correction when a work task already occupies the page.
+update public.page_sources set status = 'discrepancy' where page_id = 'page_B1';
+insert into public.page_discrepancies (workspace_id, page_id, source_ids, summary)
+values ((:'f'::jsonb->>'ws')::uuid, 'page_B1',
+  array(select id from public.page_sources where page_id = 'page_B1'), 'The sales brief needs the changed price')
+returning id as occupied_discrepancy \gset
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format($$select public.resolve_discrepancy(%L::uuid, 'update')$$, :'occupied_discrepancy')),
+  'task_exists', 'an existing work task prevents silently discarding the update request');
+select tests.reset_role();
+select is((select d.status || ':' || s.status from public.page_discrepancies d
+  join public.page_sources s on s.id = any(d.source_ids) where d.id = :'occupied_discrepancy'::uuid limit 1),
+  'open:discrepancy', 'a conflicting update leaves the difference and source pending');
 
 create or replace function private.source_fingerprint(p_data jsonb, p_block text default null)
 returns text language plpgsql immutable as $$ begin raise exception 'boom'; end $$;
