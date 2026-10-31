@@ -4,6 +4,7 @@
 import { agentEmail, agentLoginPassword } from '../_shared/agentLogin.ts';
 import { webhookSecret } from '../_shared/ciWebhook.ts';
 import { jsonResponse, oauthError } from '../_shared/errors.ts';
+import { AgentUserError, createPlatformAgent, type PlatformAgentDeps } from '../_shared/platformAgent.ts';
 
 export interface Caller {
   userId: string;
@@ -33,15 +34,6 @@ export interface CallerApi {
   rpc(fn: string, args: Record<string, unknown>): Promise<unknown>;
 }
 
-export interface AdminUserAttributes {
-  email?: string;
-  password?: string;
-  email_confirm?: boolean;
-  app_metadata?: Record<string, unknown>;
-  user_metadata?: Record<string, unknown>;
-  ban_duration?: string;
-}
-
 export interface AgentAdminDeps {
   loginPepper: string;
   ciPepper: string;
@@ -49,12 +41,8 @@ export interface AgentAdminDeps {
   /** Verifies the bearer JWT; null when it is not a valid session token of this project. */
   verifyCaller(token: string): Promise<Caller | null>;
   caller(token: string): CallerApi;
-  admin: {
-    createUser(attrs: AdminUserAttributes): Promise<{ id: string }>;
-    updateUserById(id: string, attrs: AdminUserAttributes): Promise<void>;
-    deleteUser(id: string): Promise<void>;
-  };
-  serviceRpc(fn: string, args: Record<string, unknown>): Promise<unknown>;
+  admin: PlatformAgentDeps['admin'];
+  serviceRpc: PlatformAgentDeps['serviceRpc'];
   /** Fresh server-only login as the selected agent; its credentials never leave this handler. */
   signInAgent(email: string, password: string): Promise<AgentOAuthApi>;
   newId(): string;
@@ -311,47 +299,10 @@ async function enablePlatformAgent(
     return dbFailure(err, 'The platform agent could not be read.');
   }
 
-  const agentId = deps.newId();
-  const appMetadata = {
-    principal_type: 'agent',
-    agent_id: agentId,
-    workspace_id,
-    provider: 'agent_token',
-    providers: ['agent_token'],
-  };
-
-  let userId: string;
   try {
-    const user = await deps.admin.createUser({
-      email: agentEmail(agentId),
-      password: deps.randomSecret(),
-      email_confirm: true,
-      app_metadata: appMetadata,
-      user_metadata: {},
-    });
-    userId = user.id;
-  } catch {
-    return error(500, 'server_error', 'The agent user could not be created.');
-  }
-
-  try {
-    await deps.admin.updateUserById(userId, {
-      password: await agentLoginPassword(deps.loginPepper, userId),
-      app_metadata: appMetadata,
-    });
-    const result = await deps.serviceRpc('ensure_platform_agent', {
-      p_workspace_id: workspace_id,
-      p_created_by: caller.userId,
-      p_auth_user_id: userId,
-      p_id: agentId,
-    }) as { agent_id?: string; auth_user_id?: string; created?: boolean } | null;
-    if (result?.created !== true) {
-      await deps.admin.deleteUser(userId).catch(() => undefined);
-      return ok({ agent_id: result?.agent_id, auth_user_id: result?.auth_user_id, created: false });
-    }
-    return ok({ agent_id: result.agent_id, auth_user_id: userId, created: true });
+    return ok(await createPlatformAgent(workspace_id, caller.userId, deps));
   } catch (err) {
-    await deps.admin.deleteUser(userId).catch(() => undefined);
+    if (err instanceof AgentUserError) return error(500, 'server_error', 'The agent user could not be created.');
     return dbFailure(err, 'The platform agent could not be enabled.');
   }
 }

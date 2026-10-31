@@ -87,10 +87,11 @@ async function readRpcResponse(res, id) {
 }
 
 /**
- * @param {{url: string, pat: string, tokenUrl: string, fetchImpl?: typeof fetch, clientName?: string, timeoutMs?: number}} opts
+ * @param {{url: string, pat?: string, tokenUrl?: string, signIn?: () => Promise<string>, fetchImpl?: typeof fetch, clientName?: string, timeoutMs?: number}} opts
+ *   `signIn` replaces the PAT exchange for an agent whose runtime signs it in.
  * @returns {McpClient}
  */
-export function createMcpClient({ url, pat, tokenUrl, fetchImpl = globalThis.fetch, clientName = "reference-agent", timeoutMs = 150_000 }) {
+export function createMcpClient({ url, pat, tokenUrl, signIn, fetchImpl = globalThis.fetch, clientName = "reference-agent", timeoutMs = 150_000 }) {
   /** @type {string | null} */
   let token = null;
   /** @type {string | null} */
@@ -100,7 +101,8 @@ export function createMcpClient({ url, pat, tokenUrl, fetchImpl = globalThis.fet
   let nextId = 1;
 
   async function exchange() {
-    const res = await fetchImpl(tokenUrl, {
+    if (signIn) return (token = await signIn());
+    const res = await fetchImpl(/** @type {string} */ (tokenUrl), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: pat }),

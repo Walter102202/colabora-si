@@ -106,3 +106,32 @@ export function readConfig(env) {
     ffmpegPath: env.FFMPEG_PATH || "ffmpeg",
   };
 }
+
+/**
+ * The managed runtime reads the deployment's own variables, so it needs only the two secrets of the project.
+ * @param {Record<string, string | undefined>} env
+ * @returns {{runtimeUrl: string, secret: string, config: AgentConfig}}
+ */
+export function readFleetConfig(env) {
+  const missing = ["VITE_SUPABASE_URL", "TRAMA_RUNTIME_SECRET", "META_MODEL_API_KEY"].filter((k) => !env[k]);
+  if (missing.length) throw new Error(`missing required settings: ${missing.join(", ")}`);
+  const functions = `${/** @type {string} */ (env.VITE_SUPABASE_URL).replace(/\/+$/, "")}/functions/v1`;
+  return {
+    runtimeUrl: `${functions}/trama-runtime`,
+    secret: /** @type {string} */ (env.TRAMA_RUNTIME_SECRET),
+    config: readConfig({
+      MODEL_BASE_URL: env.MODEL_BASE_URL || "https://api.meta.ai/v1",
+      MODEL_NAME: env.MODEL_NAME || "muse-spark-1.3",
+      MODEL_PRICE_IN: "1.25",
+      MODEL_PRICE_OUT: "4.25",
+      MODEL_API_KEY: env.META_MODEL_API_KEY,
+      WORKSPACE_MCP_URL: `${functions}/mcp`,
+      WORKSPACE_AGENT_PAT: "managed",
+      WORKSPACE_APP_URL: env.VITE_APP_URL,
+      AGENT_HARNESS_NAME: "trama",
+      AGENT_DISPLAY_NAME: "Trama",
+      TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN,
+      TELEGRAM_TRANSPORT: "webhook",
+    }),
+  };
+}

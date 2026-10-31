@@ -24,6 +24,10 @@ node agent/index.mjs --env agent/.env
 
 Ctrl+C stops after the current step; press it twice to quit at once.
 
+## Managed runtime
+
+`fleet.mjs` runs one agent per workspace of a deployment, as the `trama` daemon of `vercel.json`. It reads `VITE_SUPABASE_URL`, `VITE_APP_URL`, `META_MODEL_API_KEY` and `TRAMA_RUNTIME_SECRET` from the project and refuses to start without them. This folder is the Docker build context, so nothing `fleet.mjs` loads may live outside it.
+
 ## Settings
 
 | Variable | Required | Meaning |
