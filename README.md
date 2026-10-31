@@ -18,16 +18,25 @@ Agents today work in the dark: in a terminal, a chat, or a tab nobody else sees.
 
 ## What it does
 
-AI properties: a database column whose cells Colabora fills with Muse Spark when you ask; every value is signed and can be undone.
-
 - **Editor.** Blocks (text, headings, lists, to-dos, toggles, quotes, callouts, code, dividers, media, embeds, tables, equations, columns, synced blocks), slash menu, Markdown shortcuts, inline formatting, drag and drop, smart paste, sanitized HTML.
 - **Pages.** Tree with favorites and trash, icons and covers, backlinks, templates, version history, reminders, Markdown import and export.
 - **Databases.** Table, board, list, gallery, calendar and timeline views; formulas, relations, rollups, filters, sorts, grouping, row templates, linked databases with independent views, CSV export.
-- **Agents.** An "Agent Tasks" database as the control room, a Lead/Worker protocol, per-block attribution, decision and approval cards, task panel with "what was asked and what changed", heartbeats and cost per run, kill switch per workspace and per agent. Chat hosts that support MCP Apps render the same task card inline.
+- **AI in the workspace.** AI properties: a database column whose cells Colabora fills with Muse Spark when you ask, with every value signed and undoable. Agents rewrite a selected block with attribution and an Undo action, take a task when mentioned in a comment, and read attached text and PDFs under page permissions.
+- **Agents.** An "Agent Tasks" database as the control room, a Lead/Worker protocol, per-block attribution, decision and approval cards, a Home with what is waiting on you, task panel with "what was asked and what changed", handover between harnesses from the last checkpoint, revert for a whole run, heartbeats and cost per run, metrics per agent, kill switch per workspace and per agent. Chat hosts that support MCP Apps render the same task card inline.
 - **Remote MCP server.** Read and write tools for pages and databases, task tools, waiting tools that hold the call until something changes, prompts and resources for briefs and pages, and a connection recipe per harness.
 - **Cloud (optional).** Accounts, sync by block operations (no lost edits, conflicts shown on the block), presence, sharing and public pages (served as HTML to crawlers and as Markdown to agents at `/pub/<id>.md`), members and invitations, file uploads, web push reminders, email notifications.
 
 Without a backend the app is 100 % local: everything lives in the browser.
+
+## Built on Muse
+
+Any model can take part, and Meta's Muse models run the agents that ship with the product:
+
+- **Colabora**, the workspace's platform agent, runs on Muse Spark 1.3. It leads tasks, fills AI properties and rewrites selected blocks.
+- **The reviewer** runs on Muse Spark Open, the open-weight model, served by Baseten. It checks deliverables against the brief.
+- **Muse Code** joins as a harness through the bridge.
+
+Colabora and the reviewer are instances of the reference agent; [`agent/README.md`](agent/README.md) has their setup.
 
 ## How a task flows
 
@@ -106,20 +115,24 @@ It is designed to run as two instances: a Lead on a hosted frontier model and a 
 
 ## Getting started
 
+You need Node 22. The optional backend also needs Docker, and the Edge Function tests need Deno 2.
+
 ```bash
 npm ci
 npm run dev        # http://127.0.0.1:3000
 ```
 
-Optional backend (Supabase, needs Docker):
+Optional backend (Supabase):
 
 ```bash
-cp .env.example .env.local   # VITE_SUPABASE_URL and the publishable key
 npx supabase start           # Postgres 17, Auth, Realtime, Storage, Edge Functions
-npx supabase db reset        # migrations 0001–0012 and seeds (demo workspace, two demo agents)
-cp supabase/functions/.env.example supabase/functions/.env   # function secrets; the local pepper unlocks the two seeded agent tokens
-npx supabase functions serve --env-file supabase/functions/.env   # mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, pub-html, send-*
+cp .env.example .env.local   # set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY; `npx supabase status` prints both
+npx supabase db reset        # migrations and seeds (demo workspace, four demo agents)
+cp supabase/functions/.env.example supabase/functions/.env   # set AGENT_LOGIN_PEPPER=local-dev-login-pepper to unlock the four seeded agent tokens
+npx supabase functions serve --env-file supabase/functions/.env   # mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, github-webhook, pub-html, send-*
 ```
+
+Restart `npm run dev` and sign in as `owner@demo.local`; the password is in `supabase/seeds/01_workspace.sql`.
 
 Reference agent:
 
@@ -133,7 +146,7 @@ Checks:
 ```bash
 node scripts/check-ownership.mjs         # one owner per file
 npm run lint
-npm test                                  # Vitest
+TZ=UTC npm test                           # Vitest
 cd supabase/functions && deno task test   # Deno tests of the Edge Functions
 npx supabase test db                      # pgTAP
 npm run build                             # tsc + vite build
@@ -146,8 +159,8 @@ app/            SPA routes (Vite, React Router); app/main.tsx is the entry, app/
 components/     UI; components/agents/ holds the agent-layer surfaces, components/agents/panel/ the pure views
 lib/            domain types, store, pure engines (markdown, formulas, block operations, sync)
 supabase/
-  migrations/   0001 core, 0002 agents, 0003 core RPCs, 0004–0012 tasks, writes, control, dispatch, lead, retention, chat decisions
-  functions/    mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, pub-html, send-reminders, send-email
+  migrations/   numbered SQL, one concern per file: core, agents, tasks, writes, control, dispatch, Lead, decisions, metrics, AI, OAuth, CI evidence
+  functions/    mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, github-webhook, pub-html, send-reminders, send-email
   tests/        pgTAP suites (clone/, agents/)
   seeds/        demo workspace and demo agents
 agent/          reference agent over an OpenAI-compatible model slot
