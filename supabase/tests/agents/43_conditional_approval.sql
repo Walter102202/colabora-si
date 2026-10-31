@@ -1,5 +1,5 @@
 begin;
-select plan(60);
+select plan(63);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_S','page_O','page_X']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+condlead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -71,6 +71,12 @@ select is(private.deterministic_checks_pass(:'sub'::uuid),false,'redeclaring a c
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
 select is(tests.error_of(format('select public.review_task(%L::uuid,%L,%L::jsonb,%L::jsonb,null,%L::uuid)',:'sub','approved','[{"criterion_id":"c1","status":"verified"}]','[]',:'lr')),'self_review','all versions of the ref retain authorship');
 select is(public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40),'case','history'))->>'status','pending','a superseded authorship record denies conditional authority');
+select tests.reset_role();
+update public.agent_artifacts set ref='https://github.com/ACME/APP/commit/'||repeat('A',40) where id=:'authored_before'::uuid;
+select is(private.deterministic_checks_pass(:'sub'::uuid),false,'a commit URL alias retains historical authorship for deterministic checks');
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.review_task(%L::uuid,%L,%L::jsonb,%L::jsonb,null,%L::uuid)',:'sub','approved','[{"criterion_id":"c1","status":"verified"}]','[]',:'lr')),'self_review','canonical commit identity rejects review through a different spelling');
+select is(public.request_approval(:'lr'::uuid,'git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40),'case','history-alias'))->>'status','pending','conditional proof cannot hide its author behind a commit alias');
 select tests.reset_role();
 update public.agent_artifacts set ref='acme/app@'||repeat('e',40) where id=:'authored_before'::uuid;
 select is(private.deterministic_checks_pass(:'sub'::uuid),true,'an independent reviewer still satisfies deterministic close');

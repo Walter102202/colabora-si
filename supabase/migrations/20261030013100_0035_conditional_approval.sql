@@ -148,7 +148,7 @@ begin
   select * into v_review from public.agent_reviews where task_id=v_subject.id order by created_at desc,id desc limit 1;
   if not found or v_review.verdict<>'approved' or not v_review.direct_session or v_review.outdated_by is not null
      or v_review.brief_version<>v_subject.brief_version or v_review.artifact_id<>v_art.id or v_review.artifact_version<>v_art.version
-     or exists(select 1 from public.agent_artifacts a where a.task_id=v_subject.id and a.ref=v_art.ref
+     or exists(select 1 from public.agent_artifacts a where a.task_id=v_subject.id and private.same_artifact_ref(a.ref,v_art.ref)
        and a.author_type=v_review.reviewer_type and a.author_id=v_review.reviewer_id) then return false; end if;
   if exists(select 1 from public.agent_reviews r where r.task_id=v_subject.id and r.reviewer_type='human'
     and r.artifact_id=v_art.id and r.artifact_version=v_art.version and r.verdict<>'approved') then return false; end if;

@@ -5,6 +5,15 @@
 -- Existing reviews have no provable session provenance, so cannot authorize conditional effects.
 alter table public.agent_reviews add column direct_session boolean not null default false;
 
+-- A commit URL, owner/repo@SHA and case variants name the same immutable content.
+create or replace function private.same_artifact_ref(p_left text,p_right text)
+returns boolean language sql immutable set search_path = '' as $$
+  select p_left=p_right or exists(
+    select 1 from private.ci_commit(p_left) a, private.ci_commit(p_right) b
+     where a.repo=b.repo and a.sha=b.sha);
+$$;
+revoke all on function private.same_artifact_ref(text,text) from public;
+
 -- Full copy of review_task (0022).
 create or replace function public.review_task(p_task_id uuid, p_verdict text, p_findings jsonb default '[]'::jsonb,
   p_evidence jsonb default '[]'::jsonb, p_artifact_id uuid default null, p_run_id uuid default null)
@@ -81,7 +90,7 @@ begin
   end if;
   if v_art.id is null then raise exception using errcode = 'PT422', message = 'artifact_required'; end if;
 
-  if exists(select 1 from public.agent_artifacts a where a.task_id=v_t.id and a.ref=v_art.ref
+  if exists(select 1 from public.agent_artifacts a where a.task_id=v_t.id and private.same_artifact_ref(a.ref,v_art.ref)
     and a.author_type=v_reviewer_type and a.author_id=v_reviewer) then
     raise exception using errcode='PT403',message='self_review';
   end if;
@@ -174,7 +183,7 @@ returns boolean language sql stable security definer set search_path = '' as $$
               and f->>'criterion_id' = c->>'id' and f->>'status' = 'verified'
               and coalesce(f->>'severity', 'blocking') = 'blocking'
                    and not exists (select 1 from public.agent_artifacts authored
-                     where authored.task_id=t.id and authored.ref=(select ref from public.agent_artifacts where id=r.artifact_id)
+                     where authored.task_id=t.id and private.same_artifact_ref(authored.ref,(select ref from public.agent_artifacts where id=r.artifact_id))
                        and authored.author_type = r.reviewer_type and authored.author_id = r.reviewer_id)
               -- A new commit has a different ref, so it does not supersede the old artifact or its review.
               and (c->>'check' <> 'ci' or (r.brief_version = t.brief_version
