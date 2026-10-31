@@ -21,8 +21,10 @@ Agents today work in the dark: in a terminal, a chat, or a tab nobody else sees.
 - **Editor.** Blocks (text, headings, lists, to-dos, toggles, quotes, callouts, code, dividers, media, embeds, tables, equations, columns, synced blocks), slash menu, Markdown shortcuts, inline formatting, drag and drop, smart paste, sanitized HTML.
 - **Pages.** Tree with favorites and trash, icons and covers, backlinks, templates, version history, reminders, Markdown import and export.
 - **Databases.** Table, board, list, gallery, calendar and timeline views; formulas, relations, rollups, filters, sorts, grouping, row templates, linked databases with independent views, CSV export.
-- **AI in the workspace.** AI properties: a database column whose cells Colabora fills with Muse Spark when you ask, with every value signed and undoable. Agents rewrite a selected block with attribution and an Undo action, take a task when mentioned in a comment, and read attached text and PDFs under page permissions.
-- **Agents.** An "Agent Tasks" database as the control room, a Lead/Worker protocol, per-block attribution, decision and approval cards, a Home with what is waiting on you, task panel with "what was asked and what changed", handover between harnesses from the last checkpoint, revert for a whole run, heartbeats and cost per run, metrics per agent, kill switch per workspace and per agent. Chat hosts that support MCP Apps render the same task card inline.
+- **AI in the workspace.** AI properties: a database column whose cells Trama fills with Muse Spark when you ask, with every value signed and undoable. Agents rewrite a selected block with attribution and an Undo action, take a task when mentioned in a comment, and read attached text and PDFs under page permissions.
+- **Trama.** The workspace's own agent stays visible while you work. Ask about the open page, talk to it, save a note, or turn its proposal into a task. See [Trama, voice and personal notes](#trama-voice-and-personal-notes).
+- **Agents.** An "Agent Tasks" database as the control room, a Lead/Worker protocol, per-block attribution, decision and approval cards, a Home with what is waiting on you, task panel with "what was asked and what changed", handover between harnesses from the last checkpoint, review tasks opened on delivery, merges conditioned on an approved review and green CI, revert for a whole run, heartbeats and cost per run, metrics per agent, kill switch per workspace and per agent. Chat hosts that support MCP Apps render the same task card inline.
+- **Workspace memory.** A correction proposes a lesson; once a person accepts it, the next agent receives it with the reason it applies, along with related decisions, sources and pages. A page keeps its sources: when one changes, Trama checks the page and shows any difference for a person to settle.
 - **Remote MCP server.** Read and write tools for pages and databases, task tools, waiting tools that hold the call until something changes, prompts and resources for briefs and pages, and a connection recipe per harness.
 - **Cloud (optional).** Accounts, sync by block operations (no lost edits, conflicts shown on the block), presence, sharing and public pages (served as HTML to crawlers and as Markdown to agents at `/pub/<id>.md`), members and invitations, file uploads, web push reminders, email notifications.
 
@@ -32,11 +34,22 @@ Without a backend the app is 100 % local: everything lives in the browser.
 
 Any model can take part, and Meta's Muse models run the agents that ship with the product:
 
-- **Colabora**, the workspace's platform agent, runs on Muse Spark 1.3. It leads tasks, fills AI properties and rewrites selected blocks.
+- **Trama**, the workspace's platform agent, runs on Muse Spark 1.3. It answers people, leads tasks, fills AI properties, rewrites selected blocks and checks changed sources.
+- **Voice** is transcribed with `muse-voice-transcribe-1.0`.
 - **The reviewer** runs on Muse Spark Open, the open-weight model, served by Baseten. It checks deliverables against the brief.
 - **Muse Code** joins as a harness through the bridge.
 
-Colabora and the reviewer are instances of the reference agent; [`agent/README.md`](agent/README.md) has their setup.
+Trama and the reviewer are instances of the reference agent; [`agent/README.md`](agent/README.md) has their setup.
+
+## Trama, voice and personal notes
+
+Trama stays visible in the signed-in workspace. It can answer about the open page, explain selected text, and name decisions waiting for you. Page context is checked against the person's access and bounded to 6,000 characters (selection: 2,000). Suggestions are local and use no model.
+
+When Trama proposes work, **Do it** creates a normal task with your original message as its objective. A proposal alone changes no page. An existing active task on that page must be handled through the normal task flow.
+
+Voice is transcribed through `voice-transcribe`; browser clips are reviewed before sending. Audio stays in memory and is not stored by colabora.si. Meta receives it for transcription; Telegram retains its own copy. Limits are five minutes in the app, ten minutes for Telegram voice notes, plus person, workspace-agent budget and global quotas enforced by the server before calling Meta. Telegram requires `ffmpeg` on the agent host.
+
+Explicit requests such as “save in notes: buy bread” are verified from the original person message before the agent can save. Pasted or forwarded text cannot authorize saving. Notes are private by default; Undo and `/undo` or `/deshacer` remove a saved note. The platform runtime must be running to answer and save; messages remain queued while it is unavailable.
 
 ## How a task flows
 
@@ -102,7 +115,7 @@ Create an agent in **Settings → Agents**. Its token (`agt_…`) is shown once 
 | Harness | How it connects | Wakes up when a task changes |
 |---|---|---|
 | Claude Code | local stdio bridge (`bridge/`) | yes, through a channel event |
-| Codex | remote MCP over HTTP, or the bridge | yes, through a Stop hook |
+| Codex | remote MCP over HTTP, or the bridge | yes, through a Stop hook, or the watcher on Codex Desktop |
 | Claude, ChatGPT (chat apps) | OAuth, as you or as an agent you choose | ask it to check its tasks |
 | Cursor, Antigravity, Gemini CLI, Muse Code | the bridge | `wait_for_task` |
 | Grok | agent JWT | no |
@@ -128,7 +141,7 @@ Use a criterion such as `{"id":"ci","text":"CI is green","check":"ci","command":
 
 [`agent/`](agent/README.md) is a small worker in plain Node 22 with no dependencies. It waits for tasks, claims them, runs model turns against any OpenAI-compatible chat completions endpoint with tool calling, reports heartbeats with measured cost, pauses on `request_approval` until a person decides, and stops at `submit_for_review`. It never marks a task done.
 
-It is designed to run as two instances: a Lead on a hosted frontier model and a worker on an open-weight model served behind a chat completions endpoint. A typical pair is Meta's Muse Spark for the Lead and Muse Spark Open (open weights) for the worker; any other pair works, including a local server. Notifications go to the console or to a Telegram chat; decisions are always taken in the app.
+It is designed to run as two instances: a Lead on a hosted frontier model and a worker on an open-weight model served behind a chat completions endpoint. A typical pair is Meta's Muse Spark for the Lead and Muse Spark Open (open weights) for the worker; any other pair works, including a local server. Notifications go to the console or to a Telegram chat; decisions are always taken in the app. With `AGENT_INBOX=1`, the owner can also write or send voice notes to the platform agent from Telegram.
 
 ## Getting started
 
@@ -177,7 +190,7 @@ app/            SPA routes (Vite, React Router); app/main.tsx is the entry, app/
 components/     UI; components/agents/ holds the agent-layer surfaces, components/agents/panel/ the pure views
 lib/            domain types, store, pure engines (markdown, formulas, block operations, sync)
 supabase/
-  migrations/   numbered SQL, one concern per file: core, agents, tasks, writes, control, dispatch, Lead, decisions, metrics, AI, OAuth, CI evidence
+  migrations/   numbered SQL, one concern per file: core, agents, tasks, writes, control, dispatch, Lead, decisions, metrics, AI, OAuth, CI evidence, review policy, lessons, page sources, private pages, notes, voice
   functions/    mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, github-webhook, voice-transcribe, pub-html, send-reminders, send-email
   tests/        pgTAP suites (clone/, agents/)
   seeds/        demo workspace and demo agents
@@ -202,13 +215,3 @@ See [`AGENTS.md`](AGENTS.md) for how the repository is organized, built and veri
 ## License
 
 MIT
-
-### Trama, voice and personal notes
-
-Trama stays visible in the signed-in workspace. It can answer about the open page, explain selected text, and name decisions waiting for you. Page context is checked against the person's access and bounded to 6,000 characters (selection: 2,000). Suggestions are local and use no model.
-
-When Trama proposes work, **Do it** creates a normal task with your original message as its objective. A proposal alone changes no page. An existing active task on that page must be handled through the normal task flow.
-
-Voice is transcribed through `voice-transcribe`; browser clips are reviewed before sending. Audio stays in memory and is not stored by colabora.si. Meta receives it for transcription; Telegram retains its own copy. Limits are five minutes in the app, ten minutes for Telegram voice notes, plus person, workspace-agent budget and global quotas enforced by the server before calling Meta. Telegram requires `ffmpeg` on the agent host.
-
-Explicit requests such as “save in notes: buy bread” are verified from the original person message before the agent can save. Pasted or forwarded text cannot authorize saving. Notes are private by default; Undo and `/undo` or `/deshacer` remove a saved note. The platform runtime must be running to answer and save; messages remain queued while it is unavailable.
