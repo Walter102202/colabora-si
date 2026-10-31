@@ -50,6 +50,7 @@
       "supabase/migrations/*_0046_*",
       "supabase/migrations/*_0047_*",
       "supabase/migrations/*_0048_*",
+      "supabase/migrations/*_0049_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",

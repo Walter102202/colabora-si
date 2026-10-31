@@ -1,24 +1,10 @@
-import { createRoot } from "react-dom/client";
-import { createBrowserRouter, Outlet } from "react-router";
-import { RouterProvider } from "react-router/dom";
-import AppNavigation from "@/components/AppNavigation";
-import Shell from "@/components/Shell";
-import { useStore } from "@/lib/store";
-import "./globals.css";
+import { chooseEntry, hasStoredSession } from "@/lib/landingEntry";
 
-useStore.getState().persistInitialWorkspace();
+// Decides first, then loads one side: a landing visitor never downloads the Shell, the store or the editor.
+const { pathname, search, hash } = location;
+const hasBackend = Boolean(import.meta.env.VITE_SUPABASE_URL);
+let hasSession = false;
+try { hasSession = hasStoredSession(localStorage); } catch { /* blocked storage has no session */ }
 
-const router = createBrowserRouter([{ element: <AppNavigation />, HydrateFallback: () => null, children: [
-  { element: <Shell><Outlet /></Shell>, children: [
-    { index: true, lazy: async () => ({ Component: (await import("./(workspace)/page")).default }) },
-    { path: "p/:id", lazy: async () => ({ Component: (await import("./(workspace)/p/[id]/page")).default }) },
-    { path: "shared/:id", lazy: async () => ({ Component: (await import("./(workspace)/shared/[id]/page")).default }) },
-    { path: "linked", lazy: async () => ({ Component: (await import("./linked/page")).default }) },
-    { path: "mcp-pat", lazy: async () => ({ Component: (await import("./mcp-pat/page")).default }) },
-    { path: "*", element: <div className="empty-state"><title>Page not found · colabora.si</title>Page not found.</div> },
-  ] },
-  { path: "pub/:id", lazy: async () => ({ Component: (await import("./(public)/pub/[id]/page")).default }) },
-  { path: "oauth/consent", lazy: async () => ({ Component: (await import("./oauth/consent/page")).default }) },
-] }]);
-
-createRoot(document.getElementById("root")!).render(<RouterProvider router={router} />);
+if (chooseEntry({ pathname, search, hash, hasBackend, hasSession }) === "landing") void import("./landingEntry");
+else void import("./workspaceEntry");

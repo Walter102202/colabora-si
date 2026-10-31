@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { create } from "zustand";
 import type { User } from "@supabase/supabase-js";
+import { HOME_URL } from "@/lib/routes";
 import { getSupabase } from "@/lib/supabase";
 
 import { cleanupPushOnSignOut, syncPushSubscription } from "@/lib/push";
@@ -34,4 +35,5 @@ export async function signOut(): Promise<void> {
   await cleanupPushOnSignOut();
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
+  location.assign(HOME_URL);
 }
