@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { PROMPTS } from './prompts.ts';
+import { buildInstructions } from '../../../../bridge/index.mjs';
+import { INSTRUCTIONS, PROMPTS } from './prompts.ts';
 
 Deno.test('review_delivery reads the reviewed task and keeps second-round findings as data', async () => {
   const ctx: import('../mcp.ts').ToolContext = {
@@ -52,4 +53,12 @@ Deno.test('CI prompts ask for a commit and leave the result to GitHub', async ()
     assert.match(message.content.text, /Deliver a diff artifact with ref owner\/repo@<full sha>/);
     assert.match(message.content.text, /GitHub reports the result; do not state it yourself/);
   }
+});
+
+Deno.test('bridge and Edge share the same environment, lease and reviewer instructions', () => {
+  assert.equal(buildInstructions({channel:false,channelOnly:false}),INSTRUCTIONS);
+  assert.ok(buildInstructions({channel:true,channelOnly:false}).includes(INSTRUCTIONS));
+  assert.match(INSTRUCTIONS,/policies\.lease_minutes/);
+  assert.match(INSTRUCTIONS,/reviewers use their own isolated environment/);
+  assert.match(INSTRUCTIONS,/Reviewers instead record review_task and end their turn/);
 });
