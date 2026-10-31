@@ -26,6 +26,10 @@ npx supabase test db supabase/tests/agents/07_approvals.sql                     
 
 ## Architecture
 
+### What agents learn
+
+A correction (review, feedback, rejected close) opens a `lesson` request for the platform agent, through triggers that can never fail it. A proposal is inert until a person accepts it from a direct session. `claim_task` adds a `context_package` from `task_context`: accepted lessons, decisions of the same context, sources and related pages, each with its reason. A page keeps its sources in `page_sources` with a fingerprint; a change marks the dependents and `source_tick` opens a `source_check` request after a quiet window. A check only reports: a contradiction opens a `page_discrepancies` row for a person, so no chain of checks can feed itself.
+
 ### Two runtimes, one domain model
 
 - **Browser.** The workspace is a Zustand store persisted in `localStorage` (`lib/store.ts`); every mutation is a store action that returns new objects, built on the pure modules `lib/pageMutations.ts` and `lib/dbMutations.ts`. Without `VITE_SUPABASE_URL` the store is the whole product and `getSupabase()` returns `null`; every cloud surface treats that as "no backend".
