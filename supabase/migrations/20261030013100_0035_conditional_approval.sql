@@ -230,8 +230,10 @@ begin
     perform private.check_rate(v_agent);
     if exists (select 1 from public.agent_tasks p join public.agents a on a.id = p.delegate_agent_id
                 where p.id = v_t.parent_task_id and p.delegate_agent_id = v_agent and a.role = 'lead') then
+      perform private.require_active_task(v_t.parent_task_id);
       v_full := true;
     elsif v_t.delegate_agent_id = v_agent then
+      perform private.require_active_task(v_t.id);
       v_full := false;
     else
       raise exception using errcode = 'PT403', message = 'forbidden';

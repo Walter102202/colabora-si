@@ -24,6 +24,7 @@ select tests.reset_role();
 
 -- 3-7. Shapes.
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select public.claim_task(:'parent'::uuid,'claude_code');
 select is(tests.error_of(format('select public.reserve_environment(%L::uuid, %L::jsonb)', :'one', '[]')), 'invalid_input', 'an empty list is refused');
 select is(tests.error_of(format('select public.reserve_environment(%L::uuid, %L::jsonb)', :'one', '[{"kind":"gpu","value":"x"}]')), 'invalid_input', 'an unknown kind is refused');
 select is(tests.error_of(format('select public.reserve_environment(%L::uuid, %L::jsonb)', :'one', '[{"kind":"ports","value":"60950-60940"}]')), 'invalid_input', 'a backwards range is refused');

@@ -35,9 +35,14 @@ begin
   if private.is_agent() then
     v_agent := private.current_agent_id();
     if v_agent is null then raise exception using errcode = 'PT403', message = 'agent_disabled'; end if;
-    return exists (select 1 from public.agents a where a.id = v_agent and a.role = 'lead')
-       and (p_t.delegate_agent_id = v_agent
-            or exists (select 1 from public.agent_tasks p where p.id = p_t.parent_task_id and p.delegate_agent_id = v_agent));
+    if not exists(select 1 from public.agents a where a.id=v_agent and a.role='lead') then return false; end if;
+    if exists(select 1 from public.agent_tasks p where p.id=p_t.parent_task_id and p.delegate_agent_id=v_agent) then
+      perform private.require_active_task(p_t.parent_task_id);
+    elsif p_t.delegate_agent_id=v_agent then
+      perform private.require_active_task(p_t.id);
+    else return false;
+    end if;
+    return true;
   end if;
   return private.can_write_page(p_t.row_page_id, p_t.workspace_id);
 end $$;
