@@ -437,12 +437,13 @@ begin
   select * into v_op from public.external_ops
    where run_id = v_r.id and params_hash = v_hash and status in ('pending','unknown') order by created_at limit 1;
   if found then
-    if exists(select 1 from public.agent_approvals where id=v_op.approval_id and auto_by='condition')
-       and not private.conditional_allowed(p_action,v_r,p_params) then
-      v_res:=private.request_approval_core(v_r,p_action,p_params,null,'Approve ' || p_action || ' via ' || p_provider || '?');
-      return jsonb_build_object('status','approval_required','approval_id',v_res->'approval_id');
+    if not exists(select 1 from public.agent_approvals where id=v_op.approval_id and auto_by='condition')
+       or private.conditional_allowed(p_action,v_r,p_params) then
+      return jsonb_build_object('op_id',v_op.op_id,'idempotency_key',v_op.idempotency_key,'status',v_op.status);
     end if;
-    return jsonb_build_object('op_id', v_op.op_id, 'idempotency_key', v_op.idempotency_key, 'status', v_op.status);
+    -- Reauthorize the existing operation through the same human/policy path as a new one.
+    -- Keep its provider idempotency key; a stale automatic receipt cannot override the current proof.
+    if exists(select 1 from public.agent_approvals where receipt=v_receipt and auto_by is not null) then v_receipt:=null; end if;
   end if;
 
   v_by := private.action_allowed(p_action, v_r.task_id);
@@ -484,6 +485,11 @@ begin
         v_approval := (private.record_auto_approval(v_r, p_action, p_params, null, v_by, true) ->> 'approval_id')::uuid;
       end if;
     end if;
+  end if;
+
+  if v_op.op_id is not null then
+    update public.external_ops set approval_id=v_approval where op_id=v_op.op_id;
+    return jsonb_build_object('op_id',v_op.op_id,'idempotency_key',v_op.idempotency_key,'status',v_op.status);
   end if;
 
   insert into public.external_ops (workspace_id, task_id, run_id, provider, action, params_hash, params, idempotency_key, approval_id)

@@ -1,5 +1,5 @@
 begin;
-select plan(39);
+select plan(41);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_S','page_O','page_X']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+condlead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -120,7 +120,8 @@ update public.agent_reviews set artifact_id=:'art'::uuid,outdated_by=null,outdat
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
 
 -- 8. The act goes through with its receipt.
-select isnt((public.begin_external_op(:'lr'::uuid, 'github', 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40)), (:'res'::jsonb->>'receipt')::uuid))->>'status', 'approval_required', 'the receipt opens the operation');
+select public.begin_external_op(:'lr'::uuid, 'github', 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40)), (:'res'::jsonb->>'receipt')::uuid) as original_op \gset
+select isnt(:'original_op'::jsonb->>'status','approval_required','the receipt opens the operation');
 
 -- 9. require_approval wins over a condition.
 select is((public.request_approval(:'lr'::uuid, 'deploy', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40)), null, 'Deploy?'))->>'status', 'pending', 'require_approval still asks');
@@ -146,7 +147,16 @@ select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
 select is((public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40), 'try', 'unreviewed'), null, 'Merge?'))->>'status', 'pending', 'green CI on a new unsuperseded commit still needs a current review');
 select is((public.begin_external_op(:'lr'::uuid, 'github', 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40), 'try', 'freshness'), (:'fresh_receipt'::jsonb->>'receipt')::uuid))->>'status', 'approval_required', 'a conditional receipt cannot authorize a newer unreviewed commit');
-select is((public.begin_external_op(:'lr'::uuid,'github','git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40))))->>'status','approval_required','retrying a pending conditional operation rechecks the latest proof');
+select public.begin_external_op(:'lr'::uuid,'github','git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40))) as stale_op \gset
+select is(:'stale_op'::jsonb->>'status','approval_required','retrying a pending conditional operation rechecks the latest proof');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.decide_approval((:'stale_op'::jsonb->>'approval_id')::uuid,'approve') as human_override \gset
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select public.begin_external_op(:'lr'::uuid,'github','git.merge',jsonb_build_object('subtask_id',:'sub','repo','acme/app','head_sha',repeat('a',40)),(:'human_override'::jsonb->>'receipt')::uuid) as resumed_op \gset
+select is(:'resumed_op'::jsonb->>'op_id',:'original_op'::jsonb->>'op_id','a valid direct-human override resumes the same idempotent operation');
+select is(:'resumed_op'::jsonb->>'status','pending','the explicit approval is not trapped behind the stale condition');
 select tests.reset_role();
 update public.agent_artifacts set superseded_by = :'art'::uuid where id = :'fresh_art'::uuid;
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
