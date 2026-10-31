@@ -20,7 +20,7 @@ npx supabase test db supabase/tests/agents/07_approvals.sql                     
 - `npm run build` runs two Vite entries: `index.html` (the workspace) and `apps/card.html` (the MCP Apps card).
 - `npm run build:card` regenerates `supabase/functions/_shared/cardHtml.ts` from the card entry. Run it after any change under `components/agents/card/` or `components/agents/panel/` and commit the generated file; a deploy never builds it.
 - Card without a chat host: `http://127.0.0.1:3000/apps/card.html?mock=<scenario>` (scenarios in `components/agents/card/mock.ts`).
-- Two checks run only against a served local stack and are not part of `npm test`: `node tests/agents/mcp-smoke.mjs` (needs `MCP_URL`, `AGENT_PAT`, `SMOKE_PAGE_ID`) and `tests/agents/sql-concurrency.test.ts` (skips unless `A_DB_URL` is set). The seed plants four local-only agent tokens (Lead, Codex, Colabora, Reviewer); they are listed in `supabase/functions/.env.example` and only work with the local pepper.
+- Three checks run only against a served local stack and are not part of `npm test`: `node tests/agents/mcp-smoke.mjs` (needs `MCP_URL`, `AGENT_PAT`, `SMOKE_PAGE_ID`), `tests/agents/sql-concurrency.test.ts` (skips unless `A_DB_URL` is set), and `node tests/agents/loop-e2e.mjs` (reads the local URL/public key from `.env.local`, uses all four seed agents and the seed owner). The loop script refuses hosted endpoints, uses only this checkout's configured database container and performs no real merge, deployment or message to Codex. The seed credentials work only with the local pepper; never print them.
 - `scripts/check-ownership.mjs` counts untracked files too, and skips (exit 0) on `main` or on any branch without an `a/`, `b/` or `infra/` prefix. CI runs it on every push with `--base origin/main`.
 - `main` deploys: the CI job pushes migrations and deploys Edge Functions from `main` only, and only when the Supabase secrets are configured.
 
@@ -82,6 +82,25 @@ npx supabase test db supabase/tests/agents/07_approvals.sql                     
 - Every URL comes from `lib/routes.ts`. `components/AppNavigation.tsx` intercepts same-origin anchor clicks so plain `<a href>` links navigate inside the SPA. Modal state (settings tab, search, peek, task) lives in query parameters, so any screen is reachable by URL.
 
 ## Working here
+
+### P11 migrations and tools
+
+| Migration | Behavior |
+|---|---|
+| 0031 | Silent-run lease and same-agent recovery. |
+| 0032 | Owned environment resources; shutdown confirmation before release. |
+| 0033 | Blocking/minor findings; only blocking evidence satisfies criteria. |
+| 0034 | Automatic review tasks and narrower subsequent rounds. |
+| 0035 | Human-authored conditions evaluated at approval and execution. |
+
+| Tools / prompt | Notes |
+|---|---|
+| `import_plan`, `update_subtask` | Idempotent dependency import and versioned brief/delegate changes. |
+| `reserve_environment`, `list_environments`, `release_environment` | Resources are data enforced by the server; the database does not stop processes. |
+| `create_task`, `submit_for_review`, `review_delivery` | Parent reviewer policy; delivery returns `review_task_id`, and the Lead waits on `under_review`. |
+| `wait_for_my_tasks` | `session_id` belongs to the latest own run, never another agent's run. |
+
+For Desktop, `node connect/codex/watch.mjs` replaces the Stop hook and forwards task changes to that session through `codex queue`. Do not run both. Test only with a newly-created disposable chat. Conditional rules are edited in the direct app session; payment is never conditionally approved.
 
 - The branch prefix decides which track you are on; follow the ownership rules in `AGENTS.md`. On `main` you act for the maintainer and may touch infra files.
 - Private working context lives in gitignored files (`CLAUDE.local.md`, `CONTEXTO.md`). Nothing from them goes into versioned files, commits or the README.

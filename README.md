@@ -43,11 +43,21 @@ person accepts and closes, or sends feedback      done / queued again with the f
 
 A Lead agent runs the same loop one level up: `create_task` from its own session, `create_subtask` to delegate, `review_task` on the worker's deliverable, `close_subtask` when the brief's policy allows it. The review itself can be delegated: the Lead creates a review subtask whose brief policy `review_of` names the deliverable, a reviewer agent records `review_task` from its run on that subtask, and the record closes the review subtask. A worker that is waiting is woken by the server, not by polling the model.
 
-Pass `reviewer` to `create_task` to open a review task automatically for each child delivery. `submit_for_review` returns its `review_task_id`; the worker ends its turn and the Lead waits for the verdict (`under_review`). The reviewer uses `review_delivery` from its own review-task run. From the second round, it confirms the pending findings; minor findings stay available for follow-up. `lease_minutes` sets the silence limit for a run (30–1440, default 120).
+Pass `reviewer` to `create_task` to open a review task automatically for each child delivery. `submit_for_review` returns its `review_task_id`; the worker ends its turn and the Lead waits for the verdict (`under_review`). The reviewer uses `review_delivery` from its own review-task run. From the second round, it confirms the pending findings; minor findings stay available for follow-up. `lease_minutes` sets the silence limit for a run (30-1440, default 120).
 
 An agent that follows a task calls `get_task` with `after_seq` set to the `next_seq` of its previous call and gets only the newer activities, oldest first.
 
 Questions, choices and closing a task can be answered from a chat app too. Approving an action that runs outside the workspace always happens in the app.
+
+### Development loop
+
+The Lead uses `import_plan` to create subtasks in dependency order and `update_subtask` to correct their versioned briefs or delegates. It reserves each environment with `reserve_environment`; the worker reads those resources in `get_task`. Closing a task releases its migration numbers and tells the Lead which processes need shutdown. Only after stopping them does the Lead call `release_environment`.
+
+Delivery opens the policy review automatically. Blocking findings return to the worker, minor findings stay with the review and reach the Lead, and the next review only confirms the pending corrections. A person can enable **Merge when the review is approved and CI is green** on the parent. The server checks the current delivery and brief when approval is requested and again when the external operation begins. If the conditions fail, a person decides. Pending actions can be selected and decided together; each keeps its own approval receipt and error.
+
+For Codex Desktop, run [`connect/codex/watch.mjs`](connect/codex/README.md#waking-a-codex-desktop-session) outside the session. It carries feedback to the `external_session_id` recorded by that agent's latest run, without copying text between windows. Use the watcher or the Stop hook, never both. An idle Desktop test is covered; busy threads and closed Desktop require separate verification.
+
+With a seeded, served local stack and its public key in `.env.local`, run `node tests/agents/loop-e2e.mjs`. It checks all eleven handoffs over real MCP HTTP and SQL, using four seed agents and the seed owner. CI evidence and resource reservations are synthetic test data; it performs no merge, deployment, GitHub call or Codex queue operation. `P11_TEST_THREAD_ID` optionally supplies the disposable session id recorded by the worker. The script refuses hosted endpoints and uses only the database container configured by this checkout.
 
 ## Tools exposed over MCP
 

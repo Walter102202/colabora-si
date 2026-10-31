@@ -81,6 +81,25 @@ A task is done when its suites pass, lint, types and build are clean, and the ow
 
 Props, tool schemas and RPC signatures are contracts: agree a change with the other track before making it.
 
+### Development loop contracts (P11)
+
+| Migration | Contract |
+|---|---|
+| 0031 | A silent run loses its lease; human waits and stops in progress are preserved. |
+| 0032 | `agent_resources`; exclusive environment reservations and confirmed release. |
+| 0033 | Blocking/minor findings; minor notes never satisfy acceptance criteria. |
+| 0034 | Parent reviewer policy opens a separate review task for each delivery. |
+| 0035 | Trusted conditional approval, checked against the current delivery and brief at request and act. |
+
+| Tools / prompt | Purpose |
+|---|---|
+| `import_plan`, `update_subtask` | Import dependencies, correct a versioned brief or reassign a subtask. |
+| `reserve_environment`, `list_environments`, `release_environment` | Reserve and inspect resources; confirm shutdown before releasing them. |
+| `create_task`, `submit_for_review`, `review_delivery` | Set `reviewer` / `lease_minutes`; hand delivery to the reviewer and use its own review-task run. |
+| `wait_for_my_tasks` | Returns the latest own run's `session_id`; the Codex watcher never guesses a destination. |
+
+`node tests/agents/loop-e2e.mjs` needs a seeded, served local stack and `.env.local` with its URL/public key. It exercises the whole loop using the four local seed agents and seed owner, including synthetic CI evidence, without performing outside actions. Never use a real-work Codex chat for watcher tests. Use the watcher or the hook, not both.
+
 ## Environment variables
 
 | Prefix | Who reads it | Documented in |
