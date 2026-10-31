@@ -78,3 +78,7 @@ verify_jwt = false
 
 [functions.workspace-mcp]
 verify_jwt = false
+
+[functions.waitlist]
+# Public: the landing has no session. The function checks the origin and the limits.
+verify_jwt = false
