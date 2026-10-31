@@ -184,7 +184,7 @@ const createSubtask: ToolDef = {
       done_when: { type: 'array', items: doneWhenItem, minItems: 1, maxItems: 30 },
       sources: { type: 'array', items: sourceItem, maxItems: 30 },
       next_step: { type: 'string', maxLength: 2000 },
-      policies: { type: 'object', description: 'Optional. require_approval: actions that always ask (a list of action names; any shape the server cannot read is refused). Protected preapprovals and the autonomy level are set by a workspace owner directly in the app, never by the Lead.' },
+      policies: { type: 'object', description: 'Optional. require_approval: actions that always ask (a list of action names; any shape the server cannot read is refused). Protected preapprovals and the autonomy level are set by a workspace owner directly in the app, never by the Lead. A subtask never gets more than its parent.' },
     }, ['objective', 'done_when']),
     reference_task_ids: { type: 'array', items: { type: 'string' } },
     depends_on_task_ids: { type: 'array', items: { type: 'string' } },
