@@ -516,3 +516,32 @@ begin
   ) then raise exception using errcode='PT403',message='protected_page_columns'; end if;
   return new;
 end $$;
+
+-- Publication serves the public site; workspace tools still honor private ownership.
+create or replace view public.workspace_visible_pages with (security_invoker=true) as
+  select * from public.pages where not private.page_hidden(id) and private.can_read_page(id,workspace_id);
+revoke all on public.workspace_visible_pages from public,anon;
+grant select on public.workspace_visible_pages to authenticated;
+
+create or replace function public.workspace_page_bundle(p_page_id text,p_max_pages integer default 50)
+returns jsonb language plpgsql stable security definer set search_path='' as $$
+declare b jsonb; visible jsonb;
+begin
+  if auth.uid() is null or not exists(select 1 from public.pages p where p.id=p_page_id
+    and not private.page_hidden(p.id) and private.can_read_page(p.id,p.workspace_id)) then return null; end if;
+  b:=public.get_page_bundle(p_page_id,p_max_pages);
+  if b is null then return null; end if;
+  select coalesce(jsonb_object_agg(e.key,e.value),'{}') into visible from jsonb_each(b->'pages') e
+    join public.pages p on p.id=e.key where not private.page_hidden(p.id) and private.can_read_page(p.id,p.workspace_id);
+  return jsonb_set(b,'{pages}',visible);
+end $$;
+revoke all on function public.workspace_page_bundle(text,integer) from public,anon;
+grant execute on function public.workspace_page_bundle(text,integer) to authenticated;
+
+create or replace function public.workspace_search_pages(p_query text,p_limit integer default 10,p_kind text default null)
+returns jsonb language sql stable security invoker set search_path='' as $$
+  select coalesce(jsonb_agg(r),'[]') from jsonb_array_elements(public.search_pages(p_query,p_limit,p_kind)) r
+    where exists(select 1 from public.workspace_visible_pages p where p.id=r->>'id');
+$$;
+revoke all on function public.workspace_search_pages(text,integer,text) from public,anon;
+grant execute on function public.workspace_search_pages(text,integer,text) to authenticated;

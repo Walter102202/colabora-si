@@ -61,9 +61,9 @@ select public.restore_page(jsonb_build_object('page_id',(:'created'::jsonb->>'id
 select ok((select deleted_at is null from public.pages where id=(:'created'::jsonb->>'id')),'restore clears deletion');
 select tests.reset_role();
 -- Publication must not make private pages reachable through workspace tools.
-alter table public.pages disable trigger pages_30_actor;
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 update public.pages set published=true where id='private_P';
-alter table public.pages enable trigger pages_30_actor;
+select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'viewer')::uuid);
 select is(public.workspace_page_bundle('private_P'),null,'published private page stays out of workspace reads');
 select is((select count(*) from public.workspace_visible_pages where id='private_P'),0::bigint,'published private page stays out of lists');

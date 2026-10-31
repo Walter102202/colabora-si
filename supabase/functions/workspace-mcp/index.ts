@@ -1,6 +1,6 @@
 // POST /functions/v1/mcp: remote MCP endpoint (verify_jwt = false; the bearer is validated in _shared/jwt.ts).
 // Every database call runs with a client built from the caller's token, so RLS decides; never the service role.
-import { supabaseDb } from '../_shared/db.ts';
+import { type Db, supabaseDb } from '../_shared/db.ts';
 import { oauthError } from '../_shared/errors.ts';
 import { resolveLinkedSession, verifyBearer } from '../_shared/jwt.ts';
 import { handleMcp } from '../_shared/mcp.ts';
@@ -21,6 +21,12 @@ Deno.serve(async (req) => {
         return { data: data as Record<string, unknown> | null, error };
       });
     },
-    makeDb: (token, signal) => supabaseDb(callerClient(env, token), signal),
+    makeDb: (token, signal): Db => {
+      const db = supabaseDb(callerClient(env, token), signal);
+      return { ...db,
+        rpc: (name, args) => db.rpc(name === 'get_page_bundle' ? 'workspace_page_bundle' : name === 'search_pages' ? 'workspace_search_pages' : name, args),
+        select: (spec) => db.select({ ...spec, table: spec.table === 'pages' ? 'workspace_visible_pages' : spec.table }),
+      };
+    },
   }, { resourceUrl: env.MCP_WORKSPACE_RESOURCE_URL || `${new URL(req.url).origin}/functions/v1/workspace-mcp` });
 });
