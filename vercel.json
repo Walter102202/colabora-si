@@ -5,7 +5,7 @@
       "entrypoint": "Dockerfile",
       "instances": { "gru1": 1 },
       "resources": { "requests": { "memory": "1Gi" } },
-      "terminationGracePeriodSeconds": 120
+      "terminationGracePeriodSeconds": 150
     }
   },
   "headers": [{ "source": "/oauth/consent", "headers": [
