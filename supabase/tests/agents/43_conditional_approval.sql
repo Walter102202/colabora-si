@@ -1,5 +1,5 @@
 begin;
-select plan(57);
+select plan(60);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_S','page_O','page_X']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+condlead@agents.invalid', 'lead', 'page_A') as lead \gset
@@ -283,6 +283,23 @@ select is(tests.error_of(format('select public.create_agent_task(%L,%L::jsonb,%L
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
 select is((public.request_approval(:'lr'::uuid, 'payment', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40)), null, 'Pay?'))->>'status', 'pending', 'a payment always waits for a person');
+select tests.reset_role();
+
+-- A human approval is scoped to its task, even when another task has identical action parameters.
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select public.request_approval(:'lr'::uuid,'http_request','{"url":"https://scope.test"}') as scoped_request \gset
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.decide_approval((:'scoped_request'::jsonb->>'approval_id')::uuid,'approve') as scoped_receipt \gset
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.begin_external_op(%L::uuid,%L,%L,%L::jsonb,%L::uuid)',:'or_run','scope','http_request','{"url":"https://scope.test"}',:'scoped_receipt'::jsonb->>'receipt')),'approval_mismatch','another task cannot consume the human receipt');
+select is(tests.error_of(format('select public.begin_external_op(%L::uuid,%L,%L,%L::jsonb,%L::uuid)',:'lr','scope','http_request','{"url":"https://scope.test"}',:'scoped_receipt'::jsonb->>'receipt')),'','the authorized task can still consume that receipt');
+select tests.reset_role();
+-- Model an operation opened by the old cross-task path, without performing any external effect.
+update public.external_ops set task_id=:'other'::uuid,run_id=:'or_run'::uuid where task_id=:'parent'::uuid and provider='scope';
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(public.begin_external_op(:'or_run'::uuid,'scope','http_request','{"url":"https://scope.test"}')->>'status','approval_required','a legacy pending operation cannot borrow another task human approval');
 select tests.reset_role();
 
 select * from finish();

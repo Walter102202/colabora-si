@@ -446,10 +446,14 @@ begin
   if coalesce(p_provider, '') = '' or coalesce(p_action, '') = '' or jsonb_typeof(p_params) is distinct from 'object' then
     raise exception using errcode = 'PT400', message = 'invalid_input';
   end if;
+  if exists(select 1 from public.agent_approvals where receipt=v_receipt and task_id<>v_r.task_id) then
+    raise exception using errcode='PT409',message='approval_mismatch';
+  end if;
   v_hash := encode(extensions.digest(convert_to(p_provider || '|' || p_action || '|' || p_params::text, 'utf8'), 'sha256'), 'hex');
   select * into v_op from public.external_ops
    where run_id = v_r.id and params_hash = v_hash and status in ('pending','unknown') order by created_at limit 1;
-  if found and exists(select 1 from public.agent_approvals where id=v_op.approval_id and auto_by is null
+  if found and exists(select 1 from public.agent_approvals where id=v_op.approval_id and task_id=v_r.task_id and auto_by is null
+      and action_hash=private.action_hash(p_action,v_r.task_id,artifact_version,p_params)
       and status='consumed' and decision in ('approve','edit') and receipt_expires_at>now()) then
     return jsonb_build_object('op_id',v_op.op_id,'idempotency_key',v_op.idempotency_key,'status',v_op.status);
   end if;
