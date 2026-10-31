@@ -1,0 +1,6 @@
+test
+.env*
+*.notices.json
+*.md
+*.d.mts
+Dockerfile

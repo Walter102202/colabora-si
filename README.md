@@ -170,7 +170,7 @@ cp .env.example .env.local   # set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHAB
 npx supabase db reset        # migrations and seeds (demo workspace, four demo agents)
 cp supabase/functions/.env.example supabase/functions/.env   # set AGENT_LOGIN_PEPPER=local-dev-login-pepper to unlock the four seeded agent tokens
                                                               # and MCP_AUTH_SERVER_URL=http://127.0.0.1:54321/auth/v1 so the mcp function accepts tokens from the local Auth
-npx supabase functions serve --env-file supabase/functions/.env   # mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, github-webhook, voice-transcribe, pub-html, send-*, waitlist
+npx supabase functions serve --env-file supabase/functions/.env   # mcp, agent-token, trama-runtime, agent-admin, agent-dispatch, agent-webhook, github-webhook, voice-transcribe, pub-html, send-*, waitlist
 ```
 
 Restart `npm run dev`, choose Log in on the landing and sign in as `owner@demo.local`; the password is in `supabase/seeds/01_workspace.sql`.
@@ -201,7 +201,7 @@ components/     UI; components/agents/ holds the agent-layer surfaces, component
 lib/            domain types, store, pure engines (markdown, formulas, block operations, sync)
 supabase/
   migrations/   numbered SQL, one concern per file: core, agents, tasks, writes, control, dispatch, Lead, decisions, metrics, AI, OAuth, CI evidence, review policy, lessons, page sources, private pages, notes, voice
-  functions/    mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, github-webhook, voice-transcribe, pub-html, send-reminders, send-email, waitlist
+  functions/    mcp, agent-token, trama-runtime, agent-admin, agent-dispatch, agent-webhook, github-webhook, voice-transcribe, pub-html, send-reminders, send-email, waitlist
   tests/        pgTAP suites (clone/, agents/)
   seeds/        demo workspace and demo agents
 agent/          reference agent over an OpenAI-compatible model slot

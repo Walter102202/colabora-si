@@ -62,6 +62,13 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const suggestions = tramaSuggestions({ kind: new URLSearchParams(search).has("task") ? "task" : currentPage?.database ? "database" : pageId ? "text" : "home", selection: selected, decisions: waiting });
   const pending = messages.findLast((m) => m.direction === "in" && m.needs_reply);
   const missing = agentWorkspace === workspaceId && agentStatus === "ready" && !trama;
+  const managed = import.meta.env.VITE_TRAMA_MANAGED === "1";
+  // A new workspace gets its Trama from the managed runtime within seconds.
+  useEffect(() => {
+    if (!missing || !managed || !workspaceId) return;
+    const timer = setInterval(() => void loadAgents(workspaceId), 5000);
+    return () => clearInterval(timer);
+  }, [missing, managed, workspaceId, loadAgents]);
   const status = pending ? now - Date.parse(pending.created_at) >= 60_000 ? "Trama is not answering right now. Your message stays here." : "Trama is thinking…" : null;
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
@@ -317,7 +324,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
       <span id={descriptionId} className="sr-only">{[waiting > 0 ? countText : "", expanded ? previewText : ""].filter(Boolean).join(". ")}</span>
       <div className="flex items-center gap-2">
         {!folded && <div className="flex max-w-64 items-center gap-1 rounded-full border border-border bg-bg px-3 py-2 text-sm shadow-sm">
-          {missing ? <a href={settingsUrl("agents", pathname)} className="text-accent">Enable Trama</a> : <button type="button" className="text-left" onClick={openConversation}>{TRAMA_GREETING}</button>}
+          {missing && managed ? <span>Trama is getting ready…</span> : missing ? <a href={settingsUrl("agents", pathname)} className="text-accent">Enable Trama</a> : <button type="button" className="text-left" onClick={openConversation}>{TRAMA_GREETING}</button>}
           <button type="button" aria-label="Hide suggestion" className="icon-button shrink-0" onClick={fold}><X size={14} /></button>
         </div>}
         <button ref={trigger} type="button" aria-label="Talk to Trama" aria-expanded={open} aria-describedby={descriptionId} onBlur={leaveFocus}

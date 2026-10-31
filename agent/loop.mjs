@@ -1,11 +1,11 @@
 // The agent loop: wait for work, claim, let the model work through MCP tools,
 // report liveness and cost, pause on human decisions, and hand the result to a person.
 
-import { buildReason, isLeadNotice } from "../connect/codex/on-stop.mjs";
 import { argsHash, buildCheckpoint, guardFor, guardsFromResume, parseCheckpoint, WRITE_TOOLS } from "./checkpoint.mjs";
 import { McpError, toOpenAiTools } from "./mcpClient.mjs";
 import { buildSystemPrompt, buildTaskMessage } from "./prompt.mjs";
 import { extractFile, runRequest } from "./requests.mjs";
+import { buildReason, isLeadNotice } from "./taskEvent.mjs";
 import { flushPersonReplies } from "./inbox.mjs";
 
 /**

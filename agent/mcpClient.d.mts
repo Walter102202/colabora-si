@@ -28,8 +28,9 @@ export function toOpenAiTools(tools: McpTool[]): OpenAiTool[];
 export function toToolResult(result: unknown): ToolResult;
 export function createMcpClient(opts: {
   url: string;
-  pat: string;
-  tokenUrl: string;
+  pat?: string;
+  tokenUrl?: string;
+  signIn?: () => Promise<string>;
   fetchImpl?: typeof fetch;
   clientName?: string;
   timeoutMs?: number;
