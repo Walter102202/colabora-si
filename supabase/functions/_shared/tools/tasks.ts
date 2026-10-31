@@ -5,6 +5,7 @@ import { CARD_OUTPUT, CARD_TOOL_META, loadTaskCard } from './card.ts';
 import { bool, num, object, output, plural, READ, str, WRITE, WRITE_IDEMPOTENT } from './common.ts';
 import { loadEnvironment, type Row } from './taskData.ts';
 import { openDependencies } from './wait.ts';
+import { contextLine, contextPackage } from './context.ts';
 
 const TASK_STATES = ['queued', 'working', 'input_required', 'ready_for_review', 'done', 'failed', 'cancelled'];
 const idempotencyKey = { type: 'string', minLength: 1, maxLength: 200, description: 'Retry-safe key: the same key returns the first result.' } as const;
@@ -144,7 +145,7 @@ const claimTask: ToolDef = {
   title: 'Claim a task and start a run',
   description:
     'Starts a run on a task (without task_id: the oldest queued task assigned to you). Returns the current brief, ' +
-    'deliverables and recent activity. A done task cannot be claimed: only a person reopens it from the workspace. ' +
+    'deliverables, recent activity and a context_package: lessons people accepted, decisions in force, sources and related pages, each with why it is there. A done task cannot be claimed: only a person reopens it from the workspace. ' +
     'With resume: true you also get the last checkpoint: which pending writes already happened, which blocks someone else changed, and the open approvals.',
   inputSchema: object({
     task_id: { type: 'string' },
@@ -162,6 +163,7 @@ const claimTask: ToolDef = {
     recent_activities: { type: 'array', items: { type: 'object' } },
     environment: { type: 'array', items: { type: 'object' } },
     resume: { type: ['object', 'null'] },
+    context_package: { type: ['object', 'null'] },
   }),
   annotations: WRITE,
   async handler(args, ctx) {
@@ -173,9 +175,12 @@ const claimTask: ToolDef = {
     })) ?? { task_id: null };
     if (!data.task_id) return { text: 'No queued task to claim.', structured: { task_id: null } };
     data.environment = await loadEnvironment(ctx.db, String(data.task_id));
+    const brief = data.brief as Row | null;
+    const isRequest = Boolean((brief?.policies as Row | undefined)?.ai_request);
+    const pkg = isRequest ? null : await contextPackage(ctx, String(data.run_id), String(data.row_page_id), brief);
     return {
-      text: `Claimed task ${String(data.task_id)}: run ${String(data.run_id)} on page ${String(data.row_page_id)}. Read the brief before writing.` + (data.resume ? ` ${String((data.resume as Row).summary)}` : ''),
-      structured: data,
+      text: `Claimed task ${String(data.task_id)}: run ${String(data.run_id)} on page ${String(data.row_page_id)}. Read the brief before writing.` + (data.resume ? ` ${String((data.resume as Row).summary)}` : '') + (isRequest ? '' : contextLine(pkg)),
+      structured: isRequest ? data : { ...data, context_package: pkg },
     };
   },
 };

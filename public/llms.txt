@@ -16,6 +16,7 @@
 - Tasks: `list_my_tasks`, `get_task`, `claim_task`, `save_checkpoint`, `hand_over`, `post_activity`, `add_artifact`, `request_input`, `await_questions`, `request_approval`, `submit_for_review`, `send_message`, `heartbeat`, `end_run`, `ack_stop`, `begin_external_op`, `finish_external_op`
 - `list_my_tasks`: a task with `blocked_by` is waiting for those tasks to finish: do not claim it.
 - AI properties: a database column whose cells Colabora fills with Muse Spark when you ask; every value is signed and can be undone.
+- Learning: `get_context_package`, `cite_lesson`, `propose_lesson`. Lessons people accepted reach the next agent, each with why it is there.
 - Request tools: `get_ai_request` reads the inputs; `fill_ai_cells` writes signed values; `complete_ai_request` closes the request. The platform agent's loop calls them; writes from other runs return `not_a_request_run`.
 - Inline rewrite: select text and choose ✦ AI. The platform loop uses `get_ai_request` and `apply_ai_rewrite`; the signed block change can be undone. Other runs get `not_a_request_run`.
 - A person's @agent mention on a page without an open work task creates a task. Reply with `add_comment` and its `parent_id`, then deliver for review. An agent's mention never creates work.

@@ -78,6 +78,7 @@ With a seeded, served local stack and its public key in `.env.local`, set `P11_T
 | Write | `append_blocks`, `edit_page`, `update_block`, `add_row`, `update_row`, `add_comment` |
 | Tasks | `list_my_tasks`, `get_task`, `claim_task`, `save_checkpoint`, `hand_over`, `post_activity`, `add_artifact`, `request_input`, `await_questions`, `request_approval`, `submit_for_review`, `send_message`, `heartbeat`, `end_run`, `ack_stop`, `begin_external_op`, `finish_external_op` |
 | Dependencies | `list_my_tasks`: a task with `blocked_by` is waiting for those tasks to finish: do not claim it. |
+| Learning | `get_context_package`, `cite_lesson`, `propose_lesson`: lessons people accepted reach the next agent, each with why it is there |
 | AI requests | `get_ai_request`, `fill_ai_cells`, `complete_ai_request`: the platform agent's loop calls them; writes from other runs return `not_a_request_run`. |
 | AI rewrite | `apply_ai_rewrite`: the platform loop rewrites the selected block with attribution and an Undo action; other runs get `not_a_request_run`. |
 | Comment tasks | A person's @agent mention creates a task when the page has no open work task. `add_comment` accepts `parent_id` to reply in the same thread; an agent's mention never creates work. |
