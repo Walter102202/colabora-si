@@ -2,32 +2,9 @@
 # Only the settings the project depends on are pinned; everything else keeps
 # the CLI defaults so upgrades do not fight this file.
 
-project_id = "colabora-si-p14"
-
-[api]
-port = 60990
-
-[studio]
-port = 60993
-
-[inbucket]
-port = 60994
-smtp_port = 60995
-pop3_port = 60996
-
-[analytics]
-enabled = false
-port = 60997
-
-[db.pooler]
-port = 60998
-
-[edge_runtime]
-inspector_port = 60999
+project_id = "colabora-si"
 
 [db]
-port = 60991
-shadow_port = 60992
 # Same as the hosted project (Postgres 17.x) so `supabase db reset` reproduces it.
 major_version = 17
 
