@@ -12,33 +12,38 @@ insert into calls values
  ('move_page','{"page_id":"page_A","parent_id":"page_B"}'),
  ('duplicate_page','{"page_id":"page_A","parent_id":"page_B"}'),
  ('archive_page','{"page_id":"page_A"}'),
- ('restore_page','{"page_id":"page_A"}');
+ ('restore_page','{"page_id":"page_A"}'),
+ ('workspace_comment','{"page_id":"page_A"}');
 grant select on calls to authenticated, anon;
+create function pg_temp.call_sql(n text,a jsonb,k text) returns text language sql as $$
+  select case when n='workspace_comment' then format('select public.workspace_comment(%L,%L,null,null,%L)',a->>'page_id','Comment',k)
+    else format('select public.%I(%L::jsonb,%L)',n,a,k) end;
+$$;
 select tests.set_anon();
-select is(tests.sqlstate_of(format('select public.%I(%L::jsonb,%L)',name,args,'deny')), '42501', name||' rejects anon') from calls;
+select is(tests.sqlstate_of(pg_temp.call_sql(name,args,'deny')), '42501', name||' rejects anon') from calls;
 select tests.reset_role();
 select tests.make_user('outside-p14@test.local') as outsider \gset
 insert into public.workspaces(name,owner_id) values('Other workspace',:'outsider'::uuid);
 select tests.set_human(:'outsider'::uuid);
-select is(tests.sqlstate_of(format('select public.%I(%L::jsonb,%L)',name,args,'other-workspace')), 'PT403', name||' rejects another workspace member') from calls;
+select is(tests.sqlstate_of(pg_temp.call_sql(name,args,'other-workspace')), 'PT403', name||' rejects another workspace member') from calls;
 select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'viewer')::uuid);
-select is(tests.sqlstate_of(format('select public.%I(%L::jsonb,%L)',name,args,'deny')), 'PT403', name||' rejects read-only') from calls;
+select is(tests.sqlstate_of(pg_temp.call_sql(name,args,'deny')), 'PT403', name||' rejects read-only') from calls;
 select tests.reset_role();
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid,(:'f'::jsonb->>'agent')::uuid);
-select is(tests.sqlstate_of(format('select public.%I(%L::jsonb,%L)',name,replace(args::text,'page_A','page_B'),'deny')), 'PT403', name||' rejects missing grant') from calls;
+select is(tests.sqlstate_of(pg_temp.call_sql(name,replace(args::text,'page_A','page_B')::jsonb,'deny')), 'PT403', name||' rejects missing grant') from calls;
 select tests.reset_role();
 update public.agents set status='disabled' where id=(:'f'::jsonb->>'agent')::uuid;
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid,(:'f'::jsonb->>'agent')::uuid);
-select is(tests.sqlstate_of(format('select public.%I(%L::jsonb,%L)',name,args,'deny')), 'PT403', name||' rejects revoked agent') from calls;
+select is(tests.sqlstate_of(pg_temp.call_sql(name,args,'deny')), 'PT403', name||' rejects revoked agent') from calls;
 select tests.reset_role();
 update public.agents set status='enabled' where id=(:'f'::jsonb->>'agent')::uuid;
 select tests.set_human((:'f'::jsonb->>'owner')::uuid, 'p14-chat');
-select is(tests.sqlstate_of(format('select public.%I(%L::jsonb,%L)',name,replace(args::text,'page_A','private_P'),'deny')), 'PT403', name||' OAuth cannot reach private page') from calls;
+select is(tests.sqlstate_of(pg_temp.call_sql(name,replace(args::text,'page_A','private_P')::jsonb,'deny')), 'PT403', name||' OAuth cannot reach private page') from calls;
 select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.apply_page_ops('page_A','[{"op":"set_page","patch":{"locked":true}}]');
-select is(tests.sqlstate_of(format('select public.%I(%L::jsonb,%L)',name,args,'deny')), 'PT423', name||' rejects locked page') from calls;
+select is(tests.sqlstate_of(pg_temp.call_sql(name,args,'deny')), 'PT423', name||' rejects locked page') from calls;
 select public.apply_page_ops('page_A','[{"op":"set_page","patch":{"locked":false}}]');
 select is(tests.error_of($q$select public.move_page('{"page_id":"page_A","parent_id":"page_A1"}','cycle')$q$),'page_cycle','cannot move into descendants');
 select is(tests.error_of($q$select public.move_page('{"page_id":"page_A","parent_id":"private_P"}','private')$q$),'page_shared','cannot hide a page other members read');
