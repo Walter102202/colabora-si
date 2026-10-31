@@ -218,7 +218,7 @@ end $$;
 create or replace function public.update_brief(p_task_id uuid, p_patch jsonb)
 returns int language plpgsql security definer set search_path = '' as $$
 declare v_t public.agent_tasks%rowtype; v_b public.task_briefs%rowtype; v_agent uuid; v_full boolean := false;
-        v_author uuid; v_author_type text; v_bad text; v_new jsonb; v_ver int; v_d public.agents%rowtype; v_trusted boolean;
+        v_author uuid; v_author_type text; v_bad text; v_new jsonb; v_ver int; v_d public.agents%rowtype; v_trusted boolean; v_spent numeric; v_deps uuid[]; v_reassign boolean;
 begin
   if jsonb_typeof(p_patch) is distinct from 'object' then raise exception using errcode = 'PT400', message = 'invalid_input'; end if;
   select * into v_t from public.agent_tasks where id = p_task_id for update;
@@ -228,6 +228,7 @@ begin
     v_agent := private.current_agent_id();
     if v_agent is null then raise exception using errcode = 'PT403', message = 'agent_disabled'; end if;
     perform private.check_rate(v_agent);
+    if v_t.state in ('done','failed','cancelled') then raise exception using errcode='PT422',message='invalid_state'; end if;
     if exists (select 1 from public.agent_tasks p join public.agents a on a.id = p.delegate_agent_id
                 where p.id = v_t.parent_task_id and p.delegate_agent_id = v_agent and a.role = 'lead') then
       perform private.require_active_task(v_t.parent_task_id);
@@ -261,7 +262,14 @@ begin
   end if;
   v_new := (to_jsonb(v_b) - 'task_id' - 'version' - 'workspace_id' - 'author_id' - 'author_type' - 'created_at' - 'preapproved_trusted' - 'trusted_preapprovals')
            || (p_patch - 'delegate_agent_id' - 'depends_on_task_ids');
+  if p_patch ? 'policies' then
+    if jsonb_typeof(p_patch->'policies') is distinct from 'object' then raise exception using errcode='PT400',message='invalid_input'; end if;
+    v_new:=jsonb_set(v_new,'{policies}',v_b.policies || (p_patch->'policies'));
+  end if;
   perform private.validate_brief(v_new);
+  if v_author_type='agent' and not private.required_actions(v_b.policies) <@ private.required_actions(v_new->'policies') then
+    raise exception using errcode='PT403',message='approval_policy_locked';
+  end if;
   if v_author_type = 'agent' and exists (
     select 1 from jsonb_array_elements(v_b.done_when) old_criterion
      where old_criterion->>'check' = 'ci' and not exists (
@@ -276,12 +284,29 @@ begin
     select * into v_d from public.agents
      where id = (p_patch->>'delegate_agent_id')::uuid and workspace_id = v_t.workspace_id and status = 'enabled' and revoked_at is null;
     if not found then raise exception using errcode = 'PT404', message = 'delegate_not_found'; end if;
+    if v_d.monthly_budget_usd is not null then
+      select coalesce(sum(cost_usd),0) into v_spent from public.agent_runs where agent_id=v_d.id and started_at>=date_trunc('month',now());
+      if v_spent>v_d.monthly_budget_usd then raise exception using errcode='PT402',message='budget_exceeded',
+        detail=jsonb_build_object('spent_usd',v_spent,'budget_usd',v_d.monthly_budget_usd)::text; end if;
+    end if;
   end if;
-  if p_patch ? 'depends_on_task_ids' and exists (
-       select 1 from jsonb_array_elements_text(p_patch->'depends_on_task_ids') d
-        where not exists (select 1 from public.agent_tasks x where x.id = d::uuid and x.context_id = v_t.context_id and x.id <> v_t.id)) then
-    raise exception using errcode = 'PT422', message = 'invalid_dependency';
+  if p_patch ? 'depends_on_task_ids' then
+    if jsonb_typeof(p_patch->'depends_on_task_ids') is distinct from 'array' or exists(select 1 from jsonb_array_elements_text(p_patch->'depends_on_task_ids') d
+      where d !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') then
+      raise exception using errcode='PT422',message='invalid_dependency';
+    end if;
+    v_deps:=array(select d::uuid from jsonb_array_elements_text(p_patch->'depends_on_task_ids') d);
+    -- Serialize context graph edits; otherwise concurrent A→B and B→A can both pass their snapshots.
+    perform pg_advisory_xact_lock(hashtextextended('task_dependencies:'||v_t.context_id::text,0));
+    if exists(select 1 from unnest(v_deps) d where not exists(select 1 from public.agent_tasks x where x.id=d and x.context_id=v_t.context_id and x.id<>v_t.id))
+       or exists(with recursive reachable(id) as (
+          select unnest(v_deps) union select unnest(t.depends_on_task_ids) from public.agent_tasks t join reachable r on r.id=t.id where t.context_id=v_t.context_id
+        ) select 1 from reachable where id=v_t.id) then
+      raise exception using errcode='PT422',message='invalid_dependency';
+    end if;
   end if;
+  v_reassign:=p_patch ? 'delegate_agent_id' and (p_patch->>'delegate_agent_id')::uuid is distinct from v_t.delegate_agent_id and v_t.active_run_id is not null;
+  if v_reassign and v_t.state not in ('queued','working','input_required') then raise exception using errcode='PT409',message='run_active'; end if;
 
   v_ver := v_t.brief_version + 1;
   -- The preapproved list keeps its trust while it does not change; a new list is trusted only when a person writes it
@@ -307,6 +332,9 @@ begin
          updated_at = now()
    where id = v_t.id;
 
+  if v_reassign then
+    perform private.release_for_handover(v_t.id,(p_patch->>'delegate_agent_id')::uuid,'Reassigned from the task brief.',p_patch->>'delegate_agent_id' is null);
+  end if;
   if p_patch ? 'delegate_agent_id' and v_d.id is not null then
     perform private.ensure_delegate_grants(v_d.id, v_t.workspace_id, v_t.row_page_id, v_new->'sources');
   end if;

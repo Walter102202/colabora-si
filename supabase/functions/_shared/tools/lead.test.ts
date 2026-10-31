@@ -91,12 +91,12 @@ Deno.test('create_task stores the reviewer and lease as brief policies', async (
     reviewer: 'reviewer', lease_minutes: 90 }, ctx);
 });
 const planArgs = { parent_task_id: 'parent', idempotency_key: 'plan-key' };
-function planContext(failKey?: string) {
+function planContext(failObjective?: string) {
   const calls: { fn: string; args: Row }[] = [];
   const ctx = context((fn, args) => {
     calls.push({ fn, args });
     if (fn === 'add_row') return { data: { row_id: `row:${args.p_idempotency_key}`, page_id: `page:${args.p_idempotency_key}` }, error: null };
-    if (args.p_idempotency_key === failKey) return { data: null, error: { code: 'PT403', message: 'forbidden' } };
+    if (failObjective && (args.p_brief as Row)?.objective === failObjective) return { data: null, error: { code: 'PT403', message: 'forbidden' } };
     return { data: { task_id: `task:${args.p_idempotency_key}`, context_id: 'context' }, error: null };
   });
   return { ctx, calls };
@@ -105,20 +105,35 @@ function planContext(failKey?: string) {
 Deno.test('import_plan sorts dependencies, resolves their ids and retries with identical keys', async () => {
   const { ctx, calls } = planContext();
   const args = { ...planArgs, subtasks: [
-    { key: 'second', depends_on: ['first'], brief: planBrief, delegate_agent_id: 'worker' },
-    { key: 'first', brief: planBrief },
-    { key: '__proto__', depends_on: ['second'], brief: planBrief },
+    { key: 'second', depends_on: ['first'], brief: { ...planBrief, objective: 'Second' }, delegate_agent_id: 'worker' },
+    { key: 'first', brief: { ...planBrief, objective: 'First' } },
+    { key: '__proto__', depends_on: ['second'], brief: { ...planBrief, objective: 'Proto' } },
   ] };
   const first = await tool('import_plan').handler(args, ctx);
-  const created = Object.fromEntries(['first', 'second', '__proto__'].map((key) => [key, `task:plan-key:${key}`]));
-  assert.deepEqual(first.structured, { created });
   const writes = calls.filter((c) => c.fn === 'create_subtask');
-  assert.deepEqual(writes.map((c) => c.args.p_idempotency_key), ['plan-key:first', 'plan-key:second', 'plan-key:__proto__']);
-  assert.deepEqual(writes[1].args.p_depends_on_task_ids, ['task:plan-key:first']);
+  const keys = writes.map((c) => c.args.p_idempotency_key);
+  const created = Object.fromEntries(['first', 'second', '__proto__'].map((key,i) => [key, `task:${keys[i]}`]));
+  assert.deepEqual(first.structured, { created });
+  assert.deepEqual(writes.map((c) => (c.args.p_brief as Row).objective), ['First','Second','Proto']);
+  assert.equal(new Set(keys).size,3);
+  assert.deepEqual(writes[1].args.p_depends_on_task_ids, [created.first]);
+  assert.deepEqual(writes[2].args.p_depends_on_task_ids, [created.second]);
   assert.equal(writes[1].args.p_delegate_agent_id, 'worker');
   const before = structuredClone(calls);
   assert.deepEqual((await tool('import_plan').handler(args, ctx)).structured, first.structured);
   assert.deepEqual(calls.slice(before.length), before);
+});
+
+Deno.test('import_plan namespaces both task and row receipts by parent and unambiguous plan/subtask keys', async () => {
+  const { ctx, calls } = planContext();
+  for (const [parent_task_id, idempotency_key, key] of [['parent','a:b','c'],['parent','a','b:c'],['other','a:b','c']]) {
+    await tool('import_plan').handler({ parent_task_id, idempotency_key, subtasks: [{ key, brief: planBrief }] },ctx);
+  }
+  const tasks = calls.filter(c=>c.fn==='create_subtask').map(c=>c.args.p_idempotency_key);
+  const rows = calls.filter(c=>c.fn==='add_row').map(c=>c.args.p_idempotency_key);
+  assert.equal(new Set(tasks).size,3);
+  assert.equal(new Set(rows).size,3);
+  assert.ok(tasks.every(key=>String(key).length<=200));
 });
 
 Deno.test('import_plan rejects duplicate, missing, cyclic and invalid briefs before any write', async () => {
@@ -136,13 +151,13 @@ Deno.test('import_plan rejects duplicate, missing, cyclic and invalid briefs bef
 });
 
 Deno.test('import_plan includes completed subtasks in a partial failure', async () => {
-  const { ctx } = planContext('plan-key:b');
+  const { ctx, calls } = planContext('Fail second');
   await assert.rejects(() => tool('import_plan').handler({ ...planArgs, subtasks: [
-    { key: 'a', brief: planBrief }, { key: 'b', brief: planBrief },
+    { key: 'a', brief: planBrief }, { key: 'b', brief: { ...planBrief, objective: 'Fail second' } },
   ] }, ctx), (error: unknown) => {
     assert.ok(error instanceof ToolError);
     assert.equal(error.code, 'forbidden');
-    assert.deepEqual((error.detail as Row).created, { a: 'task:plan-key:a' });
+    assert.deepEqual((error.detail as Row).created, { a: `task:${calls.find((c)=>c.fn==='create_subtask')!.args.p_idempotency_key}` });
     return true;
   });
 });

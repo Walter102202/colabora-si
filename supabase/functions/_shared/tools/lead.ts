@@ -236,6 +236,9 @@ const importPlan: ToolDef = {
     }
     const created = new Map<string, string>();
     for (const subtask of ordered) {
+      const identity = JSON.stringify([args.parent_task_id, args.idempotency_key, subtask.key]);
+      const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(identity)));
+      const receiptKey = 'import-plan:v1:' + [...hash].map((byte) => byte.toString(16).padStart(2, '0')).join('');
       try {
         const result = await createOneSubtask(ctx, {
           parent_task_id: args.parent_task_id,
@@ -243,7 +246,7 @@ const importPlan: ToolDef = {
           delegate_agent_id: subtask.delegate_agent_id,
           brief: subtask.brief,
           depends_on_task_ids: (subtask.depends_on ?? []).map((key) => created.get(key)!),
-          idempotency_key: `${String(args.idempotency_key)}:${subtask.key}`,
+          idempotency_key: receiptKey,
         });
         created.set(subtask.key, String(result.structured.task_id));
       } catch (error) {

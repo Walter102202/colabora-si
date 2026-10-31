@@ -292,7 +292,8 @@ returns void language plpgsql stable security definer set search_path = '' as $$
 declare v_agent uuid:=private.current_agent_id();
 begin
   if v_agent is not null then
-    if exists(select 1 from public.agent_tasks t where t.row_page_id=p_page_id and t.delegate_agent_id=v_agent
+    if exists(select 1 from public.agent_tasks t where t.row_page_id=p_page_id and (t.delegate_agent_id=v_agent
+      or exists(select 1 from public.agent_runs previous where previous.task_id=t.id and previous.agent_id=v_agent))
       and t.state not in ('done','failed','cancelled') and not exists(select 1 from public.agent_runs r where r.id=t.active_run_id
         and r.agent_id=v_agent and r.status in ('running','waiting') and r.stop_requested_at is null)) then
       raise exception using errcode='PT422',message='run_not_active';
@@ -494,4 +495,66 @@ begin
     insert into private.write_receipts (scope, key, actor_id, result) values ('set_row_cells', p_idempotency_key, v_actor, v_receipt);
   end if;
   return v_receipt;
+end $$;
+
+-- Shared handover core from0019; callers retain their distinct human/Lead authorization.
+create or replace function private.release_for_handover(p_task_id uuid,p_to_agent_id uuid,p_note text,p_clear_delegate boolean default false)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_t public.agent_tasks%rowtype; v_r public.agent_runs%rowtype; v_from uuid;
+  v_actor_type text:=case when private.is_agent() then 'agent' else 'human' end;
+  v_actor uuid:=case when private.is_agent() then private.current_agent_id() else auth.uid() end;
+begin
+  select * into v_t from public.agent_tasks where id=p_task_id for update;
+  if v_t.state not in ('queued','working','input_required') then raise exception using errcode='PT409',message='run_active'; end if;
+  v_from := v_t.active_run_id;
+  if v_from is not null then
+    perform private.detach_task_links(v_from);
+    update public.agent_runs set status = 'cancelled', stop_requested_at = coalesce(stop_requested_at, now()),
+      ended_at = now(), error_message = case when v_actor_type='human' then 'released for handover by a person' else 'reassigned for handover by the Lead' end where id = v_from returning * into v_r;
+    insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
+    values (v_t.workspace_id, v_t.id, v_r.id, v_r.agent_id, 'task.stop', jsonb_build_object('reason', 'handover'), private.next_event_seq(v_t.id));
+  else
+    -- The last run that ended, ordered by its claim activity as resume_context does (timestamps tie inside one transaction).
+    select r.* into v_r from public.agent_runs r where r.task_id = v_t.id and r.status in ('completed','cancelled','error')
+     order by (select min(a.seq) from public.agent_activities a where a.task_id = v_t.id and a.run_id = r.id) desc nulls last,
+              r.started_at desc, r.id limit 1;
+  end if;
+  if p_to_agent_id is not null then
+    perform private.ensure_delegate_grants(p_to_agent_id, v_t.workspace_id, v_t.row_page_id,
+      (select sources from public.task_briefs where task_id = v_t.id and version = v_t.brief_version));
+  end if;
+  update public.agent_tasks set delegate_agent_id = case when p_clear_delegate then null else coalesce(p_to_agent_id, delegate_agent_id) end, active_run_id = null,
+    state = case when private.task_waits_on_human(v_t.id) then 'input_required' else 'queued' end,
+    waiting_on = case when private.task_waits_on_human(v_t.id) then 'human' end, updated_at = now()
+    where id = v_t.id returning * into v_t;
+  insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, author_type, author_id)
+  values (v_t.workspace_id, v_t.id, null, private.next_seq(v_t.id), 'prompt',
+    jsonb_build_object('signal', 'continue', 'source', 'handover', 'handover', true, 'from_run_id', v_r.id,
+      'to_agent_id', v_t.delegate_agent_id, 'text', coalesce(p_note, '')), v_actor_type, v_actor);
+  if exists (select 1 from public.agents where id = v_t.delegate_agent_id and capabilities->'continue' = 'true'::jsonb) then
+    insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
+    values (v_t.workspace_id, v_t.id, null, v_t.delegate_agent_id, 'task.continue',
+      jsonb_build_object('handover', true, 'context_id', v_t.context_id, 'brief_version', v_t.brief_version,
+        'from_harness', v_r.harness, 'note', left(coalesce(p_note, ''), 280)), private.next_event_seq(v_t.id));
+  end if;
+  perform private.audit(v_t.workspace_id, 'task.handover', jsonb_build_object('task_id', v_t.id, 'from_run_id', v_r.id, 'to_agent_id', v_t.delegate_agent_id, 'by', v_actor_type));
+  return jsonb_build_object('task_state', v_t.state, 'delegate_agent_id', v_t.delegate_agent_id, 'cancelled_run_id', v_from);
+end $$;
+revoke all on function private.release_for_handover(uuid,uuid,text,boolean) from public;
+
+create or replace function public.release_for_handover(p_task_id uuid, p_to_agent_id uuid default null, p_note text default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_t public.agent_tasks%rowtype; v_r public.agent_runs%rowtype; v_from uuid;
+begin
+  if private.principal_type() <> 'human' then raise exception using errcode = 'PT403', message = 'humans_only'; end if;
+  select * into v_t from public.agent_tasks where id = p_task_id for update;
+  if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+  if not private.can_write_page(v_t.row_page_id, v_t.workspace_id) then raise exception using errcode = 'PT403', message = 'forbidden'; end if;
+  if v_t.state not in ('queued','working','input_required') then raise exception using errcode = 'PT422', message = 'invalid_state'; end if;
+  if char_length(p_note) > 4000 then raise exception using errcode = 'PT400', message = 'invalid_input'; end if;
+  if p_to_agent_id is not null and not exists (
+    select 1 from public.agents where id = p_to_agent_id and workspace_id = v_t.workspace_id and status = 'enabled' and revoked_at is null) then
+    raise exception using errcode = 'PT404', message = 'delegate_not_found';
+  end if;
+  return private.release_for_handover(p_task_id,p_to_agent_id,p_note);
 end $$;
