@@ -93,8 +93,13 @@ select is((select count(*)::int from public.agent_activities where task_id = :'s
 select is((select count(*)::int from public.agent_events where task_id = :'parent'::uuid and type = 'task.updated' and payload ? 'ci'), 1, 'the Lead is told once');
 select is((select count(*)::int from public.agent_events where task_id = :'sub'::uuid and type = 'task.updated' and payload ? 'ci'), 0, 'a pass does not wake the worker');
 -- A different commit is a new artifact, not a new version of the same ref. Its review must be its own.
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select public.review_task(:'sub'::uuid, 'changes_requested', '[]'::jsonb, '[]'::jsonb, :'art'::uuid, :'lr'::uuid);
+select tests.reset_role();
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
-select public.add_artifact(:'run'::uuid, 'diff', 'acme/app@cccccccccccccccccccccccccccccccccccccccc', 'New commit', array['c1']) ->> 'artifact_id' as newer_art \gset
+select public.claim_task(:'sub'::uuid, 'codex') ->> 'run_id' as updated_run \gset
+select public.add_artifact(:'updated_run'::uuid, 'diff', 'acme/app@cccccccccccccccccccccccccccccccccccccccc', 'New commit', array['c1']) ->> 'artifact_id' as newer_art \gset
+select public.submit_for_review(:'updated_run'::uuid, 'updated', array[:'newer_art'::uuid]);
 select tests.reset_role();
 update public.agent_artifacts set created_at = now() + interval '1 second' where id = :'newer_art'::uuid;
 select tests.set_service();

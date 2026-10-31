@@ -1,5 +1,5 @@
 begin;
-select plan(14);
+select plan(17);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_L','page_W','page_S','page_K']) p;
 update public.agents set capabilities = capabilities || '{"resume":true}'::jsonb where id = (:'f'::jsonb->>'agent')::uuid;
@@ -51,6 +51,11 @@ select is(tests.error_of(format('select public.submit_for_review(%L::uuid, %L, a
 
 -- 13. The same agent picks it up with resume.
 select ok((public.claim_task(:'t'::uuid, 'codex', 'session-2', null, true)) ? 'run_id', 'the agent resumes the task');
+select ok(public.add_artifact((select active_run_id from public.agent_tasks where id = :'t'::uuid), 'page', 'page_L', 'Current artifact') ? 'artifact_id', 'the resumed active run can add an artifact');
+select is(tests.error_of(format('select public.add_artifact(%L::uuid, %L, %L, %L)', :'r', 'page', 'page_L', 'Late artifact')), 'run_not_active', 'an expired run cannot supersede the resumed session artifact');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select ok(public.add_artifact(:'r'::uuid, 'page', 'page_L', 'Human correction') ? 'artifact_id', 'a direct human can still attach a correction to a finished run');
 select tests.reset_role();
 
 -- 14. A second pass finds nothing to do: the release is not repeated.

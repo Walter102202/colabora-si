@@ -123,3 +123,50 @@ begin
 
   return jsonb_build_object('stale', v_stale, 'cancelled', v_cancelled, 'released', v_released, 'approvals_expired', v_expired, 'receipts_deleted', v_receipts);
 end $$;
+
+-- Full copy from 0006: an expired agent run cannot supersede the resumed session artifacts.
+create or replace function public.add_artifact(p_run_id uuid, p_kind text, p_ref text, p_title text, p_satisfies text[] default '{}',
+  p_content_hash text default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_r public.agent_runs%rowtype; v_t public.agent_tasks%rowtype; v_prev public.agent_artifacts%rowtype;
+        v_id uuid := gen_random_uuid(); v_ver int := 1; v_rev bigint; v_bad text; v_author uuid; v_author_type text;
+begin
+  if private.is_agent() or private.linked_agent_id() is not null then
+    v_r := private.own_run(p_run_id);
+    if v_r.status not in ('running','waiting') then raise exception using errcode = 'PT422', message = 'run_not_active'; end if;
+    v_author := v_r.agent_id; v_author_type := 'agent';
+  else
+    select * into v_r from public.agent_runs where id = p_run_id for update;
+    if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+    v_author := (select auth.uid()); v_author_type := 'human';
+  end if;
+  select * into v_t from public.agent_tasks where id = v_r.task_id for update;
+  if v_author_type = 'human' and not private.can_write_page(v_t.row_page_id, v_t.workspace_id) then
+    raise exception using errcode = 'PT403', message = 'forbidden';
+  end if;
+  if p_kind is null or p_kind not in ('page','file','diff','query','image','external') or coalesce(p_ref, '') = '' then
+    raise exception using errcode = 'PT400', message = 'invalid_input';
+  end if;
+  select s into v_bad from unnest(coalesce(p_satisfies, '{}')) s
+   where not exists (select 1 from public.task_briefs b, jsonb_array_elements(b.done_when) c
+                      where b.task_id = v_t.id and b.version = v_t.brief_version and c->>'id' = s) limit 1;
+  if v_bad is not null then raise exception using errcode = 'PT422', message = 'unknown_criterion', detail = v_bad; end if;
+  if p_kind = 'page' then
+    select revision into v_rev from public.pages where id = p_ref and workspace_id = v_t.workspace_id;
+    if not found then raise exception using errcode = 'PT404', message = 'page_not_found'; end if;
+  end if;
+
+  select * into v_prev from public.agent_artifacts
+   where task_id = v_t.id and kind = p_kind and ref = p_ref and superseded_by is null
+   order by version desc limit 1 for update;
+  if found then v_ver := v_prev.version + 1; end if;
+  insert into public.agent_artifacts (id, workspace_id, task_id, run_id, kind, ref, version, page_revision, content_hash, title,
+                                      satisfies, author_type, author_id)
+  values (v_id, v_t.workspace_id, v_t.id, v_r.id, p_kind, p_ref, v_ver, v_rev, p_content_hash, coalesce(p_title, ''),
+          coalesce(p_satisfies, '{}'), v_author_type, v_author);
+  -- The new row exists before the previous one points at it (FK); 0007 outdates reviews on this update.
+  if v_prev.id is not null then
+    update public.agent_artifacts set superseded_by = v_id where id = v_prev.id;
+  end if;
+  return jsonb_build_object('artifact_id', v_id, 'version', v_ver);
+end $$;
