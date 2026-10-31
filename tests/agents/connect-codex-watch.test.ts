@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { join } from "node:path";
-import { codexQueue, findCodex, runWatcher, SESSION_HINT, targetThread } from "../../connect/codex/watch.mjs";
+import { codexQueue, findCodex, runWatcher, SESSION_HINT, targetThread, type WatchSnapshot } from "../../connect/codex/watch.mjs";
 
 const THREAD = "11111111-1111-4111-8111-111111111111";
 const FALLBACK = "22222222-2222-4222-8222-222222222222";
@@ -10,12 +10,12 @@ type Answer = { tasks: Record<string, unknown>[]; next_cursor: string };
 const answer = (tasks: Record<string, unknown>[], next_cursor = "next"): Answer => ({ tasks, next_cursor });
 
 async function exercise(waits: Answer[], options: {
-  env?: Record<string, string | undefined>; cursor?: string; detail?: unknown; details?: unknown[]; saved?: Record<string, unknown>; saveError?: boolean;
+  env?: Record<string, string | undefined>; cursor?: string; detail?: unknown; details?: unknown[]; saved?: WatchSnapshot; saveError?: boolean;
   queue?: (thread: string, message: string) => Promise<void>;
 } = {}) {
   const controller = new AbortController();
   const calls: { name: string; args: Record<string, unknown> }[] = [];
-  const saves: Record<string, unknown>[] = [];
+  const saves: WatchSnapshot[] = [];
   let time = 0;
   const logs: string[] = [];
   let index = 0;
