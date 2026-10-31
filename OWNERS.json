@@ -37,6 +37,9 @@
       "supabase/migrations/*_0033_*",
       "supabase/migrations/*_0034_*",
       "supabase/migrations/*_0035_*",
+      "supabase/migrations/*_0036_*",
+      "supabase/migrations/*_0037_*",
+      "supabase/migrations/*_0038_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -190,6 +193,12 @@
       "tests/infra/vercelHeaders.test.ts"
     ],
     "a/p11": [
+      "README.md",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "public/llms.txt"
+    ],
+    "a/p9": [
       "README.md",
       "AGENTS.md",
       "CLAUDE.md",
