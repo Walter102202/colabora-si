@@ -54,7 +54,7 @@ npx supabase test db supabase/tests/agents/07_approvals.sql                     
 
 ### The MCP server
 
-- `supabase/functions/_shared/mcp.ts` is a hand-written Streamable HTTP server: one POST endpoint, JSON responses only, no SSE, no session state, both protocol eras (2025 and 2026). `supabase/functions/mcp/server.ts` assembles the server from `_shared/tools/{read,write,tasks,wait,lead,card}.ts` plus the prompts, resources and instructions in `prompts.ts`.
+- `supabase/functions/_shared/mcp.ts` is a hand-written Streamable HTTP server: one POST endpoint, JSON responses only, no SSE, no session state, both protocol eras (2025 and 2026). `supabase/functions/mcp/server.ts` assembles the server from `_shared/tools/{read,write,tasks,handover,wait,lead,ai,card}.ts` plus the prompts, resources and instructions in `_shared/tools/prompts.ts`.
 - A tool is a `ToolDef` (name, input and output JSON schema, annotations, handler). Handlers validate, call RPCs through the narrow `Db` interface in `_shared/db.ts`, and return `{text, structured}`. Tests replace `Db` with an in-memory fake, so tool tests run without a database (see `tools/*.test.ts`).
 - Wait tools (`wait_for_task`, `wait_for_my_tasks`) hold a call for up to 120 s under RLS. An empty iteration costs one select on `agent_events` (backoff from 1.5 s to 10 s); a full snapshot runs on a fresh event, at least every 10 s and at the deadline. They return a cursor that is evaluated before sleeping, so nothing is lost between calls.
 - `agent-webhook` runs the same `ToolDef`s for push agents, so validation and errors match the MCP path.
