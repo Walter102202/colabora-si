@@ -17,7 +17,12 @@ app/                 SPA routes; app/main.tsx is the entry
 apps/card.html       second Vite entry: the MCP App card
 components/          UI; components/agents/ is the agent layer, components/agents/panel/ its pure views
 lib/                 types, stores, pure engines; lib/agent* is the client side of the agent layer
-supabase/migrations  0001 core, 0002 agents, 0003 core RPCs, 0004 tasks, 0005 partial writes, 0006 control, 0007 derived state, 0008 dispatch, 0009 lead, 0010 retention, 0036 lessons, 0037 context package, 0038 page sources
+supabase/migrations  0001 core, 0002 agents, 0003 core RPCs, 0004 tasks, 0005 partial writes, 0006 control, 0007 derived state, 0008 dispatch, 0009 lead, 0010 retention,
+                     0011 chat decisions, 0012 receipts for actions, 0013 agent write boundary, 0014 task.updated events, 0015 search, 0016 page ops review and version cap,
+                     0017 platform agent, 0018 reviewer agent, 0019 handover, 0020 decisions, 0021 metrics, 0022 blocked review and webhook delivery, 0023 fair push batches,
+                     0024 claim dependencies, 0025 AI properties, 0026 AI rewrite, 0027 mention tasks, 0028 file texts, 0029 OAuth session links, 0030 CI evidence,
+                     0031 run lease, 0032 task environment, 0033 finding severity, 0034 reviewer policy, 0035 conditional approval, 0036 lessons, 0037 context package,
+                     0038 page sources
 supabase/functions   mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, github-webhook, send-reminders, send-email; _shared/ holds the MCP server and its tools
 supabase/tests       pgTAP suites (clone/, agents/)
 supabase/seeds       demo workspace (01) and demo agents (02)
