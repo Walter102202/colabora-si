@@ -8,6 +8,15 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # A newer push on a branch replaces the run in progress; every commit on main gets its
+    # own run. At job level on purpose: a main run waiting for the production approval would
+    # hold a workflow-level group and stall every later main run.
+    concurrency:
+      group: check-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+    # The Supabase CLI defaults to public.ecr.aws, which throttles the shared runner addresses.
+    env:
+      SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,6 +40,9 @@ jobs:
 
       - run: npm run lint
 
+      # Vitest does not check types, so this catches type errors in tests before the slow steps.
+      - run: npx tsc --noEmit
+
       - run: npm test
 
       - name: Edge Function tests (Deno)
@@ -46,7 +58,7 @@ jobs:
         if: hashFiles('supabase/migrations/*.sql') != ''
         uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.122.0
 
       - name: Database tests (pgTAP)
         if: hashFiles('supabase/migrations/*.sql') != ''
@@ -87,7 +99,7 @@ jobs:
       - uses: supabase/setup-cli@v1
         if: steps.gate.outputs.skip == 'false'
         with:
-          version: latest
+          version: 2.122.0
 
       - name: Push migrations and deploy functions
         if: steps.gate.outputs.skip == 'false'

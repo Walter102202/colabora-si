@@ -84,4 +84,5 @@ npx supabase test db supabase/tests/agents/07_approvals.sql                     
 ## Working here
 
 - The branch prefix decides which track you are on; follow the ownership rules in `AGENTS.md`. On `main` you act for the maintainer and may touch infra files.
+- `tests/infra/migrationOrder.test.ts` judges gaps by the target: `main` and pull requests into it take none; a branch may skip only the numbers `OWNERS.json` reserves for a part that is not merged yet.
 - Private working context lives in gitignored files (`CLAUDE.local.md`, `CONTEXTO.md`). Nothing from them goes into versioned files, commits or the README.
