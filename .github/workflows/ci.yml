@@ -8,6 +8,12 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # A newer push on a branch replaces the run in progress; every commit on main gets its
+    # own run. At job level on purpose: a main run waiting for the production approval would
+    # hold a workflow-level group and stall every later main run.
+    concurrency:
+      group: check-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,6 +36,9 @@ jobs:
           node scripts/check-ownership.mjs --base origin/main
 
       - run: npm run lint
+
+      # Vitest does not check types, so this catches type errors in tests before the slow steps.
+      - run: npx tsc --noEmit
 
       - run: npm test
 
