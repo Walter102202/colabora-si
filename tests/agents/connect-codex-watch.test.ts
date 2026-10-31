@@ -26,7 +26,7 @@ async function exercise(waits: Answer[], options: {
     if (body.method.startsWith("notifications/")) return new Response(null, { status: 202 });
     const { name, arguments: args } = body.params;
     calls.push({ name, args });
-    let result = options.detail ?? { activities: [] };
+    let result: unknown = options.detail ?? { activities: [] };
     if (name === "get_task" && options.details) result = options.details[Math.min(detailIndex++, options.details.length - 1)];
     if (name === "wait_for_my_tasks") {
       result = waits[index++];
