@@ -32,7 +32,7 @@ function retain(pageId: string) {
       do {
         again = false;
         const columns = "id,request_kind,state,request,closed_at,updated_at,active_run_id";
-        const base = () => client.from("agent_tasks").select(columns).eq("row_page_id", pageId).not("request_kind", "is", null);
+        const base = () => client.from("agent_tasks").select(columns).eq("row_page_id", pageId).in("request_kind", ["fill", "rewrite"]);
         const [open, recent] = await Promise.all([
           base().in("state", ["queued", "working", "input_required", "ready_for_review"]),
           base().in("state", CLOSED).gte("updated_at", new Date(Date.now() - 600_000).toISOString()).order("updated_at", { ascending: false }).limit(50),

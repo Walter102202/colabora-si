@@ -45,7 +45,8 @@ export function RowPanel({ pageId }: RowPanelProps) {
   const pageTask = useAgentTasks((s) => taskForPage(s, pageId));
   // `?task=<id>` selects that task when it belongs to this row; otherwise the
   // person is told explicitly instead of being shown another task as if it were it.
-  const task = requested && requested.row_page_id === pageId ? requested : pageTask;
+  const openable = requested && requested.request_kind !== "lesson" && requested.request_kind !== "source_check";
+  const task = openable && requested.row_page_id === pageId ? requested : pageTask;
   const mismatch = requestedId && status === "ready" && (!requested || requested.row_page_id !== pageId) ? (requested ? "elsewhere" : "missing") : null;
   const onOpenTask = (rowPageId: string, taskId: string) => { void navigate(taskUrl(rowPageId, taskId)); };
   const onOpenPage = (id: string) => { void navigate(pageUrl(id)); };
