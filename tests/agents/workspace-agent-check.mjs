@@ -16,12 +16,12 @@ const run = randomUUID();
 const results = [];
 let page;
 const tasks = [
-  "Create a page under market-research titled P14 Muse guide, with sections for purpose, next steps and questions. Use only fictitious local content.",
-  "Create a CRM under market-research titled P14 Muse CRM, with a stage property, a board grouped by stage, a table view, and five fictitious company rows. Deliver the complete database in one call.",
+  `Create a new page under market-research titled P14 Muse guide ${run}, with sections for purpose, next steps and questions. Use only fictitious local content.`,
+  `Create a new CRM under market-research titled P14 Muse CRM ${run}, with a stage property, a board grouped by stage, a table view, and five fictitious company rows. Deliver the complete database in one call.`,
   () => `Move page ${page} under page market-research, then archive that page.`,
 ];
 for (const [index, assignment] of tasks.entries()) {
-  const messages = [{ role: "system", content: `${discovery.instructions}\nThis is a local test workspace. The writable parent is market-research. Use idempotency keys prefixed ${run}:${index}. Finish without asking questions.` },
+  const messages = [{ role: "system", content: `${discovery.instructions}\nThis is a local test workspace. The exact parent_id market-research is already verified to exist and to be writable. No discovery or schema lookup is needed for these new objects. Use idempotency keys prefixed ${run}:${index}. Finish without asking questions.` },
     { role: "user", content: typeof assignment === "function" ? assignment() : assignment }];
   const calls = [];
   let errors = 0;
@@ -34,10 +34,10 @@ for (const [index, assignment] of tasks.entries()) {
       try {
         output = await client.callTool(call.function.name, JSON.parse(call.function.arguments));
         if (index === 0 && call.function.name === "create_page") page = output.id;
-        calls.push({ tool: call.function.name, ok: true, result: output });
+        calls.push({ tool: call.function.name, arguments: JSON.parse(call.function.arguments), ok: true, result: output });
       } catch (error) {
         errors++; output = { error: error.code || error.message };
-        calls.push({ tool: call.function.name, ok: false, error: output.error });
+        calls.push({ tool: call.function.name, arguments: call.function.arguments, ok: false, error: output.error });
       }
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(output) });
     }

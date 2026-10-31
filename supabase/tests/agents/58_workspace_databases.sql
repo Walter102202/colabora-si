@@ -17,6 +17,11 @@ grant select on calls to authenticated, anon;
 select tests.set_anon();
 select is(tests.sqlstate_of(format('select public.%I(%L::jsonb,%L)',name,args,'deny')), '42501', name||' rejects anon') from calls;
 select tests.reset_role();
+select tests.make_user('outside-p14@test.local') as outsider \gset
+insert into public.workspaces(name,owner_id) values('Other workspace',:'outsider'::uuid);
+select tests.set_human(:'outsider'::uuid);
+select is(tests.sqlstate_of(format('select public.%I(%L::jsonb,%L)',name,args,'other-workspace')), 'PT403', name||' rejects another workspace member') from calls;
+select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'viewer')::uuid);
 select is(tests.sqlstate_of(format('select public.%I(%L::jsonb,%L)',name,args,'deny')), 'PT403', name||' rejects read-only') from calls;
 select tests.reset_role();
