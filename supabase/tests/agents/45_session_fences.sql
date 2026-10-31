@@ -1,5 +1,5 @@
 begin;
-select plan(25);
+select plan(29);
 select tests.fixture() as f \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid,p,'page_A') from unnest(array['fence_p','fence_s','fence_n','fence_w','fence_db']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid,'agent+fencelead@agents.invalid','lead','page_A') as lead \gset
@@ -95,6 +95,21 @@ update public.agent_tasks set delegate_agent_id=(:'lead'::jsonb->>'agent')::uuid
 update public.agent_runs set agent_id=(:'lead'::jsonb->>'agent')::uuid,status='running',ended_at=null,stop_requested_at=null where id=:'cr'::uuid;
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
 select is(tests.error_of(format('select public.update_brief(%L::uuid,%L::jsonb)',:'child','{"next_step":"Continue my own child"}')),'','a Lead can update its own live subtask without a parent run');
+select tests.reset_role();
+
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.reserve_environment(%L::uuid,%L::jsonb)',:'child','[{"kind":"branch","value":"a/own-child"}]')),'','the live own-child run can reserve without a live parent');
+select is(tests.error_of(format('select public.release_environment(%L::uuid)',:'child')),'','the live own-child run can confirm release without a live parent');
+select tests.reset_role();
+update public.agent_runs set status='running',ended_at=null,stop_requested_at=null where id=:'lr'::uuid;
+update public.agent_tasks set state='working',active_run_id=:'lr'::uuid where id=:'parent'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.update_brief(%L::uuid,%L::jsonb)',:'child','{"objective":"Full Lead correction"}')),'','claiming the own child does not remove active parent Lead authority');
+select tests.reset_role();
+update public.agent_runs set status='completed',ended_at=now() where id=:'lr'::uuid;
+update public.agent_tasks set active_run_id=null where id=:'parent'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.update_brief(%L::uuid,%L::jsonb)',:'child','{"objective":"Delegate escalation"}')),'field_not_allowed','own-child fallback does not grant full parent authority');
 select tests.reset_role();
 
 select * from finish();

@@ -239,8 +239,10 @@ begin
     if v_t.state in ('done','failed','cancelled') then raise exception using errcode='PT422',message='invalid_state'; end if;
     if exists (select 1 from public.agent_tasks p join public.agents a on a.id = p.delegate_agent_id
                 where p.id = v_t.parent_task_id and p.delegate_agent_id = v_agent and a.role = 'lead')
-       and not (v_t.delegate_agent_id=v_agent and exists(select 1 from public.agent_runs r where r.id=v_t.active_run_id
-         and r.agent_id=v_agent and r.status in ('running','waiting') and r.stop_requested_at is null)) then
+       and (v_t.delegate_agent_id is distinct from v_agent or exists(
+         select 1 from public.agent_tasks p join public.agent_runs r on r.id=p.active_run_id
+          where p.id=v_t.parent_task_id and p.state not in ('done','failed','cancelled')
+            and r.agent_id=v_agent and r.status in ('running','waiting') and r.stop_requested_at is null)) then
       perform private.require_active_task(v_t.parent_task_id);
       v_full := true;
     elsif v_t.delegate_agent_id = v_agent then

@@ -36,7 +36,11 @@ begin
     v_agent := private.current_agent_id();
     if v_agent is null then raise exception using errcode = 'PT403', message = 'agent_disabled'; end if;
     if not exists(select 1 from public.agents a where a.id=v_agent and a.role='lead') then return false; end if;
-    if exists(select 1 from public.agent_tasks p where p.id=p_t.parent_task_id and p.delegate_agent_id=v_agent) then
+    if exists(select 1 from public.agent_tasks p where p.id=p_t.parent_task_id and p.delegate_agent_id=v_agent)
+       and (p_t.delegate_agent_id is distinct from v_agent or p_t.state in ('done','failed','cancelled') or exists(
+         select 1 from public.agent_tasks p join public.agent_runs r on r.id=p.active_run_id
+          where p.id=p_t.parent_task_id and p.state not in ('done','failed','cancelled')
+            and r.agent_id=v_agent and r.status in ('running','waiting') and r.stop_requested_at is null)) then
       if p_t.state not in ('done','failed','cancelled') then perform private.require_active_task(p_t.parent_task_id); end if;
     elsif p_t.delegate_agent_id=v_agent then
       if p_t.state not in ('done','failed','cancelled') then perform private.require_active_task(p_t.id); end if;
