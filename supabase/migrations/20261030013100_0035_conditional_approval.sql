@@ -36,7 +36,8 @@ begin
   for v_b in select * from public.task_briefs order by task_id,version loop
     select * into v_old from public.task_briefs where task_id=v_b.task_id and version<v_b.version order by version desc limit 1;
     update public.task_briefs set trusted_preapprovals=private.next_preapproval_trust(coalesce(v_old.policies,'{}'),coalesce(v_old.trusted_preapprovals,'{}'),v_b.policies,
-      v_b.author_type='human' and v_b.preapproved_trusted) where task_id=v_b.task_id and version=v_b.version;
+      v_b.author_type='human' and v_b.preapproved_trusted
+        and exists(select 1 from public.agent_tasks t where t.id=v_b.task_id and t.owner_user_id=v_b.author_id)) where task_id=v_b.task_id and version=v_b.version;
   end loop;
 end $$;
 
