@@ -73,5 +73,16 @@ select public.workspace_comment('page_A','Retry-safe comment',null,null,'comment
 select is(public.workspace_comment('page_A','Retry-safe comment',null,null,'comment'),:'comment'::jsonb,'comment retries return same result');
 select is((select count(*) from public.pages p,lateral jsonb_array_elements(p.data->'comments') c where p.id='page_A' and c->>'body'='Retry-safe comment'),1::bigint,'comment retry never duplicates');
 select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.apply_page_ops('page_A','[{"op":"insert_block","block":{"id":"original-sync","type":"synced","html":""}}]');
+select public.duplicate_page('{"page_id":"page_A","parent_id":"page_B"}','sync-copy') as sync_copy \gset
+select is((select b->>'syncedFrom' from public.pages p,lateral jsonb_array_elements(p.data->'blocks') b where p.id=:'sync_copy'::jsonb->>'id' and b->>'type'='synced'),'original-sync','duplicating original synced blocks preserves source key');
+select public.apply_page_ops('private_P','[{"op":"insert_block","block":{"id":"private-sync","type":"synced","html":""}}]');
+select public.apply_page_ops('page_B','[{"op":"insert_block","block":{"id":"transclusion","type":"synced","pageId":"private_P","syncedFrom":"private-sync","html":""}}]');
+select public.apply_workspace_ops((:'f'::jsonb->>'ws')::uuid,'[{"op":"synced_set","key":"private-sync","blocks":[{"id":"secret","type":"paragraph","html":"private content"}]}]');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'viewer')::uuid);
+select ok(not (public.workspace_page_bundle('page_B')->'syncedBlocks') ? 'private-sync','workspace bundle never carries synced content from a private page');
+select tests.reset_role();
 select * from finish();
 rollback;

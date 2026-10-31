@@ -53,8 +53,16 @@ select public.delete_view(jsonb_build_object('database_id',:'crm'::jsonb->>'id',
 select is(tests.error_of(format('select public.delete_view(%L::jsonb,%L)',jsonb_build_object('database_id',:'crm'::jsonb->>'id','name','Table'),'lastview')),'last_view','cannot remove last view');
 select public.update_database(jsonb_build_object('database_id',:'crm'::jsonb->>'id','properties','[{"name":"Stage","rename":"Status"}]'::jsonb),'renameprop');
 select is((select data->'database'->'properties'->1->>'name' from public.pages where id=(:'crm'::jsonb->>'id')),'Status','property rename preserves identity');
+select data->'database'->'rows'->0->>'pageId' as archived_row_page from public.pages where id=(:'crm'::jsonb->>'id') \gset
 select public.delete_row(jsonb_build_object('database_id',:'crm'::jsonb->>'id','row_id',data->'database'->'rows'->0->>'id'),'deleterow') from public.pages where id=(:'crm'::jsonb->>'id');
-select ok((select p.deleted_at is not null from public.pages d join public.pages p on p.id=d.data->'database'->'rows'->0->>'pageId' where d.id=(:'crm'::jsonb->>'id')),'row archive keeps row and page');
+select ok((select deleted_at is not null from public.pages where id=:'archived_row_page'),'row archive retains its page');
+select is((select jsonb_array_length(data->'database'->'rows') from public.pages where id=(:'crm'::jsonb->>'id')),0,'archived row is absent from table and board membership');
+select lives_ok(format('select public.duplicate_page(%L::jsonb,%L)',jsonb_build_object('page_id',:'crm'::jsonb->>'id','parent_id','page_A'),'copy-archived'),'database with an archived row can be duplicated');
+select public.restore_page(jsonb_build_object('page_id',:'archived_row_page'),'restore-row');
+select is((select jsonb_array_length(data->'database'->'rows') from public.pages where id=(:'crm'::jsonb->>'id')),1,'restore reinstates archived row membership');
+select public.set_view(jsonb_build_object('database_id',:'crm'::jsonb->>'id','view','{"name":"Filtered","type":"table","filters":[{"property":"Status","operator":"is","value":"New"}]}'::jsonb),'filter');
+select is((select data->'database'->'views'->1->'filters'->0->>'value' from public.pages where id=(:'crm'::jsonb->>'id')),
+ (select data->'database'->'properties'->1->'options'->0->>'id' from public.pages where id=(:'crm'::jsonb->>'id')),'saved filters resolve option names to stored ids');
 select is(coalesce(current_setting('app.ops_write',true),''),'','write capability cleared');
 select tests.reset_role();
 select * from finish();
