@@ -79,6 +79,7 @@ With a seeded, served local stack and its public key in `.env.local`, set `P11_T
 | Tasks | `list_my_tasks`, `get_task`, `claim_task`, `save_checkpoint`, `hand_over`, `post_activity`, `add_artifact`, `request_input`, `await_questions`, `request_approval`, `submit_for_review`, `send_message`, `heartbeat`, `end_run`, `ack_stop`, `begin_external_op`, `finish_external_op` |
 | Dependencies | `list_my_tasks`: a task with `blocked_by` is waiting for those tasks to finish: do not claim it. |
 | Learning | `get_context_package`, `cite_lesson`, `propose_lesson`, `declare_sources`: lessons people accepted reach the next agent, each with why it is there |
+| A person and the agent | `relay_person_message` hands over what a person sent on a chat channel, `reply_person_message` answers; `deliver_person_replies` retries and acknowledges persisted channel replies. The platform loop calls them and hides them from the model. `save_to_notes` is the agent's skill for "save this in notes": its model calls it with the person's message, and the server checks that message before writing. |
 | AI requests | `get_ai_request`, `fill_ai_cells`, `complete_ai_request`, `complete_lesson_request`, `report_source_check`: the platform agent's loop calls them; writes from other runs return `not_a_request_run`. |
 | AI rewrite | `apply_ai_rewrite`: the platform loop rewrites the selected block with attribution and an Undo action; other runs get `not_a_request_run`. |
 | Comment tasks | A person's @agent mention creates a task when the page has no open work task. `add_comment` accepts `parent_id` to reply in the same thread; an agent's mention never creates work. |
@@ -145,7 +146,7 @@ npx supabase start           # Postgres 17, Auth, Realtime, Storage, Edge Functi
 cp .env.example .env.local   # set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY; `npx supabase status` prints both
 npx supabase db reset        # migrations and seeds (demo workspace, four demo agents)
 cp supabase/functions/.env.example supabase/functions/.env   # set AGENT_LOGIN_PEPPER=local-dev-login-pepper to unlock the four seeded agent tokens
-npx supabase functions serve --env-file supabase/functions/.env   # mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, github-webhook, pub-html, send-*
+npx supabase functions serve --env-file supabase/functions/.env   # mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, github-webhook, voice-transcribe, pub-html, send-*
 ```
 
 Restart `npm run dev` and sign in as `owner@demo.local`; the password is in `supabase/seeds/01_workspace.sql`.
@@ -176,7 +177,7 @@ components/     UI; components/agents/ holds the agent-layer surfaces, component
 lib/            domain types, store, pure engines (markdown, formulas, block operations, sync)
 supabase/
   migrations/   numbered SQL, one concern per file: core, agents, tasks, writes, control, dispatch, Lead, decisions, metrics, AI, OAuth, CI evidence
-  functions/    mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, github-webhook, pub-html, send-reminders, send-email
+  functions/    mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, github-webhook, voice-transcribe, pub-html, send-reminders, send-email
   tests/        pgTAP suites (clone/, agents/)
   seeds/        demo workspace and demo agents
 agent/          reference agent over an OpenAI-compatible model slot
@@ -200,3 +201,13 @@ See [`AGENTS.md`](AGENTS.md) for how the repository is organized, built and veri
 ## License
 
 MIT
+
+### Trama, voice and personal notes
+
+Trama stays visible in the signed-in workspace. It can answer about the open page, explain selected text, and name decisions waiting for you. Page context is checked against the person's access and bounded to 6,000 characters (selection: 2,000). Suggestions are local and use no model.
+
+When Trama proposes work, **Do it** creates a normal task with your original message as its objective. A proposal alone changes no page. An existing active task on that page must be handled through the normal task flow.
+
+Voice is transcribed through `voice-transcribe`; browser clips are reviewed before sending. Audio stays in memory and is not stored by colabora.si. Meta receives it for transcription; Telegram retains its own copy. Limits are five minutes in the app, ten minutes for Telegram voice notes, plus person, workspace-agent budget and global quotas enforced by the server before calling Meta. Telegram requires `ffmpeg` on the agent host.
+
+Explicit requests such as “save in notes: buy bread” are verified from the original person message before the agent can save. Pasted or forwarded text cannot authorize saving. Notes are private by default; Undo and `/undo` or `/deshacer` remove a saved note. The platform runtime must be running to answer and save; messages remain queued while it is unavailable.

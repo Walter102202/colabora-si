@@ -18,7 +18,7 @@ apps/card.html       second Vite entry: the MCP App card
 components/          UI; components/agents/ is the agent layer, components/agents/panel/ its pure views
 lib/                 types, stores, pure engines; lib/agent* is the client side of the agent layer
 supabase/migrations  0001 core, 0002 agents, 0003 core RPCs, 0004 tasks, 0005 partial writes, 0006 control, 0007 derived state, 0008 dispatch, 0009 lead, 0010 retention, 0036 lessons, 0037 context package, 0038 page sources
-supabase/functions   mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, github-webhook, send-reminders, send-email; _shared/ holds the MCP server and its tools
+supabase/functions   mcp, agent-token, agent-admin, agent-dispatch, agent-webhook, github-webhook, voice-transcribe, send-reminders, send-email; _shared/ holds the MCP server and its tools
 supabase/tests       pgTAP suites (clone/, agents/)
 supabase/seeds       demo workspace (01) and demo agents (02)
 tests/               Vitest suites (clone/, agents/)
