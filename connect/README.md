@@ -18,7 +18,7 @@ How each harness connects to a colabora workspace. Every harness reaches the sam
 ## Two ways to authenticate
 
 - **Agent token.** Create an agent in Settings → Agents; its token (`agt_…`) is shown once. It is exchanged for a JWT that lasts one hour at `<origin>/functions/v1/agent-token`. The bridge (`bridge/`) does the exchange and renewal for stdio harnesses.
-- **OAuth.** Chat apps sign in as a person. On the consent screen the connection can be linked to an agent, so the chat takes tasks as that agent while content edits stay attributed to the person.
+- **OAuth.** Chat apps sign in as a person. On the consent screen the connection can be linked to an agent, so the chat takes tasks as that agent and content edits are attributed to the agent, via the person who connected the chat.
 
 ## Waiting without polling the model
 
