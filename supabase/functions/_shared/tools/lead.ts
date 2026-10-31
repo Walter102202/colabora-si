@@ -6,6 +6,7 @@ import type { ToolContext, ToolDef } from '../mcp.ts';
 import { validate } from '../jsonSchema.ts';
 import { num, object, output, plural, READ, str, WRITE } from './common.ts';
 import type { Row } from './taskData.ts';
+import { contextPackage } from './context.ts';
 
 const doneWhenItem = object({
   id: { type: 'string', minLength: 1, maxLength: 60 },
@@ -126,6 +127,7 @@ const createTask: ToolDef = {
         p_harness: str(args.harness) ?? 'custom',
       })) ?? {};
       structured.run_id = claim.run_id;
+      structured.context_package = await contextPackage(ctx, String(claim.run_id), String(row.page_id), claim.brief as Row | null);
     }
     return {
       text: `Task ${String(created.task_id)} created on page ${row.page_id}${structured.run_id ? `; run ${String(structured.run_id)} started` : ''}.`,

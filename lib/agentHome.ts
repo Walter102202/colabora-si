@@ -44,7 +44,7 @@ export function buildDecisionsHome({ tasks, approvals, runs, agents, userId, now
     waitingTasks.add(t.id);
   }
   for (const t of tasks) {
-    if (t.owner_user_id !== userId) continue;
+    if (t.owner_user_id !== userId || t.request_kind) continue;
     if (t.state === "input_required" && !waitingTasks.has(t.id) && t.waiting_on !== "lead" && t.waiting_on !== "agent") {
       home.waiting.push({ ...item(t, "waiting", "Waiting for you"), at: t.updated_at });
     }

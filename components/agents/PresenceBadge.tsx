@@ -1,5 +1,6 @@
 "use client";
 
+import { SourcesBadge } from "@/components/agents/SourcesBadge";
 import { useAgentsStore } from "@/lib/agentsStore";
 import { activeRunFor, taskForPage, useAgentTasks } from "@/lib/agentTasks";
 import { formatRelative } from "@/lib/utils";
@@ -11,6 +12,10 @@ export interface PresenceBadgeProps {
 }
 
 export function PresenceBadge({ pageId }: PresenceBadgeProps) {
+  return <><SourcesBadge pageId={pageId} /><RunBadge pageId={pageId} /></>;
+}
+
+function RunBadge({ pageId }: PresenceBadgeProps) {
   const task = useAgentTasks((s) => taskForPage(s, pageId));
   const run = useAgentTasks((s) => (task ? activeRunFor(s, task) : null));
   const agent = useAgentsStore((s) => (run ? s.agents.find((a) => a.id === run.agent_id) : undefined));

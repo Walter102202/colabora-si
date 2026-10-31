@@ -23,6 +23,7 @@ import type { AutonomyLevel, TaskAutonomy } from "@/lib/agentAutonomy";
 import type { TaskDiff } from "@/lib/agentRunDiff";
 import { approvalIdFromHash, openQuestionsFor } from "@/lib/agentCard";
 import { setMergeRule } from "@/lib/agentActions";
+import { TaskLessons } from "@/components/agents/TaskLessons";
 import { AssignView, TaskView, type SubtaskItem } from "@/components/agents/panel";
 
 // Agent layer plug. Mounted by the page view of a database row, under the row
@@ -45,7 +46,8 @@ export function RowPanel({ pageId }: RowPanelProps) {
   const pageTask = useAgentTasks((s) => taskForPage(s, pageId));
   // `?task=<id>` selects that task when it belongs to this row; otherwise the
   // person is told explicitly instead of being shown another task as if it were it.
-  const task = requested && requested.row_page_id === pageId ? requested : pageTask;
+  const openable = requested && requested.request_kind !== "lesson" && requested.request_kind !== "source_check";
+  const task = openable && requested.row_page_id === pageId ? requested : pageTask;
   const mismatch = requestedId && status === "ready" && (!requested || requested.row_page_id !== pageId) ? (requested ? "elsewhere" : "missing") : null;
   const onOpenTask = (rowPageId: string, taskId: string) => { void navigate(taskUrl(rowPageId, taskId)); };
   const onOpenPage = (id: string) => { void navigate(pageUrl(id)); };
@@ -182,6 +184,7 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
 
   return (
     <TaskView
+      lessons={<TaskLessons workspaceId={task.workspace_id} taskId={task.id} />}
       task={task}
       metrics={metrics}
       agent={agent}

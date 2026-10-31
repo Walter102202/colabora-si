@@ -27,3 +27,6 @@ export type { ApprovalDecision, MessageSignal } from "@/lib/agentActions";
 export type { ContinuityInfo } from "@/lib/agentContinuity";
 export { RunDiffCard } from "@/components/agents/panel/RunDiffCard";
 export type { TaskDiff, RunDiff, DiffItem } from "@/lib/agentRunDiff";
+export { LessonCard } from "@/components/agents/panel/LessonCard";
+export { HomeCards } from "@/components/agents/panel/HomeCards";
+export { DiscrepancyCard } from "@/components/agents/panel/DiscrepancyCard";

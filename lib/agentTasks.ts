@@ -9,7 +9,7 @@ import type { Acceptance, RunStatus, TaskState } from "@/lib/agentState";
 // Writes go through the control RPCs in lib/agentActions.ts.
 
 export interface TaskRow {
-  request_kind?: "fill" | "rewrite" | null;
+  request_kind?: "fill" | "rewrite" | "lesson" | "source_check" | null;
   id: string;
   workspace_id: string;
   context_id: string;
