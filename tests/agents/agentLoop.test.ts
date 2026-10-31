@@ -694,7 +694,7 @@ it("acknowledges only model-delivered notices when a batch exceeds maxTasks", as
   await runAgent({mcp,model,clock:fakeClock(),maxTasks:1});
   expect(attempts).toBe(2);
   expect(model.requests).toHaveLength(1);
-  expect([...pending.keys()]).toEqual(["one"],"the model failure remains recoverable after the other notice was delivered");
+  expect([...pending.keys()],"the model failure remains recoverable after the other notice was delivered").toEqual(["one"]);
   await runAgent({mcp,model:createStubModel([{content:"Handle the remaining notice."}]),clock:fakeClock(),maxTasks:1});
   expect(pending.size).toBe(0);
 });

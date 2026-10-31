@@ -372,4 +372,3 @@ select tests.reset_role();
 
 select * from finish();
 rollback;
-
