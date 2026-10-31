@@ -9,8 +9,9 @@
 //   [SMOKE_TASK_ID=<queued task delegated to the agent>] \
 //   node tests/agents/mcp-smoke.mjs
 //
+// Task steps (when SMOKE_TASK_ID is set): claim_task first, because an agent writes pages only inside an active run;
+// after the page steps: post_activity -> add_artifact -> submit_for_review.
 // Page steps: tools/list, read_page, append_blocks, edit_page with a stale rev -> block_conflict with the current text.
-// Task steps (when SMOKE_TASK_ID is set): claim_task -> post_activity -> add_artifact -> submit_for_review.
 
 const env = process.env;
 const missing = ["MCP_URL", "AGENT_PAT", "SMOKE_PAGE_ID"].filter((name) => !env[name]);
@@ -94,10 +95,11 @@ async function pageSteps() {
   check(String(conflict.data.detail?.text ?? "").includes(`${marker} second`), "the conflict carries the current text");
 }
 
-async function taskSteps() {
+// Agents write pages only inside an active run (migration 0013): the task is claimed before the page steps.
+async function claimTask() {
   if (!env.SMOKE_TASK_ID) {
-    console.log("skip - task steps (set SMOKE_TASK_ID)");
-    return;
+    console.log("skip - task steps (set SMOKE_TASK_ID; without a run of this agent the page writes return run_not_active)");
+    return null;
   }
   const taskId = env.SMOKE_TASK_ID;
   const waited = await ok("wait_for_my_tasks", {});
@@ -105,6 +107,10 @@ async function taskSteps() {
 
   const claim = await ok("claim_task", { task_id: taskId, harness: "custom", external_session_id: "mcp-smoke" });
   check(claim.task_id === taskId && typeof claim.run_id === "string", `claim_task starts run ${claim.run_id}`);
+  return { taskId, claim };
+}
+
+async function deliverTask({ taskId, claim }) {
   const runId = claim.run_id;
   const criteria = (claim.brief?.done_when ?? []).filter((c) => c.check !== "human").map((c) => c.id);
 
@@ -125,8 +131,9 @@ async function taskSteps() {
 
 try {
   await exchange();
+  const task = await claimTask();
   await pageSteps();
-  await taskSteps();
+  if (task) await deliverTask(task);
   console.log("mcp-smoke: all checks passed");
 } catch (error) {
   console.error(`mcp-smoke: FAILED - ${error instanceof Error ? error.message : String(error)}`);
