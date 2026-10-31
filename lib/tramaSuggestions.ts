@@ -16,5 +16,5 @@ export function tramaSuggestions(ctx: TramaContext): string[] {
     database: es ? "¿Qué sigue abierto aquí?" : "What is still open here?",
     task: es ? "¿Qué está frenando esta tarea?" : "What is blocking this task?",
   };
-  return [...suggestions, labels[ctx.kind]].slice(0, 3);
+  return [...suggestions, labels[ctx.kind], es ? "¿Cómo va todo?" : "How is everything going?"].slice(0, 3);
 }

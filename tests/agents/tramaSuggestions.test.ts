@@ -7,6 +7,7 @@ it.each(["en", "es"] as const)("prioritizes selection, decisions and context in 
 });
 it.each(["home", "text", "database", "task"] as const)("provides a context suggestion for %s", (kind) => {
   const result = tramaSuggestions({ kind, selection: false, decisions: 0, lang: "en" });
-  expect(result).toHaveLength(1);
+  expect(result).toHaveLength(2);
+  expect(result[1]).toBe("How is everything going?");
   expect(result[0]).toBe({ home: "What should I look at today?", text: "Summarize this page", database: "What is still open here?", task: "What is blocking this task?" }[kind]);
 });
