@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guide for coding agents working in this repository. Read it before changing anything.
+Guide for coding agents working in this repository. Read it before changing anything. The delivery rules are in [CONSTITUTION.md](CONSTITUTION.md) and operating production is in [RUNBOOK.md](RUNBOOK.md).
 
 ## What this is
 
@@ -118,7 +118,7 @@ Props, tool schemas and RPC signatures are contracts: agree a change with the ot
 ## Do not
 
 - Commit secrets or `.env*` files; the `.env.example` files are the only versioned ones. Nothing under `.local/` is versioned.
-- Deploy from a branch. `main` is the only source of a deployment; CI pushes migrations and functions from it.
+- Deploy from a branch. `main` is the only source of a deployment: Vercel publishes the web app on every push to it, and the backend is deployed by hand from a clean checkout of it (RUNBOOK.md). CI deploys nothing.
 - Open pull requests or merge. Push the branch and report what changed, how it was verified and what is blocked.
 - Edit another track's files, `package.json` or the root configs from a track branch.
 - Delete branches, rewrite published history or force-push.

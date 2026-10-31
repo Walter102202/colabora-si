@@ -232,7 +232,7 @@ Local checks: `node tests/agents/workspace-mcp-smoke.mjs` exercises the served P
 - **Hand-made engines.** Markdown, LaTeX, code highlighting, emoji, ZIP, sanitization and Web Push are written in-house; no new dependencies.
 - **Everything is tested.** Vitest for the client and the Node tools, Deno tests for the Edge Functions, pgTAP for the database.
 
-See [`AGENTS.md`](AGENTS.md) for how the repository is organized, built and verified.
+See [`AGENTS.md`](AGENTS.md) for how the repository is organized, built and verified, and [`CONSTITUTION.md`](CONSTITUTION.md) for how a change reaches production.
 
 ## License
 

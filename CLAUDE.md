@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 @AGENTS.md
 
-`AGENTS.md` (imported above) is the guide shared by every coding agent: stack, folders, run and verify commands, conventions, contracts and the "do not" list. Read it first. This file adds what is not written there: the commands that are easy to get wrong and the architecture that only shows up when you read several files together.
+`AGENTS.md` (imported above) is the guide shared by every coding agent: stack, folders, run and verify commands, conventions, contracts and the "do not" list. Read it first. `CONSTITUTION.md` holds the delivery rules and `RUNBOOK.md` how production is deployed, checked and rolled back. This file adds what is not written there: the commands that are easy to get wrong and the architecture that only shows up when you read several files together.
 
 ## Commands beyond AGENTS.md
 
@@ -20,9 +20,9 @@ npx supabase test db supabase/tests/agents/07_approvals.sql                     
 - `npm run build` runs two Vite entries: `index.html` (the workspace) and `apps/card.html` (the MCP Apps card).
 - `npm run build:card` regenerates `supabase/functions/_shared/cardHtml.ts` from the card entry. Run it after any change under `components/agents/card/` or `components/agents/panel/` and commit the generated file; a deploy never builds it.
 - Card without a chat host: `http://127.0.0.1:3000/apps/card.html?mock=<scenario>` (scenarios in `components/agents/card/mock.ts`).
-- Three checks run only against a served local stack and are not part of `npm test`: `node tests/agents/mcp-smoke.mjs` (needs `MCP_URL`, `AGENT_PAT`, `SMOKE_PAGE_ID`), `tests/agents/sql-concurrency.test.ts` (skips unless `A_DB_URL` is set), and `node tests/agents/loop-e2e.mjs` (reads the local URL/public key from `.env.local`, uses all four seed agents and the seed owner). The loop script refuses hosted endpoints, uses only this checkout's configured database container and performs no real merge, deployment or message to Codex. The seed credentials work only with the local pepper; never print them.
+- Three checks run only against a served local stack and are not part of `npm test`: `node tests/agents/mcp-smoke.mjs` (needs `MCP_URL`, `AGENT_PAT`, `SMOKE_PAGE_ID`; CI runs it with the seed agent), `tests/agents/sql-concurrency.test.ts` (skips unless `A_DB_URL` is set), and `node tests/agents/loop-e2e.mjs` (reads the local URL/public key from `.env.local`, uses all four seed agents and the seed owner). The loop script refuses hosted endpoints, uses only this checkout's configured database container and performs no real merge, deployment or message to Codex. The seed credentials work only with the local pepper; never print them.
 - `scripts/check-ownership.mjs` counts untracked files too, and skips (exit 0) on `main` or on any branch without an `a/`, `b/` or `infra/` prefix. CI runs it on every push with `--base origin/main`.
-- `main` deploys: the CI job pushes migrations and deploys Edge Functions from `main` only, and only when the Supabase secrets are configured.
+- `main` deploys: Vercel publishes the web app on every push to `main` without waiting for CI; the backend is deployed by hand from a clean checkout of `main` (`RUNBOOK.md`). The `deploy-backend` job has no secrets and skips its steps. The `check` job also runs `tests/agents/mcp-smoke.mjs` against the Edge Functions that `supabase start` serves.
 
 ## Architecture
 
