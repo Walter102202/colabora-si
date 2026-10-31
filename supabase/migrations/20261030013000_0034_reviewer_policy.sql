@@ -256,22 +256,33 @@ begin
 end $$;
 revoke all on function private.notify_review_queue_timeouts() from public;
 
-create or replace function private.cancel_obsolete_reviews()
-returns trigger language plpgsql security definer set search_path = '' as $$
-declare v_review public.agent_tasks%rowtype;
+create or replace function private.cancel_review_task(p_review_id uuid)
+returns void language plpgsql security definer set search_path = '' as $$
+declare v_review public.agent_tasks%rowtype; v_subject text;
 begin
-  for v_review in select rt.* from public.agent_tasks rt join public.task_briefs b on b.task_id=rt.id and b.version=rt.brief_version
-    where b.policies->>'review_of'=new.id::text and rt.state not in ('done','failed','cancelled') for update of rt loop
+  select * into v_review from public.agent_tasks where id=p_review_id for update;
+  if not found or v_review.state in ('done','failed','cancelled') then return; end if;
+  select policies->>'review_of' into v_subject from public.task_briefs where task_id=v_review.id and version=v_review.brief_version;
     if v_review.active_run_id is not null then
       perform private.detach_task_links(v_review.active_run_id);
       update public.agent_runs set status='cancelled',ended_at=now(),stop_requested_at=now(),error_message='review no longer needed'
         where id=v_review.active_run_id and status in ('running','waiting');
       insert into public.agent_events(workspace_id,task_id,run_id,agent_id,type,payload,seq)
       values(v_review.workspace_id,v_review.id,v_review.active_run_id,v_review.delegate_agent_id,'task.stop',
-        jsonb_build_object('reason','review_obsolete','review_of',new.id),private.next_event_seq(v_review.id));
+        jsonb_build_object('reason','review_obsolete','review_of',v_subject),private.next_event_seq(v_review.id));
     end if;
     update public.agent_tasks set state='cancelled',active_run_id=null,closed_at=now(),waiting_on=null,updated_at=now() where id=v_review.id;
-    perform private.audit(v_review.workspace_id,'task.review_cancelled',jsonb_build_object('task_id',v_review.id,'review_of',new.id));
+    perform private.audit(v_review.workspace_id,'task.review_cancelled',jsonb_build_object('task_id',v_review.id,'review_of',v_subject));
+end $$;
+revoke all on function private.cancel_review_task(uuid) from public;
+
+create or replace function private.cancel_obsolete_reviews()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_review public.agent_tasks%rowtype;
+begin
+  for v_review in select rt.* from public.agent_tasks rt join public.task_briefs b on b.task_id=rt.id and b.version=rt.brief_version
+    where b.policies->>'review_of'=new.id::text and rt.state not in ('done','failed','cancelled') for update of rt loop
+    perform private.cancel_review_task(v_review.id);
   end loop;
   return null;
 end $$;
@@ -279,3 +290,16 @@ revoke all on function private.cancel_obsolete_reviews() from public;
 create trigger agent_tasks_cancel_obsolete_reviews after update of state on public.agent_tasks
   for each row when (old.state is distinct from new.state and (new.state in ('done','failed','cancelled') or old.state='ready_for_review'))
   execute function private.cancel_obsolete_reviews();
+
+-- One-time cleanup also covers reviews made obsolete before this trigger existed (0018 onward).
+do $$
+declare v_id uuid;
+begin
+  for v_id in select rt.id from public.agent_tasks rt join public.task_briefs b on b.task_id=rt.id and b.version=rt.brief_version
+    left join public.agent_tasks subject on subject.id::text=b.policies->>'review_of'
+    where rt.state not in ('done','failed','cancelled') and b.policies ? 'review_of'
+      and (subject.id is null or subject.state<>'ready_for_review'
+        or subject.workspace_id<>rt.workspace_id or subject.parent_task_id is distinct from rt.parent_task_id) loop
+    perform private.cancel_review_task(v_id);
+  end loop;
+end $$;
