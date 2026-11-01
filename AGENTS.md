@@ -139,10 +139,10 @@ Migrations 0047-0048 and pgTAP 57-58 implement these operations. Calculated prop
 
 Local checks: `node tests/agents/workspace-mcp-smoke.mjs` exercises the served P14 runtime. `node tests/agents/workspace-agent-check.mjs` sends fictitious local tasks to Muse using the authorized credential file, without printing it. Use the isolated `colabora-si-p14` stack on 60990-60999.
 
-## Account email access (0053)
+## Account email access (0052)
 
 `account-link` is public, origin-checked and body-bounded. It returns the same answer before account lookup, rate limits or delivery finish (`EdgeRuntime.waitUntil`). The service-only RPCs `account_link_allowed` and `account_link_target` enforce persistent hourly limits (20/IP, 5/email) and validate workspace-token/email/expiry binding. Unknown emails and agents never reach link generation on the public path. Never use `resetPasswordForEmail`, Auth SMTP or the Send Email Hook.
 
 `send-email` accepts authenticated pg_net workspace invitations using the existing `cron_secret`; `RESEND_API_KEY` and `APP_URL` come from function environment variables. Only this reserved invitation path may create a new Auth user. `/set-password` consumes invite/recovery tokens on submit, handles TOTP, and carries `invite` to Home for `accept_invitation`.
 
-Migration 0053 leaves 0052 reserved for plan-connect. `private.invite_allowance.maximum` is the single server allowance. `private.invite_recipients` is a lifetime owner/email ledger; pre-migration recipients are exempt, deleting a member/invitation does not refund, and owner requests serialize across workspaces. Direct member inserts are restricted to the actual owner's own bootstrap row. Invitations and membership identities cannot be inserted/changed directly; ownership cannot be transferred through browser table updates. Use the RPC in fixtures acting as a person. See README for allowance maintenance.
+`private.invite_allowance.maximum` is the single server allowance. `private.invite_recipients` is a lifetime owner/email ledger; pre-migration recipients are exempt, deleting a member/invitation does not refund, and owner requests serialize across workspaces. Direct member inserts are restricted to the actual owner's own bootstrap row. Invitations and membership identities cannot be inserted/changed directly; ownership cannot be transferred through browser table updates. Use the RPC in fixtures acting as a person. See README for allowance maintenance.

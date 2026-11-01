@@ -244,7 +244,7 @@ Log in offers **Forgot password?**. Expired links offer **Send me a new link**. 
 
 Configure `RESEND_API_KEY` and `APP_URL` in the Edge Function environment. Keep the existing `project_url`/`cron_secret` dispatch configuration for pg_net. No Resend credentials belong in the database. Auth generates links but sends no email: SMTP, dashboard templates and the Send Email Hook are not part of this flow. The email copy assumes Auth email OTP expiry is 86400 seconds. A workspace invitation remains valid for seven days; renewing an expired Auth link does not extend that deadline.
 
-Each owner may invite one new person across all their workspaces. Reinviting the same normalized email or changing its role uses the original slot. Removing invitations or members does not refund it. Recipients present before migration 0053 are exempt. Direct member insertion is limited to creating the owner's own row; other membership/invitation creation uses `invite_member` and `accept_invitation`. Direct ownership transfer is disabled while this access limit applies.
+Each owner may invite one new person across all their workspaces. Reinviting the same normalized email or changing its role uses the original slot. Removing invitations or members does not refund it. Recipients present before migration 0052 are exempt. Direct member insertion is limited to creating the owner's own row; other membership/invitation creation uses `invite_member` and `accept_invitation`. Direct ownership transfer is disabled while this access limit applies.
 
 The one server setting is `private.invite_allowance.maximum`. From an authorized administrative SQL session, raise it with:
 
@@ -259,4 +259,4 @@ update private.invite_recipients set counted = false
 where owner_id = '<owner UUID>' and email = lower(btrim('<recipient email>'));
 ```
 
-This changes only quota accounting; it does not remove membership or invalidate a pending invite. The current UI message says "You can invite 1 person for now." Update that copy when raising the server allowance. Migration 0052 is reserved for plan-connect; 0053 may land on main only after that gap is filled. No `supabase config push` is needed for this change.
+This changes only quota accounting; it does not remove membership or invalidate a pending invite. The current UI message says "You can invite 1 person for now." Update that copy when raising the server allowance. No `supabase config push` is needed for this change.
