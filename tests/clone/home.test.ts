@@ -14,6 +14,12 @@ vi.mock("@/lib/agentClient", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/agentClient")>()),
   getAgentClient: () => ({}),
 }));
+// This suite checks the signed-in Home, after connection onboarding has settled.
+// Keep that fixture independent of whether local integration credentials are configured.
+vi.mock("@/lib/agentConnect", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/agentConnect")>()),
+  useConnectGate: () => "hide",
+}));
 
 const task: TaskRow = {
   id: "t1", workspace_id: "ws-1", context_id: "c1", db_page_id: "db", row_page_id: "row-1", title: "Weekly summary",
