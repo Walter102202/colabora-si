@@ -3,6 +3,7 @@ import { jobState, jobWait, subWait, type JobTask } from "@/lib/agentJobs";
 import { waitsForAcceptance } from "@/lib/agentState";
 import { deliverySummary } from "@/lib/agentTaskText";
 import { waitingOnYou, type ActivityRow, type TaskRow } from "@/lib/agentTasks";
+import { waitingOnYouCount, waitingOnYouRows } from "@/lib/databaseTaskValues";
 
 const task = (id: string, patch: Partial<TaskRow>) => ({
   id, state: "working", review_state: "none", parent_task_id: null, request_kind: null, waiting_on: null,
@@ -55,5 +56,21 @@ describe("the paragraph a person reads", () => {
   it("stays short and never comes up empty", () => {
     expect(deliverySummary([activity({ text: "x".repeat(900), submit: true })]).length).toBeLessThanOrEqual(601);
     expect(deliverySummary([])).toBe("The work is delivered and ready for you to check.");
+  });
+});
+
+describe("the Waiting on you view", () => {
+  const rows = [
+    { id: "job", cells: { status: "ready_for_review", wait: "You 1" } },
+    { id: "sub", parentRowId: "job", cells: { status: "ready_for_review", wait: "You" } },
+    { id: "busy", cells: { status: "working", wait: "Lead" } },
+    { id: "ask", cells: { status: "waiting_workers", wait: "You 1" } },
+    { id: "answer", parentRowId: "ask", cells: { status: "input_required", wait: "You" } },
+  ];
+  it("lists a delivered job with what it delivered", () => {
+    expect(waitingOnYouRows(rows, "status", "wait").map((row) => row.id)).toEqual(["job", "sub", "answer"]);
+  });
+  it("counts a delivered job once, because one Accept settles it", () => {
+    expect(waitingOnYouCount(rows, "status", "wait")).toBe(2);
   });
 });

@@ -8,12 +8,12 @@ export interface JobsBoardCard {
   progress?: { done: number; total: number };
   waiting: JobWaiting;
 }
-const laneOf = (state: JobState) => state === "needs_lead" || state === "ready" ? state : ["done", "failed", "cancelled"].includes(state) ? "done" : "working";
-const laneClass = { needs_lead: "bg-bg-secondary text-text-secondary", ready: "bg-accent/15 text-accent", working: "bg-accent/15 text-accent", done: "bg-green-500/15 text-green-700 dark:text-green-400" };
+const laneOf = (state: JobState) => state === "needs_lead" || state === "ready" || state === "ready_for_review" ? state : ["done", "failed", "cancelled"].includes(state) ? "done" : "working";
+const laneClass = { needs_lead: "bg-bg-secondary text-text-secondary", ready: "bg-accent/15 text-accent", working: "bg-accent/15 text-accent", ready_for_review: "bg-yellow-500/20 text-yellow-800 dark:text-yellow-300", done: "bg-green-500/15 text-green-700 dark:text-green-400" };
 
 export function JobsBoard({ jobs, onOpen }: { jobs: JobsBoardCard[]; onOpen: (id: string) => void }) {
   return <div className="flex items-start gap-2.5 overflow-x-auto pb-5 pt-1">
-    {(["needs_lead", "ready", "working", "done"] as const).map((lane) => {
+    {(["needs_lead", "ready", "working", "ready_for_review", "done"] as const).map((lane) => {
       const cards = jobs.filter((job) => laneOf(job.state) === lane);
       return <section key={lane} aria-label={JOB_STATE_LABEL[lane]} className="min-w-0 flex-[1_0_200px]">
         <header className="flex h-7 items-center gap-2 text-xs text-text-secondary"><span className={`whitespace-nowrap rounded px-1.5 py-0.5 font-medium ${laneClass[lane]}`}>{JOB_STATE_LABEL[lane]}</span>{cards.length}</header>
