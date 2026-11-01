@@ -6,9 +6,16 @@ const { html, text, subject, from } = WAITLIST_EMAIL;
 Deno.test('the message says what was approved', () => {
   assert.equal(from, 'colabora.si <hello@colabora.si>');
   assert.equal(subject, "You're on the colabora.si waitlist");
-  assert.equal(text, "You're on the list.\nWe'll write to you when your invite is ready.\n\ncolabora.si\n");
+  assert.equal(text, "You're on the list.\nWe'll write to you when your invite is ready.\n\ncolabora.si\nA shared workspace for people and AI agents.\n");
   assert.ok(html.includes('You’re on&nbsp;the&nbsp;list.'));
   assert.ok(html.includes('We’ll write to you when your&nbsp;invite&nbsp;is&nbsp;ready.'));
+  assert.ok(html.includes('A&nbsp;shared workspace for&nbsp;people and&nbsp;AI&nbsp;agents.'));
+});
+
+Deno.test('the product line sits under the wordmark and has a dark color', () => {
+  assert.ok(html.indexOf('colabora<span') < html.indexOf('A&nbsp;shared workspace'));
+  assert.ok(html.indexOf('A&nbsp;shared workspace') < html.indexOf('<img'));
+  assert.ok(html.includes('.e-muted{color:#b3b3aa !important}'));
 });
 
 Deno.test('the markup stays safe for mail clients', () => {
