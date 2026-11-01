@@ -8,6 +8,7 @@ import { RowPanel } from "@/components/agents/RowPanel";
 import { useAgentsStore, type AgentRow } from "@/lib/agentsStore";
 import { useAgentTasks } from "@/lib/agentTasks";
 import { mockCard } from "@/components/agents/card/mock";
+import type { TaskCardData } from "@/lib/agentCard";
 import { db, prop, row } from "../clone/fixtures";
 import type { DbOps } from "@/lib/dbOps";
 
@@ -23,7 +24,7 @@ const agents = [
   { id: "lead", name: "Claude Code", role: "lead", status: "enabled", revoked_at: null, is_platform: false },
   { id: "worker", name: "Codex", role: "worker", status: "enabled", revoked_at: null, is_platform: false },
 ] as AgentRow[];
-const task = { ...mockCard("1").task, id: "job-task", row_page_id: "job", db_page_id: "db", title: "Market research", delegate_agent_id: "lead", parent_task_id: null, state: "queued" as const, active_run_id: null, named_worker_ids: ["worker"], joined_worker_ids: [] };
+const task = { ...(mockCard("1") as TaskCardData).task, id: "job-task", row_page_id: "job", db_page_id: "db", title: "Market research", delegate_agent_id: "lead", parent_task_id: null, state: "queued" as const, active_run_id: null, named_worker_ids: ["worker"], joined_worker_ids: [] };
 const ops = { pageId: "db", database, readOnly: false } as DbOps;
 let container: HTMLDivElement, root: Root;
 beforeEach(() => {
