@@ -113,6 +113,13 @@
     ]
   },
   "branchExceptions": {
+    "infra/product-interactions": [
+      "components/BlockEditor.tsx",
+      "components/PageView.tsx",
+      "components/blocks/BlockDragContext.ts",
+      "components/blocks/BlockDragProvider.tsx",
+      "tests/clone/blockEditor.test.ts"
+    ],
     "a/connect": [
       "README.md",
       "AGENTS.md",
