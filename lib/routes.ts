@@ -7,6 +7,7 @@ export const SET_PASSWORD_URL = "/set-password";
 export const LINKED_URL = "/linked";
 export const MCP_PAT_URL = "/mcp-pat";
 export const CONNECT_URL = "/connect";
+export const AGENTS_URL = "/agents";
 export function connectUrl(id?: string): string { return id ? `${CONNECT_URL}/${encodeURIComponent(id)}` : CONNECT_URL; }
 
 // Pure URL constructors shared by the SPA and clients that generate deep links.

@@ -6,6 +6,7 @@ import { useAuthStore } from "@/lib/auth";
 import { useStore } from "@/lib/store";
 import { useAgentsStore } from "@/lib/agentsStore";
 import { connectWorkspaces } from "@/lib/agentConsent";
+import { CONNECT_AGENT_NAMES } from "@/lib/agentConnectCatalog";
 
 export interface ConnectionRow {
   agent_id: string;
@@ -15,6 +16,19 @@ export interface ConnectionRow {
   created_at: string;
 }
 export interface ConnectAttempt { agent: string; startedAt: number; agentId?: string; }
+
+export type ConnectedStatus = "connected" | "waiting" | "manual";
+export interface ConnectedRow { agentId: string; name: string; logo: string | null; status: ConnectedStatus; since: string | null; pageId: string | null; }
+export function connectedRows(agents: { id: string; name: string; is_platform: boolean; revoked_at: string | null }[], connections: ConnectionRow[]): ConnectedRow[] {
+  return agents.filter((agent) => !agent.is_platform && !agent.revoked_at).map((agent): ConnectedRow => {
+    const connection = connections.find((row) => row.agent_id === agent.id);
+    const catalogId = Object.entries(CONNECT_AGENT_NAMES).find(([, name]) => name.toLowerCase() === agent.name.toLowerCase())?.[0];
+    return { agentId: agent.id, name: agent.name, logo: catalogId ? `/brand/agents/${catalogId}.svg` : null,
+      status: connection ? connection.verified_at ? "connected" : "waiting" : "manual",
+      since: connection?.verified_at ?? connection?.created_at ?? null, pageId: connection?.page_id ?? null };
+  }).sort((a, b) => Number(a.status === "manual") - Number(b.status === "manual")
+    || (b.since ? Date.parse(b.since) : 0) - (a.since ? Date.parse(a.since) : 0));
+}
 
 export function shouldShowConnect(input: {
   canConnect: boolean; skipped: boolean;

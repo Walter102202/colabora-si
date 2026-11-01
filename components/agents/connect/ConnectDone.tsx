@@ -1,6 +1,6 @@
 import { CheckCircle2 } from "lucide-react";
 import { Link } from "react-router";
-import { HOME_URL, pageUrl, settingsUrl } from "@/lib/routes";
+import { AGENTS_URL, HOME_URL, pageUrl, settingsUrl } from "@/lib/routes";
 
 export const FIRST_CONNECT_TASK = "Read “Getting started” in colabora.si, then create a page inside it called “Our first plan”. Add sections for Goal, Next steps, and Open questions, with one short question in each section to help me get started. Then send me the page link.";
 export function ConnectDone({ name, pageId, copied, onCopy }: { name: string; pageId: string; copied: boolean; onCopy: () => void }) {
@@ -10,6 +10,6 @@ export function ConnectDone({ name, pageId, copied, onCopy }: { name: string; pa
       {copied ? <p role="status" className="text-sm">Copied — send this to {name}</p> : null}
       <p className="text-sm text-text-secondary">Your agent will create a page here. Keep using it in {name}.</p>
     </section>
-    <div className="flex flex-wrap gap-4 text-sm text-accent"><Link to={pageUrl(pageId)}>Open Getting started</Link><Link to={settingsUrl("agents")}>Manage access</Link><Link to={HOME_URL}>Go to workspace</Link></div>
+    <div className="flex flex-wrap gap-4 text-sm text-accent"><Link to={pageUrl(pageId)}>Open Getting started</Link><Link to={AGENTS_URL}>See connected agents</Link><Link to={settingsUrl("agents")}>Manage access</Link><Link to={HOME_URL}>Go to workspace</Link></div>
   </div>;
 }

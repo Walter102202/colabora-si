@@ -14,6 +14,7 @@ const router = createBrowserRouter([{ element: <AppNavigation />, HydrateFallbac
     { path: "p/:id", lazy: async () => ({ Component: (await import("./(workspace)/p/[id]/page")).default }) },
     { path: "shared/:id", lazy: async () => ({ Component: (await import("./(workspace)/shared/[id]/page")).default }) },
     { path: "linked", lazy: async () => ({ Component: (await import("./linked/page")).default }) },
+    { path: "agents", lazy: async () => ({ Component: (await import("./agents/page")).default }) },
     { path: "mcp-pat", lazy: async () => ({ Component: (await import("./mcp-pat/page")).default }) },
     { path: "connect", lazy: async () => ({ Component: (await import("./connect/page")).default }) },
     { path: "connect/:agent", lazy: async () => ({ Component: (await import("./connect/page")).default }) },
