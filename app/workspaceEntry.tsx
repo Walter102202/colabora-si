@@ -15,6 +15,8 @@ const router = createBrowserRouter([{ element: <AppNavigation />, HydrateFallbac
     { path: "shared/:id", lazy: async () => ({ Component: (await import("./(workspace)/shared/[id]/page")).default }) },
     { path: "linked", lazy: async () => ({ Component: (await import("./linked/page")).default }) },
     { path: "mcp-pat", lazy: async () => ({ Component: (await import("./mcp-pat/page")).default }) },
+    { path: "connect", lazy: async () => ({ Component: (await import("./connect/page")).default }) },
+    { path: "connect/:agent", lazy: async () => ({ Component: (await import("./connect/page")).default }) },
     { path: "*", element: <div className="empty-state"><title>Page not found · colabora.si</title>Page not found.</div> },
   ] },
   { path: "pub/:id", lazy: async () => ({ Component: (await import("./(public)/pub/[id]/page")).default }) },
