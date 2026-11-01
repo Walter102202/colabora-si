@@ -134,6 +134,9 @@ export async function handleAgentAdmin(req: Request, deps: AgentAdminDeps): Prom
           secret: await webhookSecret(deps.ciPepper, connection.id) });
       } catch (e) { return dbFailure(e, 'Could not connect the repository.'); }
     }
+    case 'connect_agent':
+    case 'connect_own_agent':
+      return connectAgent(body, caller, api, deps);
     case 'create_agent':
       return createAgent(body, caller, api, deps);
     case 'enable_platform_agent':
@@ -143,7 +146,7 @@ export async function handleAgentAdmin(req: Request, deps: AgentAdminDeps): Prom
     case 'rotate_login':
       return rotateLogin(body, api, deps);
     default:
-      return error(400, 'invalid_request', 'action must be create_agent, enable_platform_agent, revoke_agent, rotate_login, ci_connect, oauth_read, oauth_approve, oauth_deny or oauth_disconnect.');
+      return error(400, 'invalid_request', 'action must be connect_agent, connect_own_agent, create_agent, enable_platform_agent, revoke_agent, rotate_login, ci_connect, oauth_read, oauth_approve, oauth_deny or oauth_disconnect.');
   }
 }
 
@@ -153,36 +156,45 @@ async function agentOAuth(body: Record<string, unknown>, api: CallerApi, deps: A
   const id = disconnect ? body.client_id : body.authorization_id;
   if (typeof id !== 'string' || !id) return error(400, 'invalid_input', 'An authorization or client id is required.');
   try {
-    // This caller-token RPC enforces direct human, current membership and sponsor/owner on every action.
-    const context = await api.rpc('oauth_agent_context', {
-      p_agent_id: body.agent_id, p_client_id: disconnect ? id : null, p_require_enabled: !disconnect,
-    });
-    if (!isRecord(context) || !isUuid(context.auth_user_id)) throw new Error('Invalid agent context');
-    // Block all RLS surfaces before revoking the Auth grant.
-    if (disconnect && !context.link_revoked) await api.rpc('revoke_oauth_link', { p_client_id: id });
-    const authorization = disconnect ? null : await deps.serviceRpc('oauth_authorization_context', {
-      p_authorization_id: id, p_auth_user_id: context.auth_user_id,
-    });
-    if (!disconnect && (!isRecord(authorization) || typeof authorization.client_id !== 'string' || typeof authorization.redirect_uri !== 'string')) {
-      throw new Error('Invalid authorization');
-    }
-    if (!disconnect && body.action !== 'oauth_read' && (authorization as Record<string, unknown>).user_id !== context.auth_user_id) {
-      return error(404, 'not_found', 'Read this authorization as the selected agent first.');
-    }
-    const agent = await deps.signInAgent(agentEmail(body.agent_id), await agentLoginPassword(
-      deps.loginPepper, context.auth_user_id, typeof context.login_nonce === 'string' ? context.login_nonce : null,
-    ));
-    if (disconnect) { await agent.disconnect(id); return ok({ disconnected: true }); }
-    const details = authorization as Record<string, unknown>;
-    const result = body.action === 'oauth_read' ? await agent.read(id)
-      : body.action === 'oauth_approve' ? await agent.approve(id) : await agent.deny(id);
-    if (body.action === 'oauth_approve' || (body.action === 'oauth_read' && typeof result.redirect_url === 'string')) {
-      // Withhold the authorization code unless the current person can still establish the link.
-      await api.rpc('set_oauth_app', { p_client_id: details.client_id, p_agent_id: body.agent_id,
-        p_client_name: details.client_name ?? 'An app', p_redirect_uri: details.redirect_uri });
-    }
-    return ok(result);
-  } catch (e) { return dbFailure(e, 'Could not complete this connection. Try again or use Rotate login and reconnect.'); }
+    return ok(await runAgentOAuth(String(body.action), id, body.agent_id, api, deps));
+  } catch (e) {
+    if (e instanceof AgentReadRequired) return error(404, 'not_found', 'Read this authorization as the selected agent first.');
+    return dbFailure(e, 'Could not complete this connection. Try again or use Rotate login and reconnect.');
+  }
+}
+
+class AgentReadRequired extends Error {}
+async function runAgentOAuth(action: string, id: string, agentId: string, api: CallerApi, deps: AgentAdminDeps): Promise<Record<string, unknown>> {
+  const disconnect = action === 'oauth_disconnect';
+  // This caller-token RPC enforces direct human, current membership and sponsor/owner on every action.
+  const context = await api.rpc('oauth_agent_context', {
+    p_agent_id: agentId, p_client_id: disconnect ? id : null, p_require_enabled: !disconnect,
+  });
+  if (!isRecord(context) || !isUuid(context.auth_user_id)) throw new Error('Invalid agent context');
+  // Block all RLS surfaces before revoking the Auth grant.
+  if (disconnect && !context.link_revoked) await api.rpc('revoke_oauth_link', { p_client_id: id });
+  const authorization = disconnect ? null : await deps.serviceRpc('oauth_authorization_context', {
+    p_authorization_id: id, p_auth_user_id: context.auth_user_id,
+  });
+  if (!disconnect && (!isRecord(authorization) || typeof authorization.client_id !== 'string' || typeof authorization.redirect_uri !== 'string')) {
+    throw new Error('Invalid authorization');
+  }
+  if (!disconnect && action !== 'oauth_read' && (authorization as Record<string, unknown>).user_id !== context.auth_user_id) {
+    throw new AgentReadRequired();
+  }
+  const agent = await deps.signInAgent(agentEmail(agentId), await agentLoginPassword(
+    deps.loginPepper, context.auth_user_id, typeof context.login_nonce === 'string' ? context.login_nonce : null,
+  ));
+  if (disconnect) { await agent.disconnect(id); return { disconnected: true }; }
+  const details = authorization as Record<string, unknown>;
+  const result = action === 'oauth_read' ? await agent.read(id)
+    : action === 'oauth_approve' ? await agent.approve(id) : await agent.deny(id);
+  if (action === 'oauth_approve' || (action === 'oauth_read' && typeof result.redirect_url === 'string')) {
+    // Withhold the authorization code unless the current person can still establish the link.
+    await api.rpc('set_oauth_app', { p_client_id: details.client_id, p_agent_id: agentId,
+      p_client_name: details.client_name ?? 'An app', p_redirect_uri: details.redirect_uri });
+  }
+  return result;
 }
 
 async function createAgent(
@@ -226,7 +238,16 @@ async function createAgent(
   }
   if (!allowed) return error(403, 'forbidden', 'Only owners and editors of the workspace can add agents.');
 
-  const agentId = deps.newId();
+  try { return ok(await createAgentUser(body, caller, deps, deps.newId())); }
+  catch (err) {
+    if (err instanceof AgentUserError) return error(500, 'server_error', 'The agent user could not be created.');
+    return dbFailure(err, 'The agent could not be created.');
+  }
+}
+
+async function createAgentUser(fields: Record<string, unknown>, caller: Caller, deps: AgentAdminDeps, agentId: string) {
+  const { workspace_id, kind, role, sponsor_user_id, capabilities, connection, monthly_budget_usd } = fields;
+  const name = String(fields.name);
   const appMetadata = {
     principal_type: 'agent',
     agent_id: agentId,
@@ -247,7 +268,7 @@ async function createAgent(
     });
     userId = user.id;
   } catch {
-    return error(500, 'server_error', 'The agent user could not be created.');
+    throw new AgentUserError();
   }
 
   try {
@@ -268,10 +289,67 @@ async function createAgent(
       p_monthly_budget_usd: monthly_budget_usd ?? null,
       p_id: agentId,
     }) as { agent_id?: string } | null;
-    return ok({ agent_id: result?.agent_id ?? agentId, auth_user_id: userId });
+    return { agent_id: result?.agent_id ?? agentId, auth_user_id: userId };
   } catch (err) {
     await deps.admin.deleteUser(userId).catch(() => undefined);
-    return dbFailure(err, 'The agent could not be created.');
+    throw err;
+  }
+}
+
+async function connectAgent(body: Record<string, unknown>, caller: Caller, api: CallerApi, deps: AgentAdminDeps): Promise<Response> {
+  const own = body.action === 'connect_own_agent';
+  const { workspace_id, authorization_id, agent_id, role } = body;
+  const existing = !own && agent_id !== undefined;
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!isUuid(workspace_id) || (!own && (typeof authorization_id !== 'string' || !authorization_id))
+    || (existing ? !isUuid(agent_id) : name.length < 1 || name.length > 80)
+    || (role !== undefined && (typeof role !== 'string' || !ROLES.includes(role)))) {
+    return error(400, 'invalid_request', 'Use a workspace, an agent name or id, and a worker or lead role.');
+  }
+  let createdUser: string | undefined;
+  let finished = false;
+  try {
+    if (!await api.canManageWorkspace(workspace_id, caller.userId)) return error(403, 'forbidden', 'Only owners and editors of the workspace can add agents.');
+    let meta: Record<string, unknown> | null = null;
+    if (!own) {
+      try {
+        const context = await api.rpc('oauth_human_context', { p_authorization_id: authorization_id });
+        if (isRecord(context)) meta = context;
+      } catch (e) { if ((e as DbError)?.code !== 'PT404') throw e; }
+    }
+    let id: string;
+    if (existing) {
+      id = agent_id as string;
+      await api.rpc('oauth_agent_context', { p_agent_id: id, p_client_id: null, p_require_enabled: true });
+    } else {
+      const claimed = own ? deps.newId() : await api.rpc('connect_claim', {
+        p_workspace_id: workspace_id, p_authorization_id: authorization_id,
+        p_client_id: meta?.client_id ?? null, p_agent_id: deps.newId(),
+      });
+      if (!isUuid(claimed)) throw new Error('Invalid connection claim');
+      id = claimed;
+      if (own || !await api.getAgent(id)) {
+        const created = await createAgentUser({ workspace_id, name, kind: 'mcp_client', role: role ?? 'worker', connection: { source: 'connect' } }, caller, deps, id);
+        createdUser = created.auth_user_id;
+      }
+    }
+    const connection = await api.rpc('connect_agent_finish', {
+      p_workspace_id: workspace_id, p_agent_id: id, p_client_id: meta?.client_id ?? null,
+      p_authorization_id: own ? null : authorization_id,
+    });
+    if (!isRecord(connection) || typeof connection.page_id !== 'string') throw new Error('Invalid starter page');
+    finished = true;
+    let result: Record<string, unknown> = {};
+    if (!own) {
+      result = await runAgentOAuth('oauth_read', authorization_id as string, id, api, deps);
+      if (typeof result.redirect_url !== 'string') result = await runAgentOAuth('oauth_approve', authorization_id as string, id, api, deps);
+    }
+    await api.rpc('connect_agent_approved', { p_agent_id: id });
+    return ok({ ...result, agent_id: id, page_id: connection.page_id });
+  } catch (e) {
+    // Only a user created by this request is disposable. Once granted, a retry resumes it.
+    if (createdUser && !finished) await deps.admin.deleteUser(createdUser).catch(() => undefined);
+    return dbFailure(e, 'We couldn’t finish saving this connection.');
   }
 }
 
