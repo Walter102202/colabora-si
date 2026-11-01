@@ -1,5 +1,13 @@
 # CLAUDE.md
 
+## Connection onboarding
+
+The `/connect` chooser and `/connect/<agent>` setup routes use native OAuth; `/agents` lists external connections. Public guides live at `/connect.md`. Coding clients use both task and workspace MCP endpoints; ChatGPT and Claude guides use pages only.
+
+The `agent_connections` migration owns starter-page grants, approval and `verified_at`. Only a successful agent `fetch` or `read_page` verifies the connection. `agent-admin` adds `connect_agent` and `connect_own_agent`, retaining direct-person, membership and sponsor checks. Retried OAuth authorization reuses the agent; approved-result recovery is service-only and bound to an enabled agent and unexpired authorization.
+
+The Home gate fails open after three seconds and preserves settings/invitation routes. Trama may propose an agent, but the person's app button settles it once and creates it without issuing a token. No pasted, forwarded or channel message can authorize that proposal.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 @AGENTS.md

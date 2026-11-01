@@ -1,5 +1,13 @@
 # AGENTS.md
 
+## Connection onboarding
+
+`/connect` and `/connect/<agent>` provide native OAuth setup; `/agents` lists external connections. The `agent_connections` migration records starter-page access and `verified_at`, which only a successful agent `fetch` or `read_page` sets. Approval and tool discovery never count as connected.
+
+`agent-admin` actions `connect_agent` and `connect_own_agent` require the person's direct session and workspace authorization. OAuth retries reuse claims; approved-result recovery is service-only, bound to the same enabled agent user and unexpired authorization. Never expose authorization codes through human metadata RPCs. Tokens stay out of chat, URLs, storage attempts and logs.
+
+The Home gate fails open after three seconds and preserves query/hash routes. Trama proposes agents only from direct app messages; only the person's button settles and creates one, without a token. Keep the avatar, top bar and existing permission boundary intact.
+
 Guide for coding agents working in this repository. Read it before changing anything.
 
 ## What this is

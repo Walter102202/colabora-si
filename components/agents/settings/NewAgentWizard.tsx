@@ -2,25 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import { HARNESS_SNIPPETS, snippetFor } from "@/lib/agentSnippets";
-import type { AgentKind, AgentRole, NewAgentInput } from "@/lib/agentsStore";
+import type { AgentRole, NewAgentInput } from "@/lib/agentsStore";
 import { ConnectionSnippet } from "@/components/agents/settings/ConnectionSnippet";
 
+import { agentInputFor } from "@/lib/agentDefaults";
+
 const STEPS = ["Harness", "Paste", "Done"] as const;
-const DEFAULT_CAPABILITIES: Record<string, boolean> = { start: false, continue: false, cancel: false, events: false, approval: true, cost: false, files: false };
-const RESUME_HARNESSES = new Set(["claude-code", "codex", "cursor", "gemini-cli", "agent"]);
 const ROLES: Record<AgentRole, { label: string; help: string }> = {
   worker: { label: "Worker", help: "Works on the tasks it is given." },
   lead: { label: "Lead", help: "Creates tasks, delegates them to other agents and reviews their work." },
-};
-
-const HARNESS_KIND: Record<string, AgentKind> = {
-  "claude-code": "acp_local",
-  codex: "acp_local",
-  "claude-ai": "mcp_client",
-  chatgpt: "mcp_client",
-  cursor: "acp_local",
-  "gemini-cli": "acp_local",
-  agent: "webhook",
 };
 
 export function NewAgentWizard({ onCancel, onCreate, busy }: { onCancel: () => void; onCreate: (input: NewAgentInput) => void; busy: boolean }) {
@@ -37,16 +27,7 @@ export function NewAgentWizard({ onCancel, onCreate, busy }: { onCancel: () => v
   const canNext = step !== 0 || name.trim().length > 0;
 
   const submit = () => {
-    onCreate({
-      name: name.trim(),
-      kind: HARNESS_KIND[harness] ?? "acp_local",
-      role,
-      capabilities: { ...DEFAULT_CAPABILITIES, resume: RESUME_HARNESSES.has(harness) },
-      monthly_budget_usd: null,
-      rate_limit_per_min: 120,
-      grants: [],
-      harness,
-    });
+    onCreate(agentInputFor(name, harness, role));
   };
 
   return (

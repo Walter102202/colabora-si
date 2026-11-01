@@ -13,6 +13,7 @@ import { NewAgentWizard } from "@/components/agents/settings/NewAgentWizard";
 import { AgentDetail } from "@/components/agents/settings/AgentDetail";
 import { TokenReveal } from "@/components/agents/settings/TokenReveal";
 import { EnvironmentList } from "@/components/agents/settings/EnvironmentList";
+import { CONNECT_URL } from "@/lib/routes";
 
 type View = { kind: "list" } | { kind: "new" } | { kind: "detail"; id: string };
 
@@ -52,7 +53,7 @@ export function AgentsSettingsTab() {
     setFormError(null);
     try {
       const res = await createAgent(input);
-      setCreated({ id: res.agentId, token: res.token });
+      if (res.token) setCreated({ id: res.agentId, token: res.token });
       setView({ kind: "detail", id: res.agentId });
     } catch (e) {
       setFormError(e instanceof Error ? e.message : String(e));
@@ -106,6 +107,7 @@ export function AgentsSettingsTab() {
         <button type="button" className="shrink-0 rounded bg-accent px-3 py-1 text-sm text-white" onClick={() => setView({ kind: "new" })}>New agent</button>
       </div>
       <AutonomySettings key={syncWorkspaceId} workspaceId={syncWorkspaceId} />
+      <a href={CONNECT_URL} className="inline-block text-sm text-accent hover:underline">Connect an agent</a>
       <AgentList agents={agents} onOpen={(id) => setView({ kind: "detail", id })} />
       {syncWorkspaceId && <LessonsList workspaceId={syncWorkspaceId} />}
       {syncWorkspaceId && <TelegramConnection workspaceId={syncWorkspaceId} />}

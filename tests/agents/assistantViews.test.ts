@@ -46,6 +46,13 @@ const view = (over: Partial<AssistantThreadViewProps>) => renderToStaticMarkup(c
 }));
 
 describe("AssistantThreadView", () => {
+  it.each(["agent_proposed", "agent_accepted", "agent_declined"])("renders the %s state without a token", (kind) => {
+    const html = view({ messages: [message({ direction: "out", outcome: { kind, name: "Helper", harness: "codex", role: "lead" } })], onSettleAgent: noop, hasTaskDatabase: true });
+    if (kind === "agent_proposed") { expect(html).toContain("Create this agent?"); expect(html).toContain("Works with: Codex"); expect(html).toContain("Role: Lead"); expect(html).toContain("Page access: Agent Tasks"); expect(html).toContain("Create agent"); }
+    if (kind === "agent_accepted") { expect(html).toContain("Helper is ready."); expect(html).toContain('href="/connect/codex"'); }
+    if (kind === "agent_declined") expect(html).toContain("Cancelled.");
+    expect(html).not.toContain("agt_");
+  });
   it("empty, it says how to keep something", () => {
     expect(view({})).toContain("save in notes");
   });

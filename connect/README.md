@@ -1,6 +1,10 @@
 # connect
 
-How each harness connects to a colabora workspace. Every harness reaches the same remote MCP endpoint (`https://<project>.supabase.co/functions/v1/mcp`); what changes is how it authenticates and how it learns that a task changed.
+Start at [Connect your agent](https://colabora.si/connect) and the [public setup guides](https://colabora.si/connect.md). Native remote OAuth is the default. Coding clients use both the task and workspace endpoints; ChatGPT and Claude guides use pages only. The recipes below also document bridge alternatives and optional wake-up mechanisms.
+
+The `/connect/<agent>` routes create or reuse an agent when the person approves. `agent-admin` provides `connect_agent` and `connect_own_agent` with direct-person authorization. The `agent_connections` migration records starter-page access and approval; `verified_at` is set only after a real agent page read. `/agents` lists connections and their current status.
+
+Skipping setup leaves a Home card and the fixed Connect agents sidebar entry. The Home gate fails open after three seconds and preserves settings and invitation links. Trama may propose an agent in the app; the person must press Create agent, and no token appears in chat.
 
 | Harness | Folder | Auth | Wakes up when a task changes |
 |---|---|---|---|
@@ -18,7 +22,7 @@ How each harness connects to a colabora workspace. Every harness reaches the sam
 ## Two ways to authenticate
 
 - **Agent token.** Create an agent in Settings → Agents; its token (`agt_…`) is shown once. It is exchanged for a JWT that lasts one hour at `<origin>/functions/v1/agent-token`. The bridge (`bridge/`) does the exchange and renewal for stdio harnesses.
-- **OAuth.** Chat apps sign in as a person. On the consent screen the connection can be linked to an agent, so the chat takes tasks as that agent and content edits are attributed to the agent, via the person who connected the chat.
+- **OAuth.** The person approves a new or existing agent with starter-page access. The client receives that agent's Auth identity. Full human mode is available only to the exact trusted HTTPS chat hosts. Native remote clients need no bridge; use the bridge recipes for channel wake-ups or process-token renewal.
 
 ## Waiting without polling the model
 
