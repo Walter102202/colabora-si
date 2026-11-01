@@ -141,5 +141,13 @@ select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent'
 select is(tests.error_of($q$select public.join_job('Market research','worker')$q$),'agents_only','platform agent cannot join external crew');
 select tests.reset_role();
 select is((select count(*)::int from public.agent_grants where page_id='jobs-db'),4,'joining adds no database grants');
+-- An agent added in Settings has no connection row and can lead a job.
+select tests.make_agent((:'f'::jsonb->>'ws')::uuid,'jobs-settings@agents.invalid','lead','page_A') as settings gset
+select tests.make_page((:'f'::jsonb->>'ws')::uuid,'jobs-db3',null,'{"id":"jobs-db3","title":"Settings agents","blocks":[],"database":{"properties":[{"id":"status","type":"agentStatus"}],"rows":[{"id":"job-row3","pageId":"jobs-row3"}]}}');
+select tests.make_page((:'f'::jsonb->>'ws')::uuid,'jobs-row3','jobs-db3','{"id":"jobs-row3","title":"Settings job","blocks":[]}');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.assign_job('jobs-row3',(:'settings'::jsonb->>'agent')::uuid,'{}') as settings_job gset
+select tests.reset_role();
+select is((select delegate_agent_id from public.agent_tasks where id=(:'settings_job'::jsonb->>'task_id')::uuid),(:'settings'::jsonb->>'agent')::uuid,'an agent added in Settings can lead a job');
 select * from finish();
 rollback;

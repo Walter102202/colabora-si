@@ -30,11 +30,12 @@ describe("job preparation", () => {
     expect(subWait({ state: "input_required", waiting_on: "lead" })).toBe("Lead");
     expect(subtaskState(null)).toBe("pending");
   });
-  it("offers only verified, enabled external agents that have not been revoked", () => {
+  it("offers enabled external agents, verified or added in Settings, and never a pending connection", () => {
     const agent = { id: "a", name: "Codex", is_platform: false, status: "enabled" as const, revoked_at: null, role: "worker" as const };
     const connection = { agent_id: "a", verified_at: "2026-11-01" };
     expect(eligibleJobAgents([agent], [connection])).toEqual([{ id: "a", name: "Codex", logo: "/brand/agents/codex.svg", role: "worker" }]);
     expect(eligibleJobAgents([agent], [{ ...connection, verified_at: null }])).toEqual([]);
+    expect(eligibleJobAgents([agent], [])).toEqual([{ id: "a", name: "Codex", logo: "/brand/agents/codex.svg", role: "worker" }]);
     for (const patch of [{ is_platform: true }, { status: "paused" as const }, { status: "disabled" as const }, { revoked_at: "2026-11-01" }]) {
       expect(eligibleJobAgents([{ ...agent, ...patch }], [connection])).toEqual([]);
     }

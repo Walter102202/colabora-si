@@ -60,7 +60,8 @@ export function eligibleJobAgents(
   connections: Pick<ConnectionRow, "agent_id" | "verified_at">[],
 ): JobAgent[] {
   return agents.filter((agent) => !agent.is_platform && !agent.revoked_at && agent.status === "enabled"
-    && connections.some((connection) => connection.agent_id === agent.id && connection.verified_at))
+    // Agents added in Settings have no connection row; a connection still pending stays out.
+    && !connections.some((connection) => connection.agent_id === agent.id && !connection.verified_at))
     .map((agent) => {
       const catalogId = Object.entries(CONNECT_AGENT_NAMES).find(([, name]) => name.toLowerCase() === agent.name.toLowerCase())?.[0];
       return { id: agent.id, name: agent.name, role: agent.role, logo: catalogId ? `/brand/agents/${catalogId}.svg` : null };
