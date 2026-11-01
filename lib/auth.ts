@@ -5,6 +5,7 @@ import { HOME_URL } from "@/lib/routes";
 import { getSupabase } from "@/lib/supabase";
 
 import { cleanupPushOnSignOut, syncPushSubscription } from "@/lib/push";
+const UNSYNCED_SIGN_OUT = "Some changes haven’t synced yet and will be lost if you log out now. Log out anyway?";
 interface AuthState { user: User | null; loading: boolean }
 export const useAuthStore = create<AuthState>(() => ({ user: null, loading: true }));
 let initialized = false;
@@ -32,8 +33,12 @@ export function useAuth(): AuthState {
 export async function signOut(): Promise<void> {
   const supabase = getSupabase();
   if (!supabase) return;
+  // Loaded here because lib/sync depends on the store, which depends on this module.
+  const { discardLocalCopy, settleBeforeSignOut } = await import("@/lib/sync");
+  if (!await settleBeforeSignOut() && !confirm(UNSYNCED_SIGN_OUT)) return;
   await cleanupPushOnSignOut();
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
+  await discardLocalCopy();
   location.assign(HOME_URL);
 }
