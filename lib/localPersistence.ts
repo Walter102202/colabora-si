@@ -140,8 +140,8 @@ async function writeNow(token: number, connection: IDBDatabase, currentEpoch: st
     for (const [id, page] of pages) {
       const base = bases.get(id);
       if (base && page && !isShell(page) && !remote.has(id)) reconcilers.set(id, (stored) => {
-        if (!stored) { reconciled.set(id, null); return null; }
-        const merged = stored.body ? reapply(joinPage(stored.meta, stored.body), base, page) : page;
+        // A page can be edited again before its first save; absence is not a tombstone.
+        const merged = stored?.body ? reapply(joinPage(stored.meta, stored.body), base, page) : page;
         reconciled.set(id, merged); return fullWrite(merged);
       });
       dirtyPages.delete(id); remotePages.delete(id); writtenBase.delete(id);

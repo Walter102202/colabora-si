@@ -107,3 +107,12 @@ it("keeps saving without BroadcastChannel and reads the latest copy next boot", 
   const a = await tab(true); edit(a, "x", "offline browser"); await a.storage.flushLocalWrites();
   const peer = await tab(); expect(texts(peer)).toEqual(["offline browser", "Y"]); vi.unstubAllGlobals();
 });
+
+it("keeps a new page edited before its first disk write", async () => {
+  const a = await tab(true);
+  const id = a.store.getState().createPage(null, { title: "New", blocks: [b("paragraph", { id: "new-block", html: "First" })] });
+  a.store.getState().updateBlock(id, "new-block", { html: "Edited before first save" });
+  await a.storage.flushLocalWrites();
+  expect(a.store.getState().pages[id]?.blocks[0].html).toBe("Edited before first save");
+  expect(fake.dump("bodies")).toContainEqual(expect.objectContaining({ id, blocks: [expect.objectContaining({ html: "Edited before first save" })] }));
+});
