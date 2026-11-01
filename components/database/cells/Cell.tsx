@@ -40,7 +40,9 @@ export default function Cell({ ops, database, row, property, pages }: { ops: DbO
   const set = (value: unknown) => ops.updateCell(row.id, property.id, value);
   const close = () => { setAnchor(null); setQuery(""); };
   useEffect(() => { const key = (event: KeyboardEvent) => { if (event.key === "Escape") setAnchor(null); }; document.addEventListener("keydown", key); return () => document.removeEventListener("keydown", key); }, []);
-  if (property.type === "agentStatus" || property.type === "agentDelegate") return <AgentPropertyCell pageId={row.pageId} propertyId={property.id} kind={property.type} />;
+  const job = !row.parentRowId && database.properties.some((p) => p.type === "agentStatus");
+  if (job && property.name === "Lead") return <AgentPropertyCell pageId={row.pageId} dbPageId={ops.pageId} propertyId={property.id} kind="jobLead" readOnly={ops.readOnly} fallbackName={text} />;
+  if (property.type === "agentStatus" || property.type === "agentDelegate") return <AgentPropertyCell pageId={row.pageId} dbPageId={ops.pageId} propertyId={property.id} kind={property.type} isJob={job} readOnly={ops.readOnly} />;
   if (property.type === "button") return <button className="cell-button" disabled={ops.readOnly} onClick={() => { for (const action of property.buttonActions ?? []) ops.runButton(row.id, action); }}>{property.buttonLabel || "Run"}</button>;
   if (isAutoProperty(property, database)) return <span className={`cell-readonly ${text.startsWith("⚠") ? "danger" : ""}`} title={text.startsWith("⚠") ? text : property.type === "id" ? "Auto-generated ID (read-only)" : "Automatically updated"}>{text || "—"}</span>;
   if (property.type === "person") return <PersonCell value={value} onChange={set} readOnly={ops.readOnly} />;

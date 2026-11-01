@@ -28,6 +28,10 @@ import { approvalIdFromHash, openQuestionsFor } from "@/lib/agentCard";
 import { setMergeRule } from "@/lib/agentActions";
 import { TaskLessons } from "@/components/agents/TaskLessons";
 import { AssignView, TaskView, type SubtaskItem } from "@/components/agents/panel";
+import { JobReadyPanel } from "@/components/agents/panel/JobReadyPanel";
+import { jobReadyPanel, type JobSentence } from "@/lib/agentJobs";
+import { connectedRows } from "@/lib/agentConnect";
+import { AgentPropertyCell } from "@/components/agents/AgentPropertyCell";
 
 // Agent layer plug. Mounted by the page view of a database row, under the row
 // properties (also reached through the `?task=` deep link). Workspace
@@ -35,10 +39,17 @@ import { AssignView, TaskView, type SubtaskItem } from "@/components/agents/pane
 // actions; the views in components/agents/panel render it.
 export interface RowPanelProps {
   pageId: string;
+  inline?: boolean;
+  onOpenPage?: () => void;
 }
 
-export function RowPanel({ pageId }: RowPanelProps) {
+export function RowPanel({ pageId, inline, onOpenPage }: RowPanelProps) {
+  return inline ? <JobReadyConnector pageId={pageId} onOpenPage={onOpenPage ?? (() => {})} /> : <FullRowPanel pageId={pageId} />;
+}
+
+function FullRowPanel({ pageId }: RowPanelProps) {
   const workspaceId = useStore((s) => s.syncWorkspaceId);
+  const pages = useStore((state) => state.pages);
   const subscribe = useAgentTasks((s) => s.subscribe);
   const loadAgents = useAgentsStore((s) => s.load);
   const navigate = useNavigate();
@@ -51,6 +62,7 @@ export function RowPanel({ pageId }: RowPanelProps) {
   // person is told explicitly instead of being shown another task as if it were it.
   const openable = requested && requested.request_kind !== "lesson" && requested.request_kind !== "source_check";
   const task = openable && requested.row_page_id === pageId ? requested : pageTask;
+  const jobDatabase = Object.entries(pages ?? {}).find(([, page]) => page.database?.properties.some((property) => property.type === "agentStatus") && page.database.rows.some((row) => row.pageId === pageId && !row.parentRowId));
   const mismatch = requestedId && status === "ready" && (!requested || requested.row_page_id !== pageId) ? (requested ? "elsewhere" : "missing") : null;
   const onOpenTask = (rowPageId: string, taskId: string) => { void navigate(taskUrl(rowPageId, taskId)); };
   const onOpenPage = (id: string) => { void navigate(pageUrl(id)); };
@@ -85,9 +97,36 @@ export function RowPanel({ pageId }: RowPanelProps) {
         </p>
       )}
       {/* One connector per task: an error or a pending choice on one task never shows on the next. */}
-      {task ? <TaskConnector key={task.id} task={task} onOpenTask={onOpenTask} onOpenPage={onOpenPage} /> : <AssignConnector pageId={pageId} />}
+      {task?.state === "queued" && !task.parent_task_id && <JobReadyConnector key={`ready-${task.id}`} pageId={pageId} onOpenPage={() => onOpenPage(pageId)} />}
+      {task ? <TaskConnector key={task.id} task={task} onOpenTask={onOpenTask} onOpenPage={onOpenPage} /> : jobDatabase ? <>
+        <AgentPropertyCell pageId={pageId} dbPageId={jobDatabase[0]} propertyId="lead" kind="jobLead" readOnly={!!pages?.[pageId]?.locked} />
+        <JobReadyConnector pageId={pageId} onOpenPage={() => onOpenPage(pageId)} />
+      </> : <AssignConnector pageId={pageId} />}
     </section>
   );
+}
+
+function JobReadyConnector({ pageId, onOpenPage }: { pageId: string; onOpenPage: () => void }) {
+  const task = useAgentTasks((state) => taskForPage(state, pageId)), tasks = useAgentTasks((state) => state.tasks);
+  const agents = useAgentsStore((state) => state.agents), pages = useStore((state) => state.pages);
+  const [copied, setCopied] = useState<string[]>([]), [error, setError] = useState<string | null>(null);
+  if (!task?.delegate_agent_id) return <p className="px-4 py-3 text-sm text-text-secondary">No subtasks yet. Choose a Lead and it writes them.</p>;
+  if (task.state !== "queued" || task.parent_task_id) return null;
+  const known = connectedRows(agents, []).map((agent) => ({ ...agent, id: agent.agentId }));
+  const lead = known.find((agent) => agent.id === task.delegate_agent_id);
+  if (!lead) return null;
+  const subs = Object.values(tasks).filter((child) => child.parent_task_id === task.id && child.request_kind == null);
+  const workerIds = new Set([...(task.named_worker_ids ?? []), ...subs.map((child) => child.delegate_agent_id)]);
+  const title = pages?.[pageId]?.title?.trim() || task.title.trim();
+  if (!title) return <p className="px-4 py-3 text-sm text-text-secondary">Name this job and the sentence for the Lead appears here.</p>;
+  const data = jobReadyPanel({ title, lead, workers: known.filter((agent) => workerIds.has(agent.id)), subtaskCount: subs.length, hasPlan: !!pages?.[pageId]?.blocks?.some((block) => block.html?.trim()) });
+  const copy = async (line: JobSentence) => {
+    try {
+      await navigator.clipboard.writeText(line.text);
+      setCopied((previous) => [...new Set([...previous, line.agentId])]); setError(null);
+    } catch { setError("Could not copy. Select the sentence and copy it."); }
+  };
+  return <JobReadyPanel data={data} copiedAgentIds={copied} onCopy={(line) => { void copy(line); }} onOpenPage={onOpenPage} error={error} />;
 }
 
 function AssignConnector({ pageId }: { pageId: string }) {

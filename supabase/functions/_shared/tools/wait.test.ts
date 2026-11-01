@@ -95,6 +95,33 @@ function activity(seq: number, overrides: Row = {}): Row {
   };
 }
 
+Deno.test('job-scoped waits include descendants, filter prompts and notices, and never acknowledge another job', async () => {
+  const tables: Record<string, Row[]> = {
+    agent_tasks: [task({ id: 'job-a', state: 'queued' }), task({ id: 'child', parent_task_id: 'job-a', state: 'queued' }),
+      task({ id: 'grandchild', parent_task_id: 'child', state: 'queued' }), task({ id: 'job-b', state: 'queued' })],
+    agent_activities: [],
+    agent_events: [event('event-a', '2026-10-27T10:00:00Z', { task_id: 'job-a', status: 'queued' }), event('event-b', '2026-10-27T10:00:00Z', { task_id: 'job-b', status: 'queued' })],
+  };
+  const h = harness(tables);
+  const first = await tool('wait_for_my_tasks').handler({ job_id: 'job-a', timeout_s: 0 }, h.ctx);
+  assert.deepEqual((first.structured.tasks as Row[]).map(t => t.task_id).sort(), ['child', 'grandchild', 'job-a']);
+  assert.equal(tables.agent_events[0].status, 'delivered');
+  assert.equal(tables.agent_events[1].status, 'queued');
+  for (const t of tables.agent_tasks) { t.state = 'working'; t.updated_at = '2026-10-27T09:00:00Z'; }
+  tables.agent_tasks.push(task({ id: 'new-child', parent_task_id: 'job-a', state: 'queued', updated_at: '2026-10-27T10:00:01Z' }));
+  tables.agent_activities.push(...['grandchild', 'job-b'].map((id, i) => activity(i + 10,
+    { task_id: id, type: 'prompt', created_at: '2026-10-27T10:00:01Z', body: { signal: 'feedback' } })));
+  tables.agent_events.push(...['job-a', 'job-b'].map((id) => event(`notice-${id}`, '2026-10-27T10:00:02Z',
+    { task_id: id, type: 'task.updated', status: 'queued', payload: { verdict: 'approved' } })));
+  const next = await tool('wait_for_my_tasks').handler({ job_id: 'job-a', after: first.structured.next_cursor, timeout_s: 0 }, h.ctx);
+  assert.deepEqual((next.structured.tasks as Row[]).map(t => t.task_id).sort(), ['grandchild', 'job-a', 'new-child']);
+  assert.equal(tables.agent_events.find(e => e.event_id === 'notice-job-b')!.status, 'queued');
+  const outsideAck = encodeTaskCursor({ t: normTs('2026-10-27T10:00:02Z'), k: [], a: ['notice-job-b'] });
+  await assert.rejects(() => tool('wait_for_my_tasks').handler({ job_id: 'job-a', after: outsideAck, timeout_s: 0 }, h.ctx), /outside this job/);
+  const missing = await tool('wait_for_my_tasks').handler({ job_id: 'unreadable', timeout_s: 0 }, h.ctx);
+  assert.deepEqual(missing.structured.tasks, []);
+});
+
 Deno.test('a Lead without a bridge receives policy review, verdict, minor findings and environment release notices', async () => {
   const after=encodeTaskCursor({t:normTs('2026-10-27T10:00:01Z'),k:[]});
   const payloads = [

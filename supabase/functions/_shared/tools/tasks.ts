@@ -56,6 +56,39 @@ async function pendingPrompts(ctx: ToolContext, taskIds: string[]): Promise<Map<
   return out;
 }
 
+const joinJob: ToolDef = {
+  name: 'join_job',
+  title: 'Find and join a job by name',
+  description: 'Call first when asked to work on a named job as Lead or worker. The row decides your role, not the chat. ' +
+    'Searches only readable job rows; does not grant access or start a run. If refused, say why and stop. ' +
+    'For ambiguous names, ask which database and retry with job_id. After joining, claim your assigned task and pass job_id to wait_for_my_tasks.',
+  inputSchema: object({
+    name: { type: 'string', minLength: 1 },
+    as: { type: 'string', enum: ['lead', 'worker'] },
+    job_id: { type: 'string', description: 'Disambiguate with the job_id returned for the chosen database.' },
+  }, ['name', 'as']),
+  outputSchema: output({
+    status: { type: 'string', enum: ['joined', 'other_lead', 'no_lead', 'ambiguous', 'not_found'] },
+    job_id: { type: ['string', 'null'] }, title: { type: 'string' }, database: { type: 'object' },
+    lead_name: { type: ['string', 'null'] }, subtasks: { type: 'array', items: { type: 'object' } },
+    workers: { type: 'array', items: { type: 'object' } }, plan: { type: 'array', items: { type: 'object' } },
+    brief: { type: ['object', 'null'] }, jobs: { type: 'array', items: { type: 'object' } },
+  }),
+  annotations: WRITE_IDEMPOTENT,
+  async handler(args, ctx) {
+    const data = await must(ctx.db.rpc<Row>('join_job', { p_name: args.name, p_as: args.as, p_job_id: str(args.job_id) })) ?? { status: 'not_found' };
+    const database = data.database as Row | undefined;
+    const count = Array.isArray(data.jobs) ? data.jobs.length : 0;
+    const text = data.status === 'joined'
+      ? `${args.as === 'lead' ? 'Found' : 'Working on'} ${String(data.title)} in ${String(database?.title)}.`
+      : data.status === 'other_lead' ? `Refused: this job names ${String(data.lead_name)} as Lead.`
+      : data.status === 'no_lead' ? 'Refused: this job has no Lead yet. A person must choose the Lead on its row.'
+      : data.status === 'ambiguous' ? `${count === 2 ? 'Two' : count} jobs are called ${String(args.name)}. Which one?`
+      : `No job called ${String(args.name)} was found in pages you can read.`;
+    return { text, structured: data };
+  },
+};
+
 const listMyTasks: ToolDef = {
   name: 'list_my_tasks',
   title: 'List my assigned tasks',
@@ -499,6 +532,6 @@ const sendMessage: ToolDef = {
 };
 
 export const taskTools: ToolDef[] = [
-  listMyTasks, getTask, claimTask, heartbeat, postActivity, addArtifact, requestInput, awaitQuestions, requestApproval,
+  joinJob, listMyTasks, getTask, claimTask, heartbeat, postActivity, addArtifact, requestInput, awaitQuestions, requestApproval,
   beginExternalOp, finishExternalOp, submitForReview, endRun, ackStop, sendMessage,
 ];
