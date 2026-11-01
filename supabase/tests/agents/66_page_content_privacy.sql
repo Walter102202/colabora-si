@@ -1,5 +1,7 @@
 -- Private page boundaries cover files, synced content, and decisions, not just page rows.
 begin;
+-- Match the Storage API delete context; this guard is separate from the RLS policies tested below.
+select set_config('storage.allow_delete_query','true',true);
 select no_plan();
 select tests.fixture() as f \gset
 select (:'f'::jsonb->>'ws') as ws, (:'f'::jsonb->>'owner') as owner \gset
@@ -13,14 +15,21 @@ values('private-source',:'ws',:'owner','private-source');
 select tests.make_page(:'ws','public-copy',null,
   '{"id":"public-copy","blocks":[{"id":"copy","type":"synced","syncedFrom":"private-sync","html":""},{"id":"open-sync","type":"synced","html":""},{"id":"f","type":"file","fileId":"open-file"}]}');
 insert into public.page_shares(page_id,user_id,level) values('public-copy',:'sharee','view');
+select tests.make_page(:'ws','tombstone-source',null,'{"id":"tombstone-source","blocks":[{"id":"tombstone-sync","type":"synced","html":""}]}');
 select tests.set_human(:'owner');
-insert into public.files(id,workspace_id) values('private-file',:'ws'),('open-file',:'ws'),('staged-file',:'ws'),('synced-file',:'ws');
-insert into storage.objects(bucket_id,name) values('files',:'ws'||'/private-file'),('files',:'ws'||'/open-file'),('files',:'ws'||'/staged-file'),('files',:'ws'||'/synced-file');
+insert into public.files(id,workspace_id) values('private-file',:'ws'),('open-file',:'ws'),('staged-file',:'ws'),('synced-file',:'ws'),('row-origin-file',:'ws');
+insert into storage.objects(bucket_id,name) values('files',:'ws'||'/private-file'),('files',:'ws'||'/open-file'),('files',:'ws'||'/staged-file'),('files',:'ws'||'/synced-file'),('files',:'ws'||'/row-origin-file');
+insert into public.pages(id,workspace_id,data) values('private-row-origin',:'ws','{"id":"private-row-origin","blocks":[],"rowOrigin":{"databasePageId":"page_A","row":{"id":"former-row","cells":{"attachments":[{"fileId":"row-origin-file"}]}},"index":0}}');
 update public.files set uploaded_by=:'editor' where id='staged-file';
+select lives_ok(format($q$insert into public.files(id,workspace_id) values('first-upsert-file',%L) on conflict(id) do update set workspace_id=excluded.workspace_id returning id$q$,:'ws'),'first-time upsert can return its newly stamped staging row');
 select is((select uploaded_by from public.files where id='staged-file'),:'owner'::uuid,'staged ownership is stamped by the server');
 select is((select count(*) from storage.objects where name=:'ws'||'/staged-file'),1::bigint,'uploader reads before the page reference exists');
 select lives_ok(format($q$insert into public.files(id,workspace_id) values('staged-file',%L) on conflict(id) do update set workspace_id=excluded.workspace_id$q$,:'ws'),'normal metadata upsert remains supported');
 select public.apply_workspace_ops(:'ws','[{"op":"synced_set","key":"private-sync","blocks":[{"id":"secret","type":"paragraph","html":"Private acquisition budget: 500000"},{"id":"sf","type":"file","fileId":"synced-file"}]},{"op":"synced_set","key":"open-sync","blocks":[{"id":"open","type":"paragraph","html":"Public content"}]}]');
+select public.apply_workspace_ops(:'ws','[{"op":"synced_set","key":"tombstone-sync","blocks":[]}]');
+-- Match sync.tombstonePage: preserve the source row while removing its content and parent.
+update public.pages set data=null,parent_id=null,deleted_at=now() where id='tombstone-source';
+select lives_ok(format($q$select public.apply_workspace_ops(%L,'[{"op":"synced_set","key":"tombstone-sync","blocks":null}]')$q$,:'ws'),'canonical cleanup succeeds after the source page is tombstoned');
 select is((select synced_blocks from public.workspaces where id=:'ws'),'{}'::jsonb,'workspace broadcasts never contain canonical blocks');
 select is(public.read_workspace_synced_blocks(:'ws')->'private-sync'->0->>'html','Private acquisition budget: 500000','owner reads the private canonical content');
 select ok((public.get_page_bundle('public-copy')->'syncedBlocks')?'private-sync','owner gets private source content in the legacy bundle');
@@ -31,6 +40,8 @@ select throws_ok($q$select * from private.workspace_synced_blocks$q$,'42501',nul
 select throws_ok($q$select private.page_bundle_base('public-copy',200)$q$,'42501',null,'legacy bundle helper cannot be called directly');
 select throws_ok(format($q$insert into storage.objects(bucket_id,name) values('files',%L)$q$,'not-a-workspace/unknown'),'42501',null,'malformed object paths fail authorization without a UUID cast error');
 select tests.reset_role();
+
+insert into public.private_pages(page_id,workspace_id,owner_user_id,root_page_id) values('private-row-origin',:'ws',:'owner','private-row-origin');
 
 insert into public.agent_tasks(id,workspace_id,context_id,row_page_id,title,delegate_agent_id,owner_user_id,created_by,created_by_type,request_kind)
 values('00000000-0000-4000-8000-00000000c001',:'ws','00000000-0000-4000-8000-00000000c001','private-source','Private task',(:'f'::jsonb->>'agent')::uuid,:'owner',:'owner','human','fill'),
@@ -43,6 +54,7 @@ values(:'ws','00000000-0000-4000-8000-00000000c001','test','send','hash','{"secr
 select tests.set_human((:'f'::jsonb->>'viewer')::uuid);
 select is((select count(*) from public.pages where id='private-source'),0::bigint,'viewer cannot read private source page');
 select is((select count(*) from storage.objects where name=:'ws'||'/private-file'),0::bigint,'viewer cannot read the private attachment');
+select is((select count(*) from storage.objects where name=:'ws'||'/row-origin-file'),0::bigint,'rowOrigin cell files inherit private page visibility');
 select is((select count(*) from storage.objects where name=:'ws'||'/synced-file'),0::bigint,'viewer cannot read private synced attachment');
 select is((select count(*) from public.files where id in ('private-file','staged-file','synced-file')),0::bigint,'metadata does not disclose hidden or staged files');
 select is((select count(*) from storage.objects where name=:'ws'||'/open-file'),1::bigint,'viewer still reads ordinary page attachments');
@@ -59,6 +71,8 @@ select tests.set_human(:'editor');
 select throws_ok(format($q$select public.apply_workspace_ops(%L,'[{"op":"synced_set","key":"private-sync","blocks":[]}]')$q$,:'ws'),'PT403','forbidden_synced_source','another editor cannot overwrite private canonical content');
 select throws_ok(format($q$select public.apply_workspace_ops(%L,'[{"op":"synced_set","key":"private-sync","blocks":null}]')$q$,:'ws'),'PT403','forbidden_synced_source','another editor cannot delete private canonical content');
 select throws_ok($q$select public.apply_page_ops('page_B','[{"op":"insert_block","block":{"id":"steal","type":"file","fileId":"private-file"}}]')$q$,'PT403','forbidden_file_reference','guessing an id cannot launder a private file through a readable page');
+select throws_ok(format($q$insert into public.pages(id,workspace_id,data) values('forged-file-page',%L,'{"id":"forged-file-page","blocks":[{"id":"steal","type":"file","fileId":"private-file"}]}')$q$,:'ws'),'PT403','forbidden_file_reference','direct page insertion cannot launder a hidden attachment');
+select throws_ok(format($q$select public.apply_workspace_ops(%L,'[{"op":"synced_set","key":"open-sync","blocks":[{"id":"steal","type":"file","fileId":"private-file"}]}]')$q$,:'ws'),'PT403','forbidden_file_reference','a writable synced source cannot launder a hidden attachment');
 select throws_ok(format($q$insert into storage.objects(bucket_id,name) values('files',%L)$q$,:'ws'||'/private-file/overwrite'),'42501',null,'editor cannot upload into private file namespace');
 with touched as(update storage.objects set metadata='{"changed":true}' where name=:'ws'||'/private-file' returning 1)
 select is((select count(*) from touched),0::bigint,'editor cannot overwrite private storage');
@@ -67,6 +81,14 @@ select is((select count(*) from gone),0::bigint,'editor cannot delete private st
 with gone as(delete from public.files where id='private-file' returning 1)
 select is((select count(*) from gone),0::bigint,'editor cannot delete private file metadata');
 select throws_ok(format($q$insert into public.files(id,workspace_id) values('staged-file',%L) on conflict(id) do update set workspace_id=excluded.workspace_id$q$,:'ws'),'42501',null,'another editor cannot claim a staged upload');
+-- An editor who did not upload the file can preserve and restore a deleted database row.
+insert into public.pages(id,workspace_id,data) values('editor-row-origin',:'ws','{"id":"editor-row-origin","blocks":[],"rowOrigin":{"databasePageId":"public-copy","row":{"id":"moved-row","cells":{"files":[{"fileId":"open-file"}]}},"index":0}}');
+select public.apply_page_ops('public-copy','[{"op":"delete_block","id":"f"}]');
+select public.archive_page('{"page_id":"editor-row-origin"}','editor-archive-row');
+select is((select count(*) from storage.objects where name=:'ws'||'/open-file'),0::bigint,'archived-only bytes stay unreadable to a non-uploader editor');
+select lives_ok($q$select public.apply_page_ops('public-copy','[{"op":"insert_block","block":{"id":"f","type":"file","fileId":"open-file"}}]')$q$,'an authorized non-uploader restores the row reference before its archived backup');
+select public.restore_page('{"page_id":"editor-row-origin"}','editor-restore-row');
+select is((select count(*) from storage.objects where name=:'ws'||'/open-file'),1::bigint,'the restored reference makes the file readable again');
 -- A forged source block cannot replace the established source-page binding.
 select public.apply_page_ops('page_B','[{"op":"insert_block","block":{"id":"private-sync","type":"synced","html":""}}]');
 select ok(not public.read_workspace_synced_blocks(:'ws')?'private-sync','forged original block does not open the canonical source');
@@ -94,6 +116,14 @@ with gone as(delete from storage.objects where name=:'ws'||'/staged-file' return
 select is((select count(*) from gone),1::bigint,'uploader can remove an abandoned staged object');
 with gone as(delete from public.files where id='staged-file' returning 1)
 select is((select count(*) from gone),1::bigint,'uploader can remove abandoned staged metadata');
+select lives_ok($q$select public.apply_page_ops('page_A','[{"op":"insert_block","block":{"id":"owner-file-copy","type":"file","fileId":"private-file"}}]')$q$,'an authorized owner can copy a readable file to another page');
+select public.apply_page_ops('page_A','[{"op":"delete_block","id":"owner-file-copy"}]');
+select public.archive_page('{"page_id":"private-row-origin"}','archive-row-origin');
+select is((select count(*) from public.page_files where page_id='private-row-origin' and file_id='row-origin-file'),1::bigint,'rowOrigin alone retains the attachment association in trash');
+with gone as(delete from storage.objects where name=:'ws'||'/row-origin-file' returning 1)
+select is((select count(*) from gone),0::bigint,'GC cannot delete an archived rowOrigin-only attachment');
+select public.restore_page('{"page_id":"private-row-origin"}','restore-row-origin');
+select is((select count(*) from storage.objects where name=:'ws'||'/row-origin-file'),1::bigint,'restoring a rowOrigin page restores its file access');
 select public.archive_page('{"page_id":"private-source"}','archive-private-file');
 with gone as(delete from storage.objects where name=:'ws'||'/private-file' returning 1)
 select is((select count(*) from gone),0::bigint,'archived references remain protected from GC');
