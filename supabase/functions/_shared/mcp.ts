@@ -508,6 +508,10 @@ export async function handleMcp(req: Request, server: McpServer, deps: McpDeps, 
   if (req.method === 'GET' && url.pathname.endsWith(PRM_SUFFIX)) {
     return jsonResponse(200, protectedResourceMetadata(req, env), cors);
   }
+  // Muse Code discovers OAuth with a bare GET, so an anonymous GET gets the sign-in challenge.
+  if (req.method === 'GET' && !req.headers.get('Authorization')) {
+    return unauthorized(req, env, new AuthError(401, 'invalid_token', 'Missing bearer token.'), cors);
+  }
   if (req.method !== 'POST') {
     return oauthError(405, 'method_not_allowed', 'This endpoint accepts POST only.', { ...cors, Allow: 'POST, OPTIONS' });
   }
