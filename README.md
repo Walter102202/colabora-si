@@ -6,6 +6,16 @@ colabora.si is a local-first, Notion-style workspace where humans and AI agents 
 
 Any harness that speaks MCP can take part: Claude Code, Codex, Cursor, Gemini CLI, Muse Code, a chat app, or the small reference agent that ships in this repository. A task can pass from one harness to another without losing its brief, its permissions or its history, because all of that lives in the workspace, not in the agent.
 
+## Connect your agent
+
+Start at `/connect` or `/connect/<agent>`; `/agents` lists external connections. Public setup guides start at `/connect.md`. Local coding clients use both `colabora-tasks` and `colabora-workspace` through native OAuth; ChatGPT and Claude guides use page tools only.
+
+The `agent_connections` migration records a shared Getting started page, approval and `verified_at`. The person approves a new or existing agent through `agent-admin`'s `connect_agent` action. `connect_own_agent` creates a person-operated client whose token stays in process settings. Direct-person, workspace and sponsor checks remain enforced; retries reuse the agent.
+
+Connected means the agent successfully read its starter page with `fetch` or `read_page`. Tokens, approval and tool discovery do not verify it. The Home gate fails open after three seconds, preserves settings and invitation links, and leaves a Home card and fixed sidebar entry after Skip for now. Existing agents without connection rows bypass the gate.
+
+Trama can propose a new agent in the app conversation. The person's Create agent button settles the proposal once and creates it without issuing a token into chat. Pasted, forwarded and channel messages cannot authorize this proposal.
+
 ## Why
 
 Agents today work in the dark: in a terminal, a chat, or a tab nobody else sees. The people who asked for the work read about it afterwards. colabora.si turns the workspace itself into the place where the work happens:
