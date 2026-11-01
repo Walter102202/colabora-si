@@ -125,6 +125,21 @@ it("starts a new account from the default pages, without offering another accoun
   expect(h.cleared).toEqual(expect.arrayContaining(["ops", "files"]));
 });
 
+it("removes the previous account from IndexedDB before bootstrapping the next one", async () => {
+  const storage = await import("@/lib/localPersistence"), { startTestWriter } = await import("./localHelpers");
+  const fake = await startTestWriter();
+  try {
+    useStore.setState({ pages: { [stale().id]: stale() }, rootOrder: [stale().id], syncUserId: "user-a", syncWorkspaceId: "ws-a" });
+    await storage.flushLocalWrites();
+    expect(fake.dump("bodies")).toContainEqual(expect.objectContaining({ id: stale().id }));
+    await initSync(user("user-b")); await sleep(0); await storage.flushLocalWrites();
+    for (const name of ["meta", "bodies", "search", "kv"]) expect(JSON.stringify(fake.dump(name))).not.toMatch(/other-account-page|user-a|ws-a/);
+    expect(useStore.getState().syncUserId).toBe("user-b");
+    expect(h.fake.inserted.map((row) => row.id)).not.toContain(stale().id);
+    expect(h.fake.writes).toEqual([]);
+  } finally { storage.stopLocalPersistence(); }
+});
+
 it("starts an existing account from its own cloud pages", async () => {
   h.fake.workspaces.push({ id: "ws-b", owner_id: "user-b", revision: 1, root_order: ["mine"], settings: null, synced_blocks: {} });
   h.fake.pages.push(cloudRow("mine", "My page"));

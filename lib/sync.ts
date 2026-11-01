@@ -1,4 +1,5 @@
 import { mark, measureSince, reportStartup } from "@/lib/metrics";
+import { clearLocalPages } from "@/lib/localPersistence";
 import { create } from "zustand";
 import type { RealtimeChannel, SupabaseClient, User } from "@supabase/supabase-js";
 import type { Block, BlockAttr, Page, Reminder, WorkspaceState } from "@/lib/types";
@@ -344,7 +345,7 @@ async function clearLocalCopy(): Promise<void> {
   try { useStore.getState().clearLocalWorkspace(); clearHistory(); }
   finally { resumeHistory(); }
   last = useStore.getState();
-  await Promise.allSettled([clearStoredOps(true), clearLocalFiles()]);
+  await Promise.allSettled([clearLocalPages(), clearStoredOps(true), clearLocalFiles()]);
 }
 async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise<void> {
   mark("colabora:bootstrap:start");

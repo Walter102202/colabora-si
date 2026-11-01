@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { applyingExternal, isApplyingExternal } from "@/lib/externalApply";
 import { isShell, joinPage, overlayMeta, splitPage } from "@/lib/pageShell";
-import { claimWorkspace, countRecords, LOCAL_DB, openLocalDb, readBodies, readWorkspace, writeBatch, type PageWrite, type StoredWorkspace } from "@/lib/localDb";
+import { claimWorkspace, countRecords, LOCAL_DB, openLocalDb, readBodies, readWorkspace, wipeLocalDb, writeBatch, type PageWrite, type StoredWorkspace } from "@/lib/localDb";
 import { searchRecord } from "@/lib/search";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { mark, pageDataSizes, recordHydration } from "@/lib/metrics";
@@ -126,7 +126,7 @@ export function startWriter(connection: IDBDatabase, currentEpoch: string): () =
 
 type Health = "starting" | "ok" | "full" | "failing" | "unavailable";
 export const useLocalHealth = create<{ health: Health }>(() => ({ health: "starting" }));
-const LEGACY_KEY = "colabora-workspace", OPEN_TIMEOUT_MS = 8000;
+const LEGACY_KEY = "colabora-workspace", CLEAR_PENDING_KEY = "colabora-clear-pending", OPEN_TIMEOUT_MS = 8000;
 type LocalState = Pick<Store, "pages" | "rootOrder" | "expanded" | "syncedBlocks" | "reminders" | "settings" | "syncUserId" | "syncWorkspaceId">;
 let hydration: Promise<void> | null = null, giveUp: (() => void) | null = null;
 const setHealth = (health: Health) => useLocalHealth.setState({ health });
@@ -194,17 +194,60 @@ async function absorbLegacy(connection: IDBDatabase, legacy: LocalState): Promis
 function startMemoryMode(): void {
   stopWriter();
 }
-async function deleteFailedMigration(connection: IDBDatabase): Promise<void> {
-  connection.close();
-  await new Promise<void>((resolve, reject) => {
+function deleteLocalDb(): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
     const request = indexedDB.deleteDatabase(LOCAL_DB);
     request.onsuccess = () => resolve(); request.onerror = () => reject(request.error); request.onblocked = () => reject(new Error("local_db_blocked"));
   });
 }
+async function deleteFailedMigration(connection: IDBDatabase): Promise<void> {
+  connection.close(); await deleteLocalDb();
+}
+function clearWasInterrupted(): boolean {
+  try { return localStorage.getItem(CLEAR_PENDING_KEY) !== null; } catch { return false; }
+}
+function removeLegacy(): void {
+  try { localStorage.removeItem(LEGACY_KEY); } catch { /* Storage may be blocked. */ }
+}
+function unmarkClearPending(): void {
+  try { localStorage.removeItem(CLEAR_PENDING_KEY); } catch { /* A retained marker safely retries next boot. */ }
+}
+async function writeCurrentState(connection: IDBDatabase, currentEpoch: string): Promise<void> {
+  const state = currentState();
+  await writeBatch(connection, currentEpoch, { pages: Object.values(state.pages).map((page) => fullWrite(page)), kv: kvOf(state) });
+}
+
+export async function clearLocalPages(): Promise<void> {
+  try { localStorage.setItem(CLEAR_PENDING_KEY, "1"); } catch { /* Still clear IndexedDB if localStorage is blocked. */ }
+  const connection = db;
+  // Invalidates in-flight continuations as well as queued writes before any await.
+  stopWriter(); removeLegacy();
+  let cleared = false;
+  if (connection) {
+    const next = crypto.randomUUID();
+    try {
+      await wipeLocalDb(connection, next);
+      await writeCurrentState(connection, next);
+      startWriter(connection, next); cleared = true;
+    } catch { connection.close(); }
+  }
+  if (!cleared) {
+    cleared = await deleteLocalDb().then(() => true, () => false);
+    startMemoryMode(); setHealth("unavailable");
+  }
+  if (cleared) unmarkClearPending();
+}
+
 async function hydrate(): Promise<void> {
-  const legacy = readLegacy();
+  const interrupted = clearWasInterrupted(), legacy = interrupted ? null : readLegacy();
+  if (interrupted) { removeLegacy(); applyingExternal(() => useStore.getState().clearLocalWorkspace()); }
   try {
-    const opened = await openOrGiveUp(); if (!opened) throw new Error("local_db_timeout"); db = opened;
+    let opened = await openOrGiveUp(); if (!opened) throw new Error("local_db_timeout"); db = opened;
+    if (interrupted) {
+      const next = crypto.randomUUID();
+      try { await wipeLocalDb(opened, next); await writeCurrentState(opened, next); }
+      catch { opened.close(); await deleteLocalDb(); opened = await openLocalDb(); db = opened; }
+    }
     const initial = legacy ?? currentState();
     const writes = Object.values(initial.pages).map((page) => ({ ...fullWrite(page), search: searchRecord(page, initial.syncedBlocks ?? {}) }));
     const claimed = await claimWorkspace(opened, writes, kvOf(initial), legacy ? Date.now() : null);
@@ -220,6 +263,7 @@ async function hydrate(): Promise<void> {
       applyingExternal(() => useStore.setState(state));
     }
     startWriter(opened, stored.epoch); setHealth("ok");
+    if (interrupted) unmarkClearPending();
   } catch {
     db?.close(); db = null;
     if (legacy) applyingExternal(() => useStore.setState(legacy));
