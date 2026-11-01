@@ -1,7 +1,8 @@
-import { pageUrl, sharedUrl } from "@/lib/routes";
+import { CONNECT_URL, pageUrl, sharedUrl } from "@/lib/routes";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { ChevronsLeft, ChevronDown, Home, Moon, Plus, Search, Settings, Star, Sun, Trash2 } from "lucide-react";
+import { ChevronsLeft, ChevronDown, Home, Moon, Plug, Plus, Search, Settings, Star, Sun, Trash2 } from "lucide-react";
+import { isSupabaseConfigured } from "@/lib/supabase";
 import { getFavorites, useStore } from "@/lib/store";
 import { useTheme } from "@/lib/useTheme";
 import { withViewTransition } from "@/lib/viewTransition";
@@ -49,6 +50,6 @@ export default function Sidebar({ collapse }: { collapse: () => void }) {
       {rootOrder.filter((id) => pages[id] && !pages[id].isDeleted).map((id) => <SidebarItem key={id} pageId={id} />)}
       {!rootOrder.some((id) => pages[id] && !pages[id].isDeleted) && <div className="empty-state text-xs">No pages yet<button onClick={() => open(useStore.getState().createPage())}>New page</button></div>}
     </div>
-    <div className="border-t border-border px-2 py-2"><div className="px-2 py-2"><SyncStatus /></div><button className="sidebar-row w-full px-2" onClick={() => openModal("auth")}><span className="workspace-avatar h-5 w-5 text-xs">{user ? (user.email ?? "U")[0].toUpperCase() : "C"}</span><span className="truncate">{user?.email ?? "Log in"}</span></button><button className="sidebar-row w-full px-2" onClick={() => openModal("trash")}><Trash2 size={16} />Trash</button></div>
+    <div className="border-t border-border px-2 py-2"><div className="px-2 py-2"><SyncStatus /></div><button className="sidebar-row w-full px-2" onClick={() => openModal("auth")}><span className="workspace-avatar h-5 w-5 text-xs">{user ? (user.email ?? "U")[0].toUpperCase() : "C"}</span><span className="truncate">{user?.email ?? "Log in"}</span></button>{isSupabaseConfigured() && <button className="sidebar-row w-full px-2" onClick={() => navigate(CONNECT_URL)}><Plug size={16} />Connect agents</button>}<button className="sidebar-row w-full px-2" onClick={() => openModal("trash")}><Trash2 size={16} />Trash</button></div>
   </aside>;
 }

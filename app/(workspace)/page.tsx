@@ -1,14 +1,21 @@
-import { pageUrl } from "@/lib/routes";
-import { useNavigate } from "react-router";
+import { CONNECT_URL, pageUrl } from "@/lib/routes";
+import { Navigate, useLocation, useNavigate } from "react-router";
 import { Database, Plus } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { formatRelative } from "@/lib/utils";
 import { withViewTransition } from "@/lib/viewTransition";
 import Emoji from "@/components/Emoji";
 import { DecisionsHome } from "@/components/agents/DecisionsHome";
+import { useConnectGate } from "@/lib/agentConnect";
+import { ConnectHomeCard } from "@/components/agents/connect/ConnectHomeCard";
 
 export default function Home() {
   const pages = useStore((s) => s.pages), navigate = useNavigate();
+  const location = useLocation(), gate = useConnectGate();
+  if (!location.search && !location.hash) {
+    if (gate === "loading") return <div className="empty-state" role="status">Checking your connections…</div>;
+    if (gate === "show") return <Navigate to={CONNECT_URL} replace />;
+  }
   const recent = Object.values(pages).filter((p) => !p.isDeleted).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 8);
   const hour = new Date().getHours();
   const open = (id: string) => withViewTransition(() => navigate(pageUrl(id)));
@@ -18,6 +25,7 @@ export default function Home() {
       <button className="action-button" onClick={() => open(useStore.getState().createPage())}><Plus size={16} />New page</button>
       <button className="action-button" onClick={() => open(useStore.getState().createDatabasePage())}><Database size={16} />New database</button>
     </div>
+    <ConnectHomeCard />
     <DecisionsHome />
     <h2 className="mb-3 text-xs text-text-tertiary">Recently edited</h2>
     {recent.length ? <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">{recent.map((page) => <button className="home-card" key={page.id} onClick={() => open(page.id)}>

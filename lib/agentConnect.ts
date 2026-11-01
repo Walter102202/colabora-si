@@ -1,4 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { useEffect, useState } from "react";
+import { create } from "zustand";
+import { getSupabase } from "@/lib/supabase";
+import { useAuthStore } from "@/lib/auth";
+import { useStore } from "@/lib/store";
+import { useAgentsStore } from "@/lib/agentsStore";
+import { connectWorkspaces } from "@/lib/agentConsent";
 
 export interface ConnectionRow {
   agent_id: string;
@@ -62,3 +69,33 @@ export function hasSkippedConnect(workspace: string): boolean { return readFlag(
 export function setConnectSkipped(workspace: string, value = true): void { writeFlag(`colabora-connect-skipped:${workspace}`, value); }
 export function isConnectCardHidden(workspace: string): boolean { return readFlag(`colabora-connect-card-hidden:${workspace}`); }
 export function setConnectCardHidden(workspace: string, value = true): void { writeFlag(`colabora-connect-card-hidden:${workspace}`, value); }
+
+type ConnectGate = "loading" | "show" | "hide";
+// The Home card shares the gate's result rather than fetching the same data twice.
+export const useConnectEligibility = create<{ key: string; gate: ConnectGate; canConnect: boolean; hasVerified: boolean }>(() => ({
+  key: "", gate: "hide", canConnect: false, hasVerified: false,
+}));
+export function useConnectGate(): ConnectGate {
+  const client = getSupabase(), userId = useAuthStore((state) => state.user?.id), workspaceId = useStore((state) => state.syncWorkspaceId);
+  const key = `${userId ?? ""}:${workspaceId ?? ""}`;
+  const [snapshot, setSnapshot] = useState<{ key: string; gate: ConnectGate }>({ key: "", gate: "loading" });
+  useEffect(() => {
+    if (!client || !userId || !workspaceId) return;
+    let settled = false;
+    useConnectEligibility.setState({ key, gate: "loading", canConnect: false, hasVerified: false });
+    const hide = () => { if (!settled) { settled = true; setSnapshot({ key, gate: "hide" }); useConnectEligibility.setState({ key, gate: "hide", canConnect: false, hasVerified: false }); } };
+    const timer = setTimeout(hide, 3000);
+    void Promise.all([connectWorkspaces(client), useAgentsStore.getState().load(workspaceId), loadConnections(client, workspaceId)]).then(([spaces, , connections]) => {
+      if (settled) return;
+      const state = useAgentsStore.getState();
+      if (state.status !== "ready" || state.workspaceId !== workspaceId || state.userId !== userId) { hide(); return; }
+      const canConnect = spaces.some((space) => space.id === workspaceId);
+      const hasVerified = connections.some((row) => row.verified_at && state.agents.some((agent) => agent.id === row.agent_id && !agent.is_platform && !agent.revoked_at));
+      const show = shouldShowConnect({ canConnect, skipped: hasSkippedConnect(workspaceId), agents: state.agents, connections });
+      settled = true; clearTimeout(timer); setSnapshot({ key, gate: show ? "show" : "hide" }); useConnectEligibility.setState({ key, gate: show ? "show" : "hide", canConnect, hasVerified });
+    }).catch(hide);
+    return () => { settled = true; clearTimeout(timer); };
+  }, [client, userId, workspaceId, key]);
+  if (!client || !userId || !workspaceId) return "hide";
+  return snapshot.key === key ? snapshot.gate : "loading";
+}
