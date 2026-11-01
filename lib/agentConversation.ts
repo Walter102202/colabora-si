@@ -14,7 +14,7 @@ export interface PersonMessage {
   body: string;
   forwarded: boolean;
   needs_reply?: boolean;
-  outcome: { kind?: string; note_id?: string; page_id?: string; message_id?: string; name?: string; harness?: string; role?: "worker" | "lead" } | null;
+  outcome: { kind?: string; from_seq?: number; note_id?: string; page_id?: string; message_id?: string; name?: string; harness?: string; role?: "worker" | "lead" } | null;
   created_at: string;
 }
 
@@ -41,6 +41,7 @@ export interface AgentConversationState {
   send: (draft: Draft) => Promise<boolean>;
   undo: (noteId: string) => Promise<void>;
   openNotes: () => Promise<string | null>;
+  newConversation: () => Promise<boolean>;
 }
 
 let channel: RealtimeChannel | null = null;
@@ -48,6 +49,16 @@ let channelUser: string | null = null;
 let subscribers = 0;
 let generation = 0;
 let activeUser: string | null = null;
+
+export const isConversationReset = (m: PersonMessage) => m.kind === "system" && m.outcome?.kind === "conversation_reset";
+
+// The conversation on screen starts at the last cut, keeping messages that were waiting for an answer.
+export function currentThread(messages: PersonMessage[]): PersonMessage[] {
+  const reset = messages.findLast(isConversationReset);
+  if (!reset) return messages;
+  const start = reset.outcome?.from_seq ?? reset.seq;
+  return messages.filter((m) => m.seq >= start && !isConversationReset(m));
+}
 
 // A row can arrive twice, from the load and from Realtime. The server's seq decides the order.
 export function mergeMessages(current: PersonMessage[], incoming: PersonMessage[]): PersonMessage[] {
@@ -145,6 +156,18 @@ export const useAgentConversation = create<AgentConversationState>()((set, get) 
 
   async undo(noteId) {
     await getAgentClient()?.rpc("undo_note", { p_note_id: noteId });
+  },
+
+  async newConversation() {
+    const client = getAgentClient(), workspaceId = get().workspaceId, version = generation;
+    if (!client || !workspaceId) return false;
+    try {
+      const { error } = await client.rpc("start_new_conversation", { p_workspace_id: workspaceId });
+      if (version !== generation || error) return false;
+      set({ failed: null });
+      await refreshAgentConversation(workspaceId);
+      return version === generation;
+    } catch { return false; }
   },
 
   async openNotes() {
