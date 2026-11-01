@@ -7,7 +7,7 @@ import Cell from "@/components/database/cells/Cell";
 import type { DbOps } from "@/lib/dbOps";
 import type { Database } from "@/lib/types";
 import { VIRTUAL_THRESHOLD } from "@/lib/virtualWindow";
-import { databaseTaskValues } from "@/lib/databaseTaskValues";
+import { databaseTaskValues, subtaskProgress } from "@/lib/databaseTaskValues";
 import { db, prop, row, view } from "./fixtures";
 
 // happy-dom lays nothing out: every box is 0 px high, so the measured window is the overscan alone. The claims here are
@@ -90,4 +90,19 @@ it("a subtask whose parent row is not in this database stays at the top level", 
   const status = prop({ id: "state", name: "Status", type: "agentStatus" });
   const source = db([status], [row({}, "second")]);
   expect(databaseTaskValues(source, subtaskTasks, []).rows[0].parentRowId).toBeUndefined();
+});
+
+it("taskless nested rows do not dilute completed subtask progress", () => {
+  const status = prop({ id: "state", name: "Status", type: "agentStatus" });
+  const source = db([status], [row({}, "job"), ...Array.from({ length: 14 }, (_, i) => ({ ...row({ state: "done" }, `done-${i}`), parentRowId: "job" })), { ...row({}, "placeholder"), parentRowId: "job" }]);
+  expect(subtaskProgress(source, source)).toEqual({ job: { done: 14, total: 14 } });
+});
+it("agent tables do not offer taskless sub-items during setup", () => {
+  mountSubtasks(false);
+  expect(container.querySelector('[aria-label="New sub-item"]')).toBeNull();
+});
+it("ordinary tables retain the new sub-item action", () => {
+  const database = db([prop({ id: "title", name: "Name" })], [row({ title: "A" }, "a")]);
+  act(() => root.render(createElement(TableView, { ops: opsFor(database, false), database, view: view({ type: "table" }), rows: database.rows, pages: {} })));
+  expect(container.querySelector('[aria-label="New sub-item"]')).not.toBeNull();
 });
