@@ -53,7 +53,7 @@ export function AgentsSettingsTab() {
     setFormError(null);
     try {
       const res = await createAgent(input);
-      setCreated({ id: res.agentId, token: res.token });
+      if (res.token) setCreated({ id: res.agentId, token: res.token });
       setView({ kind: "detail", id: res.agentId });
     } catch (e) {
       setFormError(e instanceof Error ? e.message : String(e));

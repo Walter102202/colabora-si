@@ -4,7 +4,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { TramaSurface } from "@/components/agents/assistant/TramaSurface";
-import { useAgentConversation, type PersonMessage } from "@/lib/agentConversation";
+import { refreshAgentConversation, settleAgentProposal, useAgentConversation, type PersonMessage } from "@/lib/agentConversation";
+import { useStore } from "@/lib/store";
+import { createPage } from "@/lib/factories";
 import { useAgentsStore, type AgentRow } from "@/lib/agentsStore";
 import { buildDecisionsHome } from "@/lib/agentHome";
 import { useAgentTasks, type TaskRow, type ApprovalRow } from "@/lib/agentTasks";
@@ -12,6 +14,7 @@ import { startRecorder, uploadWav } from "@/lib/agentVoice";
 import { createTask } from "@/lib/agentActions";
 
 vi.mock("@/lib/agentActions", () => ({ createTask: vi.fn() }));
+vi.mock("@/lib/agentConversation", async (original) => ({ ...await original<object>(), settleAgentProposal: vi.fn(), refreshAgentConversation: vi.fn(async () => {}) }));
 vi.mock("@/lib/agentClient", () => ({ getAgentClient: () => ({}), agentErrorMessage: String }));
 vi.mock("@/lib/agentVoice", async (original) => ({ ...(await original<typeof import("@/lib/agentVoice")>()), startRecorder: vi.fn(), uploadWav: vi.fn() }));
 let root: Root;
@@ -29,6 +32,35 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.useRealTimers(); });
 const mount = () => act(() => root.render(<MemoryRouter initialEntries={["/p/page"]}><TramaSurface workspaceId="w" userId="person" /></MemoryRouter>));
 const button = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+const originalCreateAgent = useAgentsStore.getState().createAgent;
+
+it("the store creates a chat agent without issuing a token", async () => {
+  const api = await import("@/lib/agentClient");
+  vi.spyOn(api, "getAgentClient").mockReturnValue({ functions: { invoke: vi.fn(async () => ({ data: { agent_id: "new" }, error: null })) } } as unknown as ReturnType<typeof api.getAgentClient>);
+  const issueToken = vi.fn(); useAgentsStore.setState({ workspaceId: "w", issueToken });
+  const { agentInputFor } = await import("@/lib/agentDefaults");
+  expect(await originalCreateAgent(agentInputFor("Helper", "codex", "worker"), { issueToken: false })).toEqual({ agentId: "new", token: null });
+  expect(issueToken).not.toHaveBeenCalled();
+});
+
+it.each(["accept", "cancel", "settled", "failure"])("handles an agent proposal: %s", async (outcome) => {
+  const taskPage = createPage({ id: "task-db", database: { id: "d", properties: [{ id: "status", name: "Status", type: "agentStatus" }], rows: [], views: [] } });
+  useStore.setState({ syncWorkspaceId: "w", pages: { "task-db": taskPage } });
+  useAgentConversation.setState({ messages: [message({ id: "proposal", direction: "out", outcome: { kind: "agent_proposed", name: "Helper", harness: "codex", role: "worker" } })] });
+  const create = vi.fn().mockResolvedValue({ agentId: "new", token: null });
+  if (outcome === "failure") create.mockRejectedValue(new Error("offline"));
+  useAgentsStore.setState({ createAgent: create });
+  vi.mocked(settleAgentProposal).mockReset().mockResolvedValue({ name: "Helper", harness: "codex", role: "worker" });
+  if (outcome === "settled") vi.mocked(settleAgentProposal).mockRejectedValue(new Error("already_settled"));
+  mount(); act(() => button("Talk to Trama").click());
+  const action = [...document.querySelectorAll("button")].find((node) => node.textContent === (outcome === "cancel" ? "Cancel" : "Create agent"))!;
+  await act(async () => { action.click(); action.click(); });
+  expect(settleAgentProposal).toHaveBeenCalledExactlyOnceWith("proposal", outcome !== "cancel");
+  if (outcome === "accept" || outcome === "failure") expect(create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ name: "Helper", grants: [{ pageId: "task-db", scopes: ["read", "write", "comment"], inherit: true }] }), { issueToken: false });
+  else expect(create).not.toHaveBeenCalled();
+  if (outcome === "failure") expect(document.querySelector('[role="alert"]')?.textContent).toContain("We couldn’t create this agent.");
+  if (outcome === "settled") expect(refreshAgentConversation).toHaveBeenCalledWith("w");
+});
 
 it("stays visible when folded and restores focus after Escape", () => {
   mount();

@@ -127,5 +127,67 @@ insert into public.workspace_members(workspace_id,user_id,role) values (:'other_
 select public.create_page(jsonb_build_object('workspace_id',:'other_ws','title','Getting started'),'default-starter') as default_page \gset
 select is(public.connect_agent_finish(:'other_ws',(:'other_agent'::jsonb->>'agent')::uuid)->>'page_id',:'default_page'::jsonb->>'id','default root reused');
 select tests.reset_role();
+-- Trama can propose, but only the intended person can settle a proposal.
+select tests.make_agent((:'f'::jsonb->>'ws')::uuid,'connect-trama@agents.invalid','lead','page_A') as trama \gset
+update public.agents set is_platform=true where id=(:'trama'::jsonb->>'agent')::uuid;
+create function pg_temp.agent_proposal(f jsonb,t jsonb,channel text default 'surface',pasted boolean default false,forwarded boolean default false,fields jsonb default '{}')
+returns jsonb language plpgsql as $$
+declare msg uuid; task uuid; run uuid; ctx jsonb; reply jsonb;
+begin
+  perform tests.set_human((f->>'owner')::uuid);
+  msg:=(public.post_agent_message((f->>'ws')::uuid,'Create an agent',gen_random_uuid())->>'message_id')::uuid;
+  perform tests.reset_role();
+  update public.agent_messages m set channel=agent_proposal.channel,pasted=agent_proposal.pasted,forwarded=agent_proposal.forwarded where id=msg;
+  select id into task from public.agent_tasks where workspace_id=(f->>'ws')::uuid and request_kind='assist' and state='queued' order by created_at desc limit 1;
+  perform tests.set_agent((t->>'user')::uuid,(t->>'agent')::uuid);
+  run:=(public.claim_task(task,'proposal-test')->>'run_id')::uuid;
+  ctx:=public.assist_request_context(task);
+  reply:=public.reply_person_message(run,'Create this agent?',(ctx->>'through_seq')::bigint,null,null,
+    jsonb_build_object('message_id',msg,'name',' Helper ','role','worker','harness','codex')||fields);
+  perform tests.reset_role();
+  return jsonb_build_object('context',ctx,'reply',reply->>'message_id');
+end $$;
+select pg_temp.agent_proposal(:'f',:'trama') as proposal \gset
+select ok(:'proposal'::jsonb#>>'{context,agent_proposal_message_id}' is not null,'agent proposal works without an open page');
+select is((select outcome->>'kind' from public.agent_messages where id=(:'proposal'::jsonb->>'reply')::uuid),'agent_proposed','valid agent proposal');
+select is((select outcome->>'name' from public.agent_messages where id=(:'proposal'::jsonb->>'reply')::uuid),'Helper','proposal name trimmed');
+select tests.set_anon();
+select is(tests.sqlstate_of(format('select public.settle_agent_proposal(%L,true)',:'proposal'::jsonb->>'reply')),'42501','anonymous cannot settle');
+select tests.reset_role();
+select tests.set_agent((:'trama'::jsonb->>'user')::uuid,(:'trama'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.settle_agent_proposal(%L,true)',:'proposal'::jsonb->>'reply')),'humans_only','agent cannot settle');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid,'oauth');
+select is(tests.error_of(format('select public.settle_agent_proposal(%L,true)',:'proposal'::jsonb->>'reply')),'direct_session_required','OAuth cannot settle');
+select tests.reset_role();
+select tests.set_human(:'outsider');
+select is(tests.error_of(format('select public.settle_agent_proposal(%L,true)',:'proposal'::jsonb->>'reply')),'already_settled','other person cannot settle');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(public.settle_agent_proposal((:'proposal'::jsonb->>'reply')::uuid,true)->>'name','Helper','person accepts proposal');
+select is(tests.error_of(format('select public.settle_agent_proposal(%L,true)',:'proposal'::jsonb->>'reply')),'already_settled','second settlement rejected');
+select tests.reset_role();
+select pg_temp.agent_proposal(:'f',:'trama') as declined \gset
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.settle_agent_proposal((:'declined'::jsonb->>'reply')::uuid,false);
+select tests.reset_role();
+select is((select outcome->>'kind' from public.agent_messages where id=(:'declined'::jsonb->>'reply')::uuid),'agent_declined','person can cancel');
+select pg_temp.agent_proposal(:'f',:'trama','surface',true,false,'{}') as invalid \gset
+select is((select outcome->>'kind' from public.agent_messages where id=(:'invalid'::jsonb->>'reply')::uuid),'reply','pasted does not propose');
+select ok(:'invalid'::jsonb#>>'{context,agent_proposal_message_id}' is null,'pasted has no proposal capability');
+select pg_temp.agent_proposal(:'f',:'trama','surface',false,true,'{}') as invalid \gset
+select is((select outcome->>'kind' from public.agent_messages where id=(:'invalid'::jsonb->>'reply')::uuid),'reply','forwarded does not propose');
+select ok(:'invalid'::jsonb#>>'{context,agent_proposal_message_id}' is null,'forwarded has no proposal capability');
+select pg_temp.agent_proposal(:'f',:'trama','telegram',false,false,'{}') as invalid \gset
+select is((select outcome->>'kind' from public.agent_messages where id=(:'invalid'::jsonb->>'reply')::uuid),'reply','telegram does not propose');
+select ok(:'invalid'::jsonb#>>'{context,agent_proposal_message_id}' is null,'telegram has no proposal capability');
+select pg_temp.agent_proposal(:'f',:'trama','surface',false,false,'{"role":"admin"}') as invalid \gset
+select is((select outcome->>'kind' from public.agent_messages where id=(:'invalid'::jsonb->>'reply')::uuid),'reply','role does not propose');
+select pg_temp.agent_proposal(:'f',:'trama','surface',false,false,'{"harness":"unknown"}') as invalid \gset
+select is((select outcome->>'kind' from public.agent_messages where id=(:'invalid'::jsonb->>'reply')::uuid),'reply','harness does not propose');
+select pg_temp.agent_proposal(:'f',:'trama','surface',false,false,'{"name":" "}') as invalid \gset
+select is((select outcome->>'kind' from public.agent_messages where id=(:'invalid'::jsonb->>'reply')::uuid),'reply','empty name does not propose');
+select pg_temp.agent_proposal(:'f',:'trama','surface',false,false,'{"message_id":"invalid"}') as invalid \gset
+select is((select outcome->>'kind' from public.agent_messages where id=(:'invalid'::jsonb->>'reply')::uuid),'reply','invalid message does not propose');
 select * from finish();
 rollback;
