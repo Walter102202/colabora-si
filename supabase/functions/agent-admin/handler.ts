@@ -173,9 +173,23 @@ async function runAgentOAuth(action: string, id: string, agentId: string, api: C
   if (!isRecord(context) || !isUuid(context.auth_user_id)) throw new Error('Invalid agent context');
   // Block all RLS surfaces before revoking the Auth grant.
   if (disconnect && !context.link_revoked) await api.rpc('revoke_oauth_link', { p_client_id: id });
-  const authorization = disconnect ? null : await deps.serviceRpc('oauth_authorization_context', {
-    p_authorization_id: id, p_auth_user_id: context.auth_user_id,
-  });
+  let authorization: unknown = null;
+  try {
+    if (!disconnect) authorization = await deps.serviceRpc('oauth_authorization_context', {
+      p_authorization_id: id, p_auth_user_id: context.auth_user_id,
+    });
+  } catch (e) {
+    if (action !== 'oauth_read' || (e as DbError)?.code !== 'PT404') throw e;
+    // Caller membership/sponsor was checked above. Never expose this code through a human metadata RPC.
+    const completed = await deps.serviceRpc('connect_authorization_result', { p_authorization_id: id, p_auth_user_id: context.auth_user_id });
+    if (!isRecord(completed) || typeof completed.redirect_uri !== 'string' || typeof completed.authorization_code !== 'string' || typeof completed.client_id !== 'string') throw e;
+    await api.rpc('set_oauth_app', { p_client_id: completed.client_id, p_agent_id: agentId,
+      p_client_name: completed.client_name ?? 'An app', p_redirect_uri: completed.redirect_uri });
+    const redirect = new URL(completed.redirect_uri);
+    redirect.searchParams.set('code', completed.authorization_code);
+    if (typeof completed.state === 'string' && completed.state) redirect.searchParams.set('state', completed.state);
+    return { redirect_url: redirect.href };
+  }
   if (!disconnect && (!isRecord(authorization) || typeof authorization.client_id !== 'string' || typeof authorization.redirect_uri !== 'string')) {
     throw new Error('Invalid authorization');
   }

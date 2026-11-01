@@ -263,3 +263,21 @@ begin
 end $$;
 revoke all on function public.settle_agent_proposal(uuid,boolean) from public,anon;
 grant execute on function public.settle_agent_proposal(uuid,boolean) to authenticated;
+
+-- Auth only reads pending authorizations. Resume an already approved result without re-approving it.
+create or replace function public.connect_authorization_result(p_authorization_id text,p_auth_user_id uuid)
+returns jsonb language plpgsql stable security definer set search_path='' as $$
+declare result jsonb;
+begin
+  select jsonb_build_object('client_id',a.client_id,'client_name',c.client_name,'redirect_uri',a.redirect_uri,
+    'authorization_code',a.authorization_code,'state',a.state) into result
+    from auth.oauth_authorizations a join auth.oauth_clients c on c.id=a.client_id
+    join public.agents agent on agent.auth_user_id=a.user_id
+    where a.authorization_id=p_authorization_id and a.user_id=p_auth_user_id and a.status='approved'
+      and a.expires_at>now() and a.authorization_code is not null and c.deleted_at is null
+      and agent.status='enabled' and agent.revoked_at is null and not agent.is_platform;
+  if not found then raise exception using errcode='PT404',message='not_found'; end if;
+  return result;
+end $$;
+revoke all on function public.connect_authorization_result(text,uuid) from public,anon,authenticated;
+grant execute on function public.connect_authorization_result(text,uuid) to service_role;

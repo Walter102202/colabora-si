@@ -189,5 +189,29 @@ select pg_temp.agent_proposal(:'f',:'trama','surface',false,false,'{"name":" "}'
 select is((select outcome->>'kind' from public.agent_messages where id=(:'invalid'::jsonb->>'reply')::uuid),'reply','empty name does not propose');
 select pg_temp.agent_proposal(:'f',:'trama','surface',false,false,'{"message_id":"invalid"}') as invalid \gset
 select is((select outcome->>'kind' from public.agent_messages where id=(:'invalid'::jsonb->>'reply')::uuid),'reply','invalid message does not propose');
+-- Completed OAuth retries are server-only and bound to the same agent user.
+select gen_random_uuid() as oauth_client \gset
+insert into auth.oauth_clients(id,registration_type,redirect_uris,grant_types,client_name,client_type,token_endpoint_auth_method)
+values(:'oauth_client','dynamic','http://127.0.0.1:9/cb','authorization_code','Local test','public','none');
+insert into auth.oauth_authorizations(id,authorization_id,client_id,user_id,redirect_uri,scope,status,authorization_code,state)
+values(gen_random_uuid(),'connect-retry',:'oauth_client',(:'f'::jsonb->>'agent_user')::uuid,'http://127.0.0.1:9/cb','email','approved','fixture-code','fixture-state');
+select tests.set_anon();
+select is(tests.sqlstate_of(format('select public.connect_authorization_result(%L,%L)','connect-retry',:'f'::jsonb->>'agent_user')),'42501','anon cannot retrieve approved result');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.sqlstate_of(format('select public.connect_authorization_result(%L,%L)','connect-retry',:'f'::jsonb->>'agent_user')),'42501','person cannot directly retrieve approved result');
+select tests.reset_role();
+select tests.set_service();
+select is(public.connect_authorization_result('connect-retry',(:'f'::jsonb->>'agent_user')::uuid)->>'authorization_code','fixture-code','server can resume exact approved agent');
+select is(tests.error_of(format('select public.connect_authorization_result(%L,%L)','connect-retry',:'f'::jsonb->>'owner')),'not_found','wrong user cannot receive approved result');
+select tests.reset_role();
+update auth.oauth_authorizations set status='pending' where authorization_id='connect-retry';
+select tests.set_service();
+select is(tests.error_of(format('select public.connect_authorization_result(%L,%L)','connect-retry',:'f'::jsonb->>'agent_user')),'not_found','pending authorization has no completed result');
+select tests.reset_role();
+update auth.oauth_authorizations set status='approved',created_at=now()-interval '10 minutes',expires_at=now()-interval '1 second' where authorization_id='connect-retry';
+select tests.set_service();
+select is(tests.error_of(format('select public.connect_authorization_result(%L,%L)','connect-retry',:'f'::jsonb->>'agent_user')),'not_found','expired authorization cannot resume');
+select tests.reset_role();
 select * from finish();
 rollback;
