@@ -8,7 +8,7 @@ let fake: ReturnType<typeof installFakeIndexedDb>;
 beforeEach(() => { vi.resetModules(); localStorage.clear(); fake = installFakeIndexedDb(); });
 afterEach(async () => { const storage = await import("@/lib/localPersistence"); storage.stopLocalPersistence(); });
 async function modules() {
-  return { storage: await import("@/lib/localPersistence"), store: (await import("@/lib/store")).useStore };
+  return { storage: await import("@/lib/localPersistence"), store: (await import("@/lib/store")).useStore, bodies: await import("@/lib/pageBodies") };
 }
 function legacy() {
   const pages = Object.fromEntries(Array.from({ length: 50 }, (_, i) => {
@@ -23,10 +23,12 @@ function save(value = legacy()) { localStorage.setItem("colabora-workspace", JSO
 
 it("migrates every field atomically, retains recovery and old storage for one boot, then removes only the old key", async () => {
   const initial = save(); localStorage.setItem("colabora-recovery:person:p0", "rescue");
-  let { storage, store } = await modules(); await storage.hydrateWorkspace();
+  let { storage, store, bodies } = await modules(); await storage.hydrateWorkspace();
+  await bodies.ensurePageBodies(Object.keys(initial.pages));
   for (const key of Object.keys(initial) as (keyof typeof initial)[]) expect(store.getState()[key]).toEqual(initial[key]);
   expect(fake.dump("bodies")).toHaveLength(50); expect(localStorage.getItem("colabora-workspace")).not.toBeNull();
-  storage.stopLocalPersistence(); vi.resetModules(); ({ storage, store } = await modules()); await storage.hydrateWorkspace();
+  storage.stopLocalPersistence(); vi.resetModules(); ({ storage, store, bodies } = await modules()); await storage.hydrateWorkspace();
+  await bodies.ensurePageBodies(Object.keys(initial.pages));
   expect(store.getState().pages).toEqual(initial.pages);
   expect(localStorage.getItem("colabora-workspace")).toBeNull();
   expect(localStorage.getItem("colabora-recovery:person:p0")).toBe("rescue");
@@ -45,9 +47,13 @@ it("falls back to the intact legacy copy after an atomic failure and retries nex
 
 it("persists the initial page IDs before any edit so direct links survive a reload", async () => {
   let { storage, store } = await modules(); const seed = store.getState();
+  const originalSeed = structuredClone(seed.pages);
   const history = await import("@/lib/history"); history.initHistory();
   await storage.hydrateWorkspace();
-  expect(store.getState().pages).toBe(seed.pages); expect(history.canUndo()).toBe(false);
+  const { isShell } = await import("@/lib/pageShell");
+  expect(seed.pages).toEqual(originalSeed); expect(Object.values(seed.pages).some(isShell)).toBe(false);
+  expect(Object.keys(store.getState().pages).sort()).toEqual(Object.keys(seed.pages).sort());
+  expect(Object.values(store.getState().pages).every(isShell)).toBe(true); expect(history.canUndo()).toBe(false);
   const adapter = await import("@/lib/localDb"), disk = await adapter.openLocalDb();
   expect((await adapter.readWorkspace(disk)).kv.rootOrder).toEqual(seed.rootOrder); disk.close();
   fake.resetStats(); await storage.hydrateWorkspace(); expect(fake.stats.puts).toEqual({});
@@ -68,12 +74,14 @@ it("A-2-20 uses schema 1 and excludes foreign pages and directory caches", async
 
 it("treats corrupt JSON as absent and keeps the generated seed", async () => {
   localStorage.setItem("colabora-workspace", "{"); const { storage, store } = await modules(); const seed = store.getState().pages;
-  await storage.hydrateWorkspace(); expect(storage.useLocalHealth.getState().health).toBe("ok"); expect(store.getState().pages).toBe(seed);
+  await storage.hydrateWorkspace(); expect(storage.useLocalHealth.getState().health).toBe("ok");
+  await (await import("@/lib/pageBodies")).ensurePageBodies(Object.keys(seed)); expect(store.getState().pages).toEqual(seed);
 });
 
 it("two fresh tabs converge on one seed", async () => {
   const first = await modules(); vi.resetModules(); const second = await modules();
   await Promise.all([first.storage.hydrateWorkspace(), second.storage.hydrateWorkspace()]);
+  await Promise.all([first.bodies.ensurePageBodies(Object.keys(first.store.getState().pages)), second.bodies.ensurePageBodies(Object.keys(second.store.getState().pages))]);
   expect(second.store.getState().pages).toEqual(first.store.getState().pages);
   first.storage.stopLocalPersistence();
 });
@@ -82,6 +90,7 @@ it("two migrating tabs commit a single complete copy", async () => {
   const initial = save(), first = await modules(); vi.resetModules(); const second = await modules();
   await Promise.all([first.storage.hydrateWorkspace(), second.storage.hydrateWorkspace()]);
   expect(fake.dump("bodies")).toHaveLength(50);
+  await Promise.all([first.bodies.ensurePageBodies(Object.keys(initial.pages)), second.bodies.ensurePageBodies(Object.keys(initial.pages))]);
   expect(first.store.getState().pages).toEqual(initial.pages); expect(second.store.getState().pages).toEqual(initial.pages);
   first.storage.stopLocalPersistence();
 });

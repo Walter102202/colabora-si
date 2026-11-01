@@ -28,7 +28,8 @@ async function ready() {
   const fake = installFakeIndexedDb(), result = await modules();
   const p = page({ id: "page", blocks: [b("paragraph", { id: "block", html: "Original" })] });
   result.store.setState({ pages: { page: p }, rootOrder: [p.id] });
-  await result.storage.hydrateWorkspace(); return { ...result, fake };
+  await result.storage.hydrateWorkspace(); await (await import("@/lib/pageBodies")).ensurePageBody(p.id);
+  return { ...result, fake };
 }
 const beforeUnload = () => { const event = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; };
 

@@ -6,11 +6,13 @@ import * as pm from "@/lib/pageMutations";
 import * as dm from "@/lib/dbMutations";
 import { createPageFromTemplate as materializeTemplate, sanitizeBlocks, seedWorkspace } from "@/lib/seed";
 import { useAuthStore } from "@/lib/auth";
-import { isShell, overlayMeta } from "@/lib/pageShell";
-import { ensurePageBodies, notifyPageUnavailable } from "@/lib/pageBodies";
+import { isShell, overlayMeta, shellOf } from "@/lib/pageShell";
+import { ensurePageBodies, notifyPageUnavailable, opening } from "@/lib/pageBodies";
+import { diskAvailable, persistFull } from "@/lib/localPersistence";
 
 import { collectSubtreeFileIds, collectTrashFileIds, scheduleBlobGc } from "@/lib/fileStore";
 export interface RemotePatch {
+  replaceLoaded?: boolean;
   pages?: Record<string, Page | null>;
   rootOrder?: string[];
   syncedBlocks?: Record<string, Block[]>;
@@ -22,7 +24,7 @@ export type Store = WorkspaceState & SyncState & Actions;
 interface Actions {
   // sincronización (§II.7)
   setSyncWorkspaceId: (id: string | null, userId?: string | null) => void;
-  applyRemotePages: (patch: RemotePatch) => void;
+  applyRemotePages: (patch: RemotePatch) => RemotePatch;
   applyLocalPages: (patch: RemotePatch) => void;
   hydratePages: (pages: Page[]) => void;
 
@@ -172,10 +174,27 @@ export const useStore = create<Store>()((set, get) => {
       }
       return pages === state.pages ? state : { pages };
     }),
-    applyRemotePages: (patch) => set((state) => applyRemotePatch(state, {
-      ...patch,
-      ...(patch.pages ? { pages: Object.fromEntries(Object.entries(patch.pages).map(([id, page]) => [id, page ? cleanPage(page) : null])) } : {}),
-    })),
+    applyRemotePages: (patch) => {
+      const state = get(), toDisk: Page[] = [];
+      let pages: Record<string, Page | null> | undefined;
+      if (patch.pages) {
+        pages = {};
+        for (const [id, page] of Object.entries(patch.pages)) {
+          const current = state.pages[id], loaded = !!current && !isShell(current);
+          if (!page) { pages[id] = null; continue; }
+          if (isShell(page)) { if (!loaded || patch.replaceLoaded) pages[id] = page; continue; }
+          const newerMeta = current && isShell(current) && (current.revision ?? 0) > (page.revision ?? 0);
+          const clean = cleanPage(newerMeta ? overlayMeta(page, current) : page);
+          const keep = !diskAvailable() || loaded || (!newerMeta && opening.has(id));
+          if (!keep || (current && !loaded)) toDisk.push(clean);
+          pages[id] = keep ? clean : newerMeta ? { ...shellOf(clean), revision: current.revision } : shellOf(clean);
+        }
+        persistFull(toDisk);
+      }
+      const stored = { ...patch, ...(pages ? { pages } : {}) };
+      set((current) => applyRemotePatch(current, stored));
+      return stored;
+    },
     createPage: (parentId = null, patch = {}) => {
       const settings = get().settings ?? DEFAULT_SETTINGS;
       const page = cleanPage(makePage({ parentId, smallText: settings.smallTextDefault, fullWidth: settings.fullWidthDefault, font: settings.defaultFont !== "default" ? settings.defaultFont : undefined, ...patch }));

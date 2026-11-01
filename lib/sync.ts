@@ -170,8 +170,8 @@ const cursors: Partial<Record<PullFlow, string>> = {};
 function advance(flow: PullFlow, iso: string): void { if (!cursors[flow] || Date.parse(iso) > Date.parse(cursors[flow]!)) cursors[flow] = iso; }
 export const isApplyingRemote = isApplyingExternal;
 function applyRemote(patch: RemotePatch, rebase = true): void {
-  applyingExternal(() => useStore.getState().applyRemotePages(patch));
-  if (rebase) rebaseHistory(patch); last = useStore.getState();
+  const stored = applyingExternal(() => useStore.getState().applyRemotePages(patch));
+  if (rebase) rebaseHistory(stored); last = useStore.getState();
 }
 function scheduleFlush(ms = DEBOUNCE_MS): void {
   if (debounceTimer) clearTimeout(debounceTimer);

@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { applyingExternal, isApplyingExternal } from "@/lib/externalApply";
 import { isShell, joinPage, overlayMeta, shellFromMeta, splitPage } from "@/lib/pageShell";
-import { claimWorkspace, countRecords, isQuotaError, LOCAL_DB, openLocalDb, readBodies, readPages, readWorkspace, StaleEpochError, writeBatch, wipeLocalDb, type PageReconciler, type PageWrite, type StoredWorkspace } from "@/lib/localDb";
+import { claimWorkspace, countRecords, isQuotaError, LOCAL_DB, openLocalDb, readPages, readWorkspace, StaleEpochError, writeBatch, wipeLocalDb, type PageReconciler, type PageWrite, type StoredWorkspace } from "@/lib/localDb";
 import { searchRecord } from "@/lib/search";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { mark, pageDataSizes, recordHydration } from "@/lib/metrics";
@@ -140,7 +140,11 @@ export async function readFullWorkspace(): Promise<{ pages: Record<string, Page>
 }
 export function hasPendingLocalWrites(): boolean { return dirtyPages.size > 0 || dirtyKv.size > 0 || flushing !== null; }
 export function fullWrite(page: Page, remote = false): Extract<PageWrite, { kind: "full" }> {
-  return { kind: "full", id: page.id, ...splitPage(page), search: searchRecord(page, useStore.getState().syncedBlocks ?? {}), remote };
+  const state = useStore.getState(), current = state.pages[page.id];
+  const newerMeta = current && isShell(current) && (current.revision ?? 0) > (page.revision ?? 0);
+  const full = newerMeta ? overlayMeta(page, current) : page, split = splitPage(full);
+  if (newerMeta) split.meta.revision = current.revision;
+  return { kind: "full", id: page.id, ...split, search: searchRecord(full, state.syncedBlocks ?? {}), remote };
 }
 
 function schedule(delay = WRITE_DELAY_MS): void {
@@ -201,7 +205,9 @@ function deferPeer(id: string, delay: number): void {
 }
 async function applyPeerChange(ids: string[], keys: string[]): Promise<void> {
   if (!db) return;
-  const token = generation, wanted = ids.filter((id) => !isShell(useStore.getState().pages[id]));
+  const token = generation, wanted = ids.filter((id) => {
+    const page = useStore.getState().pages[id]; return !!page && !isShell(page);
+  });
   const stored = await readPages(db, ids, wanted, keys);
   if (token !== generation) return;
   const state = useStore.getState(), pages: Record<string, Page | null> = {};
@@ -389,10 +395,8 @@ export function continueWithoutLocalCopy(): void { giveUp?.(); }
 export function hydrateWorkspace(): Promise<void> { return hydration ??= hydrate(); }
 export function stopLocalPersistence(): void { stopWriter(); }
 
-async function stateFromDisk(connection: IDBDatabase, stored: StoredWorkspace): Promise<LocalState> {
-  const bodies = await readBodies(connection, stored.metas.map((meta) => meta.id));
-  if (stored.metas.some((meta) => !bodies.has(meta.id))) throw new Error("local_body_missing");
-  const pages = Object.fromEntries(stored.metas.map((meta) => [meta.id, joinPage(meta, bodies.get(meta.id)!)]));
+function stateFromDisk(stored: StoredWorkspace): LocalState {
+  const pages = Object.fromEntries(stored.metas.map((meta) => [meta.id, shellFromMeta(meta)]));
   const kv = stored.kv, sync = kv.sync as Pick<Store, "syncUserId" | "syncWorkspaceId"> | undefined;
   return { pages, rootOrder: (kv.rootOrder as string[] | undefined) ?? [], expanded: (kv.expanded as Record<string, boolean> | undefined) ?? {},
     syncedBlocks: kv.syncedBlocks as WorkspaceState["syncedBlocks"], reminders: (kv.reminders as WorkspaceState["reminders"]) ?? [],
@@ -486,11 +490,7 @@ async function hydrate(): Promise<void> {
     }
     if (claimed === "existing" && legacy) await absorbLegacy(opened, legacy);
     const stored = await readWorkspace(opened);
-    // Preserve the fresh seed's references; competing tabs instead read the winning claim.
-    if (claimed !== "created" || legacy) {
-      const state = await stateFromDisk(opened, stored);
-      applyingExternal(() => useStore.setState(state));
-    }
+    applyingExternal(() => useStore.setState(stateFromDisk(stored)));
     startWriter(opened, stored.epoch); setHealth("ok");
     if (claimed === "created") requestPersistence();
     if (interrupted) unmarkClearPending();

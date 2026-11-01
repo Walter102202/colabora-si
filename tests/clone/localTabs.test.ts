@@ -8,6 +8,7 @@ interface Tab {
   store: typeof import("@/lib/store").useStore;
   history: typeof import("@/lib/history");
   sync: typeof import("@/lib/sync");
+  bodies: typeof import("@/lib/pageBodies");
 }
 const tabs: Tab[] = [];
 let fake: ReturnType<typeof installFakeIndexedDb>;
@@ -16,8 +17,9 @@ async function tab(first = false) {
   const storage = await import("@/lib/localPersistence"), store = (await import("@/lib/store")).useStore;
   if (first) store.setState({ pages: { p: page({ id: "p", blocks: [b("paragraph", { id: "x", html: "X" }), b("paragraph", { id: "y", html: "Y" })] }) }, rootOrder: ["p"], syncWorkspaceId: null, syncUserId: null });
   await storage.hydrateWorkspace();
+  const bodies = await import("@/lib/pageBodies"); await bodies.ensurePageBody("p");
   const history = await import("@/lib/history"), sync = await import("@/lib/sync");
-  const value = { storage, store, history, sync }; tabs.push(value); return value;
+  const value = { storage, store, history, sync, bodies }; tabs.push(value); return value;
 }
 const settle = async () => { for (let i = 0; i < 100; i++) await Promise.resolve(); };
 const edit = (tab: Tab, id: string, html: string) => tab.store.getState().updateBlock("p", id, { html });
@@ -40,6 +42,7 @@ it("propagates new full pages, permanent removals and shared preferences, but no
   const id = a.store.getState().createPage(null, { title: "Created", blocks: [b("paragraph", { html: "body" })] });
   a.store.getState().setExpanded("p", true); a.store.getState().setSyncWorkspaceId("private", "person");
   await a.storage.flushLocalWrites(); await settle();
+  await peer.bodies.ensurePageBody(id);
   expect(peer.store.getState().pages[id].blocks[0].html).toBe("body"); expect(peer.store.getState().rootOrder).toContain(id);
   expect(peer.store.getState().expanded.p).toBeUndefined(); expect(peer.store.getState().syncUserId).toBeNull();
   a.store.setState(({ pages }) => ({ pages: { p: pages.p }, rootOrder: ["p"] }));
