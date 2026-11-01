@@ -101,6 +101,23 @@ it("agent tables do not offer taskless sub-items during setup", () => {
   mountSubtasks(false);
   expect(container.querySelector('[aria-label="New sub-item"]')).toBeNull();
 });
+
+it("agent jobs offer a nested human subtask, while completed jobs start collapsed", () => {
+  const status = prop({ id: "state", name: "Status", type: "agentStatus" });
+  const source = db([prop({ id: "title", name: "Name" }), status], [row({ title: "Job", state: "working" }, "job"), { ...row({ title: "Pending" }, "pending"), parentRowId: "job" }]);
+  source.rows[0].id = "job";
+  const addRow = vi.fn();
+  const ops = { ...opsFor(source, false), readOnly: false, database: source, addRow } as DbOps;
+  act(() => root.render(createElement(TableView, { ops, database: source, view: view(), rows: source.rows, pages: {} })));
+  const add = [...container.querySelectorAll("button")].find((button) => button.textContent === "+ New subtask");
+  expect(add).toBeDefined(); act(() => add!.click());
+  expect(addRow).toHaveBeenCalledWith({ parentRowId: "job" });
+  act(() => root.render(null));
+  const done = { ...source, rows: source.rows.map((row, index) => index === 0 ? { ...row, cells: { ...row.cells, state: "done" } } : row) };
+  act(() => root.render(createElement(TableView, { ops: opsFor(done, true), database: done, view: view(), rows: done.rows, pages: {} })));
+  expect(container.querySelector('[aria-label="Expand sub-items"]')).not.toBeNull();
+  expect(container.textContent).not.toContain("Pending");
+});
 it("ordinary tables retain the new sub-item action", () => {
   const database = db([prop({ id: "title", name: "Name" })], [row({ title: "A" }, "a")]);
   act(() => root.render(createElement(TableView, { ops: opsFor(database, false), database, view: view({ type: "table" }), rows: database.rows, pages: {} })));

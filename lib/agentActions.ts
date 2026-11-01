@@ -71,6 +71,12 @@ export async function assignJob(rowPageId: string, leadAgentId: string, workerAg
   return result;
 }
 
+export async function setSubtaskWorker(rowPageId: string, agentId: string | null): Promise<{ row_page_id: string; worker_agent_id: string | null; granted_agents: { id: string; name: string }[] }> {
+  const result = await rpc<{ row_page_id: string; worker_agent_id: string | null; granted_agents: { id: string; name: string }[] }>("set_subtask_worker", { p_row_page_id: rowPageId, p_agent_id: agentId }, { subtask_started: "This subtask has been adopted by the Lead. Its Worker is locked." });
+  await refresh();
+  return result;
+}
+
 export async function sendMessage(
   taskId: string,
   body: string,

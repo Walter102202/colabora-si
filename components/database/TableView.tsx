@@ -17,10 +17,13 @@ import { AiFillControls } from "@/components/agents/AiFillControls";
 import AggregationCell from "@/components/database/AggregationCell";
 const types = Object.keys(TYPE_LABELS) as PropertyType[];
 type TableGroup = ReturnType<typeof groupRows>[number];
-type TableItem = { kind: "jobPanel"; row: ViewProps["rows"][number] } | { kind: "group"; group: TableGroup } | { kind: "new"; group: TableGroup } | { kind: "empty"; group: TableGroup } | ({ kind: "row" } & ReturnType<typeof flattenTree>[number]);
+type TableItem = { kind: "jobPanel"; row: ViewProps["rows"][number] } | { kind: "addSubtask"; row: ViewProps["rows"][number] } | { kind: "group"; group: TableGroup } | { kind: "new"; group: TableGroup } | { kind: "empty"; group: TableGroup } | ({ kind: "row" } & ReturnType<typeof flattenTree>[number]);
 export default function TableView({ ops, database, queryDatabase = database, view, rows, pages, canOpenRow }: ViewProps) {
   const [menu, setMenu] = useState<{ propertyId?: string; rect: DOMRect } | null>(null), [widths, setWidths] = useState<Record<string, number>>({});
-  const [collapsed, setCollapsed] = useState(new Set<string>());
+  const [collapsed, setCollapsed] = useState(() => new Set(rows.filter((row) => !row.parentRowId && row.cells[database.properties.find((property) => property.type === "agentStatus")?.id ?? ""] === "done").map((row) => row.id)));
+  const [initialRows] = useState(() => new Set(rows.map((row) => row.id)));
+  const fresh = new Set(rows.filter((row) => !initialRows.has(row.id)).map((row) => row.id));
+
   const properties = visibleProperties(database, view), groups = groupRows(rows, view, queryDatabase, pages), groupProp = database.properties.find((p) => p.id === view.groupBy);
   const property = database.properties.find((p) => p.id === menu?.propertyId);
   const add = (type: PropertyType) => {
@@ -32,10 +35,18 @@ export default function TableView({ ops, database, queryDatabase = database, vie
   const items: TableItem[] = [], progress = subtaskProgress(database, queryDatabase), agentTable = database.properties.some((p) => p.type === "agentStatus");
   for (const group of groups) {
     if (groupProp) items.push({ kind: "group", group });
-    for (const entry of flattenTree(group.rows, collapsed)) {
+    const flattened = flattenTree(group.rows, collapsed);
+    for (const [index, entry] of flattened.entries()) {
       items.push({ kind: "row", ...entry });
       const state = entry.row.cells[database.properties.find((property) => property.type === "agentStatus")?.id ?? ""];
-      if (agentTable && entry.depth === 0 && !collapsed.has(entry.row.id) && !ops.readOnly && (!state || state === "queued")) items.push({ kind: "jobPanel", row: entry.row });
+      if (agentTable && entry.depth === 0 && !collapsed.has(entry.row.id) && !ops.readOnly && (!state || state === "queued" || state === "ready" || state === "needs_lead")) items.push({ kind: "jobPanel", row: entry.row });      if (agentTable && !ops.readOnly) {
+        const next = flattened[index + 1];
+        if (!next || next.depth === 0) {
+          const parent = entry.depth === 0 ? entry.row : flattened.slice(0, index).findLast((item) => item.depth === 0)?.row;
+          const parentState = parent?.cells[database.properties.find((property) => property.type === "agentStatus")?.id ?? ""];
+          if (parent && !collapsed.has(parent.id) && !["done", "failed", "cancelled"].includes(String(parentState))) items.push({ kind: "addSubtask", row: parent });
+        }
+      }
     }
     if (!group.rows.length && ops.readOnly) items.push({ kind: "empty", group });
     if (!ops.readOnly) items.push({ kind: "new", group });
@@ -53,12 +64,13 @@ export default function TableView({ ops, database, queryDatabase = database, vie
     {padTop > 0 && <tr aria-hidden="true"><td colSpan={properties.length + 1} style={{ height: padTop, padding: 0, border: 0 }} /></tr>}
     {items.slice(start, end).map((item, offset) => {
       const rowIndex = start + offset + 2; // aria-rowindex: the header row is 1
+      if (item.kind === "addSubtask") return <tr key={`add-${item.row.id}`} aria-rowindex={rowIndex}><td colSpan={properties.length + 1}><button type="button" className="new-row pl-12" onClick={() => ops.addRow({ parentRowId: item.row.id })}>+ New subtask</button></td></tr>;
       if (item.kind === "jobPanel") return <tr key={`panel-${item.row.id}`} aria-rowindex={rowIndex}><td colSpan={properties.length + 1}><RowPanel pageId={item.row.pageId} inline onOpenPage={() => ops.openRow(item.row.id)} /></td></tr>;
       if (item.kind === "group") { const { group } = item; return <tr key={`group-${group.key ?? "__none"}`} aria-rowindex={rowIndex} className="database-group"><td colSpan={properties.length + 1}><span className={group.color ? `tc-${group.color}` : ""}>{group.label}</span><span className="ml-2 text-text-tertiary">{group.rows.length}</span></td></tr>; }
       if (item.kind === "empty") return <tr key={`empty-${item.group.key ?? "__none"}`} aria-rowindex={rowIndex}><td colSpan={properties.length + 1} className="text-text-tertiary">Empty</td></tr>;
-      if (item.kind === "new") return <tr key={`new-${item.group.key ?? "__none"}`} aria-rowindex={rowIndex}><td colSpan={properties.length + 1}><button className="new-row" onClick={() => addInGroup(item.group.key)}>+ New</button></td></tr>;
+      if (item.kind === "new") return <tr key={`new-${item.group.key ?? "__none"}`} aria-rowindex={rowIndex}><td colSpan={properties.length + 1}><button className="new-row" onClick={() => addInGroup(item.group.key)}>{agentTable ? "+ New job" : "+ New"}</button></td></tr>;
       const { row, depth, hasChildren } = item, job = progress[row.id];
-      return <tr key={row.id} aria-rowindex={rowIndex} className={rowColorClass(row, view, queryDatabase, pages)}>{properties.map((prop) => <td key={prop.id}><div className="flex items-center" style={{ paddingLeft: prop.id === "title" ? depth * 18 : 0 }}>{prop.id === "title" && (hasChildren || (agentTable && depth === 0)) && <button aria-label={collapsed.has(row.id) ? "Expand sub-items" : "Collapse sub-items"} onClick={() => { const next = new Set(collapsed); if (next.has(row.id)) next.delete(row.id); else next.add(row.id); setCollapsed(next); }}>{collapsed.has(row.id) ? "▸" : "▾"}</button>}<div className={`min-w-0 ${job && prop.type === "agentStatus" ? "" : "flex-1"} ${job && prop.id === "title" ? "font-semibold" : ""}`}>{depth > 0 && agentTable && prop.name === "Lead" ? null : ops.readOnly && prop.id === "title" && canOpenRow && !canOpenRow(row) ? <span className="cell-readonly">{String(row.cells.title || pages[row.pageId]?.title || "Untitled")}</span> : <Cell ops={ops} database={database} row={row} property={prop} pages={pages} />}</div>{prop.type === "agentStatus" && job && <span className="ml-2 shrink-0 text-xs text-text-tertiary" title={`${job.done} of ${job.total} subtasks done`}>{job.done}/{job.total}</span>}</div></td>)}<td className="row-actions">{!ops.readOnly && <>{!agentTable && <button className="icon-button" aria-label="New sub-item" onClick={() => { ops.addRow({ parentRowId: row.id }); const next = new Set(collapsed); next.delete(row.id); setCollapsed(next); }}>↳</button>}<button className="icon-button" aria-label="Save row as template" onClick={() => ops.saveRowAsTemplate(row.id, String(row.cells.title || pages[row.pageId]?.title || "Row"))}>♧</button><button className="icon-button" aria-label="Delete row" onClick={() => ops.deleteRow(row.id)}><Trash2 size={14} /></button></>}</td></tr>;
+      return <tr key={row.id} aria-rowindex={rowIndex} className={[rowColorClass(row, view, queryDatabase, pages), fresh.has(row.id) ? "wb-rowin" : ""].join(" ")}>{properties.map((prop) => <td key={prop.id}><div className="flex items-center" style={{ paddingLeft: prop.id === "title" ? depth * 18 : 0 }}>{prop.id === "title" && (hasChildren || (agentTable && depth === 0)) && <button aria-label={collapsed.has(row.id) ? "Expand sub-items" : "Collapse sub-items"} onClick={() => { const next = new Set(collapsed); if (next.has(row.id)) next.delete(row.id); else next.add(row.id); setCollapsed(next); }}>{collapsed.has(row.id) ? "▸" : "▾"}</button>}<div className={`min-w-0 ${job && prop.type === "agentStatus" ? "" : "flex-1"} ${(job || (agentTable && depth === 0)) && prop.id === "title" ? "font-semibold" : ""}`}>{depth > 0 && agentTable && prop.name === "Lead" ? null : ops.readOnly && prop.id === "title" && canOpenRow && !canOpenRow(row) ? <span className="cell-readonly">{String(row.cells.title || pages[row.pageId]?.title || "Untitled")}</span> : <Cell ops={ops} database={database} row={row} property={prop} pages={pages} />}</div>{prop.type === "agentStatus" && job && <span className="ml-2 shrink-0 text-xs text-text-tertiary" title={`${job.done} of ${job.total} subtasks done`}>{job.done}/{job.total}</span>}</div></td>)}<td className="row-actions">{!ops.readOnly && <>{!agentTable && <button className="icon-button" aria-label="New sub-item" onClick={() => { ops.addRow({ parentRowId: row.id }); const next = new Set(collapsed); next.delete(row.id); setCollapsed(next); }}>↳</button>}<button className="icon-button" aria-label="Save row as template" onClick={() => ops.saveRowAsTemplate(row.id, String(row.cells.title || pages[row.pageId]?.title || "Row"))}>♧</button><button className="icon-button" aria-label="Delete row" onClick={() => ops.deleteRow(row.id)}><Trash2 size={14} /></button></>}</td></tr>;
     })}
     {padBottom > 0 && <tr aria-hidden="true"><td colSpan={properties.length + 1} style={{ height: padBottom, padding: 0, border: 0 }} /></tr>}
   </tbody>{(!ops.readOnly || properties.some((p) => view.aggregations?.[p.id] && view.aggregations[p.id] !== "none")) && <tfoot><tr>{properties.map((prop) => <td key={prop.id}><AggregationCell queryDatabase={queryDatabase} ops={ops} database={database} view={view} rows={rows} pages={pages} property={prop} /></td>)}<td /></tr></tfoot>}</table>

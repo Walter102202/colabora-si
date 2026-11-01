@@ -82,6 +82,7 @@ function FullRowPanel({ pageId }: RowPanelProps) {
   }
   return (
     <section className="mt-6 space-y-4 rounded-md border border-border p-3 text-sm" aria-label="Agent task">
+      {jobDatabase && !task?.parent_task_id && <a className="text-accent hover:underline" href={pageUrl(jobDatabase[0])}>← Back to {jobDatabase[1].title || "the table"}</a>}
       {mismatch === "missing" && (
         <p className="rounded border border-yellow-500/40 bg-yellow-500/10 px-2 py-1 text-xs" role="status">
           The task in this link no longer exists, or you cannot see it. Below is this row&apos;s own task.
@@ -109,6 +110,7 @@ function FullRowPanel({ pageId }: RowPanelProps) {
 function JobReadyConnector({ pageId, onOpenPage }: { pageId: string; onOpenPage: () => void }) {
   const task = useAgentTasks((state) => taskForPage(state, pageId)), tasks = useAgentTasks((state) => state.tasks);
   const agents = useAgentsStore((state) => state.agents), pages = useStore((state) => state.pages);
+  const rowPlans = useAgentTasks((state) => state.rowPlans);
   const [copied, setCopied] = useState<string[]>([]), [error, setError] = useState<string | null>(null);
   if (!task?.delegate_agent_id) return <p className="px-4 py-3 text-sm text-text-secondary">No subtasks yet. Choose a Lead and it writes them.</p>;
   if (task.state !== "queued" || task.parent_task_id) return null;
@@ -116,10 +118,12 @@ function JobReadyConnector({ pageId, onOpenPage }: { pageId: string; onOpenPage:
   const lead = known.find((agent) => agent.id === task.delegate_agent_id);
   if (!lead) return null;
   const subs = Object.values(tasks).filter((child) => child.parent_task_id === task.id && child.request_kind == null);
-  const workerIds = new Set([...(task.named_worker_ids ?? []), ...subs.map((child) => child.delegate_agent_id)]);
+  const database = pages?.[task.db_page_id ?? ""]?.database, row = database?.rows.find((item) => item.pageId === pageId);
+  const pending = database?.rows.filter((item) => item.parentRowId === row?.id && !subs.some((child) => child.row_page_id === item.pageId)) ?? [];
+  const workerIds = new Set([...(task.named_worker_ids ?? []), ...subs.map((child) => child.delegate_agent_id), ...pending.map((item) => rowPlans[item.pageId]?.worker_agent_id)]);
   const title = pages?.[pageId]?.title?.trim() || task.title.trim();
   if (!title) return <p className="px-4 py-3 text-sm text-text-secondary">Name this job and the sentence for the Lead appears here.</p>;
-  const data = jobReadyPanel({ title, lead, workers: known.filter((agent) => workerIds.has(agent.id)), subtaskCount: subs.length, hasPlan: !!pages?.[pageId]?.blocks?.some((block) => block.html?.trim()) });
+  const data = jobReadyPanel({ title, lead, workers: known.filter((agent) => workerIds.has(agent.id)), subtaskCount: subs.length + pending.length, hasPlan: !!pages?.[pageId]?.blocks?.some((block) => block.html?.trim()) });
   const copy = async (line: JobSentence) => {
     try {
       await navigator.clipboard.writeText(line.text);
