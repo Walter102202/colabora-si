@@ -74,6 +74,9 @@ interface Actions {
   addRow: (pageId: string, patch?: Partial<DbRow>) => string;
   updateCell: (pageId: string, rowId: string, propertyId: string, value: unknown) => void;
   deleteRow: (pageId: string, rowId: string) => void;
+  deleteRows: (pageId: string, rowIds: string[]) => void;
+  updateCells: (pageId: string, rowIds: string[], propertyId: string, value: unknown) => void;
+  moveRows: (pageId: string, rowIds: string[], targetId: string, position: "before" | "after") => void;
   addProperty: (pageId: string, prop?: Partial<DbProperty>) => void;
   updateProperty: (pageId: string, propId: string, patch: Partial<DbProperty>) => void;
   deleteProperty: (pageId: string, propId: string) => void;
@@ -176,7 +179,13 @@ export const useStore = create<Store>()(persist((set, get) => {
       const database = result.page.database ? { ...result.page.database, properties: result.page.database.properties.map((p) => p.relationDbId === result.page.id ? { ...p, relationDbId: pageId } : p) } : old.database;
       set((state) => ({ pages: { ...state.pages, ...children, [pageId]: pm.touch({ ...old, title: old.title || plan.title, icon: old.icon ?? plan.icon, blocks: result.page.blocks, database }) } }));
     },
-    updatePage: (id, patch) => mutate(id, (page) => pm.touch({ ...page, ...patch, ...(patch.blocks ? { blocks: sanitizeBlocks(patch.blocks) } : {}), ...(patch.database ? { database: cleanPage({ ...page, database: patch.database }).database } : {}) })),
+    updatePage: (id, patch) => set((state) => {
+      const page = state.pages[id]; if (!page) return state;
+      const pages = { ...state.pages, [id]: pm.touch({ ...page, ...patch, ...(patch.blocks ? { blocks: sanitizeBlocks(patch.blocks) } : {}), ...(patch.database ? { database: cleanPage({ ...page, database: patch.database }).database } : {}) }) };
+      const parent = pages[page.parentId ?? ""];
+      if (patch.title !== undefined && parent?.database) pages[parent.id] = pm.touch({ ...parent, database: { ...parent.database, rows: parent.database.rows.map((row) => row.pageId === id ? { ...row, cells: { ...row.cells, title: patch.title } } : row) } });
+      return { pages };
+    }),
     deletePage: (id) => set((state) => !state.pages[id] ? state : ({ pages: pm.softDeleteTree(state.pages, id, Date.now()), rootOrder: state.rootOrder.filter((key) => key !== id) })),
     restorePage: (id) => set((state) => {
       if (!state.pages[id]) return state;
@@ -271,13 +280,25 @@ export const useStore = create<Store>()(persist((set, get) => {
       return { pages };
     }),
     deleteRow: (pageId, rowId) => set((state) => {
-      const page = state.pages[pageId];
-      if (!page) return state;
-      const result = dm.deleteRow(page, rowId);
-      if (result.page === page) return state;
-      const pages = { ...state.pages, [pageId]: result.page };
-      return { pages: result.rowPageId ? pm.softDeleteTree(pages, result.rowPageId, Date.now()) : pages };
+      const row = state.pages[pageId]?.database?.rows.find((r) => r.id === rowId);
+      return row ? { pages: pm.softDeleteTree(state.pages, row.pageId, Date.now()) } : state;
     }),
+    deleteRows: (pageId, ids) => set((state) => {
+      const page = state.pages[pageId]; if (!page?.database || page.locked) return state;
+      let pages = state.pages;
+      for (const row of page.database.rows.filter((r) => ids.includes(r.id))) pages = pm.softDeleteTree(pages, row.pageId, Date.now());
+      return { pages };
+    }),
+    updateCells: (pageId, ids, propertyId, value) => set((state) => {
+      const page = state.pages[pageId], prop = page?.database?.properties.find((p) => p.id === propertyId);
+      if (!page?.database || page.locked || !prop || !["text", "number", "select", "status", "checkbox", "date", "url", "email", "phone"].includes(prop.type)) return state;
+      if (page.database.properties.some((p) => p.type === "agentStatus") && ["Lead", "Done when", "Output", "Cost", "Run"].includes(prop.name)) return state;
+      const rows = page.database.rows.map((row) => ids.includes(row.id) ? { ...row, cells: { ...row.cells, [propertyId]: value } } : row);
+      const pages = { ...state.pages, [pageId]: pm.touch({ ...page, database: { ...page.database, rows } }) };
+      if (propertyId === "title") for (const row of rows.filter((r) => ids.includes(r.id))) if (pages[row.pageId]) pages[row.pageId] = pm.touch({ ...pages[row.pageId], title: String(value ?? "") });
+      return { pages };
+    }),
+    moveRows: (id, ids, targetId, position) => mutate(id, (page) => dm.moveRows(page, ids, targetId, position)),
     addProperty: (id, prop) => mutate(id, (page) => dm.addProperty(page, prop)),
     updateProperty: (id, propId, patch) => mutate(id, (page) => dm.updateProperty(page, propId, patch)),
     deleteProperty: (id, propId) => mutate(id, (page) => dm.deleteProperty(page, propId)),

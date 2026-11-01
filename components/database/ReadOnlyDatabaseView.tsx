@@ -15,7 +15,7 @@ export default function ReadOnlyDatabaseView({ db, pages, onOpenRow }: { db: Dat
   const rows = sortRows(filterRows(queryDatabase.rows, view, queryDatabase, pages), view, queryDatabase, pages), ignore = () => {};
   const ops: DbOps = {
     pageId: Object.values(pages).find((p) => p.database?.id === db.id)?.id ?? "", database: db, readOnly: true, locked: true,
-    addRow: () => "", updateCell: ignore, deleteRow: ignore, addProperty: ignore, updateProperty: ignore, deleteProperty: ignore,
+    addRow: () => "", updateCell: ignore, deleteRow: ignore, deleteRows: ignore, updateCells: ignore, moveRows: ignore, addProperty: ignore, updateProperty: ignore, deleteProperty: ignore,
     addView: ignore, updateView: ignore, deleteView: ignore, setLocked: ignore, addRowFromTemplate: () => "", saveRowAsTemplate: ignore, deleteRowTemplate: ignore, runButton: ignore,
     openRow: (id) => { const pageId = db.rows.find((r) => r.id === id)?.pageId ?? id; if (pages[pageId]) onOpenRow?.(pageId); },
   };

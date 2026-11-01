@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { duplicateDeep, restoreTree, softDeleteTree, wouldCycle } from "@/lib/pageMutations";
+import { duplicateDeep, moveInTree, restoreTree, softDeleteTree, wouldCycle } from "@/lib/pageMutations";
 import { b, column, db, page, prop, row, T } from "./fixtures";
 
 it("PM-1 soft delete cascades without mutating the source", () => {
@@ -18,6 +18,24 @@ it("PM-3 detects descendant cycles", () => {
   expect(wouldCycle(pages, "a", "b")).toBe(true);
   expect(wouldCycle(pages, "b", "a")).toBe(false);
 });
+
+it("does not move relation values to a property that points at another database", () => {
+  const source = page({ id: "source", database: db([prop({ id: "rel", name: "Customer", type: "relation", relationDbId: "customers" })], [row({ rel: ["customer"] }, "item")]) });
+  const target = page({ id: "target", database: db([prop({ id: "other", name: "Customer", type: "relation", relationDbId: "suppliers" })]) });
+  const pages = { source, target, item: page({ id: "item", parentId: "source" }) };
+  expect(() => moveInTree(pages, [], "item", "target")).toThrow("same database");
+  expect(source.database!.rows).toHaveLength(1); expect(target.database!.rows).toHaveLength(0);
+});
+
+it("maps select options by name without changing a locked destination schema", () => {
+  const source = page({ id: "source", database: db([prop({ id: "state", name: "State", type: "select", options: [{ id: "new", name: "New", color: "gray" }] })], [row({ state: "new" }, "item")]) });
+  const target = page({ id: "target", database: { ...db([prop({ id: "status", name: "State", type: "select", options: [] })]), locked: true } });
+  const pages = { source, target, item: page({ id: "item", parentId: "source" }) };
+  expect(() => moveInTree(pages, [], "item", "target")).toThrow("Unlock the destination");
+  const next = moveInTree({ ...pages, target: { ...target, database: { ...target.database!, locked: false } } }, [], "item", "target").pages;
+  const option = next.target.database!.properties[0].options![0];
+  expect(option.name).toBe("New"); expect(next.target.database!.rows[0].cells.status).toBe(option.id);
+});
 it("PM-4 duplicates row pages, nested ids and internal relations", () => {
   const relation = prop({ id: "related", type: "relation", relationDbId: "a" });
   const first = row({ related: ["r2"] }, "r1"), second = row({}, "r2");
@@ -35,4 +53,17 @@ it("PM-4 duplicates row pages, nested ids and internal relations", () => {
   expect(child.blocks[0].columns![0].id).not.toBe(nested.columns![0].id);
   expect(child.blocks[0].columns![0].blocks[0].id).not.toBe(nested.columns![0].blocks[0].id);
   expect(pages.r1.parentId).toBe("a");
+});
+
+it("duplicates owned descendants and inline databases but keeps explicit linked views pointing to their source", () => {
+  const database = page({ id: "db", parentId: "home", database: db([], [row({ title: "Item" }, "item")]) });
+  const pages = { home: page({ id: "home", blocks: [b("database", { pageId: "db" }), b("database", { pageId: "db", linkedViews: [] })] }),
+    db: database, item: page({ id: "item", parentId: "db" }), nested: page({ id: "nested", parentId: "item" }) };
+  const result = duplicateDeep(pages, "home"), copy = result.pages[result.newId!];
+  const databaseId = copy.blocks[0].pageId!;
+  expect(databaseId).not.toBe("db"); expect(copy.blocks[1].pageId).toBe("db");
+  const rowPage = result.pages[result.pages[databaseId].database!.rows[0].pageId];
+  expect(rowPage.parentId).toBe(databaseId);
+  expect(Object.values(result.pages).some((p) => p.id !== "nested" && p.parentId === rowPage.id)).toBe(true);
+  expect(pages.db).toBe(database);
 });

@@ -379,6 +379,8 @@ export interface Page {
   cover: string | null;       // cover image url
   coverPosition?: number;     // 0..100, vertical focal point; 50 by default
   parentId: string | null;    // null = root page
+  // Previous row membership, retained when archived or moved out of a database.
+  rowOrigin?: { databasePageId: string; row: DbRow; index: number };
   blocks: Block[];
   database?: Database;        // present <=> the page is a database
   isFavorite: boolean;

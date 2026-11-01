@@ -231,7 +231,7 @@ kbd { border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; bac
 .database-panel { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--border); border-radius: 6px; padding: 12px; margin-bottom: 8px; font-size: 12px; }
 .database-panel input, .database-panel select { border: 1px solid var(--border); padding: 3px 6px; border-radius: 4px; min-width: 0; }
 .database-panel button { text-align: left; padding: 3px; border-radius: 4px; }
-.database-table-scroll { overflow-x: auto; }
+.database-table-scroll { position: relative; overflow-x: auto; }
 .database-table { width: max-content; min-width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 14px; }
 .database-table th { position: relative; height: 32px; text-align: left; font-weight: 400; color: var(--text-secondary); border: 1px solid var(--border); border-left: 0; }
 .database-table td { height: 34px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 0 5px; max-width: 640px; }
@@ -454,3 +454,28 @@ a.mention { text-decoration: none; font-weight: 500; border-radius: 3px; padding
 
 .cell-remind { float: right; opacity: 0; font-size: 12px; padding: 4px; }
 td:hover .cell-remind, .cell-remind:focus-visible { opacity: 1; }
+
+/* Table row selection stays reachable while horizontally scrolling. */
+.database-table .row-selector { position: sticky; left: 0; z-index: 2; width: 56px; min-width: 56px; padding: 4px; white-space: nowrap; background: var(--bg); }
+.row-selector input { width: 14px; height: 14px; vertical-align: middle; accent-color: var(--accent); }
+.row-grip { display: inline-flex; vertical-align: middle; padding: 3px; color: var(--text-tertiary); cursor: grab; }
+.row-grip[aria-disabled="true"] { cursor: not-allowed; opacity: .4; }
+.database-table .row-selected > td { background-color: var(--bg-selected); }
+.database-table .row-selected > .row-selector { background: var(--bg-secondary); }
+.database-table .row-drop-before > td { box-shadow: inset 0 2px var(--accent); }
+.database-table .row-drop-after > td { box-shadow: inset 0 -2px var(--accent); }
+.row-selection-toolbar { position: sticky; left: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px; border-bottom: 1px solid var(--border); background: var(--bg-secondary); font-size: 12px; }
+.row-selection-toolbar input, .row-selection-toolbar select { max-width: 200px; border: 1px solid var(--border); border-radius: 4px; padding: 4px; background: var(--bg); }
+/* Block movement and the quiet trailing insertion surface. */
+.block-item.selected-block > .block-gutter { opacity: 1; }
+.block-gutter button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.block-insert-area { display: block; width: 100%; min-height: 52px; text-align: left; cursor: text; background: transparent; color: var(--text-tertiary); }
+.block-insert-area:hover, .block-insert-area:focus-visible { background: transparent; }
+.block-insert-area span { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; opacity: 0; }
+.block-insert-area:hover span, .block-insert-area:focus-visible span { opacity: 1; background: var(--bg-hover); }
+.block-insert-target { box-shadow: inset 0 2px var(--accent); }
+@media (hover: none) {
+  .block-gutter { opacity: 1; }
+  .block-gutter button { min-height: 30px; }
+  .block-insert-area span { opacity: 1; }
+}

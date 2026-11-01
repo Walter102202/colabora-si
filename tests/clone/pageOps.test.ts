@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { applyOps, applyWorkspaceOps, diffPageToOps, invertOps, VERSION_CAP, type PageOp } from "@/lib/pageOps";
+import { movePageBlocks } from "@/lib/blockOps";
 import { b, column, db, page, prop, row, T, view } from "./fixtures";
 import type { BlockAttr, Page, PageComment, PageVersion } from "@/lib/types";
 import stale from "./fixtures/pageOps/stale-update.json";
@@ -7,6 +8,15 @@ import deletedAnchor from "./fixtures/pageOps/deleted-anchor.json";
 
 const actor: BlockAttr = { by: "human", id: "person", at: T };
 const content = (value: unknown) => JSON.parse(JSON.stringify(value, (key, value) => ["rev", "attr", "createdBy", "lastEditedBy"].includes(key) ? undefined : value));
+it.each(["root", "other-column", "into-column"])("reparents blocks to %s as one revision-checked update", (destination) => {
+  const moved = b("synced", { syncedFrom: "source" }), left = column([moved]), right = column([]), group = b("columns", { columns: [left, right] });
+  const before = page({ revision: 12, blocks: destination === "into-column" ? [moved, { ...group, columns: [{ ...left, blocks: [] }, right] }] : [group] });
+  const target = destination === "root" ? { columnId: null, id: group.id, position: "above" as const } : { columnId: right.id, position: "below" as const };
+  const after = { ...before, blocks: movePageBlocks(before.blocks, [moved.id], target) }, ops = diffPageToOps(before, after);
+  expect(ops).toEqual([{ op: "replace_page", page: after, revision: 12 }]);
+  expect(content(applyOps(before, ops, actor).page)).toEqual(content(after));
+  expect(content(applyOps(after, invertOps(before, ops), actor).page)).toEqual(content(before));
+});
 it("PO-1 diff and apply reproduce page content across collections", () => {
   const first = b(), removed = b(), moved = b(), nested = b("columns", { columns: [column([b()])] });
   const property = prop({ id: "value" }), removedProperty = prop(), r = row({ value: 1 }), deletedRow = row();

@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { expect, it, vi } from "vitest";
-import { enqueueUpload, uploadRowFirst, useUploadState } from "@/lib/fileStore";
+import { enqueueUpload, listReferencedFileIds, uploadRowFirst, useUploadState } from "@/lib/fileStore";
+import { useStore } from "@/lib/store";
 
 // A configured backend with no workspace yet: the usual dev setup with `.env` and no session.
 vi.mock("@/lib/supabase", async (original) => ({ ...(await original<typeof import("@/lib/supabase")>()), getSupabase: () => ({}) as never }));
@@ -35,4 +36,16 @@ it("FS-5 a file put before the workspace is known is not reported as uploading",
   useUploadState.getState().clear();
   enqueueUpload("f-before-login"); // nothing can be sent yet; onFileSyncStart re-enqueues it once the workspace is known
   expect(useUploadState.getState().uploading).toEqual({});
+});
+
+it("retains files in archived row cells until the row is permanently removed", () => {
+  const s = useStore.getState(), dbId = s.createDatabasePage();
+  s.addProperty(dbId, { name: "Attachments", type: "files" });
+  const propertyId = useStore.getState().pages[dbId].database!.properties.at(-1)!.id;
+  const rowId = s.addRow(dbId, { cells: { [propertyId]: [{ fileId: "archived-attachment" }] } });
+  const pageId = useStore.getState().pages[dbId].database!.rows[0].pageId;
+  s.deleteRows(dbId, [rowId]);
+  expect(listReferencedFileIds()).toContain("archived-attachment");
+  s.restorePage(pageId);
+  expect(useStore.getState().pages[dbId].database!.rows[0].cells[propertyId]).toEqual([{ fileId: "archived-attachment" }]);
 });

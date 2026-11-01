@@ -270,13 +270,20 @@ const queryDatabase: ToolDef = {
       return { propertyId: prop.id, direction: s.direction ?? 'asc' };
     });
 
-    let rows = db.rows.filter((row) => conditions.every((c) => matchCondition(row, c, db, pages)));
+    const tasks = await agentColumns(ctx, db);
+    // The shared cell engine has no task store. Materialize agent columns as text
+    // in a query-only copy so filtering and sorting use the same values as output.
+    const agentProps = db.properties.filter((p) => p.type === 'agentStatus' || p.type === 'agentDelegate');
+    const queryDb: Database = { ...db,
+      properties: db.properties.map((p) => agentProps.includes(p) ? { ...p, type: 'text' } : p),
+      rows: db.rows.map((row) => ({ ...row, cells: { ...row.cells, ...Object.fromEntries(agentProps.map((p) =>
+        [p.id, p.type === 'agentStatus' ? tasks.get(row.pageId)?.state ?? null : tasks.get(row.pageId)?.delegate_agent_id ?? null])) } })),
+    };
+    let rows = queryDb.rows.filter((row) => conditions.every((c) => matchCondition(row, c, queryDb, pages)));
     const view: DbView = { id: 'query', name: 'query', type: 'table', sorts };
-    rows = sortRows(rows, view, db, pages);
+    rows = sortRows(rows, view, queryDb, pages);
     const limit = num(args.limit) ?? 50;
     const slice = rows.slice(offset, offset + limit);
-    const tasks = await agentColumns(ctx, db);
-
     const outRows = slice.map((row) => {
       const cells: Record<string, string> = {};
       const raw: Record<string, unknown> = {};

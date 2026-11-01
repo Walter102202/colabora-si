@@ -200,6 +200,26 @@ const RUNS_LIMIT = 500;
 const REVIEWS_LIMIT = 20;
 let detailRequestSequence = 0;
 const detailRequests = new Map<string, number>();
+const taskRequests = new Map<string, number>();
+let workspaceGeneration = 0;
+let loadSequence = 0;
+let realtimeSequence = 0;
+const realtimeChanges = new Map<string, number>();
+
+// A request may finish after a newer read or realtime event, including a deletion.
+// Replace only rows unchanged since this read began.
+function mergeFetched<T extends { id: string }>(key: string, current: ById<T>, before: ById<T>, rows: T[] | null,
+  revision: number, removeMissing: (row: T) => boolean = () => false): ById<T> {
+  const next = { ...current };
+  const fetched = new Map((rows ?? []).map((row) => [row.id, row]));
+  for (const id of new Set([...Object.keys(before), ...fetched.keys()])) {
+    if (current[id] !== before[id] || (realtimeChanges.get(`${key}:${id}`) ?? 0) > revision) continue;
+    const row = fetched.get(id);
+    if (row) next[id] = row;
+    else if (before[id] && removeMissing(before[id])) delete next[id];
+  }
+  return next;
+}
 
 /** Merges a page of rows into a map by id: rows outside the page stay, rows inside it are replaced. */
 export function mergeRows<T extends { id: string }>(current: ById<T>, rows: T[] | null | undefined): ById<T> {
@@ -265,10 +285,19 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
   async load(workspaceId) {
     const client = getAgentClient();
     if (!client) return;
+    if (get().workspaceId !== workspaceId) {
+      workspaceGeneration += 1;
+      realtimeChanges.clear();
+    }
+    const generation = workspaceGeneration;
+    const request = ++loadSequence;
     const reset = get().workspaceId === workspaceId
       ? {}
-      : { tasks: {}, runs: {}, approvals: {}, reviews: {}, artifacts: {}, ciChecks: {}, environments: {}, closedCursor: null, closedExhausted: false };
+      : { tasks: {}, runs: {}, approvals: {}, reviews: {}, artifacts: {}, briefs: {}, activities: {}, ciChecks: {}, environments: {}, closedCursor: null, closedExhausted: false };
     set({ status: "loading", error: null, workspaceId, ...reset });
+    const before = get();
+    const revision = realtimeSequence;
+    const current = () => generation === workspaceGeneration && get().workspaceId === workspaceId && request === loadSequence;
     try {
       const [open, closed, runs, approvals] = await Promise.all([
         client.from("agent_tasks").select("*").eq("workspace_id", workspaceId).in("state", OPEN).limit(OPEN_LIMIT),
@@ -276,20 +305,21 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
         client.from("agent_runs").select("*").eq("workspace_id", workspaceId).order("started_at", { ascending: false }).limit(RUNS_LIMIT),
         client.from("agent_approvals").select("*").eq("workspace_id", workspaceId).eq("status", "pending"),
       ]);
+      if (!current()) return;
       const failed = [open, closed, runs, approvals].find((r) => r.error);
       if (failed?.error) throw new Error(agentErrorMessage(failed.error));
       const closedRows = (closed.data ?? []) as TaskRow[];
       const s = get();
       set({
         status: "ready",
-        tasks: mergeRows(s.tasks, [...((open.data ?? []) as TaskRow[]), ...closedRows]),
-        runs: mergeRows(s.runs, runs.data as RunRow[]),
-        approvals: mergeRows(s.approvals, approvals.data as ApprovalRow[]),
+        tasks: mergeFetched("tasks", s.tasks, before.tasks, [...((open.data ?? []) as TaskRow[]), ...closedRows], revision, (t) => (open.data?.length ?? 0) < OPEN_LIMIT && OPEN.includes(t.state)),
+        runs: mergeFetched("runs", s.runs, before.runs, runs.data as RunRow[], revision),
+        approvals: mergeFetched("approvals", s.approvals, before.approvals, approvals.data as ApprovalRow[], revision, (a) => a.status === "pending"),
         closedCursor: cursorAfter(closedRows),
         closedExhausted: closedRows.length < CLOSED_PAGE_SIZE,
       });
     } catch (e) {
-      set({ status: "error", error: agentErrorMessage(e) });
+      if (current()) set({ status: "error", error: agentErrorMessage(e) });
     }
   },
 
@@ -297,11 +327,14 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
     const client = getAgentClient();
     const { workspaceId, closedCursor, closedExhausted } = get();
     if (!client || !workspaceId || !closedCursor || closedExhausted) return;
+    const generation = workspaceGeneration;
+    const before = get();
+    const revision = realtimeSequence;
     const { data, error } = await closedTasksQuery(client, workspaceId, closedCursor);
-    if (error) return;
+    if (error || generation !== workspaceGeneration || get().workspaceId !== workspaceId || get().closedCursor !== closedCursor) return;
     const rows = (data ?? []) as TaskRow[];
     set({
-      tasks: mergeRows(get().tasks, rows),
+      tasks: mergeFetched("tasks", get().tasks, before.tasks, rows, revision),
       closedCursor: cursorAfter(rows) ?? closedCursor,
       closedExhausted: rows.length < CLOSED_PAGE_SIZE,
     });
@@ -313,24 +346,24 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
   async loadTask(taskId) {
     const client = getAgentClient();
     if (!client) return;
+    const before = get();
+    const generation = workspaceGeneration;
+    const revision = realtimeSequence;
+    const request = ++detailRequestSequence;
+    taskRequests.set(taskId, request);
     const [task, runs, approvals] = await Promise.all([
       client.from("agent_tasks").select("*").eq("id", taskId),
       client.from("agent_runs").select("*").eq("task_id", taskId),
       client.from("agent_approvals").select("*").eq("task_id", taskId).eq("status", "pending"),
     ]);
-    if (task.error || runs.error || approvals.error) return;
+    if (task.error || runs.error || approvals.error || generation !== workspaceGeneration || get().workspaceId !== before.workspaceId || taskRequests.get(taskId) !== request) return;
+    taskRequests.delete(taskId);
     const s = get();
-    const pending = (approvals.data ?? []) as ApprovalRow[];
-    const stillPending = new Set(pending.map((a) => a.id));
-    const kept: ById<ApprovalRow> = {};
-    for (const a of Object.values(s.approvals)) {
-      if (a.task_id === taskId && a.status === "pending" && !stillPending.has(a.id)) continue;
-      kept[a.id] = a;
-    }
     set({
-      tasks: mergeRows(s.tasks, task.data as TaskRow[]),
-      runs: mergeRows(s.runs, runs.data as RunRow[]),
-      approvals: mergeRows(kept, pending),
+      tasks: mergeFetched("tasks", s.tasks, before.tasks, task.data as TaskRow[], revision),
+      runs: mergeFetched("runs", s.runs, before.runs, runs.data as RunRow[], revision),
+      approvals: mergeFetched("approvals", s.approvals, before.approvals, approvals.data as ApprovalRow[], revision,
+        (a) => a.task_id === taskId && a.status === "pending"),
     });
   },
 
@@ -338,6 +371,9 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
   async loadTaskDetail(taskId) {
     const client = getAgentClient();
     if (!client) return;
+    const before = get();
+    const generation = workspaceGeneration;
+    const revision = realtimeSequence;
     const request = ++detailRequestSequence;
     detailRequests.set(taskId, request);
     const workspaceId = get().workspaceId;
@@ -347,18 +383,19 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
       client.from("agent_reviews").select("*").eq("task_id", taskId).order("created_at", { ascending: false }).limit(REVIEWS_LIMIT),
       client.from("agent_resources").select("kind,value,status").eq("task_id", taskId).neq("status", "released").order("created_at", { ascending: true }),
     ]);
+    if (generation !== workspaceGeneration || get().workspaceId !== workspaceId || detailRequests.get(taskId) !== request) return;
     const task = get().tasks[taskId];
     const brief = task ? get().briefs[`${taskId}:${task.brief_version}`] : undefined;
     const ci = brief?.done_when.some((c) => c.check === "ci")
       ? await client.rpc("task_ci_status", { p_task_id: taskId }) : null;
     const s = get();
-    if (s.workspaceId !== workspaceId || detailRequests.get(taskId) !== request) return;
+    if (generation !== workspaceGeneration || s.workspaceId !== workspaceId || detailRequests.get(taskId) !== request) return;
     detailRequests.delete(taskId);
     set({
       ciChecks: { ...s.ciChecks, [taskId]: ci && !ci.error ? (ci.data ?? []) as CiCheckRow[] : [] },
       ...(environment.error ? {} : { environments: { ...s.environments, [taskId]: (environment.data ?? []) as EnvironmentResource[] } }),
-      ...(artifacts.error ? {} : { artifacts: mergeRows(s.artifacts, artifacts.data as ArtifactRow[]) }),
-      ...(reviews.error ? {} : { reviews: mergeRows(s.reviews, reviews.data as ReviewRow[]) }),
+      ...(artifacts.error ? {} : { artifacts: mergeFetched("artifacts", s.artifacts, before.artifacts, artifacts.data as ArtifactRow[], revision) }),
+      ...(reviews.error ? {} : { reviews: mergeFetched("reviews", s.reviews, before.reviews, reviews.data as ReviewRow[], revision) }),
     });
   },
 
@@ -375,16 +412,19 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
     const client = getAgentClient();
     if (!client) return () => {};
     if (channel && channelWorkspace === workspaceId) {
+      const shared = channel;
       subscribers += 1;
       let released = false;
       return () => {
         if (released) return;
         released = true;
+        if (channel !== shared) return;
         subscribers -= 1;
         if (subscribers <= 0 && channel) {
           void client.removeChannel(channel);
           channel = null;
           channelWorkspace = null;
+          workspaceGeneration += 1;
         }
       };
     }
@@ -401,7 +441,10 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
         "postgres_changes",
         { event: "*", schema: "public", table, filter: `workspace_id=eq.${workspaceId}` },
         (payload: RealtimePostgresChangesPayload<{ id: string }>) => {
+          if (channel !== ch || get().workspaceId !== workspaceId) return;
           const key = KEY[table];
+          const changedId = payload.eventType === "DELETE" ? payload.old.id : payload.new.id;
+          if (changedId) realtimeChanges.set(`${key}:${changedId}`, ++realtimeSequence);
           const current = get()[key] as ById<{ id: string }>;
           if (payload.eventType === "DELETE") {
             const id = payload.old.id;
@@ -427,6 +470,7 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
       "postgres_changes",
       { event: "INSERT", schema: "public", table: "agent_activities", filter: `workspace_id=eq.${workspaceId}` },
       (payload: RealtimePostgresChangesPayload<ActivityRow>) => {
+        if (channel !== ch || get().workspaceId !== workspaceId) return;
         const row = payload.new as ActivityRow;
         if (!row?.task_id) return;
         if (row.body?.ci) {
@@ -439,18 +483,26 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
         set({ activities: { ...get().activities, [row.task_id]: [...list, row].sort((a, b) => a.seq - b.seq) } });
       },
     );
-    ch.subscribe();
     channel = ch;
     void get().load(workspaceId);
+    ch.subscribe((status) => {
+      if (channel !== ch || get().workspaceId !== workspaceId) return;
+      if (status === "SUBSCRIBED") void get().load(workspaceId);
+      else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+        loadSequence += 1; // an in-flight snapshot cannot make a disconnected store ready
+        set({ status: "error", error: "Live updates disconnected. Reconnecting." });
+      }
+    });
     let released = false;
     return () => {
       if (released) return;
       released = true;
-      subscribers -= 1;
       if (channel !== ch) return; // replaced by a newer workspace channel
+      subscribers -= 1;
       if (subscribers <= 0) {
         channel = null;
         channelWorkspace = null;
+        workspaceGeneration += 1;
         void client.removeChannel(ch);
       }
     };
@@ -461,12 +513,14 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
   async loadActivities(taskId) {
     const client = getAgentClient();
     if (!client) return;
+    const workspaceId = get().workspaceId;
+    const generation = workspaceGeneration;
     const current = get().activities[taskId];
     const base = client.from("agent_activities").select("*").eq("task_id", taskId);
     const { data, error } = current
       ? await base.gt("seq", current.reduce((max, a) => Math.max(max, a.seq), 0)).order("seq").limit(ACTIVITIES_PAGE_SIZE)
       : await base.order("seq", { ascending: false }).limit(ACTIVITIES_PAGE_SIZE);
-    if (error) return;
+    if (error || generation !== workspaceGeneration || get().workspaceId !== workspaceId) return;
     const activities = get().activities;
     set({ activities: { ...activities, [taskId]: mergeActivities(activities[taskId], (data ?? []) as ActivityRow[]) } });
   },
@@ -474,8 +528,10 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
   async loadBriefs(taskId) {
     const client = getAgentClient();
     if (!client) return;
+    const workspaceId = get().workspaceId;
+    const generation = workspaceGeneration;
     const { data, error } = await client.from("task_briefs").select("*").eq("task_id", taskId).order("version");
-    if (error) return;
+    if (error || generation !== workspaceGeneration || get().workspaceId !== workspaceId) return;
     const next = { ...get().briefs };
     for (const b of (data ?? []) as BriefRow[]) next[`${b.task_id}:${b.version}`] = b;
     set({ briefs: next });

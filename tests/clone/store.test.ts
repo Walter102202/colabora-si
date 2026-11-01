@@ -9,6 +9,46 @@ import { b, column, db, page, prop, row } from "./fixtures";
 import type { Page } from "@/lib/types";
 import { findBacklinks, pageBlockCount, pageWordCount } from "@/lib/pageStats";
 
+it("row title, trash recovery and database moves preserve membership and cell values", () => {
+  const s = useStore.getState(), dbId = s.createDatabasePage();
+  s.addProperty(dbId, { name: "Amount", type: "number" });
+  const amount = useStore.getState().pages[dbId].database!.properties.at(-1)!;
+  const rowId = s.addRow(dbId, { cells: { title: "Original", [amount.id]: 500 } });
+  const original = useStore.getState().pages[dbId].database!.rows[0];
+  s.updatePage(original.pageId, { title: "Renamed" });
+  expect(useStore.getState().pages[dbId].database!.rows[0].cells.title).toBe("Renamed");
+  s.deleteRow(dbId, rowId);
+  expect(useStore.getState().pages[dbId].database!.rows).toHaveLength(0);
+  s.restorePage(original.pageId);
+  expect(useStore.getState().pages[dbId].database!.rows[0]).toMatchObject({ id: rowId, cells: { title: "Renamed", [amount.id]: 500 } });
+  s.movePage(original.pageId, null);
+  expect(useStore.getState().pages[dbId].database!.rows).toHaveLength(0);
+  s.addProperty(dbId, { name: "Ticket", type: "id" });
+  s.movePage(original.pageId, dbId);
+  expect(useStore.getState().pages[dbId].database!.rows[0].cells[amount.id]).toBe(500);
+  const ticket = useStore.getState().pages[dbId].database!.properties.at(-1)!;
+  expect(useStore.getState().pages[dbId].database!.rows[0].cells[ticket.id]).toBe(1);
+  expect(ticket.nextId).toBe(2);
+  const other = s.createDatabasePage(), before = useStore.getState().pages;
+  expect(() => s.movePage(original.pageId, other)).toThrow("matching");
+  expect(useStore.getState().pages).toBe(before);
+  s.addProperty(other, { name: "Amount", type: "number" });
+  const target = useStore.getState().pages[other].database!.properties.at(-1)!;
+  s.addProperty(other, { name: "Ticket", type: "id" });
+  s.movePage(original.pageId, other);
+  expect(useStore.getState().pages[dbId].database!.rows).toHaveLength(0);
+  expect(useStore.getState().pages[other].database!.rows[0].cells[target.id]).toBe(500);
+});
+
+it("moving an ordinary page into a database creates a title row and deletion from its page can be restored", () => {
+  const s = useStore.getState(), dbId = s.createDatabasePage(), id = s.createPage(null, { title: "Document" });
+  s.movePage(id, dbId);
+  const original = useStore.getState().pages[dbId].database!.rows[0];
+  expect(original).toMatchObject({ pageId: id, cells: { title: "Document" } });
+  s.deletePage(id); expect(useStore.getState().pages[dbId].database!.rows).toHaveLength(0);
+  s.restorePage(id); expect(useStore.getState().pages[dbId].database!.rows[0].id).toBe(original.id);
+});
+
 const advance = () => vi.advanceTimersByTime(400);
 const change = (pages: Record<string, Page>) => { useStore.setState({ pages }); advance(); };
 function reset(pages: Record<string, Page> = {}, rootOrder: string[] = []) {

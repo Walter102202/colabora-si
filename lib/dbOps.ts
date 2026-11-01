@@ -5,11 +5,15 @@ import { withViewTransition } from "@/lib/viewTransition";
 import { runAgentAction } from "@/lib/agentActions";
 import { newId } from "@/lib/factories";
 import { cloneWithNewIds } from "@/lib/pageMutations";
+import { historyAction } from "@/lib/history";
 export interface DbOps {
   pageId: string; database: Database; locked: boolean; readOnly: boolean;
   addRow: (patch?: Partial<DbRow>) => string;
   updateCell: (rowId: string, propertyId: string, value: unknown) => void;
   deleteRow: (rowId: string) => void;
+  deleteRows: (rowIds: string[]) => void;
+  updateCells: (rowIds: string[], propertyId: string, value: unknown) => void;
+  moveRows: (rowIds: string[], targetId: string, position: "before" | "after") => void;
   addProperty: (prop?: Partial<DbProperty>) => void;
   updateProperty: (propId: string, patch: Partial<DbProperty>) => void;
   deleteProperty: (propId: string) => void;
@@ -38,6 +42,9 @@ export function buildDbOps(pageId: string): DbOps {
     addRow: (patch) => editable() ? state().addRow(pageId, patch) : "",
     updateCell: (rowId, propertyId, value) => { if (editable()) state().updateCell(pageId, rowId, propertyId, value); },
     deleteRow: (rowId) => { if (editable()) state().deleteRow(pageId, rowId); },
+    deleteRows: (ids) => { if (editable()) historyAction(() => state().deleteRows(pageId, ids)); },
+    updateCells: (ids, prop, value) => { if (editable()) historyAction(() => state().updateCells(pageId, ids, prop, value)); },
+    moveRows: (ids, target, position) => { if (editable() && !ops.locked) historyAction(() => state().moveRows(pageId, ids, target, position)); },
     addProperty: (prop) => { if (editable()) state().addProperty(pageId, prop); },
     updateProperty: (id, patch) => { if (editable()) state().updateProperty(pageId, id, patch); },
     deleteProperty: (id) => { if (editable()) state().deleteProperty(pageId, id); },

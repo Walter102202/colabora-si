@@ -2,14 +2,16 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { User } from "@supabase/supabase-js";
 import { useStore } from "@/lib/store";
-import { discardLocalCopy, initSync, settleBeforeSignOut, stopSync, useSyncConflict } from "@/lib/sync";
+import { discardLocalCopy, flush, initSync, settleBeforeSignOut, stopSync, useSyncConflict } from "@/lib/sync";
+import { applyOps, type PageOp } from "@/lib/pageOps";
+import type { Page } from "@/lib/types";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { canUndo, initHistory, undo } from "@/lib/history";
-import { page } from "./fixtures";
+import { b, page } from "./fixtures";
 
 type Row = Record<string, unknown>;
 interface Fake { workspaces: Row[]; pages: Row[]; inserted: Row[]; writes: string[]; failRpc: boolean }
-const h = vi.hoisted(() => ({ fake: null as unknown as Fake, client: null as unknown, cleared: [] as string[] }));
+const h = vi.hoisted(() => ({ fake: null as unknown as Fake, client: null as unknown, cleared: [] as string[], readSynced: vi.fn(), changes: new Map<string, (payload: { new: Row }) => void>(), synced: {} as Record<string, unknown>, sourceAtWrite: [] as boolean[] }));
 
 vi.mock("@/lib/supabase", () => ({ getSupabase: () => h.client }));
 vi.mock("@/lib/opsQueue", async (original) => {
@@ -48,12 +50,19 @@ function query(table: string) {
   return builder;
 }
 function client() {
-  const channel: unknown = new Proxy({}, { get: () => () => channel });
+  const channel: unknown = new Proxy({}, { get: (_, key) => key === "on" ? (_event: string, filter: { table: string }, callback: (payload: { new: Row }) => void) => { h.changes.set(filter.table, callback); return channel; } : () => channel });
   return {
     from: query,
     channel: () => channel, removeChannel: async () => {}, getChannels: () => [],
-    rpc: async (name: string) => {
+    rpc: async (name: string, args: Row) => {
+      if (name === "read_workspace_synced_blocks") return h.readSynced(args);
       h.fake.writes.push(name);
+      if (name === "apply_workspace_ops" && !h.fake.failRpc) for (const op of args.p_ops as Row[]) {
+        if (op.op === "synced_set") {
+          h.sourceAtWrite.push(h.fake.pages.some((row) => (row.data as { blocks: { id: string }[] })?.blocks?.some((block) => block.id === op.key)));
+          if (op.blocks === null) delete h.synced[String(op.key)]; else h.synced[String(op.key)] = op.blocks;
+        }
+      }
       if (name === "accept_invitation") return { data: "ws-b", error: null };
       return h.fake.failRpc ? { data: null, error: new Error("offline") } : { data: { revision: 2, results: [] }, error: null };
     },
@@ -66,12 +75,40 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 beforeEach(() => {
   h.fake = { workspaces: [], pages: [], inserted: [], writes: [], failRpc: false };
+  h.synced = {}; h.sourceAtWrite.length = 0; h.readSynced.mockReset().mockImplementation(async () => ({ data: structuredClone(h.synced), error: null })); h.changes.clear();
   h.client = client(); h.cleared.length = 0; foreignPageIds.clear();
   useSyncConflict.setState({ prompt: null });
   sessionStorage.clear();
   useStore.getState().clearLocalWorkspace();
 });
 afterEach(() => { stopSync(); });
+
+it("persists a trash backup before dropping the old database attachment reference", async () => {
+  await initSync(user("user-b")); await sleep(0);
+  const s = useStore.getState(), dbId = s.createDatabasePage();
+  s.addProperty(dbId, { name: "Files", type: "files" });
+  const prop = useStore.getState().pages[dbId].database!.properties.at(-1)!;
+  const rowId = s.addRow(dbId, { cells: { [prop.id]: [{ fileId: "protected-file" }] } });
+  const rowPageId = useStore.getState().pages[dbId].database!.rows[0].pageId;
+  await flush();
+  const backend = h.client as ReturnType<typeof client>, original = backend.rpc;
+  let backupSaved = false;
+  const writes: string[] = [];
+  backend.rpc = async (name, args) => {
+    if (name !== "apply_page_ops") return original(name, args);
+    const ops = args.p_ops as PageOp[], id = String(args.p_page_id);
+    if (id === dbId && ops.some((op) => op.op === "db_row_delete") && !backupSaved) return { data: null, error: new Error("last attachment reference removed before backup") };
+    const server = h.fake.pages.find((r) => r.id === id)!;
+    const result = applyOps(server.data as Page, ops, { by: "human", id: "user-b", at: Date.now() });
+    server.data = result.page; server.revision = Number(server.revision) + 1;
+    if (id === rowPageId) backupSaved = !!result.page.rowOrigin;
+    writes.push(id);
+    return { data: { revision: Number(server.revision), results: result.results }, error: null };
+  };
+  s.deleteRow(dbId, rowId); await flush();
+  expect(writes.slice(0, 2)).toEqual([rowPageId, dbId]);
+  expect((h.fake.pages.find((r) => r.id === rowPageId)!.data as Page).rowOrigin!.row.cells[prop.id]).toEqual([{ fileId: "protected-file" }]);
+});
 
 it("starts a new account from the default pages, without offering another account's copy", async () => {
   useStore.setState({ pages: { [stale().id]: stale() }, rootOrder: [stale().id], syncUserId: "user-a", syncWorkspaceId: "ws-a" });
@@ -166,4 +203,39 @@ it("leaves nothing of the previous account to undo", async () => {
   const restored: boolean[] = [];
   while (canUndo()) { undo(); restored.push(stale().id in useStore.getState().pages); }
   expect(restored).not.toContain(true);
+});
+
+it("creates source pages before publishing initial synced content and reads only the authorized map", async () => {
+  const source = page({ id: "source-page", blocks: [b("synced", { id: "original" })], createdAt: 1, updatedAt: 2 });
+  const blocks = [b("paragraph", { html: "Local synced text" })];
+  useStore.setState({ pages: { [source.id]: source }, rootOrder: [source.id], syncedBlocks: { original: blocks }, syncUserId: null, syncWorkspaceId: null });
+  await initSync(user("user-b")); await sleep(30);
+  expect(h.fake.workspaces[0].synced_blocks).toEqual({});
+  expect(h.sourceAtWrite).toEqual([true]);
+  expect(useStore.getState().syncedBlocks).toEqual({ original: blocks });
+  expect(h.readSynced).toHaveBeenCalledWith({ p_workspace_id: "ws-new" });
+});
+it("rebases pending synced edits over an authorized read and ignores the raw workspace cache", async () => {
+  const remote = [b("paragraph", { html: "Authorized" })], local = [b("paragraph", { html: "Pending local" })];
+  h.synced = { original: remote };
+  await initSync(user("user-b"));
+  expect(useStore.getState().syncedBlocks).toEqual({ original: remote });
+  let finish!: (value: unknown) => void;
+  h.readSynced.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  h.changes.get("workspaces")!({ new: { ...h.fake.workspaces[0], revision: 10, synced_blocks: {} } });
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  useStore.setState({ syncedBlocks: { original: local } });
+  finish({ data: {}, error: null }); await sleep(0);
+  expect(useStore.getState().syncedBlocks).toEqual({ original: local });
+});
+it("discards an authorized synced-content read when its account changes", async () => {
+  await initSync(user("user-a"));
+  let finish!: (value: unknown) => void;
+  h.readSynced.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  h.changes.get("workspaces")!({ new: { ...h.fake.workspaces[0], revision: 10, synced_blocks: {} } });
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  stopSync(); h.fake.workspaces = []; h.fake.pages = [];
+  await initSync(user("user-b"));
+  finish({ data: { secret: [b("paragraph", { html: "Old account" })] }, error: null }); await sleep(0);
+  expect(useStore.getState().syncedBlocks).toEqual({});
 });

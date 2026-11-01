@@ -92,6 +92,7 @@ export function collectBlockFileIds(blocks: Block[], ids = new Set<string>()): S
   return ids;
 }
 function collectPageFileIds(page: Page, ids: Set<string>): void {
+  for (const value of Object.values(page.rowOrigin?.row.cells ?? {})) if (Array.isArray(value)) for (const file of value) if (file && typeof file === "object" && typeof file.fileId === "string") ids.add(file.fileId);
   collectBlockFileIds(page.blocks, ids); for (const version of page.versions ?? []) collectBlockFileIds(version.blocks, ids); for (const template of page.database?.rowTemplates ?? []) collectBlockFileIds(template.blocks, ids);
   for (const row of page.database?.rows ?? []) for (const prop of page.database?.properties ?? []) if (prop.type === "files" && Array.isArray(row.cells[prop.id])) for (const file of row.cells[prop.id] as { fileId?: string }[]) if (file.fileId) ids.add(file.fileId);
 }

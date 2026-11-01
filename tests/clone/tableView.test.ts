@@ -9,6 +9,9 @@ import type { Database } from "@/lib/types";
 import { VIRTUAL_THRESHOLD } from "@/lib/virtualWindow";
 import { databaseTaskValues, subtaskProgress } from "@/lib/databaseTaskValues";
 import { db, prop, row, view } from "./fixtures";
+import { buildDbOps } from "@/lib/dbOps";
+import { useStore } from "@/lib/store";
+import { initHistory, undo } from "@/lib/history";
 
 // happy-dom lays nothing out: every box is 0 px high, so the measured window is the overscan alone. The claims here are
 // structural (windowed or not, spacer present or not, indices), not pixel counts.
@@ -62,7 +65,7 @@ function mountSubtasks(readOnly: boolean) {
   const source = db([prop({ id: "title", name: "Task" }), lead, status], ["job", "first", "second", "dropped"].map((id) => row({ title: id }, id)));
   const query = databaseTaskValues(source, subtaskTasks, [{ id: "lead", name: "Claude Code", role: "lead" }]);
   act(() => root.render(createElement(TableView, { ops: opsFor(source, readOnly), database: source, queryDatabase: query, view: view({ type: "table" }), rows: query.rows, pages: {} })));
-  const cells = (column: number) => [...container.querySelectorAll("tbody tr")].slice(0, 4).map((tr) => tr.children[column] as HTMLElement);
+  const cells = (column: number) => [...container.querySelectorAll("tbody tr")].slice(0, 4).map((tr) => tr.children[column + 1] as HTMLElement);
   return { source, query, cells, indents: () => cells(0).map((cell) => (cell.firstElementChild as HTMLElement).style.paddingLeft) };
 }
 it.each([false, true])("a plan's subtasks hang under the task that started them (read only: %s)", (readOnly) => {
@@ -105,4 +108,47 @@ it("ordinary tables retain the new sub-item action", () => {
   const database = db([prop({ id: "title", name: "Name" })], [row({ title: "A" }, "a")]);
   act(() => root.render(createElement(TableView, { ops: opsFor(database, false), database, view: view({ type: "table" }), rows: database.rows, pages: {} })));
   expect(container.querySelector('[aria-label="New sub-item"]')).not.toBeNull();
+});
+
+it("selects a range, removes filtered selections, and selects rows beyond the virtual window", () => {
+  const rows = Array.from({ length: VIRTUAL_THRESHOLD + 20 }, (_, i) => row({ title: `Item ${i}` }, `page-${i}`));
+  const database = db([prop({ id: "title", name: "Name" })], rows), currentView = view(), ops = opsFor(database, false);
+  const render = (visible = rows) => act(() => root.render(createElement(TableView, { ops, database, view: currentView, rows: visible, pages: {} })));
+  const select = (title: string, shift = false) => act(() => container.querySelector<HTMLInputElement>(`input[aria-label="Select row ${title}"]`)!.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: shift })));
+  render(); select("Item 0"); select("Item 2", true);
+  expect(container.querySelector('[role="toolbar"]')!.textContent).toContain("3 selected");
+  render([rows[2], rows[3]]);
+  expect(container.querySelector('[role="toolbar"]')!.textContent).toContain("1 selected");
+  render(); expect(container.querySelector('[role="toolbar"]')!.textContent).toContain("1 selected");
+  act(() => container.querySelector<HTMLInputElement>('[aria-label="Select all visible rows"]')!.click());
+  expect(container.querySelector('[role="toolbar"]')!.textContent).toContain(`${rows.length} selected`);
+  expect(container.querySelectorAll('tbody tr:not([aria-hidden])').length).toBeLessThan(rows.length);
+});
+
+it("keyboard row movement and bulk trash each undo as one action, preserving restored cells", () => {
+  initHistory();
+  const store = useStore.getState(), pageId = store.createDatabasePage();
+  const ids = ["Alpha", "Beta", "Gamma"].map((title) => store.addRow(pageId, { cells: { title } }));
+  const ops = buildDbOps(pageId);
+  function LiveTable() {
+    const pages = useStore((s) => s.pages), database = pages[pageId].database!;
+    return createElement(TableView, { ops, database, view: database.views[0], rows: database.rows, pages });
+  }
+  act(() => root.render(createElement(LiveTable)));
+  act(() => container.querySelector('[aria-label="Move row Alpha"]')!.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, altKey: true, key: "ArrowDown" })));
+  expect(ops.database.rows.map((r) => r.id)).toEqual([ids[1], ids[0], ids[2]]);
+  act(() => undo()); expect(ops.database.rows.map((r) => r.id)).toEqual(ids);
+  act(() => container.querySelector<HTMLInputElement>('[aria-label="Select all visible rows"]')!.click());
+  act(() => [...container.querySelectorAll("button")].find((b) => b.textContent === "Move to trash")!.click());
+  expect(ops.database.rows).toHaveLength(0);
+  act(() => undo()); expect(ops.database.rows.map((r) => r.cells.title)).toEqual(["Alpha", "Beta", "Gamma"]);
+});
+
+it("does not offer mutating bulk actions in read-only mode or allow dragging sorted rows", () => {
+  const rows = [row({ title: "A" })], database = db([prop({ id: "title", name: "Name" })], rows);
+  act(() => root.render(createElement(TableView, { ops: opsFor(database, true), database, view: view(), rows, pages: {} })));
+  act(() => container.querySelector<HTMLInputElement>('[aria-label="Select all visible rows"]')!.click());
+  expect(container.textContent).not.toContain("Move to trash"); expect(container.querySelector(".row-grip")).toBeNull();
+  act(() => root.render(createElement(TableView, { ops: opsFor(database, false), database, view: view({ sorts: [{ propertyId: "title", direction: "asc" }] }), rows, pages: {} })));
+  expect(container.querySelector(".row-grip")!.getAttribute("draggable")).toBe("false");
 });

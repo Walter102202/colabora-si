@@ -51,6 +51,12 @@ export class MemoryQueue implements OpsQueue {
     }) });
     this.changed(pageId);
   }
+  advanceReplacements(pageId: string, from: number, to: number): void {
+    const pending = this.pending.get(pageId); if (!pending) return;
+    this.pending.set(pageId, { ...pending, entries: pending.entries.map((entry) =>
+      entry.op.op === "replace_page" && entry.op.revision === from ? { ...entry, op: { ...entry.op, revision: to } } : entry) });
+    this.changed(pageId);
+  }
   setRevision(pageId: string, rev: number): void { this.revisions.set(pageId, Math.max(rev, this.getRevision(pageId))); this.changed(pageId); }
   getRevision(pageId: string): number { return this.revisions.get(pageId) ?? 0; }
   pageIds(): string[] { return [...this.pending.keys()].filter((id) => id !== WORKSPACE); }
@@ -133,7 +139,7 @@ export class IndexedDbQueue extends MemoryQueue {
   async close(): Promise<void> { this.closed = true; try { await this.settled(); } finally { this.release?.(); this.db?.close(); } }
 }
 
-export async function clearStoredOps(): Promise<void> {
+export async function clearStoredOps(preserveShared = false): Promise<void> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open("colabora-sync", 1);
     request.onupgradeneeded = () => { request.result.createObjectStore("ops"); request.result.createObjectStore("revisions"); };
@@ -142,7 +148,14 @@ export async function clearStoredOps(): Promise<void> {
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(["ops", "revisions"], "readwrite");
-      tx.objectStore("ops").clear(); tx.objectStore("revisions").clear();
+      for (const name of ["ops", "revisions"]) {
+        const store = tx.objectStore(name);
+        if (!preserveShared) store.clear();
+        else {
+          const keys = store.getAllKeys();
+          keys.onsuccess = () => { for (const key of keys.result) if (!String(key).split("|")[0].includes(":shared:")) store.delete(key); };
+        }
+      }
       tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error);
     });
   } finally { db.close(); }
