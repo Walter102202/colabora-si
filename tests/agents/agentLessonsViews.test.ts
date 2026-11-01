@@ -154,10 +154,16 @@ for (const [name, store, records, table] of [
     expect(records()).toEqual({});
   });
 
-  it("ignores released realtime channels and an old subscriber cannot close the new channel", async () => {
+  it("shares a channel until the last release and ignores stale subscribers", async () => {
     signIn(); const backend = learningBackend();
     const releaseA = store.getState().subscribe("a");
+    const releaseHome = store.getState().subscribe("a");
     backend.finish("a", "old"); await Promise.resolve();
+    expect(backend.channels).toHaveLength(1);
+    releaseHome();
+    expect(backend.channels[0].removed).toBe(false);
+    backend.channels[0].callbacks[table]({ eventType: "INSERT", new: { id: "still-live", workspace_id: "a" }, old: {} });
+    expect(records()).toHaveProperty("still-live");
     const releaseB = store.getState().subscribe("b");
     backend.finish("b", "current"); await Promise.resolve(); await Promise.resolve();
     releaseA();
@@ -165,6 +171,7 @@ for (const [name, store, records, table] of [
     backend.channels[0].callbacks[table]({ eventType: "INSERT", new: { id: "secret-a", workspace_id: "a" }, old: {} });
     expect(records()).not.toHaveProperty("secret-a");
     releaseB();
+    expect(backend.channels[1].removed).toBe(true);
   });
 });
 

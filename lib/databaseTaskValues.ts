@@ -45,6 +45,18 @@ export function databaseTaskValues(database: Database, tasks: Record<string, Tas
   };
 }
 
+type QueryRow = { id: string; parentRowId?: string | null; cells: Record<string, unknown> };
+
+export function waitingOnYouRows<R extends QueryRow>(rows: R[], statusId: string, waitingId: string) {
+  return rows.filter((row) => row.parentRowId ? String(row.cells[waitingId]).startsWith("You") : ["needs_lead", "ready", "ready_for_review"].includes(String(row.cells[statusId])));
+}
+
+// One Accept settles a delivered job and what it delivered, so they count once.
+export function waitingOnYouCount(rows: QueryRow[], statusId: string, waitingId: string) {
+  const delivered = new Set(rows.filter((row) => !row.parentRowId && row.cells[statusId] === "ready_for_review").map((row) => row.id));
+  return waitingOnYouRows(rows, statusId, waitingId).filter((row) => !row.parentRowId || !delivered.has(row.parentRowId)).length;
+}
+
 // Planned rows count while the job is open; closed legacy jobs ignore taskless extras.
 export function subtaskProgress(database: Database, query: Database): Record<string, { done: number; total: number }> {
   const status = database.properties.find((p) => p.type === "agentStatus"), progress: Record<string, { done: number; total: number }> = {};

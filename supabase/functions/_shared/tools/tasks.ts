@@ -449,7 +449,7 @@ const submitForReview: ToolDef = {
   name: 'submit_for_review',
   title: 'Submit the task for review',
   description:
-    'Delivers the run: needs at least one artifact and an artifact for every "done when" criterion that is not checked by a person. ' +
+    'Delivers the run: summary is two or three plain sentences a person reads before accepting. Needs at least one artifact and an artifact for every "done when" criterion that is not checked by a person. ' +
     'Ends the run and cancels your questions still open. While a request still blocks (after await_questions, every open question ' +
     'does) it fails with waiting_on_human and the ids of those requests: wait for their answers first. ' +
     'A policy reviewer, person or Lead reviews; you never mark the task done.',

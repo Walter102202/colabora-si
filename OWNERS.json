@@ -61,6 +61,8 @@
       "supabase/migrations/*_0058_*",
       "supabase/migrations/*_0059_*",
       "supabase/migrations/*_0060_*",
+      "supabase/migrations/*_0061_*",
+      "supabase/migrations/*_0062_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -113,6 +115,22 @@
     ]
   },
   "branchExceptions": {
+    "b/local-copy": [
+      "CLAUDE.md",
+      "AGENTS.md"
+    ],
+    "a/trama-pending": [
+      "README.md",
+      "public/llms.txt",
+      "components/landing/Landing.tsx"
+    ],
+    "infra/product-interactions": [
+      "components/BlockEditor.tsx",
+      "components/PageView.tsx",
+      "components/blocks/BlockDragContext.ts",
+      "components/blocks/BlockDragProvider.tsx",
+      "tests/clone/blockEditor.test.ts"
+    ],
     "a/connect": [
       "README.md",
       "AGENTS.md",

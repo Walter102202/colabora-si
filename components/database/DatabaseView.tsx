@@ -13,7 +13,7 @@ import { downloadCsv } from "@/lib/export";
 import type { ColorRule, DbViewType, FilterCondition } from "@/lib/types";
 import { taskForPage, useAgentTasks } from "@/lib/agentTasks";
 import { useAgentsStore } from "@/lib/agentsStore";
-import { databaseTaskValues, subtaskProgress } from "@/lib/databaseTaskValues";
+import { databaseTaskValues, subtaskProgress, waitingOnYouCount, waitingOnYouRows } from "@/lib/databaseTaskValues";
 import { JobAccessNote } from "@/components/agents/AgentPropertyCell";
 import { JobsBoard } from "@/components/agents/panel/JobsBoard";
 import { jobState, jobWait } from "@/lib/agentJobs";
@@ -39,7 +39,7 @@ export default function DatabaseView({ pageId, locked = false, linkedPageId, lin
     if (waiting || working) {
       const statusId = database?.properties.find((property) => property.type === "agentStatus")?.id ?? "";
       const waitingId = database?.properties.find((property) => property.name === "Waiting on")?.id ?? "";
-      const selected = source.filter((row) => waiting ? row.parentRowId ? String(row.cells[waitingId]).startsWith("You") : ["needs_lead", "ready"].includes(String(row.cells[statusId])) : row.parentRowId ? row.cells[statusId] === "working" : row.cells[statusId] === "writing");
+      const selected = waiting ? waitingOnYouRows(source, statusId, waitingId) : source.filter((row) => row.parentRowId ? row.cells[statusId] === "working" : row.cells[statusId] === "writing");
       const ids = new Set(selected.flatMap((row) => row.parentRowId ? [row.id, row.parentRowId] : [row.id]));
       source = source.filter((row) => ids.has(row.id));
     }
@@ -50,7 +50,7 @@ export default function DatabaseView({ pageId, locked = false, linkedPageId, lin
   const patchFilter = (id: string, patch: Partial<FilterCondition>) => ops.updateView(view.id, { filters: (view.filters ?? []).map((f) => f.id === id ? { ...f, ...patch } : f) });
   const patchColor = (id: string, patch: Partial<ColorRule>) => ops.updateView(view.id, { colorRules: (view.colorRules ?? []).map((r) => r.id === id ? { ...r, ...patch } : r) });
   const waitingId = database.properties.find((property) => property.name === "Waiting on")?.id ?? "", statusId = database.properties.find((property) => property.type === "agentStatus")?.id ?? "";
-  const waitingCount = queryDatabase?.rows.filter((row) => row.parentRowId ? String(row.cells[waitingId]).startsWith("You") : ["needs_lead", "ready"].includes(String(row.cells[statusId]))).length ?? 0;
+  const waitingCount = queryDatabase ? waitingOnYouCount(queryDatabase.rows, statusId, waitingId) : 0;
   const progress = subtaskProgress(database, queryDatabase ?? database);
   const knownAgents = connectedRows(agents, []).map((agent) => ({ ...agent, id: agent.agentId }));
   const boardJobs = rows.filter((row) => !row.parentRowId).map((row) => {

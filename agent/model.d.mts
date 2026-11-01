@@ -26,6 +26,7 @@ export function createModel(opts: {
   baseUrl: string;
   apiKey?: string;
   model: string;
+  reasoningEffort?: string;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   maxAttempts?: number;

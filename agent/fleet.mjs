@@ -68,8 +68,8 @@ async function main() {
     return json;
   }
 
-  const model = createModel({ baseUrl: config.modelBaseUrl, apiKey: config.modelApiKey, model: config.modelName });
-  log(`trama started: model ${config.modelName}`);
+  const model = createModel({ baseUrl: config.modelBaseUrl, apiKey: config.modelApiKey, model: config.modelName, reasoningEffort: config.modelEffort });
+  log(`trama started: model ${config.modelName}, effort ${config.modelEffort || "provider default"}`);
   await runFleet({
     signal: controller.signal,
     log,

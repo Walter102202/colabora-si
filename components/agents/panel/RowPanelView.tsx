@@ -7,7 +7,7 @@ import { useQueuedChoice } from "@/components/agents/panel/useQueuedChoice";
 import type { ActivityRow, ApprovalRow, ArtifactRow, BriefRow, ReviewRow, RunRow, TaskRow } from "@/lib/agentTasks";
 import type { ApprovalDecision, MergeCondition, MessageSignal } from "@/lib/agentActions";
 import type { AgentRole } from "@/lib/agentsStore";
-import { RUN_STATUS_LABEL, acceptanceLabel, canAcceptAndClose, isTerminal, whatWillHappen } from "@/lib/agentState";
+import { RUN_STATUS_LABEL, acceptanceLabel, canAcceptAndClose, isTerminal, waitsForAcceptance, whatWillHappen } from "@/lib/agentState";
 import { formatRelative } from "@/lib/utils";
 import { pageUrl } from "@/lib/routes";
 import { StatusBadge } from "@/components/agents/panel/StatusBadge";
@@ -16,7 +16,8 @@ import { DecisionCard } from "@/components/agents/panel/DecisionCard";
 import { LeadReviewCard, type ReviewFinding, type ReviewVerdict } from "@/components/agents/panel/LeadReviewCard";
 import { SubtaskList, type SubtaskItem } from "@/components/agents/panel/SubtaskList";
 import { ActivityTimeline } from "@/components/agents/panel/ActivityTimeline";
-import { activityLabel } from "@/lib/agentTaskText";
+import { AcceptCard } from "@/components/agents/panel/AcceptCard";
+import { activityLabel, deliverySummary } from "@/lib/agentTaskText";
 import { FeedbackComposer } from "@/components/agents/panel/FeedbackComposer";
 import { MetricsList } from "@/components/agents/panel/MetricsList";
 import type { Metric } from "@/lib/agentMetrics";
@@ -168,6 +169,7 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
 
   const agentLike = agent ? { name: agent.name, capabilities: agent.capabilities } : null;
   const terminal = isTerminal(task.state);
+  const accepting = waitsForAcceptance(task);
   const handOverOthers = handOverAgents.filter((a) => a.id !== agent?.id);
   // Without a delegate there is no "same agent": the first other agent is preselected.
   const handoverTarget = handoverAgent || (agent ? "" : (handOverOthers[0]?.id ?? ""));
@@ -226,6 +228,12 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
       </header>
 
       {error && <p role="alert" className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-700 dark:text-red-400">{error}</p>}
+
+      {accepting && <AcceptCard
+        summary={deliverySummary(activities)}
+        deliveredSubtasks={task.parent_task_id ? 0 : subtasks.filter((s) => s.task.state === "ready_for_review").length}
+        disabled={busy !== null}
+        onAccept={() => void act("close", () => onClose("accepted", null))} />}
 
       <EnvironmentCard environment={environment} />
       {!task.parent_task_id && !terminal && onSetMergeRule && <MergeRule
@@ -350,9 +358,9 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
         )}
         {(task.state === "ready_for_review" || task.state === "input_required") && !closing && (
           <>
-            <button type="button" className="rounded border border-green-600/50 px-3 py-1 text-xs text-green-700 hover:bg-bg-secondary dark:text-green-400" disabled={busy !== null || !canAcceptAndClose(task.state, !!artifact)} onClick={() => setClosing("accepted")}>
+            {!accepting && <button type="button" className="rounded border border-green-600/50 px-3 py-1 text-xs text-green-700 hover:bg-bg-secondary dark:text-green-400" disabled={busy !== null || !canAcceptAndClose(task.state, !!artifact)} onClick={() => setClosing("accepted")}>
               Accept and close
-            </button>
+            </button>}
             <button type="button" className="rounded border border-border px-3 py-1 text-xs text-text-secondary hover:bg-bg-secondary" disabled={busy !== null} onClick={() => setClosing("rejected")}>
               Close without accepting
             </button>

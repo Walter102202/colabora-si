@@ -46,6 +46,16 @@ const view = (over: Partial<AssistantThreadViewProps>) => renderToStaticMarkup(c
 }));
 
 describe("AssistantThreadView", () => {
+  it.each(["in", "out"] as const)("links only app URLs in outgoing replies (direction=%s)", (direction) => {
+    const url = `${window.location.origin}/p/budget?task=t`;
+    const body = `Review ${url}.\nhttps://other.test/p/private javascript:alert(1)`;
+    const host = document.createElement("div");
+    host.innerHTML = view({ messages: [message({ direction, body })] });
+    const paragraph = host.querySelector("li p")!;
+    expect(paragraph.textContent).toBe(body);
+    expect(paragraph.classList.contains("whitespace-pre-wrap")).toBe(true);
+    expect([...paragraph.querySelectorAll("a")].map((a) => a.getAttribute("href"))).toEqual(direction === "out" ? [url] : []);
+  });
   it("offers a new conversation only with messages and an action", () => {
     expect(view({ messages: [message({})], onNewConversation: noop })).toContain("New conversation");
     expect(view({ messages: [], onNewConversation: noop })).not.toContain("New conversation");

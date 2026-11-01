@@ -8,6 +8,7 @@ import { readFile } from "node:fs/promises";
  * @property {string} modelBaseUrl      OpenAI-compatible base URL (POST {modelBaseUrl}/chat/completions)
  * @property {string} modelApiKey       bearer key for the model endpoint ("" for local endpoints)
  * @property {string} modelName         model id sent in every request
+ * @property {string} modelEffort       optional reasoning effort (empty omits the provider field)
  * @property {{input: number, output: number}} prices  USD per million tokens
  * @property {string} mcpUrl            remote MCP endpoint of the workspace
  * @property {string} agentPat          personal access token of this agent (agt_...)
@@ -85,6 +86,7 @@ export function readConfig(env) {
     modelBaseUrl: /** @type {string} */ (env.MODEL_BASE_URL).replace(/\/+$/, ""),
     modelApiKey: env.MODEL_API_KEY ?? "",
     modelName: /** @type {string} */ (env.MODEL_NAME),
+    modelEffort: env.MODEL_REASONING_EFFORT ?? "",
     prices: { input: num(env.MODEL_PRICE_IN, 0), output: num(env.MODEL_PRICE_OUT, 0) },
     mcpUrl,
     agentPat: /** @type {string} */ (env.WORKSPACE_AGENT_PAT),
@@ -116,14 +118,20 @@ export function readFleetConfig(env) {
   const missing = ["VITE_SUPABASE_URL", "TRAMA_RUNTIME_SECRET", "META_MODEL_API_KEY"].filter((k) => !env[k]);
   if (missing.length) throw new Error(`missing required settings: ${missing.join(", ")}`);
   const functions = `${/** @type {string} */ (env.VITE_SUPABASE_URL).replace(/\/+$/, "")}/functions/v1`;
+  const modelName = env.MODEL_NAME || "muse-wonder-1.0";
+  const prices = new Map([
+    ["muse-wonder-1.0", { input: 4, output: 20 }],
+    ["muse-spark-1.3", { input: 1.25, output: 4.25 }],
+  ]).get(modelName) ?? { input: 0, output: 0 };
   return {
     runtimeUrl: `${functions}/trama-runtime`,
     secret: /** @type {string} */ (env.TRAMA_RUNTIME_SECRET),
     config: readConfig({
       MODEL_BASE_URL: env.MODEL_BASE_URL || "https://api.meta.ai/v1",
-      MODEL_NAME: env.MODEL_NAME || "muse-spark-1.3",
-      MODEL_PRICE_IN: "1.25",
-      MODEL_PRICE_OUT: "4.25",
+      MODEL_NAME: modelName,
+      MODEL_REASONING_EFFORT: env.MODEL_REASONING_EFFORT ?? "low",
+      MODEL_PRICE_IN: String(prices.input),
+      MODEL_PRICE_OUT: String(prices.output),
       MODEL_API_KEY: env.META_MODEL_API_KEY,
       WORKSPACE_MCP_URL: `${functions}/mcp`,
       WORKSPACE_AGENT_PAT: "managed",

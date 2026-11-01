@@ -268,8 +268,7 @@ const reviewTask: ToolDef = {
     'Review of a task in ready_for_review: as Lead from your own run on the parent task (run_id), or as a person ' +
     '(no run_id). One finding per "done when" criterion, judged by evidence. changes_requested sends the findings to ' +
     'the worker; past the round limit it escalates to a person. blocked means a person must decide: the task waits on ' +
-    'them and the worker resumes only after their answer. approved does not close the task: a person closes it ' +
-    '(close_task), or the Lead with close_subtask when the policy allows.' +
+    'them and the worker resumes only after their answer. approved does not close the task: call close_subtask next. If it answers policy_denied, a person accepts it in the app.' +
     ' As the reviewer agent, call it from your run on the review task delegated to you (its brief policy review_of names task_id); recording the review closes your review task. ' +
     'Minor findings never send work back and do not count a round; the Lead hears about them.',
   inputSchema: object({
@@ -314,7 +313,7 @@ const closeSubtask: ToolDef = {
   name: 'close_subtask',
   title: 'Close a reviewed subtask',
   description:
-    'Lead with an active parent run. A reviewer records review_task and ends its turn; the Lead or a person closes the delivery. Closes a subtask in ready_for_review when the parent brief allows it (policies.subtask_close = lead) or ' +
+    'Lead with an active parent run. A reviewer records review_task and ends its turn; the Lead or a person closes the delivery. Closes a subtask in ready_for_review when, at Autonomous autonomy, an agent other than its author approved it and no criterion is human, deterministic or CI; or when the parent brief allows it (policies.subtask_close = lead) or ' +
     'every deterministic criterion is verified with evidence; CI criteria require a current verified review and a passing GitHub check on the delivered commit. Otherwise policy_denied and a person decides.',
   inputSchema: object({
     task_id: { type: 'string', minLength: 1 },

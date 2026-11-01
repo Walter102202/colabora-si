@@ -9,6 +9,7 @@ export const BlockDragContext = createContext<{
   columns: { id: string; label: string }[];
   register: (columnId: string | null, surface: Surface) => () => void;
   start: (ids: string[]) => void;
+  startPage: (pageId: string) => void;
   target: (target: BlockDestination) => void;
   finish: (cancel?: boolean) => void;
   move: (ids: string[], target: BlockDestination) => void;

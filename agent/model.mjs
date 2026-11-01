@@ -50,16 +50,17 @@ export function parseRetryAfterMs(header, nowMs) {
 }
 
 /**
- * @param {{baseUrl: string, apiKey?: string, model: string, fetchImpl?: typeof fetch, timeoutMs?: number, maxAttempts?: number, baseDelayMs?: number, maxDelayMs?: number, sleep?: (ms: number) => Promise<void>, random?: () => number}} opts
+ * @param {{baseUrl: string, apiKey?: string, model: string, reasoningEffort?: string, fetchImpl?: typeof fetch, timeoutMs?: number, maxAttempts?: number, baseDelayMs?: number, maxDelayMs?: number, sleep?: (ms: number) => Promise<void>, random?: () => number}} opts
  * @returns {Model}
  */
-export function createModel({ baseUrl, apiKey = "", model, fetchImpl = globalThis.fetch, timeoutMs = 180_000, maxAttempts = 4, baseDelayMs = 500, maxDelayMs = 8_000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), random = Math.random }) {
+export function createModel({ baseUrl, apiKey = "", model, reasoningEffort = "", fetchImpl = globalThis.fetch, timeoutMs = 180_000, maxAttempts = 4, baseDelayMs = 500, maxDelayMs = 8_000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), random = Math.random }) {
   const endpoint = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
   return {
     name: model,
     async chat({ messages, tools, signal }) {
       /** @type {Record<string, unknown>} */
       const body = { model, messages };
+      if (reasoningEffort) body.reasoning_effort = reasoningEffort;
       if (tools?.length) {
         body.tools = tools;
         body.tool_choice = "auto";

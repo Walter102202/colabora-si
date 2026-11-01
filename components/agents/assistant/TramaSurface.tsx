@@ -9,6 +9,9 @@ import { useStore } from "@/lib/store";
 import { useAgentsStore } from "@/lib/agentsStore";
 import { buildDecisionsHome } from "@/lib/agentHome";
 import { useAgentTasks } from "@/lib/agentTasks";
+import { proposedLessons, useAgentLessons } from "@/lib/agentLessons";
+import { openDiscrepancies, useAgentSources } from "@/lib/agentSources";
+import { useAuthStore } from "@/lib/auth";
 import { createTask } from "@/lib/agentActions";
 import { type ClipboardEvent, type FocusEvent, type PointerEvent, useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
@@ -45,6 +48,13 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const approvals = useAgentTasks((s) => s.approvals);
   const runs = useAgentTasks((s) => s.runs);
   const subscribeTasks = useAgentTasks((s) => s.subscribe);
+  const user = useAuthStore((s) => s.user);
+  const lessons = useAgentLessons((s) => s.lessons);
+  const discrepancies = useAgentSources((s) => s.discrepancies);
+  const subscribeLessons = useAgentLessons((s) => s.subscribe);
+  const subscribeSources = useAgentSources((s) => s.subscribe);
+  const lessonCount = useMemo(() => proposedLessons(lessons).filter((l) => l.workspace_id === workspaceId).length, [lessons, workspaceId]);
+  const differenceCount = useMemo(() => openDiscrepancies(discrepancies).filter((d) => d.workspace_id === workspaceId).length, [discrepancies, workspaceId]);
   const currentPage = useStore((s) => pageId ? s.pages[pageId] : undefined);
   const taskDatabase = useStore((s) => s.syncWorkspaceId === workspaceId ? Object.values(s.pages).filter((page) => !page.isDeleted && !foreignPageIds.has(page.id)).sort((a, b) => a.createdAt - b.createdAt).find((page) => page.database?.properties.some((property) => property.type === "agentStatus")) : undefined);
   const trama = agentWorkspace === workspaceId ? agents.find((a) => isTrama(a) && !a.revoked_at) : undefined;
@@ -82,6 +92,8 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const [draft, setDraft] = useState("");
   const expanded = revealed && !open;
   const countText = waiting === 1 ? "1 decision waits for you" : `${waiting} decisions wait for you`;
+  const reviewText = [lessonCount ? `${lessonCount} lesson${lessonCount === 1 ? "" : "s"}` : "", differenceCount ? `${differenceCount} difference${differenceCount === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
+  const reviewNotice = reviewText ? `${reviewText} to ${lessonCount ? "review" : "settle"}` : "";
   const preview = waiting ? home.waiting[0] : home.working[0];
   const previewText = preview ? `${waiting ? "First" : "In progress"}: ${preview.title}` : "";
   const hidePreview = useCallback(() => {
@@ -109,6 +121,11 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   };
 
   useEffect(() => subscribe(workspaceId, userId), [workspaceId, userId, subscribe]);
+  useEffect(() => {
+    const releaseLessons = subscribeLessons(workspaceId);
+    const releaseSources = subscribeSources(workspaceId);
+    return () => { releaseLessons(); releaseSources(); };
+  }, [workspaceId, user, subscribeLessons, subscribeSources]);
   useEffect(() => {
     if (!getAgentClient() || !workspaceId || !userId) return;
     void loadAgents(workspaceId);
@@ -356,12 +373,13 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
         <div className="mt-2 flex flex-wrap gap-1">{suggestions.map((text) => <button type="button" key={text} disabled={voiceBusy} onClick={() => suggest(text)} className="rounded border border-border px-2 py-1 text-left text-xs hover:bg-bg-secondary">{text}</button>)}</div>
       </section>}
       {status && <p role="status" className="max-w-72 rounded border border-border bg-bg px-3 py-2 text-xs text-text-secondary">{status}</p>}
-      {(waiting > 0 || (expanded && preview)) && <div className="relative max-w-72 rounded-xl border border-border bg-bg px-2.5 py-1.5 text-xs">
+      {(waiting > 0 || reviewNotice || (expanded && preview)) && <div className="relative max-w-72 rounded-xl border border-border bg-bg px-2.5 py-1.5 text-xs">
         {waiting > 0 && <a href={HOME_URL} onBlur={leaveFocus} className="block text-accent">{countText}</a>}
+        {reviewNotice && <a href={HOME_URL} onBlur={leaveFocus} className="block text-accent">{reviewNotice}</a>}
         {expanded && preview && <a href={preview.href} onBlur={leaveFocus} className="block truncate text-text-secondary">{previewText}</a>}
         <span aria-hidden="true" className="absolute -bottom-1 right-3 h-2 w-2 rotate-45 border-b border-r border-border bg-bg" />
       </div>}
-      <span id={descriptionId} className="sr-only">{[waiting > 0 ? countText : "", expanded ? previewText : ""].filter(Boolean).join(". ")}</span>
+      <span id={descriptionId} className="sr-only">{[waiting > 0 ? countText : "", reviewNotice, expanded ? previewText : ""].filter(Boolean).join(". ")}</span>
       <div className="flex items-center gap-2">
         {!folded && <div className="flex max-w-64 items-center gap-1 rounded-full border border-border bg-bg px-3 py-2 text-sm shadow-sm">
           {missing && managed ? <span>Trama is getting ready…</span> : missing ? <a href={settingsUrl("agents", pathname)} className="text-accent">Enable Trama</a> : <button type="button" className="text-left" onClick={openConversation}>{TRAMA_GREETING}</button>}
