@@ -1,8 +1,9 @@
 import { useStore } from "@/lib/store";
 import { isShell } from "@/lib/pageShell";
 import { applyingExternal } from "@/lib/externalApply";
-import { readStoredPage } from "@/lib/localPersistence";
+import { diskAvailable, flushLocalWrites, readStoredPage, storedReferrers } from "@/lib/localPersistence";
 import type { Page } from "@/lib/types";
+import { findBacklinks } from "@/lib/pageStats";
 
 export type BodyState = "ready" | "unavailable";
 export const opening = new Set<string>();
@@ -56,4 +57,11 @@ export function databaseDeps(rootId: string, pages: Record<string, Page>): strin
     }
   }
   return [...seen];
+}
+
+export async function backlinkIds(pageId: string): Promise<string[]> {
+  await flushLocalWrites();
+  if (!diskAvailable()) return findBacklinks(useStore.getState().pages, pageId).map((page) => page.id);
+  const ids = await storedReferrers(pageId), pages = useStore.getState().pages;
+  return ids.filter((id) => id !== pageId && pages[id] && !pages[id].isDeleted);
 }

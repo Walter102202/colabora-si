@@ -22,7 +22,7 @@ import CoverPicker from "@/components/CoverPicker";
 const EmojiPicker = lazy(() => import("@/components/EmojiPicker"));
 import { withViewTransition } from "@/lib/viewTransition";
 import { taskForPage, useAgentTasks } from "@/lib/agentTasks";
-import { usePageBodies } from "@/lib/usePageBodies";
+import { useBacklinks, usePageBodies } from "@/lib/usePageBodies";
 import { databaseDeps } from "@/lib/pageBodies";
 import type { Page } from "@/lib/types";
 export default function PageView({ pageId }: { pageId: string }) {
@@ -34,12 +34,13 @@ export default function PageView({ pageId }: { pageId: string }) {
   const drag = useRef<{ pointer: number; y: number; pos: number; height: number } | null>(null);
   const host = page?.parentId && pages[page.parentId]?.database ? page.parentId : null;
   const bodies = usePageBodies(host ? [pageId, ...databaseDeps(host, pages)] : [pageId]);
+  const backlinks = useBacklinks(pageId);
   useEffect(() => { if (title.current && document.activeElement !== title.current && title.current.textContent !== page?.title) title.current.textContent = page?.title ?? ""; }, [pageId, page?.title, bodies]);
   useIdleSnapshot(pageId);
   const reloaded = useBlockConflicts((s) => s.pageReloads[pageId]);
   if (!page) return <div className="empty-state">Page not found.</div>;
   if (bodies !== "ready") return <PageBodyPlaceholder page={page} state={bodies} />;
-  const stats = pageStats(page, pages);
+  const stats = pageStats(page);
   const parent = host && !pages[host].isDeleted ? pages[host] : undefined;
   const row = parent?.database?.rows.find((r) => r.pageId === pageId);
   const job = row && !row.parentRowId && !task?.parent_task_id && parent?.database?.properties.some((property) => property.type === "agentStatus");
@@ -64,7 +65,7 @@ export default function PageView({ pageId }: { pageId: string }) {
     {!page.database && !page.locked && page.blocks.length <= 1 && (page.blocks[0]?.type ?? "paragraph") === "paragraph" && !page.blocks[0]?.html && <button className="mt-3 text-sm text-text-tertiary" onClick={() => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind: "template", pageId } }))}>Start with a template</button>}
     {job && <div className="mt-6"><h2 className="text-xl font-semibold">Plan</h2><p className="mt-1 text-sm text-text-secondary">The Lead reads this page when it starts.</p></div>}
     <div className="pt-2">{page.database ? <Suspense fallback={null}><DatabaseView pageId={pageId} locked={page.locked} /></Suspense> : <BlockEditor pageId={pageId} />}</div>
-    {!!stats.backlinks.length &&<section className="mt-10 border-t border-border pt-4"><h3 className="mb-2 text-xs uppercase text-text-tertiary">↳ {stats.backlinks.length} linked {stats.backlinks.length === 1 ? "reference" : "references"}</h3>{stats.backlinks.map((linked) => <button key={linked.id} className="page-link-block" onClick={() => withViewTransition(() => navigate(pageUrl(linked.id)))}><Emoji emoji={linked.icon ?? "📄"} /><span className="border-b border-border">{linked.title || "Untitled"}</span></button>)}</section>}
+    {!!backlinks.length &&<section className="mt-10 border-t border-border pt-4"><h3 className="mb-2 text-xs uppercase text-text-tertiary">↳ {backlinks.length} linked {backlinks.length === 1 ? "reference" : "references"}</h3>{backlinks.map((linked) => <button key={linked.id} className="page-link-block" onClick={() => withViewTransition(() => navigate(pageUrl(linked.id)))}><Emoji emoji={linked.icon ?? "📄"} /><span className="border-b border-border">{linked.title || "Untitled"}</span></button>)}</section>}
     <div className="mt-8 border-t border-border pt-4"><CommentThread pageId={pageId} /></div>
     <div className="mt-8 text-xs text-text-tertiary">{!page.database && <>{stats.words} {stats.words === 1 ? "word" : "words"} · {stats.blocks} {stats.blocks === 1 ? "block" : "blocks"} · {stats.mins} min read · </>}Edited {formatRelative(page.updatedAt)}</div>
   </div></div>;

@@ -147,6 +147,13 @@ export function isQuotaError(error: unknown): boolean {
   return name === "QuotaExceededError" || name === "NS_ERROR_DOM_QUOTA_REACHED";
 }
 
+export function referrers(db: IDBDatabase, id: string): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("meta", "readonly"), request = tx.objectStore("meta").index("links").getAllKeys(id);
+    tx.oncomplete = () => resolve(request.result.map(String)); tx.onabort = () => reject(tx.error);
+  });
+}
+
 export async function scanSearchRecords(db: IDBDatabase, batchSize: number, visit: (record: SearchRecord) => boolean): Promise<void> {
   let last: string | undefined;
   for (;;) {

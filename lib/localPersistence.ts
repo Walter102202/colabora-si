@@ -9,7 +9,7 @@ import { searchRecord } from "@/lib/search";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { mark, pageDataSizes, recordHydration } from "@/lib/metrics";
 import { applyOps, diffPageToOps } from "@/lib/pageOps";
-import { scanSearchRecords, type SearchRecord } from "@/lib/localDb";
+import { referrers, scanSearchRecords, type SearchRecord } from "@/lib/localDb";
 
 const WRITE_DELAY_MS = 300, WRITE_CHUNK = 200, MAX_RETRY_MS = 30_000;
 const KV_KEYS = ["rootOrder", "expanded", "syncedBlocks", "reminders", "settings"] as const;
@@ -42,6 +42,11 @@ function requestPersistence(): void {
 }
 
 export function diskAvailable(): boolean { return db !== null; }
+export async function storedReferrers(id: string): Promise<string[]> {
+  if (!db) return [];
+  const token = generation, ids = await referrers(db, id);
+  return token === generation ? ids : [];
+}
 export async function scanStoredSearchRecords(batchSize: number, visit: (record: SearchRecord) => boolean): Promise<boolean> {
   if (!db) return false;
   const token = generation;
