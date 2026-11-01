@@ -24,7 +24,7 @@ function Expired() {
   return (
     <Page>
       <h1 className="cs-solo__t">This link has expired.</h1>
-      <AccountLinkForm initialEmail={fragmentEmail(location.hash)} invite={new URLSearchParams(location.search).get("invite")} />
+      <AccountLinkForm initialEmail={fragmentEmail(location.hash)} invite={new URLSearchParams(location.search).get("invite")} resend />
       <p className="cs-solo__note">Already set your password? <a className="cs-solo__a" href={LANDING_LOGIN_URL}>Log in</a></p>
     </Page>
   );

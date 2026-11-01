@@ -163,11 +163,11 @@ const bounded = (value: string, max: number) => value.replace(/[\r\n\u0000-\u001
 export const recoveryCopy: EmailCopy = {
   subject: 'Reset your colabora.si password', title: 'Reset your password.',
   body: 'Choose a new password for your colabora.si account.', button: 'Choose a new password',
-  note: "This link is just for you and works for 24 hours. If you didn't ask for it, you can ignore this email.",
+  note: "This link is just for you and works for 24 hours. If you didn’t ask for it, you can ignore this email.",
 };
 export function workspaceCopy(name: string, workspace: string): EmailCopy {
   const person = bounded(name, 80) || 'Someone', place = bounded(workspace, 100) || 'a workspace';
-  return { subject: `${person} invited you to ${place} on colabora.si`, title: "You're invited.",
+  return { subject: `${person} invited you to ${place} on colabora.si`, title: "You’re invited.",
     body: `${person} invited you to ${place} on colabora.si, a shared workspace for people and AI agents.`,
     button: 'Accept your invite', note: defaultCopy.note };
 }

@@ -16,5 +16,5 @@ Deno.test('recovery and workspace invite deliver custom mail, keep workspace tok
   const copy = workspaceCopy('x'.repeat(500) + '\r\n', 'y'.repeat(500));
   assert.ok(copy.subject.length < 220);
   assert.ok(!copy.subject.includes('\n'));
-  assert.ok(inviteHtml('https://colabora.si', recoveryCopy).includes("If you didn't ask for it"));
+  assert.ok(inviteHtml('https://colabora.si', recoveryCopy).includes("If you didn’t ask for it"));
 });
