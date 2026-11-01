@@ -7,7 +7,7 @@ import { clearStoredOps, IndexedDbQueue, MemoryQueue } from "@/lib/opsQueue";
 import { pageFromRow, mergePageDecision, mergeReminders, type PageRow, type WorkspaceRow, type ReminderRow } from "@/lib/syncMerge";
 import { getSupabase } from "@/lib/supabase";
 import { useStore, type RemotePatch, type Store } from "@/lib/store";
-import { pauseHistory, resumeHistory, rebaseHistory } from "@/lib/history";
+import { clearHistory, pauseHistory, resumeHistory, rebaseHistory } from "@/lib/history";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { DEFAULT_SETTINGS } from "@/lib/factories";
 import { useBlockConflicts, type BlockConflict } from "@/lib/syncConflicts";
@@ -298,7 +298,7 @@ function makeEngine(sb: SupabaseClient, user: User): PageSyncEngine {
 // One account's pages never stay for the next one. Runs with sync stopped, so nothing here reaches the cloud.
 async function clearLocalCopy(): Promise<void> {
   pauseHistory();
-  try { useStore.getState().clearLocalWorkspace(); }
+  try { useStore.getState().clearLocalWorkspace(); clearHistory(); }
   finally { resumeHistory(); }
   last = useStore.getState();
   await Promise.allSettled([clearStoredOps(), clearLocalFiles()]);

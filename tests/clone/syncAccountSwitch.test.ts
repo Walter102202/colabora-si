@@ -4,6 +4,7 @@ import type { User } from "@supabase/supabase-js";
 import { useStore } from "@/lib/store";
 import { discardLocalCopy, initSync, settleBeforeSignOut, stopSync, useSyncConflict } from "@/lib/sync";
 import { foreignPageIds } from "@/lib/foreignPages";
+import { canUndo, initHistory, undo } from "@/lib/history";
 import { page } from "./fixtures";
 
 type Row = Record<string, unknown>;
@@ -151,4 +152,18 @@ it("clears the local copy without sending any deletion to the cloud", async () =
   expect(state.syncWorkspaceId).toBeNull();
   expect(h.fake.writes).toEqual([]);
   expect(h.cleared).toEqual(expect.arrayContaining(["ops", "files"]));
+});
+
+it("leaves nothing of the previous account to undo", async () => {
+  initHistory();
+  useStore.setState({ pages: { [stale().id]: stale() }, rootOrder: [stale().id], syncUserId: "user-a", syncWorkspaceId: "ws-a" });
+  useStore.setState({ rootOrder: [] });
+  await sleep(400);
+  useStore.setState({ rootOrder: [stale().id] });
+  expect(canUndo()).toBe(true);
+  await initSync(user("user-b"));
+  await sleep(30);
+  const restored: boolean[] = [];
+  while (canUndo()) { undo(); restored.push(stale().id in useStore.getState().pages); }
+  expect(restored).not.toContain(true);
 });

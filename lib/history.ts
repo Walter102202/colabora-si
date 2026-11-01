@@ -54,6 +54,7 @@ function travel(from: Snapshot[], to: Snapshot[]) {
 }
 export function undo(): void { travel(past, future); }
 export function redo(): void { travel(future, past); }
+export function clearHistory(): void { flushBurst(); past.length = 0; future.length = 0; }
 export function canUndo(): boolean { return past.length > 0; }
 export function canRedo(): boolean { return future.length > 0; }
 export function pauseHistory(): void { pauseDepth++; }
