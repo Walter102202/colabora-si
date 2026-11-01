@@ -30,3 +30,7 @@ export type { TaskDiff, RunDiff, DiffItem } from "@/lib/agentRunDiff";
 export { LessonCard } from "@/components/agents/panel/LessonCard";
 export { HomeCards } from "@/components/agents/panel/HomeCards";
 export { DiscrepancyCard } from "@/components/agents/panel/DiscrepancyCard";
+export { JobAgentPicker } from "@/components/agents/panel/JobAgentPicker";
+export type { JobAgentPickerProps } from "@/components/agents/panel/JobAgentPicker";
+export { JobReadyPanel } from "@/components/agents/panel/JobReadyPanel";
+export type { JobReadyPanelProps } from "@/components/agents/panel/JobReadyPanel";
