@@ -29,6 +29,9 @@ revoke insert,update on public.workspace_invitations from authenticated;
 -- Updating keys would be another way to add a new recipient. Only role changes are a browser operation.
 revoke update on public.workspace_members from authenticated;
 grant update(role) on public.workspace_members to authenticated;
+-- Transferring ownership directly grants access without a membership row or invitation.
+revoke update on public.workspaces from authenticated;
+grant update(name,root_order,synced_blocks,settings,revision,updated_at) on public.workspaces to authenticated;
 
 create or replace function public.invite_member(p_workspace_id uuid,p_email text,p_role text)
 returns jsonb language plpgsql security definer set search_path='' as $$
