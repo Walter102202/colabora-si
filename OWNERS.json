@@ -55,6 +55,7 @@
       "supabase/migrations/*_0051_*",
       "supabase/migrations/*_0053_*",
       "supabase/migrations/*_0054_*",
+      "supabase/migrations/*_0055_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -107,6 +108,11 @@
     ]
   },
   "branchExceptions": {
+    "a/product-privacy": ["OWNERS.json"],
+    "a/product-recovery": ["OWNERS.json"],
+    "b/product-data": ["OWNERS.json"],
+    "b/product-table": ["OWNERS.json"],
+    "b/product-blocks": ["OWNERS.json"],
     "a/connect": [
       "README.md",
       "AGENTS.md",
