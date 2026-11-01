@@ -1,6 +1,6 @@
 import { Input } from "@/components/FormControls";
 import { lazy, Suspense } from "react";
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useState, type DragEvent } from "react";
 import { ChevronRight, GripVertical, Plus } from "lucide-react";
 import Editable, { type EditableHandle } from "@/components/Editable";
 import { AttributionMargin } from "@/components/agents/AttributionMargin";
@@ -31,6 +31,8 @@ function BlockItem({ block, ops, ordinal, spellCheck, selected, pages, insertBlo
   const color = blockColorClass(block.color), heading = block.type.startsWith("heading");
   const placeholder = heading ? `Heading ${block.type.at(-1)}` : block.type === "todo" ? "To-do" : ["bulleted", "numbered"].includes(block.type) ? "List" : block.type === "toggle" ? "Toggle" : block.type === "quote" ? "Empty quote" : block.type === "callout" ? "Type something…" : "Type '/' for commands";
   const text = <Editable ref={register} html={block.html} placeholder={placeholder} spellCheck={spellCheck} readOnly={ops.locked} className={`block-text ${heading ? `block-${block.type} always-ph` : ""} ${block.checked ? "line-through text-text-tertiary" : ""} ${color.startsWith("tc-") ? color : ""}`} onInput={(html) => ops.handleInput(block.id, html)} onBlurSave={(html) => ops.saveBlock(block.id, html)} onKeyDown={(event) => ops.handleKeyDown(block.id, event)} onPaste={(event) => ops.handlePaste(block.id, event)} onFocus={() => ops.setActive(block.id)} />;
+  const startDrag = (event: DragEvent<HTMLElement>) => { event.stopPropagation(); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", block.id); const ghost = document.createElement("div"); ghost.className = "drag-ghost"; ghost.textContent = (block.type === "page" ? pages[block.pageId ?? ""]?.title ?? "" : block.type === "code" ? block.html : stripHtml(block.html)).slice(0, 60) || BLOCK_LABELS[block.type]; document.body.appendChild(ghost); event.dataTransfer.setDragImage(ghost, 0, 0); setTimeout(() => ghost.remove(), 0); ops.onDragStart(block.id); };
+  const cancelDrag = () => ops.onDragCancel?.();
   let body: React.ReactNode;
   if (block.type === "button") body = <ButtonBlock block={block} ops={ops} pages={pages} onInsert={(blocks) => insertBlocks(block.id, blocks)} />;
   else if (block.type === "columns") body = <ColumnsBlock block={block} ops={ops} />;
@@ -38,7 +40,7 @@ function BlockItem({ block, ops, ordinal, spellCheck, selected, pages, insertBlo
   else if (block.type === "equation") body = <Suspense fallback={null}><EquationBlock block={block} ops={ops} /></Suspense>;
   else if (block.type === "breadcrumb") body = <BreadcrumbBlock pageId={ops.pageId} pages={pages} />;
   else if (block.type === "synced") body = <SyncedBlock block={block} ops={ops} />;
-  else if (block.type === "page") body = <PageLinkBlock page={pages[block.pageId ?? ""]} />;
+  else if (block.type === "page") body = <PageLinkBlock page={pages[block.pageId ?? ""]} onDragStart={ops.locked ? undefined : startDrag} onDragEnd={cancelDrag} />;
   else if (block.type === "toc") body = <TocBlock blocks={pages[ops.pageId]?.blocks ?? []} />;
   else if (block.type === "database") body = <Suspense fallback={null}><InlineDatabaseBlock block={block} ops={ops} pages={pages} /></Suspense>;
   else if (block.type === "bookmark") body = <BookmarkBlock block={block} ops={ops} />;
@@ -52,11 +54,11 @@ function BlockItem({ block, ops, ordinal, spellCheck, selected, pages, insertBlo
   else if (block.type === "callout") body = <div className={`callout-block ${color || "bc-gray"}`}><span className="relative"><button disabled={ops.locked} aria-label="Change callout icon" onClick={() => setPickingIcon(!pickingIcon)}>{block.icon ?? "💡"}</button>{pickingIcon && <Suspense fallback={null}><EmojiPicker onSelect={(icon) => ops.updateBlock(block.id, { icon })} onClose={() => setPickingIcon(false)} /></Suspense>}</span>{text}</div>;
   else body = text;
   const drop = ops.dropTarget?.id === block.id ? ops.dropTarget.position : null;
-  return <div role="presentation" aria-label={BLOCK_LABELS[block.type]} data-block-id={block.id} className={`block-item ${selected ? "selected-block" : ""} ${ops.draggingId === block.id ? "opacity-40" : ""} ${drop ? `block-drop-${drop}` : ""}`} style={{ marginLeft: block.indent * 26 }} onMouseDownCapture={(event) => ops.onBlockMouseDown(block.id, event)} onDragOver={(event) => ops.onDragOverBlock(block.id, event)} onDrop={(event) => { if (ops.draggingId) { event.preventDefault(); event.stopPropagation(); ops.onDrop(); } }}>
+  return <div role="presentation" aria-label={BLOCK_LABELS[block.type]} data-block-id={block.id} className={`block-item ${block.type === "page" ? "page-block-item" : ""} ${selected ? "selected-block" : ""} ${ops.draggingId === block.id ? "opacity-40" : ""} ${drop ? `block-drop-${drop}` : ""}`} style={{ marginLeft: block.indent * 26 }} onMouseDownCapture={(event) => ops.onBlockMouseDown(block.id, event)} onDragOver={(event) => ops.onDragOverBlock(block.id, event)} onDrop={(event) => { if (ops.draggingId) { event.preventDefault(); event.stopPropagation(); ops.onDrop(); } }}>
     <AttributionMargin blockId={block.id} attr={block.attr} />
     <BlockPresence blockId={block.id} />
     {block.attr?.by === "agent" && <span className="agent-dot" title="Edited by an agent" />}
-    {!ops.locked && <div className="block-gutter" style={{ top: block.type === "heading1" ? 22 : block.type === "heading2" ? 14 : block.type === "heading3" ? 10 : 0 }} contentEditable={false}><button aria-label="Add block below" onClick={() => ops.addBlockBelow(block.id)}><Plus size={15} /></button><button aria-label="Move or open block menu" title="Drag to move · Click for block actions" draggable onDragStart={(event) => { event.stopPropagation(); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", block.id); const ghost = document.createElement("div"); ghost.className = "drag-ghost"; ghost.textContent = (block.type === "code" ? block.html : stripHtml(block.html)).slice(0, 60) || BLOCK_LABELS[block.type]; document.body.appendChild(ghost); event.dataTransfer.setDragImage(ghost, 0, 0); setTimeout(() => ghost.remove(), 0); ops.onDragStart(block.id); }} onDragEnd={() => ops.onDragCancel?.()} onClick={(event) => ops.openBlockMenu(block.id, event.currentTarget)}><GripVertical size={15} /></button></div>}
+    {!ops.locked && <div className="block-gutter" style={{ top: block.type === "heading1" ? 22 : block.type === "heading2" ? 14 : block.type === "heading3" ? 10 : 0 }} contentEditable={false}><button aria-label="Add block below" onClick={() => ops.addBlockBelow(block.id)}><Plus size={15} /></button><button aria-label="Move or open block menu" title="Drag to move · Click for block actions" draggable onDragStart={startDrag} onDragEnd={cancelDrag} onClick={(event) => ops.openBlockMenu(block.id, event.currentTarget)}><GripVertical size={15} /></button></div>}
     <div className={color.startsWith("bc-") && block.type !== "callout" ? `${color} rounded px-2` : ""}>{body}</div>
     {commentCount > 0 && ops.openComments && <button className="block-comment-count" aria-label={`${commentCount} block comments`} onClick={(event) => ops.openComments?.(block.id, event.currentTarget)}>💬 {commentCount}</button>}
     <BlockConflictNotice pageId={ops.pageId} blockId={block.id} />
