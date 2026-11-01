@@ -1,5 +1,8 @@
 import { pageUrl } from "@/lib/routes";
 import { Input } from "@/components/FormControls";
+import { GripVertical } from "lucide-react";
+import PageLinkBlock from "@/components/blocks/PageLinkBlock";
+import { unlinkedSubpages } from "@/lib/subpages";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useStore } from "@/lib/store";
@@ -38,17 +41,17 @@ export default function BlockEditor({ pageId }: { pageId: string }) {
   const page = useStore((s) => s.pages[pageId]), spellCheck = useStore((s) => s.settings?.spellcheck ?? true), actorId = useStore((s) => s.syncUserId ?? "local");
   const pages = useStore((s) => s.pages);
   if (!page) return null;
-  return <><EditorSurface key={pageId} pageId={pageId} blocks={page.blocks} pages={pages} locked={page.locked} spellCheck={spellCheck} actorId={actorId} onChange={(blocks) => useStore.getState().setBlocks(pageId, blocks)} /><DeletedBlockConflicts pageId={pageId} blocks={page.blocks} /></>;
+  return <><EditorSurface key={pageId} pageId={pageId} blocks={page.blocks} pages={pages} subpages={unlinkedSubpages(page, pages)} locked={page.locked} spellCheck={spellCheck} actorId={actorId} onChange={(blocks) => useStore.getState().setBlocks(pageId, blocks)} /><DeletedBlockConflicts pageId={pageId} blocks={page.blocks} /></>;
 }
-interface SurfaceProps { pageId: string; blocks: Block[]; onChange: (blocks: Block[]) => void; locked?: boolean; spellCheck?: boolean; actorId?: string; nested?: boolean; columnId?: string; pages?: Record<string, Page> }
+interface SurfaceProps { pageId: string; blocks: Block[]; onChange: (blocks: Block[]) => void; locked?: boolean; spellCheck?: boolean; actorId?: string; nested?: boolean; columnId?: string; pages?: Record<string, Page>; subpages?: Page[] }
 type SlashState = { id: string; query: string; index: number; rect: DOMRect };
 type Focus = { id: string; offset?: number; end?: boolean };
 export function EditorSurface(props: SurfaceProps) {
   const inherited = useBlockDrag();
   if (inherited && props.columnId) return <EditorSurfaceContent {...props} />;
-  return <BlockDragProvider blocks={props.blocks} onChange={props.onChange} locked={props.locked}><EditorSurfaceContent {...props} /></BlockDragProvider>;
+  return <BlockDragProvider blocks={props.blocks} onChange={props.onChange} locked={props.locked} subpages={props.subpages}><EditorSurfaceContent {...props} /></BlockDragProvider>;
 }
-function EditorSurfaceContent({ pageId, blocks, onChange, locked = false, spellCheck = true, actorId = "local", nested = false, columnId, pages = {} }: SurfaceProps) {
+function EditorSurfaceContent({ pageId, blocks, onChange, locked = false, spellCheck = true, actorId = "local", nested = false, columnId, pages = {}, subpages = [] }: SurfaceProps) {
   const drag = useBlockDrag()!, registerSurface = drag.register;
   const container = useRef<HTMLDivElement>(null), handles = useRef(new Map<string, EditableHandle>()), latest = useRef({ blocks, onChange, locked, actorId, pages });
   const navigate = useNavigate();
@@ -417,6 +420,13 @@ function EditorSurfaceContent({ pageId, blocks, onChange, locked = false, spellC
       next.splice(index + 1, 0, ...cloneWithNewIds(inserted)); latest.current.blocks = next; latest.current.onChange(next);
     }} />)}
     {!locked && <button className={`block-insert-area ${drag.state.target?.columnId === (columnId ?? null) && !drag.state.target.id ? "block-insert-target" : ""}`} aria-label="Add a block" onDragOver={(event) => { if (!draggingId) return; event.preventDefault(); event.stopPropagation(); drag.target({ columnId: columnId ?? null, position: "below" }); }} onDrop={(event) => { if (!draggingId) return; event.preventDefault(); event.stopPropagation(); drag.finish(); }} onClick={() => { const last = blocks.at(-1); if (last?.type === "paragraph" && !last.html) handles.current.get(last.id)?.focus(); else if (last) ops.addBlockBelow(last.id); else { const next = createBlock(); pending.current = { id: next.id }; onChange([next]); } }}><span>+ Add a block</span></button>}
+    {subpages.map((child) => {
+      const start = (event: React.DragEvent<HTMLElement>) => { event.stopPropagation(); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", child.id); drag.startPage(child.id); };
+      return <div key={child.id} className="block-item page-block-item">
+        {!locked && <div className="block-gutter"><button aria-label={`Move subpage ${child.title || "Untitled"}`} title="Drag to place this subpage among the blocks" draggable onDragStart={start} onDragEnd={() => drag.finish(true)}><GripVertical size={15} /></button></div>}
+        <PageLinkBlock page={child} onDragStart={locked ? undefined : start} onDragEnd={() => drag.finish(true)} />
+      </div>;
+    })}
     {slash && <SlashMenu nested={nested} query={slash.query} index={slash.index} rect={slash.rect} onIndex={(index) => { const next = { ...slash, index }; slashRef.current = next; setSlash(next); }} onSelect={selectSlash} />}
     {emoji && <Suspense fallback={null}><EmojiMenu query={emoji.query} index={emoji.index} rect={emoji.rect} onSelect={selectEmoji} onIndex={(index) => { const next = { ...emoji, index }; emojiRef.current = next; setEmoji(next); }} /></Suspense>}
     {menu && menuBlock && <BlockMenu block={menuBlock} rect={menu.rect} onClose={() => setMenu(null)} onType={(type) => changeType(menu.id, type)} onUpdate={(patch) => ops.updateBlock(menu.id, patch)} onComment={() => { setComments(menu); setMenu(null); }} onMove={(direction) => {
