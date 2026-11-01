@@ -40,6 +40,7 @@ a:hover{text-decoration:underline !important}
 .e-head{color:#f7f6f1 !important}
 .e-ink{color:#eeece5 !important}
 .e-blue{color:#88c3f7 !important}
+.e-muted{color:#b3b3aa !important}
 }
 </style>
 <!--[if !mso]><!-->
@@ -63,8 +64,9 @@ a:hover{text-decoration:underline !important}
 <p class="e-ink" style="margin:0 0 32px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:17px;line-height:27px;font-weight:400;color:#37352f;mso-line-height-rule:exactly;">We’ll write to you when your&nbsp;invite&nbsp;is&nbsp;ready.</p>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">
 <tr>
-<td align="left" valign="bottom" style="padding:0;">
+<td align="left" valign="bottom" style="padding:0 12px 0 0;">
 <p style="margin:0;"><a class="e-ink" href="https://colabora.si/" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:21px;line-height:26px;font-weight:700;letter-spacing:-0.5px;color:#37352f;text-decoration:none;white-space:nowrap;mso-line-height-rule:exactly;">colabora<span class="e-blue" style="color:#196eb9;">.si</span></a></p>
+<p class="e-muted" style="margin:4px 0 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;font-weight:400;color:#6c6b63;mso-line-height-rule:exactly;">A&nbsp;shared workspace for&nbsp;people and&nbsp;AI&nbsp;agents.</p>
 </td>
 <td width="64" align="right" valign="bottom" style="width:64px;padding:0;font-size:0;line-height:0;">
 <img src="https://colabora.si/brand/trama/v1/trama-128.png" width="64" height="64" alt="" style="display:block;width:64px;height:64px;border:0;outline:none;text-decoration:none;">
@@ -86,7 +88,7 @@ a:hover{text-decoration:underline !important}
 export const WAITLIST_EMAIL = {
   from: 'colabora.si <hello@colabora.si>',
   subject: "You're on the colabora.si waitlist",
-  text: "You're on the list.\nWe'll write to you when your invite is ready.\n\ncolabora.si\n",
+  text: "You're on the list.\nWe'll write to you when your invite is ready.\n\ncolabora.si\nA shared workspace for people and AI agents.\n",
   html,
 };
 
