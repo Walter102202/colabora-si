@@ -91,6 +91,7 @@ interface Actions {
   setSyncedBlocks: (key: string, blocks: Block[]) => void;
 
   resetWorkspace: () => void;
+  clearLocalWorkspace: () => void;
 }
 
 export function applyRemotePatch(state: Pick<WorkspaceState, "pages" | "rootOrder" | "syncedBlocks" | "settings" | "reminders">, patch: RemotePatch) {
@@ -217,6 +218,7 @@ export const useStore = create<Store>()(persist((set, get) => {
     updateSettings: (patch) => set((state) => ({ settings: { ...DEFAULT_SETTINGS, ...state.settings, ...patch } })),
     importWorkspace: (state) => set({ pages: Object.fromEntries(Object.entries(state.pages).map(([id, p]) => [id, cleanPage(p)])), rootOrder: state.rootOrder, expanded: state.expanded ?? {}, syncedBlocks: Object.fromEntries(Object.entries(state.syncedBlocks ?? {}).map(([id, blocks]) => [id, sanitizeBlocks(blocks)])), reminders: state.reminders ?? [], settings: state.settings ? { ...DEFAULT_SETTINGS, ...state.settings } : undefined }),
     resetWorkspace: () => set({ ...seedWorkspace(), expanded: {}, syncedBlocks: {}, reminders: [] }),
+    clearLocalWorkspace: () => set({ ...seedWorkspace(), expanded: {}, syncedBlocks: {}, reminders: [], settings: undefined, syncWorkspaceId: null, syncUserId: null }),
     saveVersion: (pageId, auto = false) => mutate(pageId, (page) => {
       const last = page.versions?.[0];
       if (last && last.title === page.title && JSON.stringify(last.blocks) === JSON.stringify(page.blocks) && JSON.stringify(last.database) === JSON.stringify(page.database)) return page;

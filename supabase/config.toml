@@ -33,7 +33,7 @@ allow_dynamic_registration = true
 verify_jwt = false
 
 [functions.send-email]
-# Auth Send Email Hook: the hook carries its own signature.
+# Workspace invitations: pg_net carries its shared secret.
 verify_jwt = false
 
 [functions.mcp]
@@ -83,6 +83,14 @@ verify_jwt = false
 # Public: the landing has no session. The function checks the origin and the limits.
 verify_jwt = false
 
+[functions.waitlist-invites]
+# pg_cron + shared secret. It reads the rows the owner marked in Notion.
+verify_jwt = false
+
 [functions.trama-runtime]
 # Answers only to TRAMA_RUNTIME_SECRET, the managed runtime has no user session.
+verify_jwt = false
+
+[functions.account-link]
+# Public; origin and persistent IP/email limits are checked inside the function.
 verify_jwt = false

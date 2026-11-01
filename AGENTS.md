@@ -1,5 +1,13 @@
 # AGENTS.md
 
+## Connection onboarding
+
+`/connect` and `/connect/<agent>` provide native OAuth setup; `/agents` lists external connections. The `agent_connections` migration records starter-page access and `verified_at`, which only a successful agent `fetch` or `read_page` sets. Approval and tool discovery never count as connected.
+
+`agent-admin` actions `connect_agent` and `connect_own_agent` require the person's direct session and workspace authorization. OAuth retries reuse claims; approved-result recovery is service-only, bound to the same enabled agent user and unexpired authorization. Never expose authorization codes through human metadata RPCs. Tokens stay out of chat, URLs, storage attempts and logs.
+
+The Home gate fails open after three seconds and preserves query/hash routes. Trama proposes agents only from direct app messages; only the person's button settles and creates one, without a token. Keep the avatar, top bar and existing permission boundary intact.
+
 Guide for coding agents working in this repository. Read it before changing anything. The delivery rules are in [CONSTITUTION.md](CONSTITUTION.md) and operating production is in [RUNBOOK.md](RUNBOOK.md).
 
 ## What this is
@@ -23,7 +31,7 @@ supabase/migrations  0001 core, 0002 agents, 0003 core RPCs, 0004 tasks, 0005 pa
                      0024 claim dependencies, 0025 AI properties, 0026 AI rewrite, 0027 mention tasks, 0028 file texts, 0029 OAuth session links, 0030 CI evidence,
                      0031 run lease, 0032 task environment, 0033 finding severity, 0034 reviewer policy, 0035 conditional approval, 0036 lessons, 0037 context package,
                      0038 page sources
-supabase/functions   mcp, agent-token, trama-runtime, agent-admin, agent-dispatch, agent-webhook, github-webhook, voice-transcribe, telegram-webhook, channel-notify, pub-html, send-reminders, send-email, waitlist; _shared/ holds the MCP server and its tools
+supabase/functions   mcp, agent-token, trama-runtime, agent-admin, agent-dispatch, agent-webhook, github-webhook, voice-transcribe, telegram-webhook, channel-notify, pub-html, send-reminders, send-email, account-link, waitlist, waitlist-invites; _shared/ holds the MCP server and its tools
 supabase/tests       pgTAP suites (clone/, agents/)
 supabase/seeds       demo workspace (01) and demo agents (02)
 tests/               Vitest suites (clone/, agents/, infra/)
@@ -138,3 +146,11 @@ Set the Edge Function secret `MCP_WORKSPACE_RESOURCE_URL` to the external worksp
 Migrations 0047-0048 and pgTAP 57-58 implement these operations. Calculated properties (`formula`, `relation`, `rollup`, `ai`, agent properties) are not created here. A hosted OAuth conversation is verified after deployment.
 
 Local checks: `node tests/agents/workspace-mcp-smoke.mjs` exercises the served P14 runtime. `node tests/agents/workspace-agent-check.mjs` sends fictitious local tasks to Muse using the authorized credential file, without printing it. Use the isolated `colabora-si-p14` stack on 60990-60999.
+
+## Account email access (0052)
+
+`account-link` is public, origin-checked and body-bounded. It returns the same answer before account lookup, rate limits or delivery finish (`EdgeRuntime.waitUntil`). The service-only RPCs `account_link_allowed` and `account_link_target` enforce persistent hourly limits (20/IP, 5/email) and validate workspace-token/email/expiry binding. Unknown emails and agents never reach link generation on the public path. Never use `resetPasswordForEmail`, Auth SMTP or the Send Email Hook.
+
+`send-email` accepts authenticated pg_net workspace invitations using the existing `cron_secret`; `RESEND_API_KEY` and `APP_URL` come from function environment variables. Only this reserved invitation path may create a new Auth user. `/set-password` consumes invite/recovery tokens on submit, handles TOTP, and carries `invite` to Home for `accept_invitation`.
+
+`private.invite_allowance.maximum` is the single server allowance. `private.invite_recipients` is a lifetime owner/email ledger; pre-migration recipients are exempt, deleting a member/invitation does not refund, and owner requests serialize across workspaces. Direct member inserts are restricted to the actual owner's own bootstrap row. Invitations and membership identities cannot be inserted/changed directly; ownership cannot be transferred through browser table updates. Use the RPC in fixtures acting as a person. See README for allowance maintenance.

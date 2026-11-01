@@ -2,8 +2,13 @@ export type SettingsTab = "account" | "members" | "agents" | "appearance" | "edi
 export interface PageLinkOptions { task?: string; peek?: string; }
 export const HOME_URL = "/";
 export const LANDING_URL = "/landing";
+export const LANDING_LOGIN_URL = "/landing#login";
+export const SET_PASSWORD_URL = "/set-password";
 export const LINKED_URL = "/linked";
 export const MCP_PAT_URL = "/mcp-pat";
+export const CONNECT_URL = "/connect";
+export const AGENTS_URL = "/agents";
+export function connectUrl(id?: string): string { return id ? `${CONNECT_URL}/${encodeURIComponent(id)}` : CONNECT_URL; }
 
 // Pure URL constructors shared by the SPA and clients that generate deep links.
 export function withQuery(path: string, values: Record<string, string | null | undefined>): string {

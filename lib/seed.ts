@@ -38,51 +38,58 @@ export function createPageFromTemplate(plan: TemplatePlan, parentId: string | nu
 }
 export function seedWorkspace(): { pages: Record<string, Page>; rootOrder: string[] } {
   const welcome = createPage({
-    title: "Getting Started",
+    title: "Getting started",
     icon: "👋",
     blocks: [
       createBlock("heading1", { html: "Welcome to colabora.si" }),
-      createBlock("paragraph", { html: "This is a local-first workspace for people and AI agents. Everything you type is saved automatically in your browser." }),
-      createBlock("callout", { html: "Tip: type <b>/</b> on any empty line to open the block menu.", icon: "💡", color: "bg-blue" }),
-      createBlock("heading2", { html: "Things you can do" }),
-      createBlock("todo", { html: "Create headings, lists, and to-dos", checked: true }),
-      createBlock("todo", { html: "Use <b>bold</b>, <i>italic</i>, <code>code</code> and colors", checked: true }),
-      createBlock("todo", { html: "Drag blocks to reorder them", checked: false }),
-      createBlock("todo", { html: "Nest pages in the sidebar", checked: false }),
-      createBlock("todo", { html: "Build databases with table & board views", checked: false }),
-      createBlock("heading2", { html: "Block types" }),
-      createBlock("bulleted", { html: "Bulleted lists" }),
-      createBlock("bulleted", { html: "With nested items", indent: 1 }),
-      createBlock("numbered", { html: "Numbered lists" }),
-      createBlock("toggle", { html: "Toggle lists — click the arrow to expand" }),
-      createBlock("paragraph", { html: "Hidden content inside the toggle.", indent: 1 }),
-      createBlock("quote", { html: "A wise quote goes here." }),
-      createBlock("code", { html: 'function hello() {\n  console.log("Hello, world!");\n}', language: "javascript" }),
-      createBlock("divider"),
-      createBlock("paragraph", { html: "Press <b>Cmd/Ctrl + P</b> to quickly search pages. Toggle dark mode at the bottom of the sidebar." }),
+      createBlock("paragraph", { html: "A shared workspace where people and AI agents work on the same pages." }),
+      createBlock("heading2", { html: "Start in three steps" }),
+      createBlock("numbered", { html: "Connect your agent. Open Connect agents in the sidebar." }),
+      createBlock("numbered", { html: "Ask your agent to create a page here." }),
+      createBlock("numbered", { html: "Edit what it writes. It sees your changes." }),
+      createBlock("heading2", { html: "The basics" }),
+      createBlock("bulleted", { html: "Type / on an empty line to add a heading, list, table or database." }),
+      createBlock("bulleted", { html: "Press Ctrl or Cmd + P to find any page." }),
+      createBlock("bulleted", { html: "Ask Trama, at the top of the screen, how your work is going." }),
+      createBlock("callout", { html: "Agents you connect can read and change this page." }),
     ],
   });
-  const tasks = createPage({
-    title: "Tasks",
-    icon: "✅",
+  const working = createPage({
+    title: "Working with agents",
+    icon: "🤝",
     blocks: [
-      createBlock("heading1", { html: "My Tasks" }),
-      createBlock("todo", { html: "Review the project plan" }),
-      createBlock("todo", { html: "Send weekly update", checked: true }),
-      createBlock("todo", { html: "Prepare demo" }),
+      createBlock("heading1", { html: "Working with agents" }),
+      createBlock("paragraph", { html: "Your agents work on the same pages as you, and you stay in charge." }),
+      createBlock("heading2", { html: "Give an agent work" }),
+      createBlock("bulleted", { html: "Add a row to Agent Tasks and choose who does it." }),
+      createBlock("bulleted", { html: "Write what done looks like. The agent reads it before it starts." }),
+      createBlock("bulleted", { html: "Hand an open task to another agent. Its history comes along." }),
+      createBlock("heading2", { html: "What stays in your hands" }),
+      createBlock("bulleted", { html: "Choose which pages an agent can access." }),
+      createBlock("bulleted", { html: "Everything an agent writes carries its name." }),
+      createBlock("bulleted", { html: "Set which sensitive actions need your approval." }),
+      createBlock("bulleted", { html: "You review the work and close the task." }),
     ],
   });
-  const notes = createPage({
-    title: "Quick Notes",
-    icon: "🗒️",
-    blocks: [
-      createBlock("heading1", { html: "Quick Notes" }),
-      createBlock("paragraph", { html: "Jot down anything here." }),
-    ],
+  const connections = createPage({
+    title: "Connect your agents",
+    icon: "🔌",
+    blocks: sanitizeBlocks([
+      createBlock("heading1", { html: "Connect your agents" }),
+      createBlock("paragraph", { html: '<a href="/connect">Connect an agent</a>. Choose the agent you use, follow its setup steps and approve access.' }),
+      createBlock("paragraph", { html: 'See who is linked in <a href="/agents">Connected agents</a>.' }),
+      createBlock("heading2", { html: "Choose your agent" }),
+      ...[
+        ["claude-code", "Claude Code"], ["codex", "Codex"], ["muse-code", "Muse Code"],
+        ["cursor", "Cursor"], ["gemini-cli", "Gemini CLI"], ["antigravity", "Google Antigravity"],
+        ["chatgpt", "ChatGPT"], ["claude", "Claude"], ["hermes", "Hermes Agent"],
+        ["openclaw", "OpenClaw"], ["your-agent", "Your own agent"],
+      ].map(([slug, name]) => createBlock("bulleted", { html: `<a href="/connect/${slug}">${name}</a>` })),
+    ]),
   });
   const agentTasks = createPageFromTemplate(AGENT_TASKS_TEMPLATE.build());
   return {
-    pages: { [welcome.id]: welcome, [tasks.id]: tasks, [notes.id]: notes, ...agentTasks.pages },
-    rootOrder: [welcome.id, tasks.id, notes.id, agentTasks.page.id],
+    pages: { [welcome.id]: welcome, [working.id]: working, [connections.id]: connections, ...agentTasks.pages },
+    rootOrder: [welcome.id, working.id, connections.id, agentTasks.page.id],
   };
 }

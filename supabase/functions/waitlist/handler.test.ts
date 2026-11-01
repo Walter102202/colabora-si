@@ -1,20 +1,26 @@
 import assert from 'node:assert/strict';
-import { handleWaitlist, MAX_BODY_BYTES, type JoinResult, type WaitlistDeps } from './handler.ts';
+import { CATCH_UP_BATCH, handleWaitlist, MAX_BODY_BYTES, type JoinResult, type WaitlistDeps } from './handler.ts';
 import { addToNotion } from './notion.ts';
 
 const ORIGIN = 'https://colabora.si';
 
 function deps(over: Partial<WaitlistDeps> = {}, result: JoinResult = { outcome: 'added', id: 'row' }) {
   const log: string[] = [];
+  const work: Promise<unknown>[] = [];
   const d: WaitlistDeps = {
     appOrigin: ORIGIN,
     hashIp: (ip) => Promise.resolve(`hash(${ip})`),
     join: (email, ipHash) => { log.push(`join:${email}:${ipHash}`); return Promise.resolve(result); },
     markSynced: (id) => { log.push(`synced:${id}`); return Promise.resolve(); },
+    background: (task) => { work.push(task); },
     copyToNotion: (email) => { log.push(`notion:${email}`); return Promise.resolve(); },
+    unsynced: () => Promise.resolve([]),
+    sendConfirmation: (email, id) => { log.push(`sent:${email}:${id}`); return Promise.resolve(); },
+    unconfirmed: () => Promise.resolve([]),
+    markConfirmed: (id) => { log.push(`confirmed:${id}`); return Promise.resolve(); },
     ...over,
   };
-  return { d, log };
+  return { d, log, settled: () => Promise.all(work) };
 }
 
 function post(body: unknown = { email: 'Ana@Company.co ', company: '' }, headers: Record<string, string> = {}) {
@@ -25,48 +31,137 @@ function post(body: unknown = { email: 'Ana@Company.co ', company: '' }, headers
   });
 }
 
-Deno.test('a new address is saved, copied and marked', async () => {
-  const { d, log } = deps();
+Deno.test('a new address is saved, copied, confirmed and marked', async () => {
+  const { d, log, settled } = deps();
   const res = await handleWaitlist(post(), d);
   assert.deepEqual([res.status, await res.json()], [200, { ok: true }]);
   assert.equal(res.headers.get('Access-Control-Allow-Origin'), ORIGIN);
+  await settled();
+  assert.deepEqual(log, ['join:ana@company.co:hash(203.0.113.9)', 'notion:ana@company.co', 'synced:row', 'sent:ana@company.co:row', 'confirmed:row']);
+});
+
+Deno.test('the answer does not wait for the copy or the email', async () => {
+  const never = new Promise<void>(() => {});
+  const { d } = deps({ copyToNotion: () => never, sendConfirmation: () => never });
+  assert.equal((await handleWaitlist(post(), d)).status, 200);
+});
+
+Deno.test('a signup also sends the emails others are still owed', async () => {
+  let asked = 0;
+  const { d, log, settled } = deps({
+    unconfirmed: (limit) => { asked = limit; return Promise.resolve([{ id: 'row', email: 'ana@company.co' }, { id: 'old', email: 'old@company.co' }]); },
+  });
+  await handleWaitlist(post(), d);
+  await settled();
+  assert.equal(asked, CATCH_UP_BATCH);
+  assert.deepEqual(log.slice(3), ['sent:ana@company.co:row', 'confirmed:row', 'sent:old@company.co:old', 'confirmed:old']);
+});
+
+Deno.test('a refused email stays owed and the next one is still tried', async () => {
+  const { d, log, settled } = deps({
+    unconfirmed: () => Promise.resolve([{ id: 'old', email: 'old@company.co' }]),
+    sendConfirmation: (email, id) => {
+      if (id === 'row') return Promise.reject(new Error('resend answered 429'));
+      log.push(`sent:${email}:${id}`);
+      return Promise.resolve();
+    },
+  });
+  const res = await handleWaitlist(post(), d);
+  await settled();
+  assert.deepEqual([res.status, await res.json()], [200, { ok: true }]);
+  assert.deepEqual(log.slice(3), ['sent:old@company.co:old', 'confirmed:old']);
+});
+
+Deno.test('a failed lookup of owed emails still sends the new one', async () => {
+  const { d, log, settled } = deps({ unconfirmed: () => Promise.reject(new Error('down')) });
+  await handleWaitlist(post(), d);
+  await settled();
+  assert.deepEqual(log.slice(3), ['sent:ana@company.co:row', 'confirmed:row']);
+});
+
+Deno.test('a signup also copies the rows Notion is still owed, with their own date', async () => {
+  const dates: string[] = [];
+  let asked = 0;
+  const { d, log, settled } = deps({
+    unsynced: (limit) => { asked = limit; return Promise.resolve([{ id: 'row', email: 'ana@company.co', created_at: '2026-11-01T10:00:00Z' }, { id: 'old', email: 'old@company.co', created_at: '2026-10-31T10:00:00Z' }]); },
+    copyToNotion: (email, at) => { log.push(`notion:${email}`); dates.push(at.toISOString()); return Promise.resolve(); },
+    sendConfirmation: undefined,
+  });
+  await handleWaitlist(post(), d);
+  await settled();
+  assert.equal(asked, CATCH_UP_BATCH);
+  assert.deepEqual(log.slice(1), ['notion:ana@company.co', 'synced:row', 'notion:old@company.co', 'synced:old']);
+  assert.equal(dates[1], '2026-10-31T10:00:00.000Z');
+});
+
+Deno.test('a failed Notion copy stays owed and the next one is still tried', async () => {
+  const { d, log, settled } = deps({
+    unsynced: () => Promise.resolve([{ id: 'old', email: 'old@company.co', created_at: '2026-10-31T10:00:00Z' }]),
+    copyToNotion: (email) => {
+      if (email === 'ana@company.co') return Promise.reject(new Error('notion answered 429'));
+      log.push(`notion:${email}`);
+      return Promise.resolve();
+    },
+    sendConfirmation: undefined,
+  });
+  await handleWaitlist(post(), d);
+  await settled();
+  assert.deepEqual(log.slice(1), ['notion:old@company.co', 'synced:old']);
+});
+
+Deno.test('without the Notion secrets no copy is looked up', async () => {
+  const { d, log, settled } = deps({ copyToNotion: undefined, unsynced: () => Promise.reject(new Error('unexpected')), sendConfirmation: undefined });
+  await handleWaitlist(post(), d);
+  await settled();
+  assert.deepEqual(log, ['join:ana@company.co:hash(203.0.113.9)']);
+});
+
+Deno.test('without the Resend key nothing is sent or looked up', async () => {
+  const { d, log, settled } = deps({ sendConfirmation: undefined, unconfirmed: () => Promise.reject(new Error('unexpected')) });
+  await handleWaitlist(post(), d);
+  await settled();
   assert.deepEqual(log, ['join:ana@company.co:hash(203.0.113.9)', 'notion:ana@company.co', 'synced:row']);
 });
 
-Deno.test('a repeated address answers the same and is not copied again', async () => {
+Deno.test('a repeated address answers the same and is neither copied nor emailed again', async () => {
   const added = await handleWaitlist(post(), deps().d);
-  const { d, log } = deps({}, { outcome: 'exists' });
+  const { d, log, settled } = deps({}, { outcome: 'exists' });
   const repeated = await handleWaitlist(post(), d);
+  await settled();
   assert.deepEqual([repeated.status, await repeated.json()], [added.status, await added.json()]);
   assert.deepEqual(log, ['join:ana@company.co:hash(203.0.113.9)']);
 });
 
-Deno.test('a filled honeypot answers success and saves nothing', async () => {
-  const { d, log } = deps();
+Deno.test('a filled honeypot answers success, saves nothing and emails nobody', async () => {
+  const { d, log, settled } = deps();
   const res = await handleWaitlist(post({ email: 'bot@spam.co', company: 'ACME' }), d);
+  await settled();
   assert.deepEqual([res.status, await res.json()], [200, { ok: true }]);
   assert.deepEqual(log, []);
 });
 
-Deno.test('a rate limit answers 429 and copies nothing', async () => {
-  const { d, log } = deps({}, { outcome: 'rate_limited' });
+Deno.test('a rate limit answers 429 and neither copies nor emails', async () => {
+  const { d, log, settled } = deps({}, { outcome: 'rate_limited' });
   const res = await handleWaitlist(post(), d);
+  await settled();
   assert.deepEqual([res.status, (await res.json()).error], [429, 'rate_limited']);
   assert.deepEqual(log, ['join:ana@company.co:hash(203.0.113.9)']);
 });
 
-Deno.test('a Notion failure leaves the row unsynced and the visitor sees success', async () => {
-  const { d, log } = deps({ copyToNotion: () => Promise.reject(new Error('timeout')) });
+Deno.test('a Notion failure leaves the row unsynced, still emails, and the visitor sees success', async () => {
+  const { d, log, settled } = deps({ copyToNotion: () => Promise.reject(new Error('timeout')) });
   const res = await handleWaitlist(post(), d);
+  await settled();
   assert.equal(res.status, 200);
-  assert.deepEqual(log, ['join:ana@company.co:hash(203.0.113.9)']);
+  assert.deepEqual(log, ['join:ana@company.co:hash(203.0.113.9)', 'sent:ana@company.co:row', 'confirmed:row']);
 });
 
-Deno.test('without the Notion secrets the row is saved and nothing else happens', async () => {
-  const { d, log } = deps({ copyToNotion: undefined });
+Deno.test('without the Notion secrets the row is saved and not copied', async () => {
+  const { d, log, settled } = deps({ copyToNotion: undefined });
   const res = await handleWaitlist(post(), d);
+  await settled();
   assert.equal(res.status, 200);
-  assert.deepEqual(log, ['join:ana@company.co:hash(203.0.113.9)']);
+  assert.deepEqual(log, ['join:ana@company.co:hash(203.0.113.9)', 'sent:ana@company.co:row', 'confirmed:row']);
 });
 
 Deno.test('a malformed address or body is refused before the database', async () => {

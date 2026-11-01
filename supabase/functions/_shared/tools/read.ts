@@ -70,6 +70,9 @@ const fetchTool: ToolDef = {
   async handler(args, ctx) {
     const id = String(args.id);
     const { bundle, row } = await loadPage(ctx.db, id);
+    if (ctx.principal.agentId) {
+      try { await ctx.db.rpc('record_agent_read', { p_page_id: id }); } catch { /* Verification never interrupts a read. */ }
+    }
     const md = pageToMarkdown(bundle.page, {
       pages: bundle.pages,
       syncedBlocks: bundle.syncedBlocks,
@@ -153,6 +156,9 @@ const readPage: ToolDef = {
     const pageId = String(args.page_id);
     if (decodeCursor(str(args.cursor)) === null) throw new ToolError('invalid_input', 'The cursor is not valid. Start again without it.');
     const { bundle, row } = await loadPage(ctx.db, pageId);
+    if (ctx.principal.agentId) {
+      try { await ctx.db.rpc('record_agent_read', { p_page_id: pageId }); } catch { /* Verification never interrupts a read. */ }
+    }
     const md = pageToMarkdown(bundle.page, {
       pages: bundle.pages,
       syncedBlocks: bundle.syncedBlocks,

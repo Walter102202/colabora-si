@@ -16,6 +16,7 @@ export const useUploadState = create<{ uploading: Record<string, true>; start(id
   clear: () => set({ uploading: {} }),
 }));
 export function useUploading(fileId?: string): boolean { return useUploadState((s) => !!fileId && !!s.uploading[fileId]); }
+export function hasPendingUploads(): boolean { return Object.keys(useUploadState.getState().uploading).length > 0; }
 const DB_NAME = "colabora-files", BUCKET = "files", THROTTLE_MS = 400, MAX_BACKOFF_MS = 30000;
 let dbPromise: Promise<IDBDatabase> | null = null;
 function database(): Promise<IDBDatabase> {
@@ -32,6 +33,10 @@ async function local<T>(store: string, mode: IDBTransactionMode, action: (s: IDB
 const putLocal = (id: string, blob: Blob) => local("files", "readwrite", (s) => s.put(blob, id));
 const getLocal = (id: string) => local<Blob | undefined>("files", "readonly", (s) => s.get(id));
 const markUploaded = (id: string, ws: string) => local("uploaded", "readwrite", (s) => s.put(ws, id));
+export async function clearLocalFiles(): Promise<void> {
+  useUploadState.getState().clear();
+  await Promise.all(["files", "uploaded"].map((store) => local(store, "readwrite", (s) => s.clear())));
+}
 let wsId: string | null = null, epoch = 0, running = false, attempts = 0, retryTimer: ReturnType<typeof setTimeout> | null = null;
 const queue: string[] = [], queuedSet = new Set<string>(), downloads = new Map<string, Promise<Blob | undefined>>();
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));

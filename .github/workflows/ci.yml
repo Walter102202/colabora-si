@@ -93,20 +93,22 @@ jobs:
 
       # The Deno tests import handlers, not entrypoints, so a function that cannot boot passed
       # them. Every function is called once with the local anon key, because without a token the
-      # gateway answers for a verify_jwt function and never boots it (503 is a boot error; 4xx and
-      # 500 mean it answered). Then the MCP flow runs over HTTP with the seeded Codex agent and
-      # its queued seed task.
+      # gateway answers for a verify_jwt function and never boots it. BOOT_ERROR in the body is the
+      # runtime saying a function cannot start; a bare 503 is not, because account-link and
+      # send-email answer it when mail is not configured. Then the MCP flow runs over HTTP with
+      # the seeded Codex agent and its queued seed task.
       - name: Served MCP smoke (every function boots, then the MCP flow)
         if: hashFiles('supabase/migrations/*.sql') != ''
         run: |
           anon=$(supabase status -o env | sed -n 's/^ANON_KEY="\(.*\)"$/\1/p')
           if [ -z "$anon" ]; then echo "::error::no local anon key"; exit 1; fi
+          body=$(mktemp)
           for dir in supabase/functions/*/; do
             name=$(basename "$dir")
             [ "$name" = "_shared" ] && continue
-            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 120 -X POST "http://127.0.0.1:54321/functions/v1/$name" -H "Authorization: Bearer $anon" -H 'Content-Type: application/json' -d '{}')
+            code=$(curl -s -o "$body" -w '%{http_code}' --max-time 120 -X POST "http://127.0.0.1:54321/functions/v1/$name" -H "Authorization: Bearer $anon" -H 'Content-Type: application/json' -d '{}')
             echo "$name $code"
-            if [ "$code" = "503" ]; then echo "::error::$name does not boot"; docker logs supabase_edge_runtime_colabora-si 2>&1 | tail -20; exit 1; fi
+            if grep -q BOOT_ERROR "$body"; then echo "::error::$name does not boot"; docker logs supabase_edge_runtime_colabora-si 2>&1 | tail -20; exit 1; fi
           done
           AGENT_PAT="$(grep -oE 'agt_LOCALDEVCODEX[0-9]+' supabase/seeds/02_agents.sql | head -1)" \
           MCP_URL=http://127.0.0.1:54321/functions/v1/mcp \

@@ -242,7 +242,7 @@ check("the new platform agent login works", (await raw("POST", "/functions/v1/ag
 const memberPassword = `Member-${randomUUID()}`, memberEmail = `member-${randomUUID()}@test.invalid`;
 const memberUser = await raw("POST", "/auth/v1/admin/users", service, { email: memberEmail, password: memberPassword, email_confirm: true }, service);
 if (memberUser.status !== 200) throw new Error(`Create member failed: ${JSON.stringify(memberUser)}`);
-const membership = await person.from("workspace_members").insert({ workspace_id: agent.workspace_id, user_id: memberUser.json.id, role: "editor" });
+const membership = await person.rpc("invite_member", { p_workspace_id: agent.workspace_id, p_email: memberEmail, p_role: "editor" });
 if (membership.error) throw membership.error;
 const member = createClient(base, anon, { auth: { persistSession: false, autoRefreshToken: false } });
 const memberSession = await member.auth.signInWithPassword({ email: memberEmail, password: memberPassword });

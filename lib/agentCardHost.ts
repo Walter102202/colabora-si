@@ -1,7 +1,7 @@
 // Host bridge of the MCP Apps task card (MCP extension SEP-1865, specification 2026-01-26):
-// JSON-RPC 2.0 over postMessage between the card (an iframe) and the chat host. Written by hand,
-// exactly as the specification describes the messages; the official SDK would add the MCP client
-// and zod to a card that only needs a dozen message kinds.
+// JSON-RPC 2.0 over postMessage between the card (an iframe) and the chat host. Written by hand; the
+// official SDK would add the MCP client and zod to a card that only needs a dozen message kinds.
+// Hosts validate with the SDK's schemas, so params follow its src/spec.types.ts, not only the prose.
 
 export const UI_PROTOCOL_VERSION = "2026-01-26";
 
@@ -233,8 +233,7 @@ export function createCardHost(
       const result = (await request("ui/initialize", {
         appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
         protocolVersion: UI_PROTOCOL_VERSION,
-        clientInfo: info,
-        capabilities: {},
+        appInfo: info,
       })) as InitializeResult;
       if (isObject(result?.hostContext)) Object.assign(context, result.hostContext);
       notify("ui/notifications/initialized");
@@ -248,7 +247,7 @@ export function createCardHost(
       await request("ui/open-link", { url });
     },
     async sendMessage(text) {
-      await request("ui/message", { role: "user", content: { type: "text", text } });
+      await request("ui/message", { role: "user", content: [{ type: "text", text }] });
     },
     async requestDisplayMode(mode) {
       const result = await request("ui/request-display-mode", { mode });

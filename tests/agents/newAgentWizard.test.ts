@@ -62,4 +62,30 @@ describe("NewAgentWizard", () => {
     click("Next"); click("Next"); click("Create agent");
     expect(created[0].capabilities.resume).toBe(false);
   });
+  it("creates a Lead when the person picks that role, and says what it can do", () => {
+    const created: NewAgentInput[] = [];
+    act(() => root.render(createElement(NewAgentWizard, { onCancel: () => {}, onCreate: (input: NewAgentInput) => void created.push(input), busy: false })));
+    type(container.querySelector("input")!, "Claude Code");
+    const role = container.querySelector("#new-agent-role") as HTMLSelectElement;
+    expect(role.value).toBe("worker");
+    expect(container.textContent).toContain("Works on the tasks it is given.");
+    role.value = "lead";
+    act(() => role.dispatchEvent(new Event("change", { bubbles: true })));
+    expect(container.textContent).toContain("Creates tasks, delegates them to other agents and reviews their work.");
+    click("Next");
+    click("Next");
+    expect(container.textContent).toContain("Claude Code on Claude Code, as Lead.");
+    click("Create agent");
+    expect(created[0].role).toBe("lead");
+  });
+  it("keeps the chosen role when the person goes back", () => {
+    act(() => root.render(createElement(NewAgentWizard, { onCancel: () => {}, onCreate: () => {}, busy: false })));
+    type(container.querySelector("input")!, "Claude Code");
+    const role = container.querySelector("#new-agent-role") as HTMLSelectElement;
+    role.value = "lead";
+    act(() => role.dispatchEvent(new Event("change", { bubbles: true })));
+    click("Next");
+    click("Back");
+    expect((container.querySelector("#new-agent-role") as HTMLSelectElement).value).toBe("lead");
+  });
 });

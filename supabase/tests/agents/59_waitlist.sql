@@ -6,6 +6,9 @@ create temporary table calls(sql text);
 insert into calls values
  ($$select public.waitlist_join('ana@company.co','hash')$$),
  ($$select public.waitlist_mark_synced('00000000-0000-4000-8000-000000000001')$$),
+ ($$select * from public.waitlist_unconfirmed(10)$$),
+ ($$select * from public.waitlist_unsynced(10)$$),
+ ($$select public.waitlist_mark_confirmed('00000000-0000-4000-8000-000000000001')$$),
  ($$select * from private.waitlist$$),
  ($$select * from private.waitlist_attempts$$),
  ($$insert into private.waitlist(email) values ('ana@company.co')$$);
@@ -53,6 +56,23 @@ select tests.set_service();
 select public.waitlist_join('fresh@company.co','ip-fresh');
 select tests.reset_role();
 select is((select count(*)::int from private.waitlist_attempts where key='ip:old'), 0, 'old windows are purged');
+
+select tests.set_service();
+select public.waitlist_join('owed@company.co','ip-owed');
+select is((select count(*)::int from public.waitlist_unconfirmed(1000) where email='owed@company.co'), 1, 'a new address is owed its email');
+select public.waitlist_mark_confirmed((select id from public.waitlist_unconfirmed(1000) where email='owed@company.co'));
+select is((select count(*)::int from public.waitlist_unconfirmed(1000) where email='owed@company.co'), 0, 'a confirmed address is owed nothing');
+select is((select count(*)::int from public.waitlist_unconfirmed(2)), 2, 'the limit holds');
+select is((select count(*)::int from public.waitlist_unconfirmed(-1)), 0, 'a negative limit returns nothing');
+select tests.reset_role();
+select isnt((select confirmation_sent_at from private.waitlist where email='owed@company.co'), null, 'the send is dated');
+
+select tests.set_service();
+select is((select count(*)::int from public.waitlist_unsynced(1000) where email='owed@company.co'), 1, 'a new address is owed its copy');
+select is((select count(*)::int from public.waitlist_unsynced(1000) where email='sync@company.co'), 0, 'a copied address is owed nothing');
+select is((select count(*)::int from public.waitlist_unsynced(2)), 2, 'the copy limit holds');
+select isnt((select created_at from public.waitlist_unsynced(1000) where email='owed@company.co'), null, 'the copy keeps the signup date');
+select tests.reset_role();
 
 select * from finish();
 rollback;

@@ -41,6 +41,11 @@ describe("chooseEntry", () => {
     expect(chooseEntry({ ...visitor, pathname: "/landing/", hasSession: true })).toBe("landing");
   });
 
+  it("opens the password page outside the workspace, with or without a session", () => {
+    expect(chooseEntry({ ...visitor, pathname: "/set-password", search: "?token_hash=t&type=invite" })).toBe("setPassword");
+    expect(chooseEntry({ ...visitor, pathname: "/set-password/", hasSession: true })).toBe("setPassword");
+  });
+
   it.each(["/p/abc", "/shared/abc", "/pub/abc", "/linked", "/mcp-pat", "/oauth/consent", "/nowhere"])("leaves %s to the app", (pathname) => {
     expect(chooseEntry({ ...visitor, pathname })).toBe("workspace");
   });

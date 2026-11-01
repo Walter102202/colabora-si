@@ -1,4 +1,4 @@
-import { pageUrl, peekUrl, withQuery, settingsUrl, searchUrl, type SettingsTab } from "@/lib/routes";
+import { CONNECT_URL, pageUrl, peekUrl, withQuery, settingsUrl, searchUrl, type SettingsTab } from "@/lib/routes";
 import { lazy, Suspense, useEffect, useState, useSyncExternalStore } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 import { ChevronRight, Menu, MoreHorizontal, Star } from "lucide-react";
@@ -38,6 +38,9 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = useLocation().pathname, navigate = useNavigate(), pages = useStore((s) => s.pages);
   const narrow = useSyncExternalStore(subscribeWidth, () => window.innerWidth < 768);
   const [collapsed, setCollapsed] = useState(false), [drawerAt, setDrawerAt] = useState<string | null>(null);
+  const [connectSidebarAt, setConnectSidebarAt] = useState<string | null>(null);
+  const isConnect = pathname === CONNECT_URL || pathname.startsWith(`${CONNECT_URL}/`);
+  const sidebarCollapsed = collapsed || (isConnect && connectSidebarAt !== pathname);
   const [width, setWidth] = useState(() => { try { const value = Number(localStorage.getItem("colabora-sidebar-width")); return value > 0 ? Math.max(200, Math.min(480, value)) : 260; } catch { return 260; } });
   const [resizing, setResizing] = useState(false);
   const location = useLocation(), [params] = useSearchParams();
@@ -77,7 +80,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     const handler = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey, key = event.key.toLowerCase(), target = event.target as HTMLElement;
       if (mod && (key === "p" || key === "k")) { event.preventDefault(); request("search"); }
-      else if (mod && key === "\\") { event.preventDefault(); setCollapsed((value) => !value); setDrawerAt((value) => value === pathname ? null : pathname); }
+      else if (mod && key === "\\") { event.preventDefault(); setCollapsed(!sidebarCollapsed); setConnectSidebarAt(pathname); setDrawerAt((value) => value === pathname ? null : pathname); }
       else if (mod && key === "z") { event.preventDefault(); if (event.shiftKey) redo(); else undo(); }
       else if (mod && key === "y") { event.preventDefault(); redo(); }
       else if ((mod && key === "/") || (key === "?" && !target.isContentEditable && !["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) { event.preventDefault(); request("shortcuts"); }
@@ -89,17 +92,17 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       }
     };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
-  }, [pathname]);
+  }, [pathname, sidebarCollapsed]);
   return <div className={`app-shell flex h-screen overflow-hidden ${resizing ? "select-none" : ""}`}>
     {narrow && drawerAt === pathname && <button className="drawer-backdrop" aria-label="Close sidebar" onClick={() => setDrawerAt(null)} />}
-    <div inert={narrow ? drawerAt !== pathname : collapsed} className={`app-sidebar ${narrow ? "drawer" : ""} ${narrow && drawerAt !== pathname ? "drawer-closed" : ""}`} style={{ width: narrow ? 256 : collapsed ? 0 : width, transitionDuration: resizing ? "0ms" : undefined }}>
-      <Sidebar collapse={() => { setCollapsed(true); setDrawerAt(null); }} />
-      {!narrow && !collapsed && <button aria-label="Resize sidebar" className="sidebar-resizer" onDoubleClick={() => { setWidth(260); localStorage.setItem("colabora-sidebar-width", "260"); }} onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { const next = Math.min(480, Math.max(200, width + (event.key === "ArrowRight" ? 10 : -10))); setWidth(next); localStorage.setItem("colabora-sidebar-width", String(next)); } }} onPointerDown={(event) => {
+    <div inert={narrow ? drawerAt !== pathname : sidebarCollapsed} className={`app-sidebar ${narrow ? "drawer" : ""} ${narrow && drawerAt !== pathname ? "drawer-closed" : ""}`} style={{ width: narrow ? 256 : sidebarCollapsed ? 0 : width, transitionDuration: resizing ? "0ms" : undefined }}>
+      <Sidebar collapse={() => { setConnectSidebarAt(null); setCollapsed(true); setDrawerAt(null); }} />
+      {!narrow && !sidebarCollapsed && <button aria-label="Resize sidebar" className="sidebar-resizer" onDoubleClick={() => { setWidth(260); localStorage.setItem("colabora-sidebar-width", "260"); }} onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { const next = Math.min(480, Math.max(200, width + (event.key === "ArrowRight" ? 10 : -10))); setWidth(next); localStorage.setItem("colabora-sidebar-width", String(next)); } }} onPointerDown={(event) => {
         event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); setResizing(true);
       }} onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) setWidth(Math.max(200, Math.min(480, event.clientX))); }} onPointerUp={(event) => { event.currentTarget.releasePointerCapture(event.pointerId); setResizing(false); localStorage.setItem("colabora-sidebar-width", String(width)); }} onPointerCancel={() => setResizing(false)} />}
     </div>
     <div className="app-main flex min-w-0 flex-1 flex-col"><header className="app-topbar flex h-11 shrink-0 items-center gap-1 px-3">
-      {(collapsed || narrow) && <button className="icon-button" aria-label="Open sidebar" onClick={() => { setCollapsed(false); setDrawerAt(pathname); }}><Menu size={18} /></button>}
+      {(sidebarCollapsed || narrow) && <button className="icon-button" aria-label="Open sidebar" onClick={() => { setConnectSidebarAt(pathname); setCollapsed(false); setDrawerAt(pathname); }}><Menu size={18} /></button>}
       <nav aria-label="Breadcrumb" className="flex min-w-0 flex-1 items-center text-sm">{crumbs.length ? crumbs.map((crumb, index) => <span className="flex min-w-0 items-center" key={crumb.id}>{index > 0 && <ChevronRight size={14} className="shrink-0 text-text-tertiary" />}<button className="breadcrumb-button" onClick={() => withViewTransition(() => navigate(pageUrl(crumb.id)))}><Emoji emoji={crumb.icon ?? "📄"} size={16} /><span className="truncate">{crumb.title || "Untitled"}</span></button></span>) : <button className="text-text-tertiary" onClick={() => request("search")}>Search…</button>}</nav>
       {page && <><span className="hidden whitespace-nowrap text-xs text-text-tertiary md:block">Edited {formatRelative(page.updatedAt)}</span><PresenceAvatars /><PresenceBadge pageId={page.id} /></>}
       {user && <HumanNotifications />}<ReminderBell /><InboxBell />

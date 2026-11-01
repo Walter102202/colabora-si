@@ -1,109 +1,113 @@
-// The landing's example: one brief goes Brief, Work, Review. Local state only: it runs no agent
-// and calls no backend, and only the visitor's click accepts anything.
-export type DemoStep = 0 | 1 | 2;
-export type DemoActivity = "idle" | "starting" | "drafting" | "revising";
-export type DemoTone = "brief" | "working" | "review" | "done";
+// The landing's example: Claude Code leads, Codex works, and Trama brings the last call to the visitor.
+// Local state only: it runs no agent and calls no backend, and only the visitor's click decides.
+export type DemoChoice = "approved" | "rejected";
+export type DemoTone = "working" | "review" | "decision" | "done";
 
-export const DRAFT_BLOCKS = 3;
-const NOTE_LIMIT = 120;
+// How long each beat stays on screen, then the card with the decision.
+const BEATS = [1200, 900, 1000, 1900, 1100, 1900, 1100, 1800, 1700];
+const CARD_WAIT = 5000;
+const DECIDED_WAIT = 3000;
+const ALL_WORK_DONE = 7;
+
+export const DEMO_CALL = 8;
+export const DEMO_END = BEATS.length;
+// `still` is where a step lands when nothing moves on its own.
+export const DEMO_STEPS = [
+  { label: "1 · Brief", beat: 0, still: 0 },
+  { label: "2 · Work", beat: 1, still: ALL_WORK_DONE },
+  { label: "3 · Review", beat: DEMO_CALL, still: DEMO_END },
+];
 
 export interface DemoState {
-  step: DemoStep;
-  activity: DemoActivity;
-  draftBlocks: number;
-  accepted: boolean;
-  version: number;
-  justNow: boolean;
-  note: string | null;
+  beat: number;
+  choice: DemoChoice | null;
+  pointer: boolean;
+  focused: boolean;
 }
 
 export type DemoEvent =
-  | { type: "goto"; step: DemoStep }
-  | { type: "start" }
-  | { type: "draft" }
-  | { type: "block" }
-  | { type: "drafted" }
-  | { type: "accept" }
-  | { type: "send"; text: string }
-  | { type: "revised" };
+  | { type: "tick" }
+  | { type: "goto"; beat: number }
+  | { type: "choose"; choice: DemoChoice }
+  | { type: "hand"; pointer?: boolean; focused?: boolean };
 
-export interface DemoTimer { after: number; event: DemoEvent }
+export interface DemoCheck { text: string; tag: string }
 
-export const initialDemo: DemoState = { step: 0, activity: "idle", draftBlocks: DRAFT_BLOCKS, accepted: false, version: 1, justNow: false, note: null };
+export interface DemoBlock {
+  title: string;
+  text?: string;
+  by?: string;
+  sign?: string;
+  ask?: string;
+  checks?: DemoCheck[];
+}
+
+export function demoStart(reducedMotion: boolean): DemoState {
+  return { beat: reducedMotion ? DEMO_END : 0, choice: null, pointer: false, focused: false };
+}
 
 export function demoReducer(state: DemoState, event: DemoEvent): DemoState {
   switch (event.type) {
-    case "goto": {
-      if (event.step === 0) return initialDemo;
-      const revising = state.activity === "revising";
-      return { ...state, step: event.step, activity: "idle", draftBlocks: DRAFT_BLOCKS, note: null, justNow: revising, version: state.version + (revising ? 1 : 0) };
-    }
-    case "start":
-      return state.step === 0 && state.activity === "idle" ? { ...state, activity: "starting" } : state;
-    case "draft":
-      return state.activity === "starting" ? { ...state, step: 1, activity: "drafting", draftBlocks: 0, justNow: true } : state;
-    case "block":
-      return state.activity === "drafting" ? { ...state, draftBlocks: Math.min(state.draftBlocks + 1, DRAFT_BLOCKS) } : state;
-    case "drafted":
-      return state.activity === "drafting" ? { ...state, activity: "idle", draftBlocks: DRAFT_BLOCKS } : state;
-    case "accept":
-      return state.step === 2 && state.activity === "idle" ? { ...state, accepted: true } : state;
-    case "send": {
-      const text = event.text.trim();
-      if (!text || state.step !== 2 || state.activity !== "idle" || state.accepted) return state;
-      return { ...state, activity: "revising", note: text.length > NOTE_LIMIT ? `${text.slice(0, NOTE_LIMIT - 3)}…` : text };
-    }
-    case "revised":
-      return state.activity === "revising" ? { ...state, activity: "idle", version: state.version + 1, justNow: true, note: null } : state;
+    case "tick":
+      if (demoDelay(state) === null) return state;
+      // The focused element goes away with the old round, and it leaves without a blur event.
+      return state.choice || state.beat === DEMO_END ? { ...state, beat: 0, choice: null, focused: false } : { ...state, beat: state.beat + 1 };
+    case "goto":
+      return { ...state, beat: event.beat, choice: null };
+    case "choose":
+      return state.beat === DEMO_END && !state.choice ? { ...state, choice: event.choice } : state;
+    case "hand":
+      return { ...state, pointer: event.pointer ?? state.pointer, focused: event.focused ?? state.focused };
   }
 }
 
-// What the clock may do next. None of these events accepts anything.
-export function demoTimers(activity: DemoActivity, reducedMotion: boolean): DemoTimer[] {
-  const after = (ms: number) => (reducedMotion ? 0 : ms);
-  if (activity === "starting") return [{ after: after(550), event: { type: "draft" } }];
-  if (activity === "revising") return [{ after: after(1500), event: { type: "revised" } }];
-  if (activity !== "drafting") return [];
-  if (reducedMotion) return [{ after: 0, event: { type: "drafted" } }];
-  return [
-    ...[200, 650, 1100].map((ms) => ({ after: ms, event: { type: "block" } as const })),
-    { after: 1600, event: { type: "drafted" } },
-  ];
+// What the clock waits for next. It only moves the agents' work and starts over: null means it waits for the visitor.
+export function demoDelay({ beat, choice, pointer, focused }: DemoState): number | null {
+  if (choice) return DECIDED_WAIT;
+  if (beat < DEMO_END) return BEATS[beat];
+  return pointer || focused ? null : CARD_WAIT;
 }
 
-export function demoStatus({ step, activity, accepted }: DemoState): { text: string; tone: DemoTone } {
-  if (step === 0) return { text: "Brief ready", tone: "brief" };
-  if (activity === "drafting" || activity === "revising") return { text: "Working", tone: "working" };
-  return accepted ? { text: "Done · accepted", tone: "done" } : { text: "Ready for review", tone: "review" };
+export function demoStep(beat: number): number {
+  return DEMO_STEPS.filter((step) => beat >= step.beat).length - 1;
 }
 
-export function demoSignature({ activity, version, justNow }: DemoState): string {
-  const run = version > 1 ? "9e20c1f7" : "4abf5433";
-  if (activity === "drafting") return `Trama · run ${run} (running) · Just now`;
-  return `Trama · run ${run} (completed) · ${justNow ? "Just now" : "2m ago"}`;
+export function demoStatus({ beat, choice }: DemoState): { text: string; tone: DemoTone } {
+  if (beat <= 2) return { text: "Working", tone: "working" };
+  if (beat === 3) return { text: "Lead reviewing · round 1 of 2", tone: "review" };
+  if (beat === 4) return { text: "Working · round 1 of 2", tone: "working" };
+  if (beat === 5) return { text: "Lead reviewing · round 2 of 2", tone: "review" };
+  if (beat === 6) return { text: "Working · round 2 of 2", tone: "working" };
+  if (beat === ALL_WORK_DONE) return { text: "Approved · by Claude Code", tone: "review" };
+  if (choice === "approved") return { text: "Done", tone: "done" };
+  return choice === "rejected" ? { text: "Working", tone: "working" } : { text: "Needs your decision", tone: "decision" };
 }
 
-export function demoWorkReply({ activity }: DemoState): string {
-  if (activity === "drafting") return "On it. I’ll add the draft to this page.";
-  return "The draft is ready. The audience, message and checklist are in the page, next to your original brief.";
+const signature = (run: string, running: boolean) => `Codex · run ${run} (${running ? "running" : "completed"}) · Just now`;
+
+function fixBlock(beat: number): DemoBlock {
+  const block = { title: "The fix", by: "Codex" };
+  if (beat === 2) return { ...block, text: "Trim the address before saving it.", sign: signature("4abf5433", true) };
+  if (beat === 3) return { ...block, text: "Trim the address before saving it.", sign: signature("4abf5433", false), ask: "Claude Code: Add a test for this case." };
+  if (beat === 4) return { ...block, text: "Trim the address before saving it. Test added.", sign: signature("9e20c1f7", true) };
+  if (beat === 5) return { ...block, text: "Trim the address before saving it. Test added.", sign: signature("9e20c1f7", false), ask: "Claude Code: Apply it to login too." };
+  return { ...block, text: "Trim the address in signup and login before saving it. Test added.", sign: signature("c71d0a32", beat === 6) };
 }
 
-export function demoReview({ activity, accepted, version }: DemoState) {
-  const revising = activity === "revising";
-  if (accepted) {
-    return {
-      title: "Launch brief · accepted",
-      reply: `Version ${version} is accepted. The task is closed.`,
-      note: "Accepted by you · The draft is kept with the task.",
-      caption: "Prepared by Trama · Accepted by you",
-    };
-  }
-  return {
-    title: "Launch brief · ready for review",
-    reply: revising ? "Got it. I’ll update the draft on this page."
-      : version > 1 ? `Version ${version} is on the page, ready for your review.`
-        : "Review the brief and checklist. You can accept the draft or ask for changes.",
-    note: revising ? "Trama has your feedback." : "Your review: is this draft ready to keep?",
-    caption: revising ? "Prepared by Trama · Your note is with Trama" : "Prepared by Trama · Awaiting your acceptance",
-  };
+export function demoBlocks({ beat }: DemoState): DemoBlock[] {
+  const blocks: DemoBlock[] = [{ title: "Goal", text: "People can join the waitlist from any phone." }];
+  if (beat >= 1) blocks.push({ title: "What broke", text: "Signup fails when an email ends in a space.", by: "Codex", sign: signature("4abf5433", beat <= 2) });
+  if (beat >= 2) blocks.push(fixBlock(beat));
+  if (beat >= ALL_WORK_DONE) blocks.push({ title: "Approved · by Claude Code · deliverable v3 · brief v1", by: "Claude Code", checks: [{ text: "Signup and login accept a trailing space", tag: "verified" }, { text: "Tests pass", tag: "CI passed" }] });
+  return blocks;
+}
+
+export function demoNote({ choice }: DemoState): string {
+  return `Fixed by Codex · Reviewed by Claude Code${choice === "approved" ? " · Approved by you" : ""}`;
+}
+
+export function demoOutcome(choice: DemoChoice): { title: string; text: string } {
+  return choice === "approved"
+    ? { title: "Approved by you.", text: "Codex merged pull request #128." }
+    : { title: "Rejected by you.", text: "Nothing was merged." };
 }
