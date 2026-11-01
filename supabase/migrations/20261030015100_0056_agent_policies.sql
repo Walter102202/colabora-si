@@ -77,8 +77,6 @@ begin
   if p_depth >= 10 or coalesce(p_action, '') = '' then return null; end if;
   select * into v_t from public.agent_tasks where id = p_task_id;
   if not found then return null; end if;
-  -- Workspace Ask is the global stop, including trusted brief preapprovals.
-  if private.workspace_autonomy(v_t.workspace_id) = 'ask' then return null; end if;
   select * into v_b from public.task_briefs where task_id = v_t.id and version = v_t.brief_version;
   -- Fails closed: an action it names asks, and a shape it cannot read makes every action ask.
   v_required := private.required_actions(v_b.policies);
