@@ -78,7 +78,7 @@ it("A-5-126 inactive colors are skipped", () => expect(rowColorKey(rows[0], view
 it("A-5-127 empty color rules", () => { const v = view({ colorRules: [{ id: "1", propertyId: "status", operator: "isEmpty", color: "gray" }] }); expect(rowColorKey(row(), v, database, {})).toBe("gray"); expect(rowColorKey(rows[0], v, database, {})).toBeNull(); });
 
 
-import { databaseTaskValues } from "@/lib/databaseTaskValues";
+import { databaseTaskValues, subtaskProgress } from "@/lib/databaseTaskValues";
 import { groupRows } from "@/lib/dbCompute";
 it("agent views filter and group authoritative task states without changing stored cells", () => {
   const status = prop({ id: "state", name: "Status", type: "agentStatus" }), worker = prop({ id: "worker", type: "agentDelegate" });
@@ -91,12 +91,29 @@ it("agent views filter and group authoritative task states without changing stor
   const waiting = view({ filters: [{ id: "f", propertyId: "state", operator: "is", value: "ready_for_review" }] });
   expect(filterRows(query.rows, waiting, query, {}).map((r) => r.pageId)).toEqual(["review-page"]);
   const groups = groupRows(query.rows, view({ type: "board", groupBy: "state" }), query, {});
-  expect(groups.find((g) => g.key === "queued")?.rows[0].pageId).toBe("queued-page");
+  expect(groups.find((g) => g.key === "ready")?.rows[0].pageId).toBe("queued-page");
   expect(groups.find((g) => g.key === "ready_for_review")?.rows[0].pageId).toBe("review-page");
-  expect(groups.find((g) => g.key === null)?.rows[0].pageId).toBe("plain-page");
+  expect(groups.find((g) => g.key === "needs_lead")?.rows[0].pageId).toBe("plain-page");
   expect(query.rows[1].cells.worker).toBe("worker");
   expect(source.properties[0].type).toBe("agentStatus");
   expect(source.rows[0].cells).toEqual({ state: "done" });
+});
+
+it("derives job waiting, brief criteria and pending progress while preserving closed legacy rows", () => {
+  const source = db([prop({ id: "state", type: "agentStatus" }), prop({ id: "wait", name: "Waiting on", type: "select" }), prop({ id: "done", name: "Done when" })],
+    [{ ...row({}, "job"), id: "job" }, { ...row({ done: "Old cell" }, "child"), id: "child", parentRowId: "job" }, { ...row({}, "planned"), parentRowId: "job" }]);
+  const base = { delegate_agent_id: "agent", parent_task_id: null, updated_at: "2026-11-01", brief_version: 1 };
+  const tasks = { parent: { ...base, row_page_id: "job", state: "working" as const },
+    child: { ...base, row_page_id: "child", state: "done" as const, parent_task_id: "parent" } };
+  const query = databaseTaskValues(source, tasks, [], { "child:1": { done_when: [{ text: "Ten links" }, { text: "One summary" }] } });
+  expect(query.rows.map((r) => r.cells)).toEqual([
+    { state: "working", wait: "Lead 1", done: "" }, { state: "done", wait: "Nobody", done: "Ten links; One summary" }, { state: "pending", wait: "Lead", done: "" },
+  ]);
+  expect(subtaskProgress(source, query)).toEqual({ job: { done: 1, total: 2 } });
+  const closed = databaseTaskValues(source, { ...tasks, parent: { ...tasks.parent, state: "done" } }, []);
+  expect(subtaskProgress(source, closed)).toEqual({ job: { done: 1, total: 1 } });
+  expect(closed.rows[1].cells.done).toBe("");
+  expect(source.rows[1].cells.done).toBe("Old cell");
 });
 
 it("agent task Lead cells display the assigned lead name without changing stored people", () => {

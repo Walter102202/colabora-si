@@ -2,9 +2,10 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { eligibleJobAgents, jobReadyPanel, type JobAgent } from "@/lib/agentJobs";
+import { eligibleJobAgents, jobReadyPanel, jobState, jobWait, subWait, subtaskState, type JobAgent } from "@/lib/agentJobs";
 import { JobAgentPicker } from "@/components/agents/panel/JobAgentPicker";
 import { JobReadyPanel } from "@/components/agents/panel/JobReadyPanel";
+import { JobsBoard } from "@/components/agents/panel/JobsBoard";
 
 const lead: JobAgent = { id: "lead", name: "My Claude Code", logo: null, role: "lead" };
 const worker: JobAgent = { id: "worker", name: "Codex", logo: null, role: "worker" };
@@ -12,6 +13,23 @@ const other: JobAgent = { id: "other", name: "Cursor", logo: null, role: "lead" 
 const input = { title: "Market research", lead, workers: [worker], subtaskCount: 0, hasPlan: false };
 
 describe("job preparation", () => {
+  it("derives live stages and who is waiting without changing terminal work", () => {
+    expect(jobState(null, [])).toBe("needs_lead");
+    expect(jobState({ state: "queued" }, [])).toBe("ready");
+    expect(jobState({ state: "working" }, [])).toBe("writing");
+    const running = { state: "working" as const, named_worker_ids: ["worker"], joined_worker_ids: [] };
+    expect(jobState(running, [{ state: "queued" }])).toBe("waiting_workers");
+    expect(jobState({ ...running, joined_worker_ids: ["worker"] }, [{ state: "queued" }])).toBe("working");
+    expect(jobState({ ...running, state: "done" }, [{ state: "queued" }])).toBe("done");
+    expect(jobWait(null, [])).toEqual({ label: "You", count: 0 });
+    expect(jobWait(running, [])).toEqual({ label: "Lead", count: 0 });
+    expect(jobWait(running, [{ state: "queued" }])).toEqual({ label: "Worker", count: 0 });
+    expect(jobWait({ state: "working" }, [null, { state: "working" }, { state: "input_required", waiting_on: "human" }])).toEqual({ label: "You", count: 1 });
+    expect(jobWait({ state: "working" }, [null, { state: "ready_for_review" }])).toEqual({ label: "Lead", count: 2 });
+    expect(subWait({ state: "queued" })).toBe("Nobody");
+    expect(subWait({ state: "input_required", waiting_on: "lead" })).toBe("Lead");
+    expect(subtaskState(null)).toBe("pending");
+  });
   it("offers only verified, enabled external agents that have not been revoked", () => {
     const agent = { id: "a", name: "Codex", is_platform: false, status: "enabled" as const, revoked_at: null, role: "worker" as const };
     const connection = { agent_id: "a", verified_at: "2026-11-01" };
@@ -76,4 +94,24 @@ it("copies the requested line, then shows waiting only when the Lead's line was 
   expect(onCopy).toHaveBeenCalledWith(data.lines[0]);
   act(() => root.render(<JobReadyPanel {...props} copiedAgentIds={[lead.id]} />));
   expect(container.querySelector('[role="status"]')?.textContent).toBe(data.waitingText);
+});
+
+it("keeps a person's subtask choice optional and lets a Lead work too", () => {
+  const onChoose = vi.fn();
+  act(() => root.render(<JobAgentPicker kind="subtask" agents={[lead, worker]} selectedIds={[]} onChoose={onChoose} onClose={() => {}} connectHref="/connect" agentsHref="/agents" />));
+  expect(container.textContent).toContain("Worker for this subtask");
+  const choices = [...container.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")];
+  expect(choices).toHaveLength(3);
+  act(() => choices[0].click()); expect(onChoose).toHaveBeenCalledWith("");
+  act(() => choices[1].click()); expect(onChoose).toHaveBeenCalledWith(lead.id);
+});
+
+it("renders jobs in four board lanes with progress and a working substage", () => {
+  const onOpen = vi.fn();
+  act(() => root.render(<JobsBoard jobs={[{ id: "job", title: "Market research", lead, state: "waiting_workers", progress: { done: 1, total: 4 }, waiting: { label: "Worker", count: 0 } }]} onOpen={onOpen} />));
+  expect([...container.querySelectorAll("section")].map((lane) => lane.getAttribute("aria-label"))).toEqual(["Needs a Lead", "Ready", "Working", "Done"]);
+  expect(container.querySelector('section[aria-label="Working"]')?.textContent).toContain("Market research");
+  expect(container.textContent).toContain("1/4");
+  act(() => (container.querySelector('button[aria-label="Open Market research"]') as HTMLButtonElement).click());
+  expect(onOpen).toHaveBeenCalledWith("job");
 });
