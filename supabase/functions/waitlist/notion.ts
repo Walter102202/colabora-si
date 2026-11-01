@@ -1,5 +1,6 @@
 // One page in the owner's Notion database for each new address. The database needs a title property called Email and
-// a date property called Joined, and the integration must be connected to it.
+// a date property called Joined, and the integration must be connected to it. The invitations read the same database
+// in waitlist-invites/notion.ts.
 const NOTION_PAGES = 'https://api.notion.com/v1/pages';
 const NOTION_VERSION = '2022-06-28';
 const TIMEOUT_MS = 3_000;
