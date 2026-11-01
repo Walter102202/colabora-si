@@ -10,7 +10,7 @@ export const AUTONOMY_HELP: Record<AutonomyLevel, string> = {
 export interface TaskAutonomy {
   level: AutonomyLevel;
   requested: AutonomyLevel | null;
-  source: "workspace" | "task" | "parent";
+  source: "workspace" | "task" | "agent" | "parent";
   workspace_level: AutonomyLevel;
   auto_approved: string[];
   require_approval: string[];
@@ -31,7 +31,7 @@ export function autonomyLine(a: TaskAutonomy | null | undefined): string | null 
   if (!a) return null;
   // The server says "workspace" both without a level of its own and when the workspace holds a higher one down.
   const source = a.source === "workspace" && a.requested ? "limited by the workspace"
-    : { workspace: "workspace default", task: "set on this task", parent: "limited by the parent task" }[a.source];
+    : { workspace: "workspace default", task: "set on this task", agent: "set on this agent", parent: "limited by the parent task" }[a.source];
   const actions = a.auto_approved.length ? "runs on its own: " + a.auto_approved.join(", ") : "asks before every outside action";
   return "Autonomy: " + AUTONOMY_LABEL[a.level] + " (" + source + "); " + actions + ".";
 }

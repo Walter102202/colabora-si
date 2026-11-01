@@ -38,7 +38,7 @@ export function subtaskProgress(database: Database, query: Database): Record<str
   if (!status) return progress;
   for (const row of query.rows) {
     const state = row.cells[status.id];
-    if (!row.parentRowId || state === "cancelled") continue;
+    if (!row.parentRowId || !state || state === "cancelled") continue;
     const entry = progress[row.parentRowId] ??= { done: 0, total: 0 };
     entry.total += 1;
     if (state === "done") entry.done += 1;

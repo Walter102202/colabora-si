@@ -21,3 +21,23 @@ describe("enablePlatformAgent", () => {
     expect(res).toEqual({ agentId: "ag-1", token: "agt_x" });
   });
 });
+
+describe("agent role and autonomy", () => {
+  it("uses the dedicated RPCs, reloads saved state and propagates errors", async () => {
+    const load = vi.fn(async () => {});
+    useAgentsStore.setState({ load });
+    rpc.mockReset().mockResolvedValue({ data: null, error: null });
+    await useAgentsStore.getState().setAgentRole("ag-1", "lead");
+    await useAgentsStore.getState().setAgentAutonomy("ag-1", "balanced");
+    await useAgentsStore.getState().setAgentAutonomy("ag-1", null);
+    expect(rpc.mock.calls).toEqual([
+      ["set_agent_role", { p_agent_id: "ag-1", p_role: "lead" }],
+      ["set_agent_autonomy", { p_agent_id: "ag-1", p_level: "balanced" }],
+      ["set_agent_autonomy", { p_agent_id: "ag-1", p_level: null }],
+    ]);
+    expect(load).toHaveBeenCalledTimes(3);
+    rpc.mockResolvedValue({ data: null, error: "owner_required" });
+    await expect(useAgentsStore.getState().setAgentRole("ag-1", "worker")).rejects.toThrow("owner_required");
+    expect(load).toHaveBeenCalledTimes(3);
+  });
+});

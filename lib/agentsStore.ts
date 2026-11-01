@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { agentErrorMessage, getAgentClient } from "@/lib/agentClient";
+import type { AutonomyLevel } from "@/lib/agentAutonomy";
 
 // Non-persisted store behind Settings → Agents. Reads through RLS with the
 // person's session; writes go through the identity RPCs and the agent-admin
@@ -17,6 +18,7 @@ export interface AgentRow {
   kind: AgentKind;
   delivery: "pull" | "push";
   role: AgentRole;
+  autonomy: AutonomyLevel | null;
   sponsor_user_id: string;
   status: AgentStatus;
   monthly_budget_usd: number | null;
@@ -78,14 +80,16 @@ export interface AgentsState {
   grantPage: (agentId: string, pageId: string, scopes: string[], inherit: boolean) => Promise<void>;
   revokeGrant: (grantId: string) => Promise<void>;
   setPaused: (agentId: string, paused: boolean) => Promise<void>;
+  setAgentRole: (agentId: string, role: AgentRole) => Promise<void>;
+  setAgentAutonomy: (agentId: string, level: AutonomyLevel | null) => Promise<void>;
   revokeAgent: (agentId: string, reason?: string) => Promise<void>;
 }
 
-async function rpc<T>(name: string, args: Record<string, unknown>): Promise<T> {
+async function rpc<T>(name: string, args: Record<string, unknown>, agentName?: string): Promise<T> {
   const client = getAgentClient();
   if (!client) throw new Error("Cloud is not configured.");
   const { data, error } = await client.rpc(name, args);
-  if (error) throw new Error(agentErrorMessage(error));
+  if (error) throw new Error(agentErrorMessage(error, agentName));
   return data as T;
 }
 
@@ -209,6 +213,16 @@ export const useAgentsStore = create<AgentsState>()((set, get) => ({
 
   async setPaused(agentId, paused) {
     await rpc("update_agent", { p_agent_id: agentId, p_patch: { status: paused ? "paused" : "enabled" } });
+    await get().load();
+  },
+
+  async setAgentRole(agentId, role) {
+    await rpc("set_agent_role", { p_agent_id: agentId, p_role: role }, get().agents.find((agent) => agent.id === agentId)?.name);
+    await get().load();
+  },
+
+  async setAgentAutonomy(agentId, level) {
+    await rpc("set_agent_autonomy", { p_agent_id: agentId, p_level: level });
     await get().load();
   },
 

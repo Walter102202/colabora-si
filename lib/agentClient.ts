@@ -11,7 +11,7 @@ export function getAgentClient(): SupabaseClient | null {
 
 // Readable message for an RPC or PostgREST error (PTnnn codes carry the
 // actionable name in `message`).
-export function agentErrorMessage(error: unknown): string {
+export function agentErrorMessage(error: unknown, agentName = "This agent"): string {
   if (!error) return "Unknown error";
   if (typeof error === "string") return error;
   const e = error as { message?: string; details?: string; code?: string };
@@ -26,7 +26,8 @@ export function agentErrorMessage(error: unknown): string {
   if (e.message === "approval_not_pending") return "This was already answered.";
   if (e.message === "humans_only") return "Only a person can do that.";
   if (e.message === "cross_workspace") return "The page and the agent belong to different workspaces.";
-  if (e.message === "owner_required") return "Only a workspace owner can do that.";
+  if (e.message === "owner_required") return "Only the workspace owner can change roles and autonomy.";
+  if (e.message === "lead_has_open_work") return `${agentName} still leads "${e.details ?? "Untitled"}". Finish it or reassign it first.`;
   if (e.message === "misconfigured") return "The server is not configured for agent tokens yet.";
   return e.message ?? e.details ?? e.code ?? "Unknown error";
 }
