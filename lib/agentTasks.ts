@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { agentErrorMessage, getAgentClient } from "@/lib/agentClient";
 import type { CiCheckRow } from "@/lib/agentCi";
-import type { Acceptance, RunStatus, TaskState } from "@/lib/agentState";
+import { waitsForAcceptance, type Acceptance, type RunStatus, type TaskState } from "@/lib/agentState";
 
 // Non-persisted store of the agent task model for one workspace: tasks, runs,
 // approvals, reviews and artifacts by id, kept live through Realtime.
@@ -569,7 +569,9 @@ export function taskForPage(state: Pick<AgentTasksState, "tasks">, pageId: strin
 
 export function waitingOnYou(state: AgentTasksState): TaskRow[] {
   return Object.values(state.tasks)
-    .filter((t) => t.state === "input_required" && (t.waiting_on === "human" || t.waiting_on === null))
+    .filter((t) => (t.state === "input_required" && (t.waiting_on === "human" || t.waiting_on === null))
+      // Accepting a job settles its deliveries, so the job alone stands for them.
+      || (waitsForAcceptance(t) && state.tasks[t.parent_task_id ?? ""]?.state !== "ready_for_review"))
     .sort((a, b) => (b.last_activity_at ?? b.updated_at).localeCompare(a.last_activity_at ?? a.updated_at));
 }
 

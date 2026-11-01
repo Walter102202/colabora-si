@@ -79,6 +79,11 @@ export function canAcceptAndClose(state: TaskState, hasDeliverable: boolean): bo
   return state === "ready_for_review" || (state === "input_required" && hasDeliverable);
 }
 
+// A person settles this now: a delivered job, or a subtask approved in review that its Lead could not close.
+export function waitsForAcceptance(task: { state: TaskState; parent_task_id?: string | null; review_state?: string; request_kind?: string | null }): boolean {
+  return task.state === "ready_for_review" && !task.request_kind && (!task.parent_task_id || task.review_state === "approved");
+}
+
 export function nextState(task: TaskLike, event: TaskEvent): TaskState | null {
   const target = TRANSITIONS[task.state]?.[event];
   if (target === undefined) return null;

@@ -8,10 +8,10 @@ export interface JobSentence { agentId: string; name: string; logo: string | nul
 export interface JobReadyData { lines: JobSentence[]; sayThis: string; readyNote: string; planText: string; waitingText: string; }
 export const JOB_ACCESS_NOTE = "Choosing an agent gives it access to this database. It can see every job here, not only this one.";
 
-export type JobTask = Pick<TaskRow, "state"> & Partial<Pick<TaskRow, "waiting_on" | "named_worker_ids" | "joined_worker_ids">>;
+export type JobTask = Pick<TaskRow, "state"> & Partial<Pick<TaskRow, "waiting_on" | "review_state" | "named_worker_ids" | "joined_worker_ids">>;
 export const JOB_STATE_LABEL = {
   needs_lead: "Needs a Lead", ready: "Ready", writing: "Writing subtasks", waiting_workers: "Waiting for Workers",
-  working: "Working", done: "Done", failed: "Failed", cancelled: "Cancelled", input_required: "Needs your decision", ready_for_review: "Ready for review",
+  working: "Working", done: "Done", failed: "Failed", cancelled: "Cancelled", input_required: "Needs your decision", ready_for_review: "Ready to accept",
 };
 export const SUBTASK_STATE_LABEL = {
   pending: "Waiting on Lead", queued: "Planned", working: "Working", input_required: "Needs your decision",
@@ -25,6 +25,7 @@ export function jobState(task: JobTask | null | undefined, subtasks: (JobTask | 
   if (!task) return "needs_lead";
   if (task.state === "done" || task.state === "failed" || task.state === "cancelled") return task.state;
   if (task.state === "queued") return "ready";
+  if (task.state === "ready_for_review") return "ready_for_review";
   if (task.state === "working" && !subtasks.length) return "writing";
   if (subtasks.length && task.named_worker_ids?.some((id) => !task.joined_worker_ids?.includes(id))) return "waiting_workers";
   return subtasks.length ? "working" : task.state;
@@ -38,7 +39,7 @@ export function subtaskState(task: JobTask | null | undefined): keyof typeof SUB
 export function subWait(task: JobTask | null | undefined): WaitLabel {
   if (!task) return "Lead";
   if (task.state === "input_required") return task.waiting_on === "human" ? "You" : task.waiting_on === "lead" ? "Lead" : "Worker";
-  if (task.state === "ready_for_review") return "Lead";
+  if (task.state === "ready_for_review") return task.review_state === "approved" ? "You" : "Lead";
   return task.state === "working" ? "Worker" : "Nobody";
 }
 
@@ -48,8 +49,11 @@ export function jobWait(task: JobTask | null | undefined, subtasks: (JobTask | n
   if (state === "writing") return { label: "Lead", count: 0 };
   if (state === "waiting_workers") return { label: "Worker", count: 0 };
   if (state === "done" || state === "failed" || state === "cancelled") return { label: "Nobody", count: 0 };
-  const waits = subtasks.map(subWait);
-  if (task?.state === "input_required" || task?.state === "ready_for_review") waits.push(subWait(task));
+  // One Accept settles a delivered job and the deliveries under it, so together they count once.
+  const accepting = task?.state === "ready_for_review";
+  const waits = (accepting ? subtasks.filter((sub) => sub?.state !== "ready_for_review") : subtasks).map(subWait);
+  if (accepting) waits.push("You");
+  else if (task?.state === "input_required") waits.push(subWait(task));
   const you = waits.filter((wait) => wait === "You").length, lead = waits.filter((wait) => wait === "Lead").length;
   return you ? { label: "You", count: you } : lead ? { label: "Lead", count: lead }
     : { label: waits.includes("Worker") ? "Worker" : "Nobody", count: 0 };

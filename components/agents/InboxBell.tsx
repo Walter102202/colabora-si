@@ -73,7 +73,7 @@ export function InboxBell() {
                   }}
                 >
                   <span className="truncate">{t.title || "Untitled task"}</span>
-                  <span className="text-xs text-text-tertiary">Needs your decision{t.last_activity_at ? ` · ${formatRelative(Date.parse(t.last_activity_at))}` : ""}</span>
+                  <span className="text-xs text-text-tertiary">{t.state === "ready_for_review" ? "Ready to accept" : "Needs your decision"}{t.last_activity_at ? ` · ${formatRelative(Date.parse(t.last_activity_at))}` : ""}</span>
                 </button>
               </li>
             ))}
