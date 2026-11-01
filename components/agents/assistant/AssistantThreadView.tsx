@@ -6,6 +6,22 @@ import type { PersonMessage } from "@/lib/agentConversation";
 import { VOICE_NOTICE } from "@/lib/agentVoice";
 import { CONNECT_AGENT_NAMES } from "@/lib/agentConnectCatalog";
 import { connectUrl, settingsUrl } from "@/lib/routes";
+import { safeHref } from "@/lib/utils";
+
+function appLinks(body: string): ReactNode {
+  if (typeof window === "undefined") return body;
+  return body.split(/(https?:\/\/[^\s<>"']+)/gi).map((part, index) => {
+    if (index % 2 === 0) return part;
+    const url = part.replace(/[.,;:!?)\]]+$/, "");
+    const href = safeHref(url);
+    try {
+      if (href && new URL(href).origin === window.location.origin) {
+        return <span key={index}><a href={href} className="text-accent underline">{url}</a>{part.slice(url.length)}</span>;
+      }
+    } catch { /* Keep malformed URLs as text. */ }
+    return part;
+  });
+}
 
 export interface AssistantThreadViewProps {
   messages: PersonMessage[];
@@ -46,7 +62,7 @@ export function AssistantThreadView({ messages, draft, reviewing, busy = false, 
         {messages.length === 0 && <li className="py-2 text-xs text-text-tertiary">{empty ?? "Write or talk to the agent. Say “save in notes” to keep something."}</li>}
         {messages.map((m) => (
           <li key={m.id} className={m.direction === "in" ? "ml-6 rounded bg-bg-secondary px-2 py-1" : "mr-6 px-2 py-1"}>
-            <p className="whitespace-pre-wrap break-words">{m.body}</p>
+            <p className="whitespace-pre-wrap break-words">{m.direction === "out" ? appLinks(m.body) : m.body}</p>
             {(m.kind === "voice" || m.forwarded || m.channel !== "surface") && (
               <p className="text-xs text-text-tertiary">{[m.channel === "telegram" ? "Telegram" : null, m.kind === "voice" ? "voice" : null, m.forwarded ? "forwarded" : null].filter(Boolean).join(" · ")}</p>
             )}
