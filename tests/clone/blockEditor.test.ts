@@ -11,6 +11,9 @@ import { clearHistory, initHistory, undo } from "@/lib/history";
 import { applyOps, diffPageToOps } from "@/lib/pageOps";
 import type { Block } from "@/lib/types";
 import { b, column, page } from "./fixtures";
+import { flushLocalWrites } from "@/lib/localPersistence";
+import type { PageBody } from "@/lib/pageShell";
+import { startTestWriter } from "./localHelpers";
 
 let host: HTMLDivElement, root: Root;
 beforeEach(() => { (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true; host = document.createElement("div"); document.body.append(host); root = createRoot(host); });
@@ -29,7 +32,8 @@ function drag(node: HTMLElement, type: string, clientY = 1) {
   act(() => node.dispatchEvent(event));
 }
 
-it.each(["above", "below"] as const)("materializes an unlinked child %s an empty block only on drop, with page ops and undo", (position) => {
+it.each(["above", "below"] as const)("materializes an unlinked child %s an empty block only on drop, with page ops and undo", async (position) => {
+  const fake = await startTestWriter();
   const home = page({ id: "home", title: "Home", blocks: Array.from({ length: 4 }, (_, i) => b("paragraph", { id: `empty-${i}`, html: "" })) });
   const child = page({ id: "improvements", parentId: home.id, title: "Improvements colabora.si" });
   useStore.setState({ pages: { [home.id]: home, [child.id]: child }, rootOrder: [home.id] });
@@ -58,7 +62,8 @@ it.each(["above", "below"] as const)("materializes an unlinked child %s an empty
   act(() => undo());
   expect(useStore.getState().pages[home.id].blocks).toEqual(home.blocks);
   expect(host.querySelectorAll(".page-link-block")).toHaveLength(1);
-  expect(JSON.parse(localStorage.getItem("colabora-workspace")!).state.pages.home.blocks).toEqual(home.blocks);
+  await flushLocalWrites();
+  expect((fake.dump("bodies") as PageBody[]).find((body) => body.id === "home")?.blocks).toEqual(home.blocks);
 });
 
 it("does not enable dragging an unlinked child on a locked page or a link in a read-only page", () => {

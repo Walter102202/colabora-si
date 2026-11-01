@@ -11,6 +11,8 @@ import { loadPageRecoveries, pageRecoveryCopies, savePageRecovery, usePageRecove
 import SharedPageView from "@/components/SharedPageView";
 import type { PageRow } from "@/lib/syncMerge";
 import { b, page } from "./fixtures";
+import { flushLocalWrites } from "@/lib/localPersistence";
+import { startTestWriter } from "./localHelpers";
 
 const h = vi.hoisted(() => ({ row: null as unknown as PageRow & { workspace_id: string }, push: vi.fn(),
   access: "edit" as string | null, queues: new Map<string, unknown>(), scopes: [] as string[] }));
@@ -48,11 +50,13 @@ beforeEach(() => {
 });
 afterEach(async () => { if (root) await unmount(); container.remove(); vi.useRealTimers(); });
 it("restores offline edits on reopen and retries them without inserting a personal page", async () => {
+  const fake = await startTestWriter();
   await mount(); edit("Offline draft");
   await act(async () => { await vi.advanceTimersByTimeAsync(1201); });
   expect(container.textContent).toContain("Offline draft"); await unmount();
   expect(useStore.getState().pages.shared).toBeUndefined();
-  expect(JSON.parse(localStorage.getItem("colabora-workspace")!).state.pages.shared).toBeUndefined();
+  await flushLocalWrites();
+  expect(fake.dump("meta")).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: "shared" })]));
   await mount(); expect(container.textContent).toContain("Offline draft");
   expect(h.scopes).toEqual(["editor:owner:shared:shared", "editor:owner:shared:shared"]);
   h.push.mockImplementation(async (_id: string, ops: PageOp[]) => {

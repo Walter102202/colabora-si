@@ -1,10 +1,13 @@
 import { useStore, type Store } from "@/lib/store";
-import type { Page } from "@/lib/types";
+import type { Page, WorkspaceState } from "@/lib/types";
+import { create } from "zustand";
 import { foreignPageIds } from "@/lib/foreignPages";
-import { isApplyingExternal } from "@/lib/externalApply";
-import { isShell, overlayMeta, splitPage } from "@/lib/pageShell";
-import { writeBatch, type PageWrite } from "@/lib/localDb";
+import { applyingExternal, isApplyingExternal } from "@/lib/externalApply";
+import { isShell, joinPage, overlayMeta, splitPage } from "@/lib/pageShell";
+import { claimWorkspace, countRecords, LOCAL_DB, openLocalDb, readBodies, readWorkspace, writeBatch, type PageWrite, type StoredWorkspace } from "@/lib/localDb";
 import { searchRecord } from "@/lib/search";
+import { isSupabaseConfigured } from "@/lib/supabase";
+import { mark, pageDataSizes, recordHydration } from "@/lib/metrics";
 
 const WRITE_DELAY_MS = 300, WRITE_CHUNK = 200, MAX_RETRY_MS = 30_000;
 const KV_KEYS = ["rootOrder", "expanded", "syncedBlocks", "reminders", "settings"] as const;
@@ -119,4 +122,109 @@ export function startWriter(connection: IDBDatabase, currentEpoch: string): () =
     removeListeners = () => { window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", hidden); };
   }
   return () => { if (token === generation) stopWriter(); };
+}
+
+type Health = "starting" | "ok" | "full" | "failing" | "unavailable";
+export const useLocalHealth = create<{ health: Health }>(() => ({ health: "starting" }));
+const LEGACY_KEY = "colabora-workspace", OPEN_TIMEOUT_MS = 8000;
+type LocalState = Pick<Store, "pages" | "rootOrder" | "expanded" | "syncedBlocks" | "reminders" | "settings" | "syncUserId" | "syncWorkspaceId">;
+let hydration: Promise<void> | null = null, giveUp: (() => void) | null = null;
+const setHealth = (health: Health) => useLocalHealth.setState({ health });
+
+function currentState(): LocalState {
+  const state = useStore.getState();
+  return { pages: Object.fromEntries(Object.entries(state.pages).filter(([id]) => !foreignPageIds.has(id))),
+    rootOrder: state.rootOrder, expanded: state.expanded, syncedBlocks: state.syncedBlocks, reminders: state.reminders,
+    settings: state.settings, syncUserId: state.syncUserId, syncWorkspaceId: state.syncWorkspaceId };
+}
+function kvOf(state: LocalState): [string, unknown][] {
+  return [...KV_KEYS.map((key): [string, unknown] => [key, state[key]]), ["sync", { syncUserId: state.syncUserId, syncWorkspaceId: state.syncWorkspaceId }]];
+}
+function readLegacy(): LocalState | null {
+  try {
+    const raw = localStorage.getItem(LEGACY_KEY); if (!raw) return null;
+    const value = JSON.parse(raw)?.state as Partial<LocalState> | undefined;
+    if (!value || !value.pages || Array.isArray(value.pages) || !Array.isArray(value.rootOrder)
+      || !Object.entries(value.pages).every(([id, p]) => p && p.id === id && typeof p.title === "string" && Array.isArray(p.blocks))) return null;
+    return { pages: value.pages, rootOrder: value.rootOrder, expanded: value.expanded ?? {}, syncedBlocks: value.syncedBlocks ?? {},
+      reminders: value.reminders ?? [], settings: value.settings, syncUserId: value.syncUserId ?? null, syncWorkspaceId: value.syncWorkspaceId ?? null };
+  } catch { return null; }
+}
+function openOrGiveUp(): Promise<IDBDatabase | null> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeout = isSupabaseConfigured() ? setTimeout(() => finish(null), OPEN_TIMEOUT_MS) : null;
+    const finish = (connection: IDBDatabase | null, error?: unknown) => {
+      if (settled) { connection?.close(); return; }
+      settled = true; if (timeout) clearTimeout(timeout); giveUp = null;
+      if (error) reject(error); else resolve(connection);
+    };
+    giveUp = () => finish(null);
+    void openLocalDb().then((connection) => finish(connection), (error) => finish(null, error));
+  });
+}
+export function continueWithoutLocalCopy(): void { giveUp?.(); }
+export function hydrateWorkspace(): Promise<void> { return hydration ??= hydrate(); }
+export function stopLocalPersistence(): void { stopWriter(); }
+
+async function stateFromDisk(connection: IDBDatabase, stored: StoredWorkspace): Promise<LocalState> {
+  const bodies = await readBodies(connection, stored.metas.map((meta) => meta.id));
+  if (stored.metas.some((meta) => !bodies.has(meta.id))) throw new Error("local_body_missing");
+  const pages = Object.fromEntries(stored.metas.map((meta) => [meta.id, joinPage(meta, bodies.get(meta.id)!)]));
+  const kv = stored.kv, sync = kv.sync as Pick<Store, "syncUserId" | "syncWorkspaceId"> | undefined;
+  return { pages, rootOrder: (kv.rootOrder as string[] | undefined) ?? [], expanded: (kv.expanded as Record<string, boolean> | undefined) ?? {},
+    syncedBlocks: kv.syncedBlocks as WorkspaceState["syncedBlocks"], reminders: (kv.reminders as WorkspaceState["reminders"]) ?? [],
+    settings: kv.settings as WorkspaceState["settings"], syncUserId: sync?.syncUserId ?? null, syncWorkspaceId: sync?.syncWorkspaceId ?? null };
+}
+async function absorbLegacy(connection: IDBDatabase, legacy: LocalState): Promise<void> {
+  const stored = await readWorkspace(connection), sync = stored.kv.sync as { syncUserId?: string } | undefined;
+  if (!legacy.syncUserId || legacy.syncUserId === sync?.syncUserId) {
+    const metas = new Map(stored.metas.map((meta) => [meta.id, meta])), added: string[] = [], pages: PageWrite[] = [];
+    for (const page of Object.values(legacy.pages)) {
+      const current = metas.get(page.id);
+      if (current ? page.updatedAt > current.updatedAt : page.createdAt > Number(stored.kv.migratedAt ?? Infinity)) {
+        pages.push(fullWrite(page)); if (!current && page.parentId === null && !page.isDeleted) added.push(page.id);
+      }
+    }
+    const kv: [string, unknown][] = added.length ? [["rootOrder", [...new Set([...(stored.kv.rootOrder as string[] ?? []), ...added])]]] : [];
+    if (pages.length) await writeBatch(connection, stored.epoch, { pages, kv });
+  }
+  localStorage.removeItem(LEGACY_KEY);
+}
+function startMemoryMode(): void {
+  stopWriter();
+}
+async function deleteFailedMigration(connection: IDBDatabase): Promise<void> {
+  connection.close();
+  await new Promise<void>((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(LOCAL_DB);
+    request.onsuccess = () => resolve(); request.onerror = () => reject(request.error); request.onblocked = () => reject(new Error("local_db_blocked"));
+  });
+}
+async function hydrate(): Promise<void> {
+  const legacy = readLegacy();
+  try {
+    const opened = await openOrGiveUp(); if (!opened) throw new Error("local_db_timeout"); db = opened;
+    const initial = legacy ?? currentState();
+    const writes = Object.values(initial.pages).map((page) => ({ ...fullWrite(page), search: searchRecord(page, initial.syncedBlocks ?? {}) }));
+    const claimed = await claimWorkspace(opened, writes, kvOf(initial), legacy ? Date.now() : null);
+    if (claimed === "created" && legacy) {
+      const counts = await countRecords(opened), expected = Object.keys(legacy.pages).length;
+      if (counts.meta !== expected || counts.bodies !== expected) { await deleteFailedMigration(opened); throw new Error("local_copy_mismatch"); }
+    }
+    if (claimed === "existing" && legacy) await absorbLegacy(opened, legacy);
+    const stored = await readWorkspace(opened);
+    // Preserve the fresh seed's references; competing tabs instead read the winning claim.
+    if (claimed !== "created" || legacy) {
+      const state = await stateFromDisk(opened, stored);
+      applyingExternal(() => useStore.setState(state));
+    }
+    startWriter(opened, stored.epoch); setHealth("ok");
+  } catch {
+    db?.close(); db = null;
+    if (legacy) applyingExternal(() => useStore.setState(legacy));
+    startMemoryMode(); setHealth("unavailable");
+  }
+  mark("colabora:hydrate:end");
+  if (import.meta.env.DEV) recordHydration(pageDataSizes(useStore.getState().pages));
 }

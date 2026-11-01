@@ -112,12 +112,6 @@ it("A-2-17 undo and redo traverse snapshots", () => {
 it("A-2-18 new changes discard redo", () => {
   change({ a: page() }); undo(); change({ b: page() }); expect(canRedo()).toBe(false);
 });
-it("A-2-20 persist uses version 1 and excludes foreign pages and directory caches", () => {
-  foreignPageIds.add("foreign"); change({ local: page(), foreign: page() });
-  const persisted = JSON.parse(localStorage.getItem("colabora-workspace")!);
-  expect(persisted.version).toBe(1); expect(Object.keys(persisted.state.pages)).toEqual(["local"]);
-  expect(persisted.state).not.toHaveProperty("members"); expect(persisted.state).not.toHaveProperty("agents");
-});
 it("ST-1 seed has four roots and the Agent Tasks contract", () => {
   const seed = seedWorkspace(); expect(seed.rootOrder).toHaveLength(4);
   const tasks = seed.pages[seed.rootOrder[3]];
@@ -135,21 +129,6 @@ it("clearing the local copy leaves the default pages and no account", () => {
   expect(state.rootOrder).toHaveLength(4);
   expect(state.syncUserId).toBeNull(); expect(state.syncWorkspaceId).toBeNull();
   expect(state.reminders).toEqual([]); expect(state.settings).toBeUndefined();
-});
-
-it("persists the initial page IDs before any edit so direct links survive a reload", async () => {
-  const seed = seedWorkspace(); reset(seed.pages, seed.rootOrder);
-  localStorage.removeItem("colabora-workspace");
-  useStore.getState().persistInitialWorkspace();
-  const saved = localStorage.getItem("colabora-workspace")!;
-  expect(JSON.parse(saved).state.rootOrder).toEqual(seed.rootOrder);
-  expect(useStore.getState().pages).toBe(seed.pages);
-  expect(canUndo()).toBe(false);
-  useStore.getState().persistInitialWorkspace();
-  expect(localStorage.getItem("colabora-workspace")).toBe(saved);
-  useStore.setState({ pages: {} }); localStorage.setItem("colabora-workspace", saved);
-  await useStore.persist.rehydrate();
-  expect(Object.keys(useStore.getState().pages)).toEqual(Object.keys(seed.pages));
 });
 
 it("CM-1 comments identify their author and anchor and touch the page", () => {

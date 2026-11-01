@@ -1,13 +1,10 @@
-import { mark, pageDataSizes, recordHydration } from "@/lib/metrics";
 import { VERSION_CAP } from "@/lib/pageOps";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 import type { Block, BlockType, DbProperty, DbRow, DbView, Page, Reminder, TemplatePlan, WorkspaceSettings, WorkspaceState } from "@/lib/types";
 import { createBlock, createDatabase, createPage as makePage, DEFAULT_SETTINGS, newId } from "@/lib/factories";
 import * as pm from "@/lib/pageMutations";
 import * as dm from "@/lib/dbMutations";
 import { createPageFromTemplate as materializeTemplate, sanitizeBlocks, seedWorkspace } from "@/lib/seed";
-import { foreignPageIds } from "@/lib/foreignPages";
 import { useAuthStore } from "@/lib/auth";
 
 import { collectSubtreeFileIds, collectTrashFileIds, scheduleBlobGc } from "@/lib/fileStore";
@@ -21,7 +18,6 @@ export interface RemotePatch {
 interface SyncState { syncWorkspaceId: string | null; syncUserId: string | null }
 export type Store = WorkspaceState & SyncState & Actions;
 interface Actions {
-  persistInitialWorkspace: () => void;
   // sincronización (§II.7)
   setSyncWorkspaceId: (id: string | null, userId?: string | null) => void;
   applyRemotePages: (patch: RemotePatch) => void;
@@ -124,7 +120,7 @@ function cleanPage(page: Page): Page {
   };
 }
 
-export const useStore = create<Store>()(persist((set, get) => {
+export const useStore = create<Store>()((set, get) => {
   const mutate = (id: string, fn: (page: Page) => Page) => set((state) => {
     const page = state.pages[id];
     if (!page) return state;
@@ -145,11 +141,6 @@ export const useStore = create<Store>()(persist((set, get) => {
   };
   return {
     ...seedWorkspace(), expanded: {}, syncWorkspaceId: null, syncUserId: null,
-    persistInitialWorkspace: () => {
-      try {
-        if (!localStorage.getItem("colabora-workspace")) set({});
-      } catch { /* Storage can be unavailable; the workspace remains usable in memory. */ }
-    },
     setSyncWorkspaceId: (id, userId = null) => set({ syncWorkspaceId: id, syncUserId: userId }),
     applyRemotePages: (patch) => set((state) => applyRemotePatch(state, {
       ...patch,
@@ -317,16 +308,7 @@ export const useStore = create<Store>()(persist((set, get) => {
     deleteRowTemplate: (id, templateId) => mutate(id, (page) => dm.deleteRowTemplate(page, templateId)),
     setSyncedBlocks: (key, blocks) => set((state) => ({ syncedBlocks: { ...state.syncedBlocks, [key]: sanitizeBlocks(blocks) } })),
   };
-}, {
-  name: "colabora-workspace", version: 1,
-  onRehydrateStorage: () => (state) => { mark("colabora:hydrate:end"); if (import.meta.env.DEV && state) recordHydration(pageDataSizes(state.pages)); },
-  partialize: (state): WorkspaceState & SyncState => ({
-    pages: Object.fromEntries(Object.entries(state.pages).filter(([id]) => !foreignPageIds.has(id))),
-    rootOrder: state.rootOrder, expanded: state.expanded, syncedBlocks: state.syncedBlocks,
-    reminders: state.reminders, settings: state.settings, syncWorkspaceId: state.syncWorkspaceId, syncUserId: state.syncUserId,
-  }),
-  migrate: (persisted) => persisted as Store,
-}));
+});
 
 export function getChildren(pages: Record<string, Page>, parentId: string | null): Page[] {
   return Object.values(pages).filter((p) => p.parentId === parentId && !p.isDeleted).sort((a, b) => a.createdAt - b.createdAt);

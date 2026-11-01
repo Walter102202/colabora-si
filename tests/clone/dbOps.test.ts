@@ -4,6 +4,9 @@ vi.mock("@/lib/agentActions", () => ({ runAgentAction: vi.fn().mockResolvedValue
 import { runAgentAction } from "@/lib/agentActions";
 import { buildDbOps, buildLinkedDbOps, createLinkedViews } from "@/lib/dbOps";
 import { useStore } from "@/lib/store";
+import { flushLocalWrites } from "@/lib/localPersistence";
+import type { PageBody } from "@/lib/pageShell";
+import { startTestWriter } from "./localHelpers";
 it("DB-1 DbOps exposes the frozen functions and delegates agent actions with the row page", () => {
   const pageId = useStore.getState().createDatabasePage(), ops = buildDbOps(pageId);
   const functions = ["addRow", "updateCell", "deleteRow", "deleteRows", "updateCells", "moveRows", "addProperty", "updateProperty", "deleteProperty", "addView", "updateView", "deleteView", "setLocked", "addRowFromTemplate", "saveRowAsTemplate", "deleteRowTemplate", "openRow", "runButton"] as const;
@@ -17,7 +20,8 @@ it("DB-1 DbOps exposes the frozen functions and delegates agent actions with the
 });
 
 import { createBlock, createView } from "@/lib/factories";
-it("linked databases isolate view settings while sharing rows and properties", () => {
+it("linked databases isolate view settings while sharing rows and properties", async () => {
+  const fake = await startTestWriter();
   const store = useStore.getState(), sourceId = store.createDatabasePage(), source = buildDbOps(sourceId);
   const makeLink = () => { const block = createBlock("database", { pageId: sourceId, linkedViews: createLinkedViews(source.database) }); const hostId = store.createPage(null, { blocks: [block], updatedAt: 1 }); return { hostId, block, ops: buildLinkedDbOps(sourceId, hostId, block.id) }; };
   const a = makeLink(), b = makeLink(), original = source.database, viewId = a.ops.database.views[0].id;
@@ -38,8 +42,10 @@ it("linked databases isolate view settings while sharing rows and properties", (
   source.updateView(original.views[0].id, { name: "Source table" });
   expect(a.ops.database.views[0].name).toBe("Focused");
   expect(b.ops.database.views[0].name).toBe("Table");
-  const saved = JSON.parse(localStorage.getItem("colabora-workspace")!).state;
-  expect(saved.pages[a.hostId].blocks[0].linkedViews[0]).toMatchObject(patch);
+  expect(useStore.getState().pages[a.hostId].blocks[0].linkedViews![0]).toMatchObject(patch);
+  await flushLocalWrites();
+  const saved = (fake.dump("bodies") as PageBody[]).find((body) => body.id === a.hostId)!;
+  expect(saved.blocks[0].linkedViews![0]).toMatchObject(patch);
 });
 it("linked view add/delete preserves the last view and host locking", () => {
   const store = useStore.getState(), sourceId = store.createDatabasePage(), source = buildDbOps(sourceId);

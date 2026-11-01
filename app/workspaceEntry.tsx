@@ -3,13 +3,11 @@ import { createBrowserRouter, Outlet } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import AppNavigation from "@/components/AppNavigation";
 import Shell from "@/components/Shell";
-import { useStore } from "@/lib/store";
+import HydrationGate from "@/components/HydrationGate";
 import "./globals.css";
 
-useStore.getState().persistInitialWorkspace();
-
 const router = createBrowserRouter([{ element: <AppNavigation />, HydrateFallback: () => null, children: [
-  { element: <Shell><Outlet /></Shell>, children: [
+  { element: <HydrationGate><Shell><Outlet /></Shell></HydrationGate>, children: [
     { index: true, lazy: async () => ({ Component: (await import("./(workspace)/page")).default }) },
     { path: "p/:id", lazy: async () => ({ Component: (await import("./(workspace)/p/[id]/page")).default }) },
     { path: "shared/:id", lazy: async () => ({ Component: (await import("./(workspace)/shared/[id]/page")).default }) },
