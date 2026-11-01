@@ -59,6 +59,7 @@
       "supabase/migrations/*_0056_*",
       "supabase/migrations/*_0057_*",
       "supabase/migrations/*_0058_*",
+      "supabase/migrations/*_0059_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",

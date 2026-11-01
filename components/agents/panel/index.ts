@@ -34,3 +34,5 @@ export { JobAgentPicker } from "@/components/agents/panel/JobAgentPicker";
 export type { JobAgentPickerProps } from "@/components/agents/panel/JobAgentPicker";
 export { JobReadyPanel } from "@/components/agents/panel/JobReadyPanel";
 export type { JobReadyPanelProps } from "@/components/agents/panel/JobReadyPanel";
+export { JobsBoard } from "@/components/agents/panel/JobsBoard";
+export type { JobsBoardCard } from "@/components/agents/panel/JobsBoard";

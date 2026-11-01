@@ -12,7 +12,7 @@ const block = (type: BlockType, patch: Partial<Block> = {}): Block => ({ id: new
 const option = (name: string, color: SelectOption["color"]): SelectOption => ({ id: newId(), name, color });
 
 export function buildAgentTasksPlan(): TemplatePlan {
-  const title: DbProperty = { id: "title", name: "Task", type: "text" };
+  const title: DbProperty = { id: "title", name: "Name", type: "text" };
   const lead: DbProperty = { id: newId(), name: "Lead", type: "person" };
   const worker: DbProperty = { id: newId(), name: "Worker", type: "agentDelegate" };
   const status: DbProperty = { id: newId(), name: "Status", type: "agentStatus" };
@@ -28,7 +28,7 @@ export function buildAgentTasksPlan(): TemplatePlan {
   const cost: DbProperty = { id: newId(), name: "Cost", type: "number", numberFormat: "dollar" };
   const run: DbProperty = { id: newId(), name: "Run", type: "id", idPrefix: "RUN", nextId: 1 };
 
-  const properties = [title, lead, worker, status, waitingOn, doneWhen, dependsOn, output, cost, run];
+  const properties = [title, lead, worker, doneWhen, status, waitingOn, dependsOn, output, cost, run];
 
   const views: DbView[] = [
     { id: newId(), name: "Table", type: "table", sorts: [], filters: [] },
@@ -38,8 +38,7 @@ export function buildAgentTasksPlan(): TemplatePlan {
       type: "table",
       sorts: [],
       filters: [
-        { id: newId(), propertyId: status.id, operator: "is", value: "input_required" },
-        { id: newId(), propertyId: status.id, operator: "is", value: "ready_for_review" },
+        { id: newId(), propertyId: waitingOn.id, operator: "contains", value: "You" },
       ],
       filterConjunction: "or",
     },

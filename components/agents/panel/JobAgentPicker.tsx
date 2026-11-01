@@ -2,7 +2,7 @@ import { Check, KeyRound, X } from "lucide-react";
 import { JOB_ACCESS_NOTE, type JobAgent } from "@/lib/agentJobs";
 
 export interface JobAgentPickerProps {
-  kind: "lead" | "workers";
+  kind: "lead" | "workers" | "subtask";
   agents: JobAgent[];
   selectedIds: string[];
   leadId?: string;
@@ -16,8 +16,8 @@ export interface JobAgentPickerProps {
 }
 
 export function JobAgentPicker({ kind, agents, selectedIds, leadId, busy = false, blockedAgentIds = [], lockedIds = [], onChoose, onClose, connectHref, agentsHref }: JobAgentPickerProps) {
-  const choices = agents.filter((agent) => kind === "lead" ? agent.role === "lead" : agent.id !== leadId);
-  const title = kind === "lead" ? "Lead for this job" : "Who works with the Lead";
+  const choices = agents.filter((agent) => kind === "lead" ? agent.role === "lead" : kind === "subtask" || agent.id !== leadId);
+  const title = kind === "lead" ? "Lead for this job" : kind === "subtask" ? "Worker for this subtask" : "Who works with the Lead";
   return (
     <div role="dialog" aria-label={title}
       className="w-[340px] max-w-full rounded-lg border border-border bg-bg p-1 text-sm text-text shadow-xl">
@@ -26,10 +26,13 @@ export function JobAgentPicker({ kind, agents, selectedIds, leadId, busy = false
           <h3 className="font-semibold">{title}</h3>
           <p className="text-[13px] text-text-secondary">{kind === "lead"
             ? "Writes the subtasks, assigns the work and reviews it. Only agents with the Lead role appear here."
-            : "Optional. They go in your sentence, and the Lead shares out the subtasks."}</p>
+            : kind === "subtask" ? "Optional. The Lead keeps your choice." : "Optional. They go in your sentence, and the Lead shares out the subtasks."}</p>
         </div>
         <button type="button" aria-label="Close menu" onClick={onClose} className="rounded p-1 text-text-secondary hover:bg-bg-secondary"><X size={16} aria-hidden="true" /></button>
       </div>
+      {kind === "subtask" && <button type="button" aria-pressed={!selectedIds.length} disabled={busy} onClick={() => onChoose("")} className="flex min-h-11 w-full items-center gap-2.5 rounded-md px-2.5 text-left hover:bg-bg-secondary disabled:opacity-50">
+        <span aria-hidden="true" className="size-6 shrink-0 rounded-full border border-dashed border-border" /><span className="flex-1 font-medium">Let the Lead choose</span>{!selectedIds.length && <Check size={16} aria-hidden="true" />}
+      </button>}
       {choices.length === 0 && <p className="px-2.5 py-2 text-[13px] text-text-secondary">{kind === "lead"
         ? <>No connected agents have the Lead role. <a className="text-accent underline" href={agentsHref}>Change a role in Connected agents.</a></>
         : "No connected agents are available."}</p>}

@@ -23,8 +23,10 @@ import { COVER_GRADIENTS, coverBackground, safeCover } from "@/lib/cover";
 import CoverPicker from "@/components/CoverPicker";
 const EmojiPicker = lazy(() => import("@/components/EmojiPicker"));
 import { withViewTransition } from "@/lib/viewTransition";
+import { taskForPage, useAgentTasks } from "@/lib/agentTasks";
 export default function PageView({ pageId }: { pageId: string }) {
   const page = useStore((s) => s.pages[pageId]), pages = useStore((s) => s.pages), spellCheck = useStore((s) => s.settings?.spellcheck ?? true), title = useRef<HTMLDivElement>(null);
+  const task = useAgentTasks((state) => taskForPage(state, pageId));
   const [coverPicker, setCoverPicker] = useState(false), [reposition, setReposition] = useState(false), [tempPos, setTempPos] = useState(50), navigate = useNavigate();
   const [params] = useSearchParams();
   const [iconPicker, setIconPicker] = useState(false);
@@ -36,6 +38,7 @@ export default function PageView({ pageId }: { pageId: string }) {
   const stats = pageStats(page, pages), subpages = unlinkedSubpages(page, pages);
   const parent = Object.values(pages).find((p) => !p.isDeleted && p.database?.rows.some((row) => row.pageId === pageId));
   const row = parent?.database?.rows.find((r) => r.pageId === pageId);
+  const job = row && !row.parentRowId && !task?.parent_task_id && parent?.database?.properties.some((property) => property.type === "agentStatus");
   const cover = safeCover(page.cover), gradient = cover?.startsWith("linear-gradient"), update = useStore.getState().updatePage;
   return <div className="h-full overflow-y-auto scrollbar-thin"><title>{`${page.title || "Untitled"} · colabora.si`}</title>{cover && <div className={`page-cover ${reposition ? "repositioning" : ""}`} style={{ backgroundImage: coverBackground(cover), backgroundPositionY: `${reposition ? tempPos : page.coverPosition ?? 50}%` }} onPointerDown={(e) => {
     if (!reposition || (e.target as HTMLElement).closest("button,input")) return;
@@ -55,6 +58,7 @@ export default function PageView({ pageId }: { pageId: string }) {
     {(row || params.has("task")) && <RowPanel pageId={pageId} />}
     {getSupabase() && <AiRequestToasts pageId={pageId} />}
     {!page.database && !page.locked && page.blocks.length <= 1 && (page.blocks[0]?.type ?? "paragraph") === "paragraph" && !page.blocks[0]?.html && <button className="mt-3 text-sm text-text-tertiary" onClick={() => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind: "template", pageId } }))}>Start with a template</button>}
+    {job && <div className="mt-6"><h2 className="text-xl font-semibold">Plan</h2><p className="mt-1 text-sm text-text-secondary">The Lead reads this page when it starts.</p></div>}
     <div className="pt-2">{page.database ? <Suspense fallback={null}><DatabaseView pageId={pageId} locked={page.locked} /></Suspense> : <BlockEditor pageId={pageId} />}</div>
     {!!subpages.length && <div className="mt-1">{subpages.map((child) => <PageLinkBlock key={child.id} page={child} />)}</div>}
     {!!stats.backlinks.length &&<section className="mt-10 border-t border-border pt-4"><h3 className="mb-2 text-xs uppercase text-text-tertiary">↳ {stats.backlinks.length} linked {stats.backlinks.length === 1 ? "reference" : "references"}</h3>{stats.backlinks.map((linked) => <button key={linked.id} className="page-link-block" onClick={() => withViewTransition(() => navigate(pageUrl(linked.id)))}><Emoji emoji={linked.icon ?? "📄"} /><span className="border-b border-border">{linked.title || "Untitled"}</span></button>)}</section>}

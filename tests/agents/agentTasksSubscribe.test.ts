@@ -156,6 +156,14 @@ describe("useAgentTasks.subscribe", () => {
     expect([s.tasks, s.runs, s.approvals, s.artifacts, s.reviews, s.briefs, s.activities, s.environments]).toEqual(Array.from({ length: 8 }, () => ({})));
   });
 
+  it("keeps a person's pending row assignment live through the shared channel", async () => {
+    const release = useAgentTasks.getState().subscribe("row-plans");
+    await vi.waitFor(() => expect(useAgentTasks.getState().status).toBe("ready"));
+    const plan = { row_page_id: "pending-row", workspace_id: "row-plans", worker_agent_id: "worker", updated_by: "human", updated_at: "2026-11-01" };
+    created.at(-1)!.handlers.get("agent_row_plans")!({ new: plan });
+    expect(useAgentTasks.getState().rowPlans[plan.row_page_id]).toEqual(plan);
+    release();
+  });
   it("does not let an older evidence read overwrite a newer commit's result", async () => {
     const data = mockCard("1") as TaskCardData;
     useAgentTasks.setState({ workspaceId: "race-ws", tasks: { [data.task.id]: data.task },

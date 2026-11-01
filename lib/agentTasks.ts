@@ -151,6 +151,8 @@ export interface EnvironmentResource {
   status: "held" | "releasing" | "released";
 }
 
+export interface RowPlan { row_page_id: string; workspace_id: string; worker_agent_id: string | null; updated_by: string; updated_at: string; }
+
 type ById<T> = Record<string, T>;
 type Client = NonNullable<ReturnType<typeof getAgentClient>>;
 type ClosedCursor = { updated_at: string; id: string };
@@ -160,6 +162,7 @@ export interface AgentTasksState {
   status: "idle" | "loading" | "ready" | "error";
   error: string | null;
   tasks: ById<TaskRow>; // open tasks plus the closed pages loaded so far
+  rowPlans: Record<string, RowPlan>;
   runs: ById<RunRow>; // the most recent runs of the workspace plus every run of a loaded task
   approvals: ById<ApprovalRow>; // pending approvals plus what Realtime delivers
   reviews: ById<ReviewRow>; // per task, loaded with the detail
@@ -271,6 +274,7 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
   status: "idle",
   error: null,
   tasks: {},
+  rowPlans: {},
   runs: {},
   approvals: {},
   reviews: {},
@@ -295,26 +299,28 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
     const request = ++loadSequence;
     const reset = get().workspaceId === workspaceId
       ? {}
-      : { tasks: {}, runs: {}, approvals: {}, reviews: {}, artifacts: {}, briefs: {}, activities: {}, ciChecks: {}, environments: {}, closedCursor: null, closedExhausted: false };
+      : { tasks: {}, rowPlans: {}, runs: {}, approvals: {}, reviews: {}, artifacts: {}, briefs: {}, activities: {}, ciChecks: {}, environments: {}, closedCursor: null, closedExhausted: false };
     set({ status: "loading", error: null, workspaceId, ...reset });
     const before = get();
     const revision = realtimeSequence;
     const current = () => generation === workspaceGeneration && get().workspaceId === workspaceId && request === loadSequence;
     try {
-      const [open, closed, runs, approvals] = await Promise.all([
+      const [open, closed, runs, approvals, plans] = await Promise.all([
         client.from("agent_tasks").select("*").eq("workspace_id", workspaceId).in("state", OPEN).limit(OPEN_LIMIT),
         closedTasksQuery(client, workspaceId, null),
         client.from("agent_runs").select("*").eq("workspace_id", workspaceId).order("started_at", { ascending: false }).limit(RUNS_LIMIT),
         client.from("agent_approvals").select("*").eq("workspace_id", workspaceId).eq("status", "pending"),
+        client.from("agent_row_plans").select("*").eq("workspace_id", workspaceId),
       ]);
       if (!current()) return;
-      const failed = [open, closed, runs, approvals].find((r) => r.error);
+      const failed = [open, closed, runs, approvals, plans].find((r) => r.error);
       if (failed?.error) throw new Error(agentErrorMessage(failed.error));
       const closedRows = (closed.data ?? []) as TaskRow[];
       const s = get();
       set({
         status: "ready",
         tasks: mergeFetched("tasks", s.tasks, before.tasks, [...((open.data ?? []) as TaskRow[]), ...closedRows], revision, (t) => (open.data?.length ?? 0) < OPEN_LIMIT && OPEN.includes(t.state)),
+        rowPlans: Object.fromEntries(((plans.data ?? []) as RowPlan[]).map((plan) => [plan.row_page_id, plan])),
         runs: mergeFetched("runs", s.runs, before.runs, runs.data as RunRow[], revision),
         approvals: mergeFetched("approvals", s.approvals, before.approvals, approvals.data as ApprovalRow[], revision, (a) => a.status === "pending"),
         closedCursor: cursorAfter(closedRows),
@@ -468,6 +474,12 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
         },
       );
     }
+    ch.on("postgres_changes", { event: "*", schema: "public", table: "agent_row_plans", filter: `workspace_id=eq.${workspaceId}` }, (payload: RealtimePostgresChangesPayload<RowPlan>) => {
+      const next = { ...get().rowPlans };
+      if (payload.eventType === "DELETE") delete next[payload.old.row_page_id ?? ""];
+      else next[payload.new.row_page_id] = payload.new;
+      set({ rowPlans: next });
+    });
     ch.on(
       "postgres_changes",
       { event: "INSERT", schema: "public", table: "agent_activities", filter: `workspace_id=eq.${workspaceId}` },
@@ -548,7 +560,7 @@ export function subtaskWorkers(tasks: Record<string, TaskRow>, taskId: string): 
   return [...new Set(ids)];
 }
 
-export function taskForPage(state: AgentTasksState, pageId: string): TaskRow | null {
+export function taskForPage(state: Pick<AgentTasksState, "tasks">, pageId: string): TaskRow | null {
   const rows = Object.values(state.tasks).filter((t) => t.row_page_id === pageId && t.request_kind == null);
   if (rows.length === 0) return null;
   const open = rows.find((t) => OPEN.includes(t.state));

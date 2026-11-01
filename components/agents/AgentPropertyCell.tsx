@@ -8,11 +8,11 @@ import { activeRunFor, subtaskWorkers, taskForPage, useAgentTasks } from "@/lib/
 import { taskSubtitle } from "@/lib/agentTaskText";
 import { StatusBadge } from "@/components/agents/panel/StatusBadge";
 import { JobAgentPicker } from "@/components/agents/panel/JobAgentPicker";
-import { eligibleJobAgents, jobAgentNames, type JobAgent } from "@/lib/agentJobs";
+import { eligibleJobAgents, jobAgentNames, jobState, jobWait, subtaskState, subWait, JOB_STATE_LABEL, SUBTASK_STATE_LABEL, type JobAgent } from "@/lib/agentJobs";
 import { connectedRows, loadConnections } from "@/lib/agentConnect";
 import { connectWorkspaces } from "@/lib/agentConsent";
 import { getAgentClient } from "@/lib/agentClient";
-import { assignJob } from "@/lib/agentActions";
+import { assignJob, setSubtaskWorker } from "@/lib/agentActions";
 import { AGENTS_URL, CONNECT_URL } from "@/lib/routes";
 import type { GrantRow } from "@/lib/agentsStore";
 import type { Page } from "@/lib/types";
@@ -25,19 +25,20 @@ export { StatusBadge };
 export interface AgentPropertyCellProps {
   pageId: string;
   propertyId: string;
-  kind: "agentStatus" | "agentDelegate" | "jobLead";
+  kind: "agentStatus" | "agentDelegate" | "jobLead" | "agentWaiting" | "agentDoneWhen";
   dbPageId?: string;
   isJob?: boolean;
+  isSubtask?: boolean;
   readOnly?: boolean;
   fallbackName?: string;
 }
 
 export function AgentPropertyCell(props: AgentPropertyCellProps) {
-  if (props.kind === "jobLead" || (props.kind === "agentDelegate" && props.isJob)) return <JobAssignmentCell {...props} />;
+  if (props.kind === "jobLead" || (props.kind === "agentDelegate" && (props.isJob || props.isSubtask))) return <JobAssignmentCell {...props} />;
   return <TaskPropertyCell {...props} />;
 }
 
-function TaskPropertyCell({ pageId, kind }: AgentPropertyCellProps) {
+function TaskPropertyCell({ pageId, dbPageId, kind, isJob, isSubtask }: AgentPropertyCellProps) {
   const workspaceId = useStore((s) => s.syncWorkspaceId);
   const subscribe = useAgentTasks((s) => s.subscribe);
   const loadAgents = useAgentsStore((s) => s.load);
@@ -49,12 +50,30 @@ function TaskPropertyCell({ pageId, kind }: AgentPropertyCellProps) {
   const task = useAgentTasks((s) => taskForPage(s, pageId));
   const run = useAgentTasks((s) => (task ? activeRunFor(s, task) : null));
   const agents = useAgentsStore((s) => s.agents);
+  const tasks = useAgentTasks((state) => state.tasks), briefs = useAgentTasks((state) => state.briefs), loadBriefs = useAgentTasks((state) => state.loadBriefs);
+  const pages = useStore((state) => state.pages);
+  const taskId = task?.id, briefVersion = task?.brief_version;
+  useEffect(() => { if (taskId && kind === "agentDoneWhen") void loadBriefs(taskId); }, [taskId, briefVersion, kind, loadBriefs]);
   const nameOf = (id: string) => agents.find((a) => a.id === id)?.name ?? "Agent";
   const agentName = task?.delegate_agent_id ? nameOf(task.delegate_agent_id) : null;
   // A task with subtasks shows who does them; the agent it is assigned to already appears as its Lead.
   const workers = useAgentTasks((s) => (task && kind === "agentDelegate" ? subtaskWorkers(s.tasks, task.id).join(",") : ""));
   const workerIds = workers ? workers.split(",") : [];
   const workerName = workerIds.length > 1 ? `${workerIds.length} workers` : workerIds.length === 1 ? nameOf(workerIds[0]) : agentName;
+
+  const children = task ? Object.values(tasks).filter((child) => child.parent_task_id === task.id && child.request_kind == null) : [];
+  const database = pages?.[dbPageId ?? ""]?.database, row = database?.rows.find((item) => item.pageId === pageId);
+  const pending = row ? database!.rows.filter((item) => item.parentRowId === row.id && !Object.values(tasks).some((child) => child.row_page_id === item.pageId && child.request_kind == null)) : [];
+  const subtasks = [...children, ...pending.map(() => null)];
+  if (kind === "agentDoneWhen") return <span className="cell-readonly">{task ? briefs[`${task.id}:${task.brief_version}`]?.done_when.map((criterion) => criterion.text).join("; ") ?? "" : ""}</span>;
+  if (kind === "agentWaiting") {
+    const wait = isJob ? jobWait(task, subtasks) : { label: subWait(task), count: 0 };
+    return <span className={`cell-readonly ${wait.label === "You" ? "text-[var(--c-yellow)]" : "text-text-secondary"}`}>{wait.label}{wait.count ? ` ${wait.count}` : ""}</span>;
+  }
+  if (kind === "agentStatus" && (isJob || isSubtask)) {
+    const label = isJob ? JOB_STATE_LABEL[jobState(task, subtasks)] : SUBTASK_STATE_LABEL[subtaskState(task)];
+    return <span className="cell-readonly"><span className={`rounded px-1.5 py-0.5 text-xs ${task?.state === "done" ? "bg-[var(--bgc-green)] text-[var(--c-green)]" : task?.waiting_on === "human" ? "bg-[var(--bgc-yellow)] text-[var(--c-yellow)]" : "bg-bg-secondary text-text-secondary"}`}>{label}</span></span>;
+  }
 
   if (kind === "agentDelegate") {
     return <span className={"cell-readonly " + (workerName ? "" : "text-text-tertiary")} title={workerName ? "Assigned agent" : "Open the row to assign an agent"}>{workerName ?? "Unassigned"}</span>;
@@ -86,10 +105,11 @@ export function JobAccessNote({ dbPageId }: { dbPageId: string }) {
   return <p className="mb-3 text-[13px] text-text-secondary">{names.length ? `${jobAgentNames(names)} can see every job here. ` : ""}To keep a project apart, use a separate database.</p>;
 }
 
-function JobAssignmentCell({ pageId, dbPageId, kind, readOnly, fallbackName }: AgentPropertyCellProps) {
+function JobAssignmentCell({ pageId, dbPageId, kind, readOnly, fallbackName, isSubtask }: AgentPropertyCellProps) {
   const workspaceId = useStore((state) => state.syncWorkspaceId), pages = useStore((state) => state.pages);
   const agents = useAgentsStore((state) => state.agents), grants = useAgentsStore((state) => state.grants), loadAgents = useAgentsStore((state) => state.load);
   const subscribe = useAgentTasks((state) => state.subscribe), task = useAgentTasks((state) => taskForPage(state, pageId));
+  const plan = useAgentTasks((state) => state.rowPlans[pageId]);
   const [anchor, setAnchor] = useState<DOMRect | null>(null), [choices, setChoices] = useState<JobAgent[]>([]);
   const [canGrant, setCanGrant] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null), [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
@@ -104,11 +124,11 @@ function JobAssignmentCell({ pageId, dbPageId, kind, readOnly, fallbackName }: A
     return subscribe(workspaceId);
   }, [workspaceId, subscribe, loadAgents]);
   const lead = kind === "jobLead", workerIds = task?.named_worker_ids ?? [];
-  const selectedIds = lead ? task?.delegate_agent_id ? [task.delegate_agent_id] : [] : workerIds;
+  const selectedIds = lead || isSubtask ? (task?.delegate_agent_id ?? (isSubtask ? plan?.worker_agent_id : null)) ? [task?.delegate_agent_id ?? plan!.worker_agent_id!] : [] : workerIds;
   const selected = connectedRows(agents, []).filter((agent) => selectedIds.includes(agent.agentId));
   const started = !!task && (task.state !== "queued" || !!task.active_run_id);
-  const locked = readOnly || (lead && started) || task?.state === "done";
-  const label = selected.length ? lead || selected.length === 1 ? selected[0].name : `${selected.length} workers` : lead ? fallbackName || "Choose a Lead" : "Optional";
+  const locked = readOnly || (isSubtask && !!task) || (lead && started) || task?.state === "done";
+  const label = selected.length ? lead || selected.length === 1 ? selected[0].name : `${selected.length} workers` : lead ? fallbackName || "Choose a Lead" : isSubtask ? "Lead chooses" : "Optional";
   const open = async (rect: DOMRect) => {
     setError(null); setBusy(true);
     try {
@@ -122,15 +142,15 @@ function JobAssignmentCell({ pageId, dbPageId, kind, readOnly, fallbackName }: A
   };
   const choose = async (id: string) => {
     const leadId = lead ? id : task?.delegate_agent_id;
-    if (!leadId) { setError("Choose a Lead first."); return; }
+    if (!isSubtask && !leadId) { setError("Choose a Lead first."); return; }
     setBusy(true); setError(null);
     try {
       const workers = lead ? workerIds.filter((worker) => worker !== id) : workerIds.includes(id) ? workerIds.filter((worker) => worker !== id) : [...workerIds, id];
-      const result = await assignJob(pageId, leadId, workers);
+      const result = isSubtask ? await setSubtaskWorker(pageId, id || null) : await assignJob(pageId, leadId!, workers);
       const database = pages[dbPageId ?? ""]?.title ?? "this database";
       setNotice(result.granted_agents.map((agent) => `${agent.name} now has access to ${database}, so it can see every job here.`).join(" ") || null);
       await loadAgents(workspaceId);
-      if (lead) setAnchor(null);
+      if (lead || isSubtask) setAnchor(null);
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(false); }
   };
@@ -142,7 +162,7 @@ function JobAssignmentCell({ pageId, dbPageId, kind, readOnly, fallbackName }: A
     {notice && <p role="status" className="px-2 text-xs text-[var(--c-green)]">{notice}</p>}
     {error && <p role="alert" className="px-2 text-xs text-[var(--c-red)]">{error}</p>}
     {anchor && createPortal(<><button type="button" className="cell-backdrop" aria-label="Close menu" onClick={() => setAnchor(null)} /><div className="cell-popover max-h-[70vh] overflow-auto" style={{ width: Math.min(340, innerWidth - 16), left: Math.max(8, Math.min(anchor.left, innerWidth - 348)), top: Math.max(8, Math.min(anchor.bottom + 4, innerHeight - 360)) }}>
-      <JobAgentPicker kind={lead ? "lead" : "workers"} agents={choices} selectedIds={selectedIds} leadId={task?.delegate_agent_id ?? undefined} busy={busy} blockedAgentIds={blocked} lockedIds={!lead && started ? workerIds : []} onChoose={(id) => { void choose(id); }} onClose={() => setAnchor(null)} connectHref={CONNECT_URL} agentsHref={AGENTS_URL} />
+      <JobAgentPicker kind={lead ? "lead" : isSubtask ? "subtask" : "workers"} agents={choices} selectedIds={selectedIds} leadId={task?.delegate_agent_id ?? undefined} busy={busy} blockedAgentIds={blocked} lockedIds={!lead && started ? workerIds : []} onChoose={(id) => { void choose(id); }} onClose={() => setAnchor(null)} connectHref={CONNECT_URL} agentsHref={AGENTS_URL} />
     </div></>, document.body)}
   </div>;
 }

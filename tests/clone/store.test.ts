@@ -122,7 +122,7 @@ it("ST-1 seed has four roots and the Agent Tasks contract", () => {
   const seed = seedWorkspace(); expect(seed.rootOrder).toHaveLength(4);
   const tasks = seed.pages[seed.rootOrder[3]];
   expect(tasks.title).toBe("Agent Tasks");
-  expect(tasks.database!.properties.map((p) => p.name)).toEqual(["Task", "Lead", "Worker", "Status", "Waiting on", "Done when", "Depends on", "Output", "Cost", "Run"]);
+  expect(tasks.database!.properties.map((p) => p.name)).toEqual(["Name", "Lead", "Worker", "Done when", "Status", "Waiting on", "Depends on", "Output", "Cost", "Run"]);
   expect(tasks.database!.views.map((v) => v.name)).toEqual(["Table", "Waiting on you", "Working", "Board"]);
 });
 

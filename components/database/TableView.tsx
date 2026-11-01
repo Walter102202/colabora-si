@@ -18,10 +18,13 @@ import { AiFillControls } from "@/components/agents/AiFillControls";
 import AggregationCell from "@/components/database/AggregationCell";
 const types = Object.keys(TYPE_LABELS) as PropertyType[];
 type TableGroup = ReturnType<typeof groupRows>[number];
-type TableItem = { kind: "jobPanel"; row: ViewProps["rows"][number] } | { kind: "group"; group: TableGroup } | { kind: "new"; group: TableGroup } | { kind: "empty"; group: TableGroup } | ({ kind: "row" } & ReturnType<typeof flattenTree>[number]);
+type TableItem = { kind: "jobPanel"; row: ViewProps["rows"][number] } | { kind: "addSubtask"; row: ViewProps["rows"][number] } | { kind: "group"; group: TableGroup } | { kind: "new"; group: TableGroup } | { kind: "empty"; group: TableGroup } | ({ kind: "row" } & ReturnType<typeof flattenTree>[number]);
 export default function TableView({ ops, database, queryDatabase = database, view, rows, pages, canOpenRow }: ViewProps) {
   const [menu, setMenu] = useState<{ propertyId?: string; rect: DOMRect } | null>(null), [widths, setWidths] = useState<Record<string, number>>({});
-  const [collapsed, setCollapsed] = useState(new Set<string>());
+  const [collapsed, setCollapsed] = useState(() => new Set(rows.filter((row) => !row.parentRowId && row.cells[database.properties.find((property) => property.type === "agentStatus")?.id ?? ""] === "done").map((row) => row.id)));
+  const [initialRows] = useState(() => new Set(rows.map((row) => row.id)));
+  const fresh = new Set(rows.filter((row) => !initialRows.has(row.id)).map((row) => row.id));
+
   const properties = visibleProperties(database, view), groups = groupRows(rows, view, queryDatabase, pages), groupProp = database.properties.find((p) => p.id === view.groupBy);
   const property = database.properties.find((p) => p.id === menu?.propertyId);
   const add = (type: PropertyType) => {
@@ -33,10 +36,18 @@ export default function TableView({ ops, database, queryDatabase = database, vie
   const items: TableItem[] = [], progress = subtaskProgress(database, queryDatabase), agentTable = database.properties.some((p) => p.type === "agentStatus");
   for (const group of groups) {
     if (groupProp) items.push({ kind: "group", group });
-    for (const entry of flattenTree(group.rows, collapsed)) {
+    const flattened = flattenTree(group.rows, collapsed);
+    for (const [index, entry] of flattened.entries()) {
       items.push({ kind: "row", ...entry });
       const state = entry.row.cells[database.properties.find((property) => property.type === "agentStatus")?.id ?? ""];
-      if (agentTable && entry.depth === 0 && !collapsed.has(entry.row.id) && !ops.readOnly && (!state || state === "queued")) items.push({ kind: "jobPanel", row: entry.row });
+      if (agentTable && entry.depth === 0 && !collapsed.has(entry.row.id) && !ops.readOnly && (!state || state === "queued" || state === "ready" || state === "needs_lead")) items.push({ kind: "jobPanel", row: entry.row });      if (agentTable && !ops.readOnly) {
+        const next = flattened[index + 1];
+        if (!next || next.depth === 0) {
+          const parent = entry.depth === 0 ? entry.row : flattened.slice(0, index).findLast((item) => item.depth === 0)?.row;
+          const parentState = parent?.cells[database.properties.find((property) => property.type === "agentStatus")?.id ?? ""];
+          if (parent && !collapsed.has(parent.id) && !["done", "failed", "cancelled"].includes(String(parentState))) items.push({ kind: "addSubtask", row: parent });
+        }
+      }
     }
     if (!group.rows.length && ops.readOnly) items.push({ kind: "empty", group });
     if (!ops.readOnly) items.push({ kind: "new", group });
@@ -77,12 +88,13 @@ export default function TableView({ ops, database, queryDatabase = database, vie
     {padTop > 0 && <tr aria-hidden="true"><td colSpan={properties.length + 2} style={{ height: padTop, padding: 0, border: 0 }} /></tr>}
     {items.slice(start, end).map((item, offset) => {
       const rowIndex = start + offset + 2; // aria-rowindex: the header row is 1
+      if (item.kind === "addSubtask") return <tr key={`add-${item.row.id}`} aria-rowindex={rowIndex}><td colSpan={properties.length + 2}><button type="button" className="new-row pl-12" onClick={() => ops.addRow({ parentRowId: item.row.id })}>+ New subtask</button></td></tr>;
       if (item.kind === "jobPanel") return <tr key={`panel-${item.row.id}`} aria-rowindex={rowIndex}><td colSpan={properties.length + 2}><RowPanel pageId={item.row.pageId} inline onOpenPage={() => ops.openRow(item.row.id)} /></td></tr>;
       if (item.kind === "group") { const { group } = item; return <tr key={`group-${group.key ?? "__none"}`} aria-rowindex={rowIndex} className="database-group"><td colSpan={properties.length + 2}><span className={group.color ? `tc-${group.color}` : ""}>{group.label}</span><span className="ml-2 text-text-tertiary">{group.rows.length}</span></td></tr>; }
       if (item.kind === "empty") return <tr key={`empty-${item.group.key ?? "__none"}`} aria-rowindex={rowIndex}><td colSpan={properties.length + 2} className="text-text-tertiary">Empty</td></tr>;
       if (item.kind === "new") return <tr key={`new-${item.group.key ?? "__none"}`} aria-rowindex={rowIndex}><td colSpan={properties.length + 2}><button className="new-row" onClick={() => addInGroup(item.group.key)}>+ New</button></td></tr>;
       const { row, depth, hasChildren } = item, job = progress[row.id];
-      return <tr key={row.id} aria-rowindex={rowIndex} className={`${rowColorClass(row, view, queryDatabase, pages)} ${selected.includes(row.id) ? "row-selected" : ""} ${drop?.id === row.id ? `row-drop-${drop.position}` : ""}`}
+      return <tr key={row.id} aria-rowindex={rowIndex} className={`${rowColorClass(row, view, queryDatabase, pages)} ${fresh.has(row.id) ? "wb-rowin" : ""} ${selected.includes(row.id) ? "row-selected" : ""} ${drop?.id === row.id ? `row-drop-${drop.position}` : ""}`}
         onDragOver={(event) => { if (!dragging.length || !canDrop(dragging, row.id)) return; event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); setDrop({ id: row.id, position: event.clientY < rect.top + rect.height / 2 ? "before" : "after" }); }}
         onDrop={(event) => { if (dragging.length && drop?.id === row.id) { event.preventDefault(); move(dragging, row.id, drop.position); } setDragging([]); setDrop(null); }}>
         <td className="row-selector"><input type="checkbox" aria-label={`Select row ${String(row.cells.title || pages[row.pageId]?.title || "Untitled")}`} checked={selected.includes(row.id)} onChange={() => {}} onClick={(event) => select(row.id, event.shiftKey)} />

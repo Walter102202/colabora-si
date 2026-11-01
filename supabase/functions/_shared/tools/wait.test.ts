@@ -95,6 +95,29 @@ function activity(seq: number, overrides: Row = {}): Row {
   };
 }
 
+Deno.test('human rows wake their Lead on initial and unchanged scoped polls until adopted', async () => {
+  const tables = { agent_tasks: [task(), task({ id: 'other' })] };
+  const h = harness(tables);
+  let pending: Row[] = [{ row_page_id: 'human-row', title: 'Keep my subtask', worker_agent_id: 'agent-2' }];
+  const rpc = h.ctx.db.rpc;
+  h.ctx.db.rpc = <T>(fn: string, params: Row) => {
+    if (fn === 'get_pending_job_rows') {
+      assert.equal(params.p_task_id, 't1', 'job scope must not inspect another job');
+      return Promise.resolve({ data: pending as T, error: null });
+    }
+    return rpc<T>(fn, params);
+  };
+  const first = await tool('wait_for_my_tasks').handler({ job_id: 't1', timeout_s: 0 }, h.ctx);
+  const notices = first.structured.tasks as Row[];
+  assert.equal(notices[0]?.reason, 'pending_row');
+  assert.deepEqual(notices[0]?.pending_rows, pending);
+  const again = await tool('wait_for_my_tasks').handler({ job_id: 't1', after: first.structured.next_cursor, timeout_s: 0 }, h.ctx);
+  assert.equal((again.structured.tasks as Row[])[0]?.reason, 'pending_row');
+  pending = [];
+  const adopted = await tool('wait_for_my_tasks').handler({ job_id: 't1', after: again.structured.next_cursor, timeout_s: 0 }, h.ctx);
+  assert.deepEqual(adopted.structured.tasks, []);
+});
+
 Deno.test('job-scoped waits include descendants, filter prompts and notices, and never acknowledge another job', async () => {
   const tables: Record<string, Row[]> = {
     agent_tasks: [task({ id: 'job-a', state: 'queued' }), task({ id: 'child', parent_task_id: 'job-a', state: 'queued' }),
@@ -308,7 +331,7 @@ Deno.test('wait_for_my_tasks with after returns only tasks updated after the cur
   assert.equal(out.structured.changed, true);
   const tasks = out.structured.tasks as Row[];
   assert.deepEqual(tasks.map((t) => [t.task_id, t.reason, t.pending_prompts]), [['t1', 'feedback', 1]]);
-  assert.deepEqual(h.rpcs.map((r) => r.fn), ['mark_events_delivered']);
+  assert.deepEqual(h.rpcs.map((r) => r.fn), [...Array(4).fill('get_pending_job_rows'), 'mark_events_delivered']);
   const next = decodeTaskCursor(String(out.structured.next_cursor));
   assert.equal(next.t, '2026-10-27T10:01:00.123456Z');
 
@@ -325,7 +348,7 @@ Deno.test('wait_for_my_tasks timeout returns changed:false and the same cursor',
   assert.equal(out.structured.changed, false);
   assert.equal(out.structured.next_cursor, after);
   assert.equal(h.elapsed(), 3000);
-  assert.deepEqual(h.rpcs, []);
+  assert.deepEqual(h.rpcs, [{ fn: 'get_pending_job_rows', params: { p_task_id: 't1' } }]);
 });
 
 Deno.test('wait_for_my_tasks reports a stop, an approval decision and a closed task', async () => {
@@ -374,7 +397,7 @@ Deno.test('wait_for_my_tasks: an event resets the backoff and triggers one full 
   assert.equal(out.structured.changed, true);
   assert.deepEqual((out.structured.tasks as Row[]).map((t) => [t.task_id, t.reason]), [['p1', 'feedback']]);
   assert.equal(h.sleeps(), 3);
-  assert.equal(h.selects.filter((t) => t === 'agent_tasks').length, 3); // first pass (updated) + the pass after the event (updated + the missing task): never one per poll
+  assert.equal(h.selects.filter((t) => t === 'agent_tasks').length, 5); // updated/missing tasks plus pending-human-row roots on each full pass; never one per poll
   assert.ok(!decodeTaskCursor(String(out.structured.next_cursor)).k.some((k) => k.startsWith('e:')), 'the cursor carries task and prompt keys only');
 });
 
@@ -423,7 +446,7 @@ Deno.test('wait_for_my_tasks: unrelated events advance only the independent even
   const out = await tool('wait_for_my_tasks').handler({ after, timeout_s: 5 }, h.ctx);
   assert.equal(out.structured.changed, false);
   assert.deepEqual(decodeTaskCursor(String(out.structured.next_cursor)), { ...decodeTaskCursor(after), e: { t: normTs('2026-10-27T10:00:30+00:00'), k: ['e:e7'] } });
-  assert.equal(h.selects.filter((t) => t === 'agent_tasks').length, 2); // the first pass and the one the event triggered; nothing at the deadline
+  assert.equal(h.selects.filter((t) => t === 'agent_tasks').length, 4); // updated tasks and pending-row roots on both full passes; nothing at the deadline
 });
 
 Deno.test('wait_for_my_tasks: full passes are never more than SLOW_POLL_MS apart while nothing happens', async () => {
