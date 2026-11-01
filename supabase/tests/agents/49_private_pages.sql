@@ -74,10 +74,13 @@ select is((select owner_user_id from public.private_pages where page_id = 'page_
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_T', null);
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_T1', 'page_T');
 alter table public.pages disable trigger pages_30_actor;
+-- Trusted inheritance fixture, using the structural-write context introduced in 0047.
+select set_config('app.workspace_write','1',true);
 update public.pages set parent_id = 'page_P' where id = 'page_T';
 select is((select count(*) from public.private_pages where page_id in ('page_T','page_T1')), 2::bigint, 'a tree moved in inherits whole');
 update public.pages set parent_id = null where id = 'page_T';
 alter table public.pages enable trigger pages_30_actor;
+select set_config('app.workspace_write','',true);
 select is((select count(*) from public.private_pages where page_id in ('page_T','page_T1')), 2::bigint, 'moving it out keeps it private');
 
 -- D. A task on a private page stays out of other people's lists; its delegate keeps it.
