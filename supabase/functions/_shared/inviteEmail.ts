@@ -26,17 +26,20 @@ const escapeHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/"/g,
 
 // The link stops at our page instead of Auth's verify URL: a mail scanner that opens it spends nothing, because the
 // token is used when the person submits. The address travels in the fragment, which never reaches a server.
-export function inviteUrl(appUrl: string, tokenHash: string, email: string): string {
+export function inviteUrl(appUrl: string, tokenHash: string, email: string, type: 'invite' | 'recovery' = 'invite', invite?: string): string {
   const url = new URL('/set-password', appUrl);
   url.searchParams.set('token_hash', tokenHash);
-  url.searchParams.set('type', 'invite');
+  url.searchParams.set('type', type);
+  if (invite) url.searchParams.set('invite', invite);
   url.hash = encodeURIComponent(email);
   return url.href;
 }
 
 export const inviteText = (url: string) => `You're in.\nWelcome to colabora.si, a shared workspace for people and AI agents.\n\nAccept your invite:\n${url}\n\nThis link is just for you and works for 24 hours.\n\ncolabora.si\n`;
 
-export const inviteHtml = (url: string) => `<!doctype html>
+export interface EmailCopy { subject: string; title: string; body: string; button: string; note: string; }
+const defaultCopy: EmailCopy = { subject: INVITE_EMAIL.subject, title: 'You’re in.', body: '', button: 'Accept your invite', note: 'This link is just for you and works for 24 hours.' };
+export const inviteHtml = (url: string, copy: EmailCopy = defaultCopy) => `<!doctype html>
 <html lang="en" dir="ltr" xmlns="http://www.w3.org/1999/xhtml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
 <meta charset="utf-8">
@@ -46,7 +49,7 @@ export const inviteHtml = (url: string) => `<!doctype html>
 <meta name="format-detection" content="telephone=no,date=no,address=no,email=no,url=no">
 <meta name="color-scheme" content="light dark">
 <meta name="supported-color-schemes" content="light dark">
-<title>Your colabora.si invite is ready</title>
+<title>${escapeHtml(copy.subject)}</title>
 <!--[if mso]>
 <xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml>
 <style>
@@ -86,8 +89,8 @@ table,td{mso-table-lspace:0pt;mso-table-rspace:0pt}
 <!--<![endif]-->
 </head>
 <body class="e-ground" bgcolor="#f7f7f3" style="margin:0;padding:0;background-color:#f7f7f3;">
-<div role="article" aria-label="Your colabora.si invite is ready" lang="en" dir="ltr">
-<div style="display:none;max-height:0;max-width:0;overflow:hidden;opacity:0;color:transparent;font-size:1px;line-height:1px;mso-hide:all;">Set your password to get started.&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;</div>
+<div role="article" aria-label="${escapeHtml(copy.subject)}" lang="en" dir="ltr">
+<div style="display:none;max-height:0;max-width:0;overflow:hidden;opacity:0;color:transparent;font-size:1px;line-height:1px;mso-hide:all;">${copy === defaultCopy ? "Set your password to get started." : escapeHtml(copy.title)}&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">
 <tr>
 <td class="e-ground e-gutter" align="center" bgcolor="#f7f7f3" style="padding:24px 16px;background-color:#f7f7f3;">
@@ -95,16 +98,16 @@ table,td{mso-table-lspace:0pt;mso-table-rspace:0pt}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:560px;margin:0 auto;border-collapse:separate;border-spacing:0;">
 <tr>
 <td class="e-sheet e-pad" align="left" bgcolor="#ffffff" style="padding:32px 24px 24px 24px;background-color:#ffffff;border:1px solid #dfdfd7;border-radius:12px;">
-<h1 class="e-h1 e-head" style="margin:0 0 12px 0;font-family:Georgia,'Times New Roman',Times,serif;font-size:32px;line-height:36px;font-weight:400;letter-spacing:-1px;color:#1b1a17;mso-line-height-rule:exactly;">You’re in.</h1>
-<p class="e-ink" style="margin:0 0 24px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:17px;line-height:27px;font-weight:400;color:#37352f;mso-line-height-rule:exactly;">Welcome to <a class="e-ink" href="https://colabora.si/" style="color:#37352f;text-decoration:none;">colabora.si</a>, a&nbsp;shared workspace for&nbsp;people and&nbsp;AI&nbsp;agents.</p>
+<h1 class="e-h1 e-head" style="margin:0 0 12px 0;font-family:Georgia,'Times New Roman',Times,serif;font-size:32px;line-height:36px;font-weight:400;letter-spacing:-1px;color:#1b1a17;mso-line-height-rule:exactly;">${escapeHtml(copy.title)}</h1>
+<p class="e-ink" style="margin:0 0 24px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:17px;line-height:27px;font-weight:400;color:#37352f;overflow-wrap:anywhere;mso-line-height-rule:exactly;">${copy.body ? escapeHtml(copy.body) : 'Welcome to <a class="e-ink" href="https://colabora.si/" style="color:#37352f;text-decoration:none;">colabora.si</a>, a&nbsp;shared workspace for&nbsp;people and&nbsp;AI&nbsp;agents.'}</p>
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;border-spacing:0;">
 <tr>
 <td class="e-btn" align="center" bgcolor="#176bb5" style="background-color:#176bb5;border-radius:7px;mso-padding-alt:13px 22px;">
-<a class="e-btn-ink" href="${escapeHtml(url)}" style="display:inline-block;padding:13px 22px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:600;color:#ffffff;text-decoration:none;white-space:nowrap;border-radius:7px;mso-line-height-rule:exactly;">Accept your invite</a>
+<a class="e-btn-ink" href="${escapeHtml(url)}" style="display:inline-block;padding:13px 22px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:7px;mso-line-height-rule:exactly;">${escapeHtml(copy.button)}</a>
 </td>
 </tr>
 </table>
-<p class="e-muted" style="margin:12px 0 32px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;font-weight:400;color:#6c6b63;mso-line-height-rule:exactly;">This link is just for you and works for 24 hours.</p>
+<p class="e-muted" style="margin:12px 0 32px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;font-weight:400;color:#6c6b63;mso-line-height-rule:exactly;">${escapeHtml(copy.note)}</p>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">
 <tr>
 <td align="left" valign="bottom" style="padding:0;">
@@ -134,12 +137,13 @@ function refusal(status: number): InviteFailure {
   return { status: 400, code: 'email_refused' };
 }
 
-export async function sendInvite(links: InviteLinks, resendKey: string, appUrl: string, email: string, send: typeof fetch = fetch): Promise<InviteFailure | null> {
+export async function sendInvite(links: InviteLinks, resendKey: string, appUrl: string, email: string, send: typeof fetch = fetch, workspace?: { token: string; name: string; inviter: string }): Promise<InviteFailure | null> {
   const { data, error } = await links.generateLink({ type: 'invite', email });
   if (error) return { status: error.status, code: error.code };
   const tokenHash = data.properties?.hashed_token;
   if (!tokenHash) return { status: 502, code: 'no_token' };
-  const url = inviteUrl(appUrl, tokenHash, email);
+  const url = inviteUrl(appUrl, tokenHash, email, 'invite', workspace?.token);
+  if (workspace) return sendAccountEmail(resendKey, email, url, workspaceCopy(workspace.inviter, workspace.name), `invite/${tokenHash}`, send);
   const { from, subject } = INVITE_EMAIL;
   try {
     const res = await send(RESEND_EMAILS, {
@@ -153,4 +157,29 @@ export async function sendInvite(links: InviteLinks, resendKey: string, appUrl: 
   } catch {
     return { status: 502, code: 'email_unreachable' };
   }
+}
+
+const bounded = (value: string, max: number) => value.replace(/[\r\n\u0000-\u001f]/g, ' ').trim().slice(0, max);
+export const recoveryCopy: EmailCopy = {
+  subject: 'Reset your colabora.si password', title: 'Reset your password.',
+  body: 'Choose a new password for your colabora.si account.', button: 'Choose a new password',
+  note: "This link is just for you and works for 24 hours. If you didn't ask for it, you can ignore this email.",
+};
+export function workspaceCopy(name: string, workspace: string): EmailCopy {
+  const person = bounded(name, 80) || 'Someone', place = bounded(workspace, 100) || 'a workspace';
+  return { subject: `${person} invited you to ${place} on colabora.si`, title: "You're invited.",
+    body: `${person} invited you to ${place} on colabora.si, a shared workspace for people and AI agents.`,
+    button: 'Accept your invite', note: defaultCopy.note };
+}
+export async function sendAccountEmail(resendKey: string, email: string, url: string, copy: EmailCopy, key: string, send: typeof fetch = fetch): Promise<InviteFailure | null> {
+  try {
+    const response = await send(RESEND_EMAILS, {
+      method: 'POST', headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': key },
+      body: JSON.stringify({ from: INVITE_EMAIL.from, to: [email], subject: copy.subject, html: inviteHtml(url, copy),
+        text: `${copy.title}\n${copy.body}\n\n${copy.button}:\n${url}\n\n${copy.note}\n\ncolabora.si\n` }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    await response.body?.cancel();
+    return response.ok ? null : refusal(response.status);
+  } catch { return { status: 502, code: 'email_unreachable' }; }
 }
