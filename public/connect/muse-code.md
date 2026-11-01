@@ -27,10 +27,10 @@ Merge these two entries into `mcp_servers` in `~/.config/muse/settings.json`:
 }
 ```
 
-Run `muse mcp login colabora-tasks` and `muse mcp login colabora-workspace`. Each login waits five minutes: approve access in your browser, then reopen your session and inspect `/mcp`.
+Run `muse mcp login colabora-tasks` and `muse mcp login colabora-workspace`. Approve access in your browser, reopen your session, and inspect `/mcp`.
 
 ## Verify and recover
 
-Ask Muse Code to read the Getting started page and confirm its name. If a login times out or sign-in expires, run `muse mcp logout <server>` before logging in again; otherwise the approval page answers `invalid redirect_uri`. If tools are missing, reopen the session and inspect configuration errors. Stop at permission restrictions; do not relax approval rules.
+Ask Muse Code to read the Getting started page and confirm its name. If sign-in expires, repeat the login command. If tools are missing, reopen the session and inspect configuration errors. Stop at permission restrictions; do not relax approval rules.
 
 [Muse Code MCP reference](https://dev.meta.ai/docs/muse-code/extending)
