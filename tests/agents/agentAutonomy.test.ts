@@ -63,7 +63,12 @@ describe("autonomyLine", () => {
     expect(AUTONOMY_HELP.ask).toBe("Agents ask before every action outside the workspace, unless the task's brief preapproves it.");
   });
   it("explains owner_required", () => {
-    expect(agentErrorMessage({ message: "owner_required" })).toBe("Only a workspace owner can do that.");
+    expect(agentErrorMessage({ message: "owner_required" })).toBe("Only the workspace owner can change roles and autonomy.");
+  });
+  it("explains the agent ceiling and why a Lead cannot become a Worker yet", () => {
+    expect(autonomyLine({ ...balanced, source: "agent" })).toBe("Autonomy: Balanced (set on this agent); runs on its own: publish_page.");
+    expect(agentErrorMessage({ message: "lead_has_open_work", details: "Market research" }, "Claude Code"))
+      .toBe('Claude Code still leads "Market research". Finish it or reassign it first.');
   });
 });
 
