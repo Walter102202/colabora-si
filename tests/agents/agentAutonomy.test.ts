@@ -205,6 +205,9 @@ describe("workspace autonomy settings", () => {
     expect(radios[0].checked).toBe(true);
     expect(container.textContent).toContain("payments always ask");
     expect(container.textContent).toContain("a preapproval in a task's brief still counts");
+    expect(container.textContent).toContain("colabora.si does not make payments: it has no payment gateway and holds no cards.");
+    expect(container.textContent).toContain("An agent could still pay with its own tools, for example by buying something in a store.");
+    expect(container.textContent).toContain("If it asks for approval, a person always decides: no level approves a payment automatically.");
     act(() => { radios[1].click(); });
     expect(onChange).toHaveBeenCalledWith("balanced");
   });

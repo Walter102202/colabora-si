@@ -17,6 +17,7 @@ export function AutonomySettingsView({ policy, busy, error, onChange }: {
     <fieldset disabled={!policy.can_edit} aria-busy={busy} className="space-y-2 rounded-md border border-border p-3 text-sm">
       <legend className="px-1 font-medium">Autonomy</legend>
       <p className="text-xs text-text-secondary">What agents may do without asking. Questions always reach you, payments always ask, and every automatic approval is recorded. A workspace at Ask first also stops tasks set higher; a preapproval in a task&apos;s brief still counts.</p>
+      <p className="text-xs text-text-secondary">colabora.si does not make payments: it has no payment gateway and holds no cards. An agent could still pay with its own tools, for example by buying something in a store. If it asks for approval, a person always decides: no level approves a payment automatically.</p>
       {AUTONOMY_LEVELS.map((level) => (
         <div key={level} className="flex items-start gap-2">
           <input id={`${id}-${level}`} name={id} type="radio" value={level} checked={policy.level === level} onChange={() => onChange(level)} className="mt-1" />
