@@ -2,7 +2,8 @@ import { useStore } from "@/lib/store";
 import { isShell } from "@/lib/pageShell";
 import { applyingExternal } from "@/lib/externalApply";
 import { diskAvailable, flushLocalWrites, readStoredPage, storedReferrers } from "@/lib/localPersistence";
-import type { Page } from "@/lib/types";
+import type { Block, Page } from "@/lib/types";
+import { treeIds } from "@/lib/pageMutations";
 import { findBacklinks } from "@/lib/pageStats";
 
 export type BodyState = "ready" | "unavailable";
@@ -64,4 +65,39 @@ export async function backlinkIds(pageId: string): Promise<string[]> {
   if (!diskAvailable()) return findBacklinks(useStore.getState().pages, pageId).map((page) => page.id);
   const ids = await storedReferrers(pageId), pages = useStore.getState().pages;
   return ids.filter((id) => id !== pageId && pages[id] && !pages[id].isDeleted);
+}
+
+export async function duplicatePageLoaded(id: string): Promise<string | null> {
+  const state = useStore.getState(), pages = state.pages, parentId = pages[id]?.parentId;
+  const ids = [...treeIds(pages, id)].filter((key) => !pages[key].isDeleted);
+  if (parentId && pages[parentId]?.database) ids.push(parentId);
+  if (await ensurePageBodies(ids) !== "ready") { notifyPageUnavailable(); return null; }
+  const current = useStore.getState();
+  if (state.syncUserId !== current.syncUserId || state.syncWorkspaceId !== current.syncWorkspaceId) return null;
+  return current.duplicatePage(id);
+}
+export async function movePageLoaded(id: string, parentId: string | null, index?: number): Promise<void> {
+  const state = useStore.getState(), pages = state.pages;
+  const ids = [pages[id]?.parentId, parentId].filter((key): key is string => !!key && !!pages[key]?.database);
+  if (await ensurePageBodies(ids) !== "ready") throw new Error(PAGE_UNAVAILABLE);
+  const current = useStore.getState();
+  if (state.syncUserId !== current.syncUserId || state.syncWorkspaceId !== current.syncWorkspaceId) throw new Error(PAGE_UNAVAILABLE);
+  current.movePage(id, parentId, index);
+}
+export async function restorePageLoaded(id: string): Promise<boolean> {
+  const state = useStore.getState(), pages = state.pages, parentId = pages[id]?.parentId;
+  if (parentId && pages[parentId]?.database && await ensurePageBody(parentId) !== "ready") { notifyPageUnavailable(); return false; }
+  const current = useStore.getState();
+  if (state.syncUserId !== current.syncUserId || state.syncWorkspaceId !== current.syncWorkspaceId || !current.pages[id]) return false;
+  current.restorePage(id); return true;
+}
+export function exportDeps(pageId: string, pages: Record<string, Page>): string[] {
+  const ids = new Set(databaseDeps(pageId, pages));
+  const walk = (blocks: Block[]) => {
+    for (const block of blocks) {
+      if (block.type === "database" && block.pageId) databaseDeps(block.pageId, pages).forEach((id) => ids.add(id));
+      for (const column of block.columns ?? []) walk(column.blocks);
+    }
+  };
+  walk(pages[pageId]?.blocks ?? []); return [...ids];
 }

@@ -6,6 +6,8 @@ import { runAgentAction } from "@/lib/agentActions";
 import { newId } from "@/lib/factories";
 import { cloneWithNewIds } from "@/lib/pageMutations";
 import { historyAction } from "@/lib/history";
+import { isShell } from "@/lib/pageShell";
+import { ensurePageBody, notifyPageUnavailable } from "@/lib/pageBodies";
 export interface DbOps {
   pageId: string; database: Database; locked: boolean; readOnly: boolean;
   addRow: (patch?: Partial<DbRow>) => string;
@@ -53,16 +55,28 @@ export function buildDbOps(pageId: string): DbOps {
     deleteView: (id) => { if (editable()) state().deleteView(pageId, id); },
     setLocked: (locked) => { if (editable()) state().setDbLocked(pageId, locked); },
     addRowFromTemplate: (id) => editable() ? state().addRowFromTemplate(pageId, id) : "",
-    saveRowAsTemplate: (id, name) => { if (editable()) state().saveRowAsTemplate(pageId, id, name); },
+    saveRowAsTemplate: (id, name) => {
+      if (!editable()) return;
+      const rowPage = state().pages[ops.database.rows.find((row) => row.id === id)?.pageId ?? ""];
+      const run = () => { if (editable()) state().saveRowAsTemplate(pageId, id, name); };
+      if (!isShell(rowPage)) { run(); return; }
+      void ensurePageBody(rowPage.id).then((result) => { if (result === "ready") run(); else notifyPageUnavailable(); });
+    },
     deleteRowTemplate: (id) => { if (editable()) state().deleteRowTemplate(pageId, id); },
     openRow: (id) => { const row = ops.database.rows.find((r) => r.id === id); withViewTransition(() => openPeek(row?.pageId ?? id)); },
     runButton: (rowId, action) => {
       if (!editable()) return;
       const row = ops.database.rows.find((r) => r.id === rowId), rowPage = row ? state().pages[row.pageId] : undefined;
       if (!rowPage) return;
-      if (action.kind === "agentTask") { void runAgentAction(action, { pageId: rowPage.id }); return; }
-      if (action.kind === "openPage" && action.pageId) withViewTransition(() => openPeek(action.pageId!));
-      if (action.kind === "insertBlocks") state().setBlocks(rowPage.id, [...rowPage.blocks, ...cloneWithNewIds(action.blocks)]);
+      if (action.kind === "openPage" && action.pageId) { withViewTransition(() => openPeek(action.pageId!)); return; }
+      const run = () => {
+        const current = state().pages[rowPage.id];
+        if (!editable() || !current || isShell(current)) return;
+        if (action.kind === "agentTask") { void runAgentAction(action, { pageId: rowPage.id }); return; }
+        if (action.kind === "insertBlocks") state().setBlocks(rowPage.id, [...current.blocks, ...cloneWithNewIds(action.blocks)]);
+      };
+      if (!isShell(rowPage)) { run(); return; }
+      void ensurePageBody(rowPage.id).then((result) => { if (result === "ready") run(); else notifyPageUnavailable(); });
     },
   };
   cached.set(pageId, ops);

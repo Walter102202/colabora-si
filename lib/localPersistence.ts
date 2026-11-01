@@ -114,6 +114,30 @@ export async function readLocalPageSnapshot(ids: string[]): Promise<Page[]> {
   }
   return [...pages.values()];
 }
+export async function readFullWorkspace(): Promise<{ pages: Record<string, Page>; missing: number }> {
+  const token = generation;
+  // A backup is also the escape hatch when quota prevents flushing recent edits.
+  await flushLocalWrites().catch(() => {});
+  if (token !== generation) throw new StaleEpochError();
+  const state = useStore.getState(), pages: Record<string, Page> = {};
+  for (const [id, page] of Object.entries(state.pages)) {
+    if (foreignPageIds.has(id)) continue;
+    if (!isShell(page)) pages[id] = page;
+    else {
+      const pending = dirtyPages.get(id);
+      if (pending && !isShell(pending) && (pending.revision ?? 0) >= (page.revision ?? 0)) pages[id] = overlayMeta(pending, page);
+    }
+  }
+  try {
+    await scanStoredPages((page) => {
+      const current = state.pages[page.id];
+      if (current && !foreignPageIds.has(page.id) && !pages[page.id] && (page.revision ?? 0) >= (current.revision ?? 0)) pages[page.id] = overlayMeta(page, current);
+    });
+  } catch { /* Completeness below decides whether a memory-only backup is possible. */ }
+  if (token !== generation) throw new StaleEpochError();
+  const missing = Object.keys(state.pages).filter((id) => !foreignPageIds.has(id) && !pages[id]).length;
+  return { pages, missing };
+}
 export function hasPendingLocalWrites(): boolean { return dirtyPages.size > 0 || dirtyKv.size > 0 || flushing !== null; }
 export function fullWrite(page: Page, remote = false): Extract<PageWrite, { kind: "full" }> {
   return { kind: "full", id: page.id, ...splitPage(page), search: searchRecord(page, useStore.getState().syncedBlocks ?? {}), remote };
@@ -154,7 +178,8 @@ function onStoreChange(state: Store, prev: Store): void {
 }
 
 function reapply(theirs: Page, base: Page, local: Page): Page {
-  if (JSON.stringify(theirs) === JSON.stringify(base)) return local;
+  // Splitting/joining moves body keys; key order alone is not a peer edit.
+  if (JSON.stringify(splitPage(theirs)) === JSON.stringify(splitPage(base))) return local;
   const ops = diffPageToOps(base, local);
   if (!ops.length) return theirs;
   return { ...applyOps(theirs, ops, { by: "human", id: useStore.getState().syncUserId ?? "local", at: local.updatedAt }).page, updatedAt: Math.max(theirs.updatedAt, local.updatedAt) };
