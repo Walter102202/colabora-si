@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { applyingExternal, isApplyingExternal } from "@/lib/externalApply";
 import { isShell, joinPage, overlayMeta, shellFromMeta, splitPage } from "@/lib/pageShell";
-import { claimWorkspace, countRecords, LOCAL_DB, openLocalDb, readBodies, readPages, readWorkspace, StaleEpochError, writeBatch, wipeLocalDb, type PageReconciler, type PageWrite, type StoredWorkspace } from "@/lib/localDb";
+import { claimWorkspace, countRecords, isQuotaError, LOCAL_DB, openLocalDb, readBodies, readPages, readWorkspace, StaleEpochError, writeBatch, wipeLocalDb, type PageReconciler, type PageWrite, type StoredWorkspace } from "@/lib/localDb";
 import { searchRecord } from "@/lib/search";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { mark, pageDataSizes, recordHydration } from "@/lib/metrics";
@@ -19,6 +19,26 @@ const dirtyPages = new Map<string, Page | null>(), remotePages = new Set<string>
 const TAB = crypto.randomUUID(), ACTIVE_EDIT_MS = 2000;
 const writtenBase = new Map<string, Page>(), lastEdit = new Map<string, number>(), peerTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let channel: BroadcastChannel | null = null, applyingPeer = false;
+let editedSinceStart = false, persistRequested = false, reopenedAfterFailure = false;
+let cloudHasEverything = () => false;
+
+export function setCloudCheck(check: () => boolean): void { cloudHasEverything = check; }
+export function hasUnsavedLocalChanges(): boolean {
+  if (useLocalHealth.getState().health === "unavailable") return editedSinceStart && !cloudHasEverything();
+  return hasPendingLocalWrites() && useLocalHealth.getState().health !== "ok";
+}
+function beforeUnload(event: BeforeUnloadEvent): void {
+  if (hasUnsavedLocalChanges()) { event.preventDefault(); event.returnValue = ""; }
+}
+function noteLocalEdit(state: Store, prev: Store): void {
+  if (isApplyingExternal() || applyingPeer) return;
+  if (state.pages !== prev.pages || KV_KEYS.some((key) => state[key] !== prev[key])) editedSinceStart = true;
+}
+function requestPersistence(): void {
+  if (persistRequested || !navigator.storage?.persist || isSupabaseConfigured()) return;
+  persistRequested = true;
+  try { void navigator.storage?.persist?.().catch(() => {}); } catch { /* This is an optional browser permission. */ }
+}
 
 export function diskAvailable(): boolean { return db !== null; }
 export function hasPendingLocalWrites(): boolean { return dirtyPages.size > 0 || dirtyKv.size > 0 || flushing !== null; }
@@ -39,6 +59,7 @@ function markPage(id: string, page: Page | null): void {
 }
 function onStoreChange(state: Store, prev: Store): void {
   if (applyingPeer) return;
+  noteLocalEdit(state, prev);
   if (state.pages !== prev.pages) {
     for (const id in state.pages) {
       const before = prev.pages[id], after = state.pages[id];
@@ -129,7 +150,7 @@ async function writeNow(token: number, connection: IDBDatabase, currentEpoch: st
     try {
       await writeBatch(connection, currentEpoch, { pages: pages.filter(([id]) => !foreignPageIds.has(id)).map(([id, page]) => pageWrite(id, page, remote.has(id))), kv }, reconcilers);
       if (token === generation) {
-        retryMs = 1000;
+        retryMs = 1000; reopenedAfterFailure = false; setHealth("ok"); requestPersistence();
         const patch: Record<string, Page | null> = {}, snapshots = new Map(pages), current = useStore.getState().pages;
         for (const [id, committed] of reconciled) {
           const snapshot = snapshots.get(id), now = current[id];
@@ -145,6 +166,7 @@ async function writeNow(token: number, connection: IDBDatabase, currentEpoch: st
     } catch (error) {
       if (token === generation) {
         if (error instanceof StaleEpochError) { reloadLocalCopy(); throw error; }
+        setHealth(isQuotaError(error) ? "full" : "failing");
         for (const [id, page] of pages) if (!foreignPageIds.has(id)) {
           const newer = dirtyPages.get(id);
           if (!dirtyPages.has(id)) { dirtyPages.set(id, page); if (remote.has(id)) remotePages.add(id); }
@@ -165,7 +187,17 @@ export function flushLocalWrites(): Promise<void> {
   if (flushing) return flushing;
   if (!db || (!dirtyPages.size && !dirtyKv.size)) return Promise.resolve();
   const token = generation;
-  const task = writeNow(token, db, epoch).finally(() => {
+  const task = (async () => {
+    if (useLocalHealth.getState().health === "failing" && !reopenedAfterFailure) {
+      reopenedAfterFailure = true;
+      try {
+        const connection = await openLocalDb();
+        if (token !== generation) { connection.close(); return; }
+        db?.close(); db = connection;
+      } catch { /* Retry the existing connection without discarding the pending batch. */ }
+    }
+    if (token === generation && db) await writeNow(token, db, epoch);
+  })().finally(() => {
     if (flushing === task) flushing = null;
   });
   flushing = task;
@@ -183,6 +215,7 @@ function stopWriter(): void {
   generation++; unsubscribe?.(); unsubscribe = null; removeListeners?.(); removeListeners = null;
   if (timer !== null) clearTimeout(timer);
   timer = null; flushing = null; db = null; epoch = ""; retryMs = 1000;
+  editedSinceStart = false; reopenedAfterFailure = false;
   dirtyPages.clear(); remotePages.clear(); dirtyKv.clear();
   writtenBase.clear(); lastEdit.clear();
   for (const timer of peerTimers.values()) clearTimeout(timer);
@@ -209,8 +242,8 @@ export function startWriter(connection: IDBDatabase, currentEpoch: string): () =
   if (typeof window !== "undefined") {
     const flush = () => { void flushLocalWrites().catch(() => {}); };
     const hidden = () => { if (document.visibilityState === "hidden") flush(); };
-    window.addEventListener("pagehide", flush); document.addEventListener("visibilitychange", hidden);
-    removeListeners = () => { window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", hidden); };
+    window.addEventListener("pagehide", flush); document.addEventListener("visibilitychange", hidden); window.addEventListener("beforeunload", beforeUnload);
+    removeListeners = () => { window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", hidden); window.removeEventListener("beforeunload", beforeUnload); };
   }
   return () => { if (token === generation) stopWriter(); };
 }
@@ -284,6 +317,11 @@ async function absorbLegacy(connection: IDBDatabase, legacy: LocalState): Promis
 }
 function startMemoryMode(): void {
   stopWriter();
+  unsubscribe = useStore.subscribe(noteLocalEdit);
+  if (typeof window !== "undefined") {
+    window.addEventListener("beforeunload", beforeUnload);
+    removeListeners = () => window.removeEventListener("beforeunload", beforeUnload);
+  }
 }
 function deleteLocalDb(): Promise<void> {
   return new Promise<void>((resolve, reject) => {
@@ -356,6 +394,7 @@ async function hydrate(): Promise<void> {
       applyingExternal(() => useStore.setState(state));
     }
     startWriter(opened, stored.epoch); setHealth("ok");
+    if (claimed === "created") requestPersistence();
     if (interrupted) unmarkClearPending();
   } catch {
     db?.close(); db = null;

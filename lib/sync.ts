@@ -1,5 +1,5 @@
 import { mark, measureSince, reportStartup } from "@/lib/metrics";
-import { clearLocalPages } from "@/lib/localPersistence";
+import { clearLocalPages, setCloudCheck } from "@/lib/localPersistence";
 import { create } from "zustand";
 import type { RealtimeChannel, SupabaseClient, User } from "@supabase/supabase-js";
 import type { Block, BlockAttr, Page, Reminder, WorkspaceState } from "@/lib/types";
@@ -124,7 +124,7 @@ export class PageSyncEngine {
 
 let fetchedPages = 0, fetchBytes = 0;
 let started = false, ready = false, currentUserId: string | null = null, wsId: string | null = null, generation = 0;
-let queue: IndexedDbQueue | null = null, engine: PageSyncEngine | null = null, channel: RealtimeChannel | null = null;
+let queue: (MemoryQueue & { close?(): Promise<void> }) | null = null, engine: PageSyncEngine | null = null, channel: RealtimeChannel | null = null;
 let unsubStore: (() => void) | null = null, last: Store | null = null, pushing = false, dirty = false, attempts = 0;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null, retryTimer: ReturnType<typeof setTimeout> | null = null, deferTimer: ReturnType<typeof setTimeout> | null = null;
 let syncedRequest = 0;
@@ -239,7 +239,9 @@ export async function flush(): Promise<void> {
     await flushWorkspace(sb); if (token !== generation) return;
     await pushReminders(sb, snapshot.reminders ?? []); if (token !== generation) return;
     await queue.settled(); if (token !== generation) return;
-    attempts = 0; setStatus("synced");
+    attempts = 0;
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+    setStatus("synced");
   } catch (error) {
     if (token !== generation) return;
     attempts++; setStatus(navigator.onLine ? "error" : "offline", error instanceof Error ? error.message : JSON.stringify(error));
@@ -427,11 +429,18 @@ async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise
 async function openQueue(sb: SupabaseClient, user: User): Promise<void> {
   if (queue) return;
   let owner = sessionStorage.getItem("colabora-sync-tab"); if (!owner) { owner = crypto.randomUUID(); sessionStorage.setItem("colabora-sync-tab", owner); }
-  queue = new IndexedDbQueue(`${user.id}:${wsId}`, owner); await queue.ready;
+  const token = generation, opened = new IndexedDbQueue(`${user.id}:${wsId}`, owner);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const usable = await Promise.race([opened.ready.then(() => true, () => false), new Promise<false>((resolve) => { timeout = setTimeout(() => resolve(false), 8000); })]);
+  if (timeout !== undefined) clearTimeout(timeout);
+  if (!usable || token !== generation) void opened.close().catch(() => {});
+  if (token !== generation) throw SYNC_CANCELLED;
+  queue = usable ? opened : new MemoryQueue();
   engine = makeEngine(sb, user); onStoreChange(useStore.getState());
   unsubStore = useStore.subscribe(onStoreChange);
 }
 export async function initSync(user: User): Promise<void> {
+  setCloudCheck(() => useSyncStatus.getState().status === "synced" && !pushing && !dirty && !debounceTimer && !retryTimer && !hasUnsyncedEdits());
   if (started && currentUserId === user.id) return;
   if (started) stopSync(); const sb = getSupabase(); if (!sb) return;
   started = true; currentUserId = user.id; last = useStore.getState(); const token = ++generation;
@@ -463,7 +472,7 @@ export function stopSync(): void {
   if (debounceTimer) clearTimeout(debounceTimer); if (retryTimer) clearTimeout(retryTimer); if (deferTimer) clearTimeout(deferTimer);
   debounceTimer = retryTimer = deferTimer = null; unsubStore?.(); unsubStore = null;
   if (channel) void getSupabase()?.removeChannel(channel); channel = null;
-  if (queue) void queue.close().catch(() => {}); queue = null; engine = null;
+  if (queue) void queue.close?.().catch(() => {}); queue = null; engine = null;
   last = null; pushing = dirty = false; attempts = lastWorkspaceRevision = 0;
   fetchedPages = fetchBytes = 0;
   known.clear(); for (const key of Object.keys(cursors)) delete cursors[key as PullFlow]; lastEditAt.clear(); recentlyDeleted.clear(); deferred.clear(); setStatus("idle");
