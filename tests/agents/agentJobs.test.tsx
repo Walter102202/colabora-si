@@ -30,6 +30,26 @@ describe("job preparation", () => {
     expect(subWait({ state: "input_required", waiting_on: "lead" })).toBe("Lead");
     expect(subtaskState(null)).toBe("pending");
   });
+  it("stops waiting for Workers once no work is left for them", () => {
+    const missing = { state: "working" as const, named_worker_ids: ["worker"], joined_worker_ids: [] };
+    const done = { state: "done" as const };
+    expect(jobState(missing, [done, done, done])).toBe("working");
+    expect(jobState(missing, [done, { state: "failed" }, { state: "cancelled" }])).toBe("working");
+    expect(jobState(missing, [done, { state: "queued" }])).toBe("waiting_workers");
+    expect(jobState(missing, [done, null])).toBe("waiting_workers");
+  });
+  it("shows the Lead as next when every subtask has ended and the job is still open", () => {
+    const done = { state: "done" as const };
+    expect(jobWait({ state: "working" }, [done, done, done])).toEqual({ label: "Lead", count: 1 });
+    expect(jobWait({ state: "working", named_worker_ids: ["worker"], joined_worker_ids: [] }, [done, done])).toEqual({ label: "Lead", count: 1 });
+    expect(jobWait({ state: "working" }, [done, { state: "working" }])).toEqual({ label: "Worker", count: 0 });
+  });
+  it("does not let a missing Worker hide what a person or the Lead must do", () => {
+    const missing = { state: "working" as const, named_worker_ids: ["worker"], joined_worker_ids: [] };
+    expect(jobWait(missing, [{ state: "queued" }])).toEqual({ label: "Worker", count: 0 });
+    expect(jobWait(missing, [{ state: "queued" }, { state: "input_required", waiting_on: "human" }])).toEqual({ label: "You", count: 1 });
+    expect(jobWait(missing, [{ state: "queued" }, { state: "ready_for_review" }])).toEqual({ label: "Lead", count: 1 });
+  });
   it("offers enabled external agents, verified or added in Settings, and never a pending connection", () => {
     const agent = { id: "a", name: "Codex", is_platform: false, status: "enabled" as const, revoked_at: null, role: "worker" as const };
     const connection = { agent_id: "a", verified_at: "2026-11-01" };

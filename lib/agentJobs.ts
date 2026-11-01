@@ -27,8 +27,13 @@ export function jobState(task: JobTask | null | undefined, subtasks: (JobTask | 
   if (task.state === "queued") return "ready";
   if (task.state === "ready_for_review") return "ready_for_review";
   if (task.state === "working" && !subtasks.length) return "writing";
-  if (subtasks.length && task.named_worker_ids?.some((id) => !task.joined_worker_ids?.includes(id))) return "waiting_workers";
+  // A Worker that never showed up only matters while there is work left for someone to take.
+  if (!allEnded(subtasks) && task.named_worker_ids?.some((id) => !task.joined_worker_ids?.includes(id))) return "waiting_workers";
   return subtasks.length ? "working" : task.state;
+}
+
+function allEnded(subtasks: (JobTask | null)[]): boolean {
+  return subtasks.every((sub) => sub?.state === "done" || sub?.state === "failed" || sub?.state === "cancelled");
 }
 
 export function subtaskState(task: JobTask | null | undefined): keyof typeof SUBTASK_STATE_LABEL {
@@ -47,13 +52,15 @@ export function jobWait(task: JobTask | null | undefined, subtasks: (JobTask | n
   const state = jobState(task, subtasks);
   if (state === "needs_lead" || state === "ready") return { label: "You", count: 0 };
   if (state === "writing") return { label: "Lead", count: 0 };
-  if (state === "waiting_workers") return { label: "Worker", count: 0 };
   if (state === "done" || state === "failed" || state === "cancelled") return { label: "Nobody", count: 0 };
   // One Accept settles a delivered job and the deliveries under it, so together they count once.
   const accepting = task?.state === "ready_for_review";
   const waits = (accepting ? subtasks.filter((sub) => sub?.state !== "ready_for_review") : subtasks).map(subWait);
   if (accepting) waits.push("You");
   else if (task?.state === "input_required") waits.push(subWait(task));
+  else if (state === "waiting_workers") waits.push("Worker");
+  // Every subtask ended and the job is still open: closing it is the Lead's move.
+  else if (allEnded(subtasks)) waits.push("Lead");
   const you = waits.filter((wait) => wait === "You").length, lead = waits.filter((wait) => wait === "Lead").length;
   return you ? { label: "You", count: you } : lead ? { label: "Lead", count: lead }
     : { label: waits.includes("Worker") ? "Worker" : "Nobody", count: 0 };
