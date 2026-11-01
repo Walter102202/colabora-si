@@ -227,7 +227,10 @@ export async function flush(): Promise<void> {
   try {
     const snapshot = useStore.getState();
     for (const page of Object.values(snapshot.pages)) if (!foreignPageIds.has(page.id) && !known.has(page.id) && !page.isDeleted) { await insertPage(sb, page); if (token !== generation) return; }
-    for (const id of queue.pageIds()) {
+    // Retain attachment authorization before removing the last old row reference:
+    // archive backups first, then destination rows, then source-row removals.
+    const priority = (id: string) => snapshot.pages[id]?.rowOrigin ? 0 : queue!.peek(id).some((op) => op.op === "db_row_add") ? 1 : 2;
+    for (const id of queue.pageIds().sort((a, b) => priority(a) - priority(b))) {
       if (foreignPageIds.has(id)) continue;
       if (queue.isDeleted(id)) await tombstonePage(sb, id);
       else if (known.has(id) && queue.peek(id).length) await engine.flushPage(id);

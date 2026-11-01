@@ -92,7 +92,7 @@ export function moveInTree(pages: Record<string, Page>, rootOrder: string[], id:
       if (prop?.type === "relation" && prop.relationDbId !== target.relationDbId) throw new Error(`“${prop.name}” must relate to the same database in the destination.`);
       if (prop?.options && target.options && prop.id !== target.id) {
         const options = [...target.options];
-        const translate = (id: unknown) => { const option = prop.options!.find((o) => o.id === id); if (!option) return id; let match = options.find((o) => o.name === option.name); if (!match) { match = { ...option, id: newId() }; options.push(match); } return match.id; };
+        const translate = (id: unknown) => { const option = prop.options!.find((o) => o.id === id); if (!option) return id; let match = options.find((o) => o.name === option.name); if (!match) { if (database.locked) throw new Error("Unlock the destination database to add the required options."); match = { ...option, id: newId() }; options.push(match); } return match.id; };
         cells[target.id] = Array.isArray(value) ? value.map(translate) : translate(value);
         properties = properties.map((p) => p.id === target.id ? { ...p, options } : p);
       } else cells[target.id] = value;

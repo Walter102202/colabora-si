@@ -26,6 +26,16 @@ it("does not move relation values to a property that points at another database"
   expect(() => moveInTree(pages, [], "item", "target")).toThrow("same database");
   expect(source.database!.rows).toHaveLength(1); expect(target.database!.rows).toHaveLength(0);
 });
+
+it("maps select options by name without changing a locked destination schema", () => {
+  const source = page({ id: "source", database: db([prop({ id: "state", name: "State", type: "select", options: [{ id: "new", name: "New", color: "gray" }] })], [row({ state: "new" }, "item")]) });
+  const target = page({ id: "target", database: { ...db([prop({ id: "status", name: "State", type: "select", options: [] })]), locked: true } });
+  const pages = { source, target, item: page({ id: "item", parentId: "source" }) };
+  expect(() => moveInTree(pages, [], "item", "target")).toThrow("Unlock the destination");
+  const next = moveInTree({ ...pages, target: { ...target, database: { ...target.database!, locked: false } } }, [], "item", "target").pages;
+  const option = next.target.database!.properties[0].options![0];
+  expect(option.name).toBe("New"); expect(next.target.database!.rows[0].cells.status).toBe(option.id);
+});
 it("PM-4 duplicates row pages, nested ids and internal relations", () => {
   const relation = prop({ id: "related", type: "relation", relationDbId: "a" });
   const first = row({ related: ["r2"] }, "r1"), second = row({}, "r2");

@@ -2,7 +2,9 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { User } from "@supabase/supabase-js";
 import { useStore } from "@/lib/store";
-import { discardLocalCopy, initSync, settleBeforeSignOut, stopSync, useSyncConflict } from "@/lib/sync";
+import { discardLocalCopy, flush, initSync, settleBeforeSignOut, stopSync, useSyncConflict } from "@/lib/sync";
+import { applyOps, type PageOp } from "@/lib/pageOps";
+import type { Page } from "@/lib/types";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { b, page } from "./fixtures";
 
@@ -79,6 +81,33 @@ beforeEach(() => {
   useStore.getState().clearLocalWorkspace();
 });
 afterEach(() => { stopSync(); });
+
+it("persists a trash backup before dropping the old database attachment reference", async () => {
+  await initSync(user("user-b")); await sleep(0);
+  const s = useStore.getState(), dbId = s.createDatabasePage();
+  s.addProperty(dbId, { name: "Files", type: "files" });
+  const prop = useStore.getState().pages[dbId].database!.properties.at(-1)!;
+  const rowId = s.addRow(dbId, { cells: { [prop.id]: [{ fileId: "protected-file" }] } });
+  const rowPageId = useStore.getState().pages[dbId].database!.rows[0].pageId;
+  await flush();
+  const backend = h.client as ReturnType<typeof client>, original = backend.rpc;
+  let backupSaved = false;
+  const writes: string[] = [];
+  backend.rpc = async (name, args) => {
+    if (name !== "apply_page_ops") return original(name, args);
+    const ops = args.p_ops as PageOp[], id = String(args.p_page_id);
+    if (id === dbId && ops.some((op) => op.op === "db_row_delete") && !backupSaved) return { data: null, error: new Error("last attachment reference removed before backup") };
+    const server = h.fake.pages.find((r) => r.id === id)!;
+    const result = applyOps(server.data as Page, ops, { by: "human", id: "user-b", at: Date.now() });
+    server.data = result.page; server.revision = Number(server.revision) + 1;
+    if (id === rowPageId) backupSaved = !!result.page.rowOrigin;
+    writes.push(id);
+    return { data: { revision: Number(server.revision), results: result.results }, error: null };
+  };
+  s.deleteRow(dbId, rowId); await flush();
+  expect(writes.slice(0, 2)).toEqual([rowPageId, dbId]);
+  expect((h.fake.pages.find((r) => r.id === rowPageId)!.data as Page).rowOrigin!.row.cells[prop.id]).toEqual([{ fileId: "protected-file" }]);
+});
 
 it("starts a new account from the default pages, without offering another account's copy", async () => {
   useStore.setState({ pages: { [stale().id]: stale() }, rootOrder: [stale().id], syncUserId: "user-a", syncWorkspaceId: "ws-a" });
