@@ -110,8 +110,8 @@
   "branchExceptions": {
     "a/product-privacy": ["OWNERS.json"],
     "a/product-recovery": ["OWNERS.json"],
-    "b/product-data": ["OWNERS.json"],
-    "b/product-table": ["OWNERS.json"],
+    "b/product-data": ["OWNERS.json", "supabase/functions/_shared/lib/types.ts"],
+    "b/product-table": ["OWNERS.json", "supabase/functions/_shared/lib/types.ts"],
     "b/product-blocks": ["OWNERS.json"],
     "a/connect": [
       "README.md",
