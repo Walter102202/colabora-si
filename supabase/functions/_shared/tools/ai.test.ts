@@ -147,17 +147,38 @@ Deno.test('a reply never passes 50000 characters', async () => {
   assert.equal((out.structured.pages as { text: string }[])[0].text.length, 50000); assert.equal(out.structured.truncated, true);
 });
 
-Deno.test('query_database ignores AI requests when reading work task columns', async () => {
+Deno.test('query_database filters and sorts work task columns, ignoring AI requests', async () => {
   const page = { id: 'db', database: { ...database, properties: [...database.properties,
-    { id: 'status', name: 'Status', type: 'agentStatus' }, { id: 'worker', name: 'Worker', type: 'agentDelegate' }] } };
+    { id: 'status', name: 'Status', type: 'agentStatus' }, { id: 'worker', name: 'Worker', type: 'agentDelegate' }],
+    rows: ['row1', 'row2', 'row3'].map((pageId, i) => ({ ...database.rows[0], id: `r${i + 1}`, pageId })),
+  } };
   const h = harness(fill, page);
-  const rows = [{ row_page_id: 'row1', state: 'ready_for_review', delegate_agent_id: 'worker', request_kind: null },
-    { row_page_id: 'row1', state: 'done', delegate_agent_id: 'platform', request_kind: 'rewrite' }];
+  const rows = [{ row_page_id: 'row1', state: 'working', delegate_agent_id: 'worker', request_kind: null },
+    { row_page_id: 'row1', state: 'done', delegate_agent_id: 'platform', request_kind: 'rewrite' },
+    { row_page_id: 'row2', state: 'done', delegate_agent_id: 'another', request_kind: null }];
   h.ctx.db.select = <T>(spec: import('../db.ts').SelectSpec) => Promise.resolve({ data: (spec.table === 'agent_tasks'
     ? rows.filter(r => (spec.filters ?? []).every(f => f.col !== 'request_kind' || r.request_kind === f.value)) : []) as T[], error: null });
-  const out = await readTools.find(t => t.name === 'query_database')!.handler({ database_id: 'db' }, h.ctx);
-  assert.deepEqual((out.structured.rows as { raw: Row }[])[0].raw.Status, 'ready_for_review');
+  const query = (args: Row) => readTools.find(t => t.name === 'query_database')!.handler({ database_id: 'db', ...args }, h.ctx);
+  const out = await query({});
+  assert.deepEqual((out.structured.rows as { raw: Row }[])[0].raw.Status, 'working');
   assert.deepEqual((out.structured.rows as { raw: Row }[])[0].raw.Worker, 'worker');
+  assert.deepEqual(out.structured.properties, page.database.properties);
+  for (const [property, op, value, ids] of [
+    ['Status', 'is', 'working', ['r1']], ['Worker', 'is', 'worker', ['r1']],
+    ['Status', 'isNot', 'working', ['r2', 'r3']], ['Worker', 'isEmpty', '', ['r3']],
+  ] as const) {
+    const filtered = await query({ filter: [{ property, op, value }] });
+    assert.deepEqual((filtered.structured.rows as Row[]).map(r => r.row_id), ids);
+    assert.equal(filtered.structured.total, ids.length);
+  }
+  for (const property of ['Status', 'Worker']) {
+    const sorted = await query({ sort: [{ property, direction: 'asc' }], limit: 1 });
+    assert.deepEqual((sorted.structured.rows as Row[]).map(r => r.row_id), ['r3']);
+    const next = await query({ sort: [{ property, direction: 'asc' }], limit: 1, cursor: sorted.structured.next_cursor });
+    assert.deepEqual((next.structured.rows as Row[]).map(r => r.row_id), ['r2']);
+    const descending = await query({ sort: [{ property, direction: 'desc' }], limit: 1 });
+    assert.deepEqual((descending.structured.rows as Row[]).map(r => r.row_id), ['r1']);
+  }
 });
 
 Deno.test('get_ai_request rejects oversized Markdown without dropping the end of a block', async () => {
