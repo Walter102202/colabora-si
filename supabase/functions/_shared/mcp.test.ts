@@ -197,15 +197,45 @@ Deno.test('no bearer: 401 with WWW-Authenticate pointing at the protected-resour
   assert.equal((await wrong.json()).error, 'wrong_principal');
 });
 
-Deno.test('GET serves the PRM on the well-known path and 405 elsewhere', async () => {
+Deno.test('GET serves the PRM on the well-known path', async () => {
   const prm = await handleMcp(new Request('http://localhost/functions/v1/mcp/.well-known/oauth-protected-resource'), server, deps());
   const body = await prm.json();
   assert.equal(body.resource, 'http://project.test/functions/v1/mcp');
   assert.deepEqual(body.authorization_servers, ['http://project.test/auth/v1']);
   assert.deepEqual(body.bearer_methods_supported, ['header']);
-  const get = await handleMcp(new Request('http://localhost/functions/v1/mcp'), server, deps());
-  assert.equal(get.status, 405);
-  await get.body?.cancel();
+});
+
+Deno.test('anonymous GET answers the OAuth challenge, so clients that discover by GET can sign in', async () => {
+  const tasks = await handleMcp(new Request('http://localhost/functions/v1/mcp'), server, deps());
+  assert.equal(tasks.status, 401);
+  assert.match(
+    tasks.headers.get('WWW-Authenticate') ?? '',
+    /resource_metadata="http:\/\/project\.test\/functions\/v1\/mcp\/\.well-known\/oauth-protected-resource"/,
+  );
+  assert.equal((await tasks.json()).error, 'invalid_token');
+  const pages = await handleMcp(new Request('http://localhost/functions/v1/workspace-mcp'), server, deps(), {
+    resourceUrl: 'http://project.test/functions/v1/workspace-mcp',
+  });
+  assert.equal(pages.status, 401);
+  assert.match(
+    pages.headers.get('WWW-Authenticate') ?? '',
+    /resource_metadata="http:\/\/project\.test\/functions\/v1\/workspace-mcp\/\.well-known\/oauth-protected-resource"/,
+  );
+  await pages.body?.cancel();
+});
+
+Deno.test('a signed-in GET and every other method stay 405: this server offers no stream', async () => {
+  const url = 'http://localhost/functions/v1/mcp';
+  const signedIn = await handleMcp(new Request(url, { headers: { Authorization: 'Bearer jwt' } }), server, deps());
+  assert.equal(signedIn.status, 405);
+  assert.equal(signedIn.headers.get('Allow'), 'POST, OPTIONS');
+  await signedIn.body?.cancel();
+  for (const method of ['HEAD', 'DELETE', 'PUT']) {
+    const res = await handleMcp(new Request(url, { method }), server, deps());
+    assert.equal(res.status, 405, method);
+    assert.equal(res.headers.get('WWW-Authenticate'), null, method);
+    await res.body?.cancel();
+  }
 });
 
 Deno.test('domain errors come back as isError results, not JSON-RPC errors', async () => {
