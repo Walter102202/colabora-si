@@ -23,13 +23,18 @@ it("row title, trash recovery and database moves preserve membership and cell va
   expect(useStore.getState().pages[dbId].database!.rows[0]).toMatchObject({ id: rowId, cells: { title: "Renamed", [amount.id]: 500 } });
   s.movePage(original.pageId, null);
   expect(useStore.getState().pages[dbId].database!.rows).toHaveLength(0);
+  s.addProperty(dbId, { name: "Ticket", type: "id" });
   s.movePage(original.pageId, dbId);
   expect(useStore.getState().pages[dbId].database!.rows[0].cells[amount.id]).toBe(500);
+  const ticket = useStore.getState().pages[dbId].database!.properties.at(-1)!;
+  expect(useStore.getState().pages[dbId].database!.rows[0].cells[ticket.id]).toBe(1);
+  expect(ticket.nextId).toBe(2);
   const other = s.createDatabasePage(), before = useStore.getState().pages;
   expect(() => s.movePage(original.pageId, other)).toThrow("matching");
   expect(useStore.getState().pages).toBe(before);
   s.addProperty(other, { name: "Amount", type: "number" });
   const target = useStore.getState().pages[other].database!.properties.at(-1)!;
+  s.addProperty(other, { name: "Ticket", type: "id" });
   s.movePage(original.pageId, other);
   expect(useStore.getState().pages[dbId].database!.rows).toHaveLength(0);
   expect(useStore.getState().pages[other].database!.rows[0].cells[target.id]).toBe(500);

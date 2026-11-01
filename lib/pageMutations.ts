@@ -89,6 +89,7 @@ export function moveInTree(pages: Record<string, Page>, rootOrder: string[], id:
       const prop = origin?.properties.find((p) => p.id === key);
       const target = properties.find((p) => p.id === key) ?? properties.find((p) => p.name === prop?.name && p.type === prop?.type);
       if (!target || (prop && target.type !== prop.type)) throw new Error(`The destination needs a matching “${prop?.name ?? key}” property to keep this row's data.`);
+      if (prop?.type === "relation" && prop.relationDbId !== target.relationDbId) throw new Error(`“${prop.name}” must relate to the same database in the destination.`);
       if (prop?.options && target.options && prop.id !== target.id) {
         const options = [...target.options];
         const translate = (id: unknown) => { const option = prop.options!.find((o) => o.id === id); if (!option) return id; let match = options.find((o) => o.name === option.name); if (!match) { match = { ...option, id: newId() }; options.push(match); } return match.id; };
@@ -99,7 +100,7 @@ export function moveInTree(pages: Record<string, Page>, rootOrder: string[], id:
     properties = properties.map((prop) => {
       if (prop.type !== "id") return prop;
       const value = Math.max(prop.nextId ?? 1, ...database.rows.map((r) => (Number(r.cells[prop.id]) || 0) + 1));
-      if (saved?.databasePageId !== destination.id || database.rows.some((r) => r.cells[prop.id] === cells[prop.id])) cells[prop.id] = value;
+      if (saved?.databasePageId !== destination.id || !Number.isFinite(Number(cells[prop.id])) || cells[prop.id] == null || database.rows.some((r) => r.cells[prop.id] === cells[prop.id])) cells[prop.id] = value;
       return { ...prop, nextId: Math.max(value, Number(cells[prop.id]) + 1) };
     });
     const row: DbRow = { id: saved?.row.id ?? newId(), pageId: id, cells };

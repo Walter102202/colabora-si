@@ -34,6 +34,17 @@ export function deleteRow(page: Page, rowId: string, now = Date.now()): { page: 
   return { page: withDatabase(page, { ...page.database, rows }, now), rowPageId: row.pageId };
 }
 
+export function moveRows(page: Page, ids: string[], targetId: string, position: "before" | "after"): Page {
+  const database = page.database;
+  if (!database || page.locked || database.locked) return page;
+  const selected = new Set(ids), target = database.rows.find((r) => r.id === targetId);
+  const moved = database.rows.filter((r) => selected.has(r.id));
+  if (!target || selected.has(targetId) || !moved.length || moved.some((r) => (r.parentRowId ?? null) !== (target.parentRowId ?? null))) return page;
+  const rows = database.rows.filter((r) => !selected.has(r.id));
+  rows.splice(rows.findIndex((r) => r.id === targetId) + (position === "after" ? 1 : 0), 0, ...moved);
+  return withDatabase(page, { ...database, rows }, Date.now());
+}
+
 export function addProperty(page: Page, patch: Partial<DbProperty> = {}, now = Date.now()): Page {
   if (!page.database || page.database.locked) return page;
   const property = createProperty({ name: patch.name ?? "Property", type: patch.type ?? "text", options: patch.options, idPrefix: patch.idPrefix });

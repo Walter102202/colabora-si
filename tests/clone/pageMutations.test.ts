@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { duplicateDeep, restoreTree, softDeleteTree, wouldCycle } from "@/lib/pageMutations";
+import { duplicateDeep, moveInTree, restoreTree, softDeleteTree, wouldCycle } from "@/lib/pageMutations";
 import { b, column, db, page, prop, row, T } from "./fixtures";
 
 it("PM-1 soft delete cascades without mutating the source", () => {
@@ -17,6 +17,14 @@ it("PM-3 detects descendant cycles", () => {
   const pages = { a: page({ id: "a" }), b: page({ id: "b", parentId: "a" }) };
   expect(wouldCycle(pages, "a", "b")).toBe(true);
   expect(wouldCycle(pages, "b", "a")).toBe(false);
+});
+
+it("does not move relation values to a property that points at another database", () => {
+  const source = page({ id: "source", database: db([prop({ id: "rel", name: "Customer", type: "relation", relationDbId: "customers" })], [row({ rel: ["customer"] }, "item")]) });
+  const target = page({ id: "target", database: db([prop({ id: "other", name: "Customer", type: "relation", relationDbId: "suppliers" })]) });
+  const pages = { source, target, item: page({ id: "item", parentId: "source" }) };
+  expect(() => moveInTree(pages, [], "item", "target")).toThrow("same database");
+  expect(source.database!.rows).toHaveLength(1); expect(target.database!.rows).toHaveLength(0);
 });
 it("PM-4 duplicates row pages, nested ids and internal relations", () => {
   const relation = prop({ id: "related", type: "relation", relationDbId: "a" });

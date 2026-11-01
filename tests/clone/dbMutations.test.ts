@@ -19,6 +19,16 @@ it("DM-3 title cells return a row page patch", () => {
   const theRow = row();
   expect(mutations.updateCell(page({ database: db([], [theRow]) }), theRow.id, "title", "Hello", T + 1).rowPagePatch).toEqual({ title: "Hello" });
 });
+
+it("moves a selected set in source order without changing hidden rows or sub-item parents", () => {
+  const a = row({}, "a"), b = row({}, "b"), c = row({}, "c"), d = row({}, "d"), child = { ...row({}, "child"), parentRowId: a.id };
+  const source = page({ database: db([], [a, b, child, c, d]) });
+  const moved = mutations.moveRows(source, [c.id, a.id], d.id, "after");
+  expect(moved.database!.rows.map((r) => r.id)).toEqual([b.id, child.id, d.id, a.id, c.id]);
+  expect(moved.database!.rows[1].parentRowId).toBe(a.id);
+  expect(mutations.moveRows(source, [child.id], b.id, "before")).toBe(source);
+  expect(mutations.moveRows({ ...source, locked: true }, [a.id], d.id, "after").database!.rows).toBe(source.database!.rows);
+});
 it("DM-4 every successful database mutation touches updatedAt", () => {
   const property = prop(), theRow = row(), secondView = view();
   const database = db([property], [theRow]);

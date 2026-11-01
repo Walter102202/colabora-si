@@ -6,7 +6,7 @@ import { buildDbOps, buildLinkedDbOps, createLinkedViews } from "@/lib/dbOps";
 import { useStore } from "@/lib/store";
 it("DB-1 DbOps exposes the frozen functions and delegates agent actions with the row page", () => {
   const pageId = useStore.getState().createDatabasePage(), ops = buildDbOps(pageId);
-  const functions = ["addRow", "updateCell", "deleteRow", "addProperty", "updateProperty", "deleteProperty", "addView", "updateView", "deleteView", "setLocked", "addRowFromTemplate", "saveRowAsTemplate", "deleteRowTemplate", "openRow", "runButton"] as const;
+  const functions = ["addRow", "updateCell", "deleteRow", "deleteRows", "updateCells", "moveRows", "addProperty", "updateProperty", "deleteProperty", "addView", "updateView", "deleteView", "setLocked", "addRowFromTemplate", "saveRowAsTemplate", "deleteRowTemplate", "openRow", "runButton"] as const;
   for (const key of functions) expect(typeof ops[key]).toBe("function");
   expect(Object.values(ops).filter((value) => typeof value === "function")).toHaveLength(functions.length);
   expect(buildDbOps(pageId)).toBe(ops);

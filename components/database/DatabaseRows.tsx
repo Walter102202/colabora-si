@@ -8,5 +8,5 @@ const TimelineView = lazy(() => import("@/components/database/TimelineView"));
 import type { ViewProps } from "@/lib/dbView";
 export default function DatabaseRows(props: ViewProps) {
   const View = { table: TableView, board: BoardView, list: ListView, gallery: GalleryView, calendar: CalendarView, timeline: TimelineView }[props.view.type];
-  return <Suspense fallback={<div className="min-h-40" />}><View {...props} /></Suspense>;
+  return <Suspense fallback={<div className="min-h-40" />}><View key={`${props.ops.pageId}:${props.view.id}`} {...props} /></Suspense>;
 }
