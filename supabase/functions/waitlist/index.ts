@@ -3,14 +3,17 @@
 import { oauthError } from '../_shared/errors.ts';
 import { hmacSha256Hex } from '../_shared/hmac.ts';
 import { denoEnv, MisconfiguredError, serviceClient } from '../_shared/supabase.ts';
-import { handleWaitlist, type JoinResult } from './handler.ts';
+import { sendConfirmation } from './email.ts';
+import { handleWaitlist, type JoinResult, type Unconfirmed, type Unsynced } from './handler.ts';
 import { addToNotion } from './notion.ts';
+
+declare const EdgeRuntime: { waitUntil(work: Promise<unknown>): void };
 
 Deno.serve(async (req) => {
   const env = denoEnv();
   try {
     if (!env.APP_URL) throw new MisconfiguredError('APP_URL');
-    const { NOTION_TOKEN: token, NOTION_WAITLIST_DATABASE_ID: databaseId } = env;
+    const { NOTION_TOKEN: token, NOTION_WAITLIST_DATABASE_ID: databaseId, RESEND_API_KEY: resendKey } = env;
     return await handleWaitlist(req, {
       appOrigin: new URL(env.APP_URL).origin,
       hashIp: (ip) => hmacSha256Hex(env.SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SECRET_KEYS ?? '', ip),
@@ -23,7 +26,23 @@ Deno.serve(async (req) => {
         const { error } = await serviceClient(env).rpc('waitlist_mark_synced', { p_id: id });
         if (error) throw error;
       },
+      background: (work) => EdgeRuntime.waitUntil(work),
       copyToNotion: token && databaseId ? (email, at) => addToNotion(token, databaseId, email, at) : undefined,
+      async unsynced(limit) {
+        const { data, error } = await serviceClient(env).rpc('waitlist_unsynced', { p_limit: limit });
+        if (error) throw error;
+        return data as Unsynced[];
+      },
+      sendConfirmation: resendKey ? (email, id) => sendConfirmation(resendKey, email, id) : undefined,
+      async unconfirmed(limit) {
+        const { data, error } = await serviceClient(env).rpc('waitlist_unconfirmed', { p_limit: limit });
+        if (error) throw error;
+        return data as Unconfirmed[];
+      },
+      async markConfirmed(id) {
+        const { error } = await serviceClient(env).rpc('waitlist_mark_confirmed', { p_id: id });
+        if (error) throw error;
+      },
     });
   } catch (err) {
     if (err instanceof MisconfiguredError) return oauthError(500, 'misconfigured', 'The waitlist is not configured.');
