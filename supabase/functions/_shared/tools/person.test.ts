@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import type { Db, DbResult } from '../db.ts';
 import type { ToolContext, ToolDef } from '../mcp.ts';
 import { assistRequest, personTools } from './person.ts';
+import { aiTools } from './ai.ts';
 
 type Row = Record<string, unknown>;
 const tool = (name: string) => personTools.find((t) => t.name === name) as ToolDef;
@@ -49,9 +50,12 @@ Deno.test('the skill hands the run, the message and the wording to SQL, and a re
 });
 
 Deno.test('assistRequest returns the thread as it came', async () => {
-  const h = harness({ kind: 'assist', task_id: 't', messages: [], through_seq: null });
+  const to_review = { lessons: [{ id: 'l', text: 'Review this', task: 'Task', path: '/p/p?task=t' }], lessons_total: 1, differences: [], differences_total: 0 };
+  const h = harness({ kind: 'assist', task_id: 't', messages: [], through_seq: null, to_review });
   const out = await assistRequest('t', h.ctx);
   assert.equal((out.structured as Row).kind, 'assist');
+  assert.deepEqual((out.structured as Row).to_review, to_review);
+  assert.deepEqual((aiTools.find((t) => t.name === 'get_ai_request')?.outputSchema?.properties as Row).to_review, { type: 'object' });
   assert.deepEqual(h.calls[0], { name: 'assist_request_context', args: { p_task_id: 't' } });
 });
 

@@ -102,7 +102,7 @@ select is((select count(*) from public.lessons), 0::bigint, 'a chat without a li
 select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'viewer')::uuid);
 select is(tests.error_of(format($$select public.decide_lesson(%L::uuid, 'accept')$$, :'l1')), 'forbidden', 'a viewer cannot accept');
-select is((select count(*) from public.lessons where id = :'l1'::uuid), 1::bigint, 'but can read it');
+select is((select count(*) from public.lessons where id = :'l1'::uuid), 0::bigint, 'a viewer does not receive a proposal they cannot decide');
 select tests.reset_role();
 select tests.set_anon();
 select is(tests.sqlstate_of(format($$select public.decide_lesson(%L::uuid, 'accept')$$, :'l1')), '42501', 'a signed-out caller cannot call it');
