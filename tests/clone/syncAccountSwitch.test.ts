@@ -53,6 +53,7 @@ function client() {
     channel: () => channel, removeChannel: async () => {}, getChannels: () => [],
     rpc: async (name: string) => {
       h.fake.writes.push(name);
+      if (name === "accept_invitation") return { data: "ws-b", error: null };
       return h.fake.failRpc ? { data: null, error: new Error("offline") } : { data: { revision: 2, results: [] }, error: null };
     },
   };
@@ -66,6 +67,7 @@ beforeEach(() => {
   h.fake = { workspaces: [], pages: [], inserted: [], writes: [], failRpc: false };
   h.client = client(); h.cleared.length = 0; foreignPageIds.clear();
   useSyncConflict.setState({ prompt: null });
+  sessionStorage.clear();
   useStore.getState().clearLocalWorkspace();
 });
 afterEach(() => { stopSync(); });
@@ -106,6 +108,25 @@ it("still asks a person with local pages and no account yet", async () => {
   useSyncConflict.getState().prompt!.resolve("server");
   await started;
   expect(Object.keys(useStore.getState().pages)).toEqual(["mine"]);
+});
+
+it.each([false, true])("joining an invited workspace preserves its pages and merges only meaningful local content (%s)", async (meaningful) => {
+  h.fake.workspaces.push({ id: "ws-b", owner_id: "owner", revision: 1, root_order: ["owner-page"], settings: null, synced_blocks: {} });
+  h.fake.pages.push(cloudRow("owner-page", "The owner's page"));
+  if (meaningful) {
+    const local = page({ id: "local-work", title: "My notes", createdAt: 1, updatedAt: 2 });
+    useStore.setState({ pages: { [local.id]: local }, rootOrder: [local.id], syncUserId: null, syncWorkspaceId: null });
+  }
+  sessionStorage.setItem("colabora-invitation", "workspace-token");
+  await initSync(user("invitee"));
+  await sleep(30);
+  const expected = meaningful ? ["owner-page", "local-work"] : ["owner-page"];
+  expect(Object.keys(useStore.getState().pages).sort()).toEqual([...expected].sort());
+  expect(useStore.getState().rootOrder).toEqual(expected);
+  expect(h.fake.inserted.map((row) => row.id)).toEqual(meaningful ? ["local-work"] : []);
+  expect(h.fake.pages.find((row) => row.id === "owner-page")?.deleted_at).toBeNull();
+  expect(useSyncConflict.getState().prompt).toBeNull();
+  expect(sessionStorage.getItem("colabora-invitation")).toBeNull();
 });
 
 it("reports whether every edit reached the cloud", async () => {

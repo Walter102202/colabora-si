@@ -309,10 +309,12 @@ async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise
   if (previousUser && previousUser !== user.id) await clearLocalCopy();
   const initial = useStore.getState();
   let linked = initial.syncWorkspaceId;
+  let acceptedInvitation = false;
   const invitation = sessionStorage.getItem("colabora-invitation");
   if (invitation) {
     const result = await sb.rpc("accept_invitation", { p_token: invitation });
     if (result.error) throw result.error;
+    acceptedInvitation = true;
     linked = result.data; sessionStorage.removeItem("colabora-invitation");
     const url = new URL(location.href); url.searchParams.delete("invite"); history.replaceState(history.state, "", url);
   }
@@ -339,7 +341,7 @@ async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise
   if (token !== generation) throw SYNC_CANCELLED;
   const rows = await fetchAllPages(sb); if (token !== generation) throw SYNC_CANCELLED;
   rows.forEach((r) => { known.add(r.id); advance("pages", r.updated_at); });
-  let choice: ConflictChoice = !linked && !meaningful && rows.some((r) => r.data && !r.deleted_at) ? "server" : "merge";
+  let choice: ConflictChoice = (!linked || acceptedInvitation) && !meaningful && rows.some((r) => r.data && !r.deleted_at) ? "server" : "merge";
   if (!linked && meaningful && rows.some((r) => r.data && !r.deleted_at)) choice = await askConflictChoice(rows.filter((r) => r.data && !r.deleted_at).length, Object.values(useStore.getState().pages).filter((p) => !p.isDeleted && !foreignPageIds.has(p.id)).length);
   if (token !== generation) throw SYNC_CANCELLED;
   const current = useStore.getState();

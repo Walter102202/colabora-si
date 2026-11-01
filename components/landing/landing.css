@@ -186,7 +186,7 @@ html:has(.landing){-webkit-text-size-adjust:100%;scroll-behavior:smooth}
 .landing .cs-alt{margin-top:14px;padding-top:12px;border-top:1px solid var(--cs-line);font-size:15px;color:var(--cs-muted)}
 .landing .cs-linkbtn{padding:0;border:0;background:none;color:var(--cs-blue);font-weight:500;cursor:pointer;text-underline-offset:3px}
 .landing .cs-linkbtn:hover{text-decoration:underline}
-.landing.cs-solo{min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px 16px}
+.landing.cs-solo{box-sizing:border-box;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px 16px}
 .landing .cs-solo__sheet{width:100%;max-width:480px;padding:32px 24px 24px;border:1px solid var(--cs-line);border-radius:12px;background:var(--cs-white)}
 .landing .cs-solo__t{font-size:32px;line-height:36px;letter-spacing:-1px}
 .landing .cs-solo__p{margin-top:12px;font-size:17px;line-height:27px}
