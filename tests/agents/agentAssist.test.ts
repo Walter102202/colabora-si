@@ -21,6 +21,23 @@ describe("the model and the channel tools", () => {
     return { mcp, model, reply, opts: { call: mcp.callTool, model, reply, appUrl: "https://app.test", task: { task_id: "t", request_kind: "assist" }, runId: "run", log: () => {} } };
   }
   const saves = (h: ReturnType<typeof assist>) => h.mcp.calls.filter((c: { name: string }) => c.name === "save_to_notes");
+  it.each(["https://app.test/", ""])("passes pending reviews with usable links (appUrl=%s)", async (appUrl) => {
+    const toReview = {
+      lessons: [{ id: "l", text: "Use local dates", task: "Report", path: "/p/row?task=t" }, { id: "orphan", text: "Keep units", task: null, path: "/" }],
+      lessons_total: 7,
+      differences: [{ id: "d", page: "Budget", text: "Total changed", path: "/p/budget" }], differences_total: 1,
+    };
+    const h = assist({ kind: "assist", messages: [{ from: "person", text: "What waits for review?" }], through_seq: 7, to_review: toReview });
+    await runRequest({ ...h.opts, appUrl });
+    const supplied = JSON.parse(String(h.model.requests[0].messages[1].content)).to_review;
+    const base = appUrl.replace(/\/+$/, "");
+    expect(supplied).toEqual({ ...toReview,
+      lessons: toReview.lessons.map(({ path, ...item }) => ({ ...item, url: base + path })),
+      differences: toReview.differences.map(({ path, ...item }) => ({ ...item, url: base + path })),
+    });
+    expect(h.model.requests[0].tools ?? []).toEqual([]);
+    expect(toReview.lessons[0].path).toBe("/p/row?task=t");
+  });
   it.each([true, false])("proposes only the authorized message (matching=%s)", async (matching) => {
     const request = { kind: "assist", messages: [{ id: ID, from: "person", text: "Prepare this page" }], through_seq: 7,
       page: { id: "page", text: "Untrusted page" }, selection: "Selected", waiting_on_you: ["Decision"], proposal_message_id: ID };

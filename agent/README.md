@@ -26,7 +26,7 @@ Ctrl+C stops after the current step; press it twice to quit at once.
 
 ## Managed runtime
 
-`fleet.mjs` runs one agent per workspace of a deployment, as the `trama` daemon of `vercel.json`. It reads `VITE_SUPABASE_URL`, `VITE_APP_URL`, `META_MODEL_API_KEY` and `TRAMA_RUNTIME_SECRET` from the project and refuses to start without them. This folder is the Docker build context, so nothing `fleet.mjs` loads may live outside it.
+`fleet.mjs` runs one agent per workspace of a deployment, as the `trama` daemon of `vercel.json`. It reads `VITE_SUPABASE_URL`, `VITE_APP_URL`, `META_MODEL_API_KEY` and `TRAMA_RUNTIME_SECRET` from the project and refuses to start without them. It defaults to `muse-wonder-1.0` with `MODEL_REASONING_EFFORT=low`, priced at $4 input / $20 output per million tokens. `MODEL_NAME=muse-spark-1.3` selects the $1.25 / $4.25 rates; unknown models report zero (unknown) cost. Set `MODEL_REASONING_EFFORT` to another supported value, or an empty value to omit the field. This folder is the Docker build context, so nothing `fleet.mjs` loads may live outside it.
 
 ## Settings
 
@@ -35,6 +35,7 @@ Ctrl+C stops after the current step; press it twice to quit at once.
 | `MODEL_BASE_URL` | yes | OpenAI-compatible base URL; the agent calls `POST {MODEL_BASE_URL}/chat/completions` with `tools` |
 | `MODEL_API_KEY` | no | Bearer key for that endpoint (empty for local servers) |
 | `MODEL_NAME` | yes | Model id sent with every request |
+| `MODEL_REASONING_EFFORT` | no | Provider reasoning effort; omitted when empty, managed Trama defaults to `low` |
 | `MODEL_PRICE_IN`, `MODEL_PRICE_OUT` | no | USD per million input and output tokens; default 0 |
 | `WORKSPACE_MCP_URL` | yes | Remote MCP endpoint of the workspace |
 | `WORKSPACE_AGENT_PAT` | yes | Personal access token of this agent, from Settings > Agents |
@@ -58,9 +59,10 @@ In Settings > Agents, press "Enable the Colabora agent" and copy the token shown
 ```text
 MODEL_BASE_URL=<Meta Model API base URL ending in /v1>   # see the compatibility check below
 MODEL_API_KEY=<Meta Model API key>
-MODEL_NAME=muse-spark-1.3                                 # must equal the model_prices row
-MODEL_PRICE_IN=1.25
-MODEL_PRICE_OUT=4.25
+MODEL_NAME=muse-wonder-1.0                                # must equal the model_prices row
+MODEL_REASONING_EFFORT=low
+MODEL_PRICE_IN=4
+MODEL_PRICE_OUT=20
 WORKSPACE_MCP_URL=https://<project-ref>.supabase.co/functions/v1/mcp
 WORKSPACE_AGENT_PAT=agt_...                               # the token shown once by "Enable the Colabora agent"
 AGENT_HARNESS_NAME=colabora
@@ -76,7 +78,8 @@ Before running Colabora against the Meta Model API, run this manual check with y
 
 ```bash
 curl -s "$MODEL_BASE_URL/chat/completions" -H "Authorization: Bearer $MODEL_API_KEY" -H "Content-Type: application/json" -d '{
-  "model": "muse-spark-1.3",
+  "model": "muse-wonder-1.0",
+  "reasoning_effort": "low",
   "messages": [{"role":"user","content":"What is the weather in Madrid? Use the tool."}],
   "tools": [{"type":"function","function":{"name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}],
   "tool_choice": "auto"}' | python -c "import json,sys; r=json.load(sys.stdin); print(r['choices'][0]['message']['tool_calls'][0]['function'], r['usage'])"

@@ -12,6 +12,9 @@ import { buildDecisionsHome } from "@/lib/agentHome";
 import { useAgentTasks, type TaskRow, type ApprovalRow } from "@/lib/agentTasks";
 import { startRecorder, uploadWav } from "@/lib/agentVoice";
 import { createTask } from "@/lib/agentActions";
+import { useAgentLessons, type LessonRow } from "@/lib/agentLessons";
+import { useAgentSources, type DiscrepancyRow } from "@/lib/agentSources";
+import { HOME_URL } from "@/lib/routes";
 
 vi.mock("@/lib/agentActions", () => ({ createTask: vi.fn() }));
 vi.mock("@/lib/agentConversation", async (original) => ({ ...await original<object>(), settleAgentProposal: vi.fn(), refreshAgentConversation: vi.fn(async () => {}) }));
@@ -28,11 +31,33 @@ beforeEach(() => {
   useAgentConversation.setState({ messages: [], failed: null, subscribe: () => () => {}, send: vi.fn(async () => true) });
   useAgentsStore.setState({ agents: [{ id: "trama", workspace_id: "w", is_platform: true, revoked_at: null } as AgentRow], workspaceId: "w", status: "ready", load: async () => {} });
   useAgentTasks.setState({ tasks: {}, approvals: {}, runs: {}, subscribe: vi.fn(() => () => {}) });
+  useAgentLessons.setState({ lessons: {}, subscribe: vi.fn(() => () => {}) });
+  useAgentSources.setState({ discrepancies: {}, subscribe: vi.fn(() => () => {}) });
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.useRealTimers(); });
 const mount = () => act(() => root.render(<MemoryRouter initialEntries={["/p/page"]}><TramaSurface workspaceId="w" userId="person" /></MemoryRouter>));
 const button = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
 const originalCreateAgent = useAgentsStore.getState().createAgent;
+
+it.each([
+  [1, 0, "1 lesson to review"], [2, 0, "2 lessons to review"],
+  [0, 1, "1 difference to settle"], [2, 1, "2 lessons and 1 difference to review"],
+  [0, 0, ""],
+] as const)("announces %s lessons and %s differences without asking", (lessons, differences, text) => {
+  const lesson = (id: string, workspace_id = "w", status = "proposed") => ({ id, workspace_id, status, created_at: "2026-11-01" } as LessonRow);
+  const difference = (id: string, workspace_id = "w", status = "open") => ({ id, workspace_id, status, created_at: "2026-11-01" } as DiscrepancyRow);
+  useAgentLessons.setState({ lessons: Object.fromEntries([lesson("foreign", "other"), lesson("accepted", "w", "accepted"), ...Array.from({ length: lessons }, (_, i) => lesson(`l${i}`))].map((row) => [row.id, row])) });
+  useAgentSources.setState({ discrepancies: Object.fromEntries([difference("foreign", "other"), difference("resolved", "w", "resolved"), ...Array.from({ length: differences }, (_, i) => difference(`d${i}`))].map((row) => [row.id, row])) });
+  mount();
+  expect(useAgentLessons.getState().subscribe).toHaveBeenCalledWith("w");
+  expect(useAgentSources.getState().subscribe).toHaveBeenCalledWith("w");
+  const links = [...document.querySelectorAll("a")].filter((a) => /lesson|difference/.test(a.textContent ?? ""));
+  expect(links.map((a) => a.textContent)).toEqual(text ? [text] : []);
+  if (text) {
+    expect(links[0].getAttribute("href")).toBe(HOME_URL);
+    expect(document.getElementById(button("Talk to Trama").getAttribute("aria-describedby")!)?.textContent).toContain(text);
+  }
+});
 
 it("hides the old conversation and cut and shows the empty state", () => {
   useAgentConversation.setState({ messages: [message({ body: "Old topic" }), message({ id: "cut", seq: 2, kind: "system", body: "New conversation", outcome: { kind: "conversation_reset" } })] });

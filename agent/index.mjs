@@ -32,9 +32,9 @@ for (const sig of ["SIGINT", "SIGTERM"]) {
 }
 
 const mcp = createMcpClient({ url: config.mcpUrl, pat: config.agentPat, tokenUrl: config.tokenUrl, clientName: config.harness });
-const model = createModel({ baseUrl: config.modelBaseUrl, apiKey: config.modelApiKey, model: config.modelName });
+const model = createModel({ baseUrl: config.modelBaseUrl, apiKey: config.modelApiKey, model: config.modelName, reasoningEffort: config.modelEffort });
 
-log(`${config.harness} started: model ${config.modelName}, workspace ${new URL(config.mcpUrl).host}`);
+log(`${config.harness} started: model ${config.modelName}, effort ${config.modelEffort || "provider default"}, workspace ${new URL(config.mcpUrl).host}`);
 await serveAgent({ config, mcp, model, noticeState: fileState(`${resolve(envPath)}.notices.json`), signal: controller.signal, log });
 log("stopped");
 process.exit(0);

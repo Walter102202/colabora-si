@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { readFleetConfig } from "../../agent/config.mjs";
+import { readConfig, readFleetConfig } from "../../agent/config.mjs";
 import { runFleet } from "../../agent/fleet.mjs";
 import { createMcpClient } from "../../agent/mcpClient.mjs";
 
@@ -72,7 +72,23 @@ describe("readFleetConfig", () => {
     expect(runtimeUrl).toBe("https://x.supabase.co/functions/v1/trama-runtime");
     expect(config.mcpUrl).toBe("https://x.supabase.co/functions/v1/mcp");
     expect(config.appUrl).toBe("https://app.test");
+    expect(config.modelName).toBe("muse-wonder-1.0");
+    expect(config.modelEffort).toBe("low");
+    expect(config.prices).toEqual({ input: 4, output: 20 });
+  });
+
+  it("prices Spark separately and honors an effort override", () => {
+    const { config } = readFleetConfig({ ...env, MODEL_NAME: "muse-spark-1.3", MODEL_REASONING_EFFORT: "high" });
+    expect(config.modelName).toBe("muse-spark-1.3");
+    expect(config.modelEffort).toBe("high");
     expect(config.prices).toEqual({ input: 1.25, output: 4.25 });
+    expect(readFleetConfig({ ...env, MODEL_REASONING_EFFORT: "" }).config.modelEffort).toBe("");
+  });
+
+  it("leaves reference providers' effort unset unless configured", () => {
+    const reference = { MODEL_BASE_URL: "http://model.test", MODEL_NAME: "other", WORKSPACE_MCP_URL: "http://app.test/mcp", WORKSPACE_AGENT_PAT: "test" };
+    expect(readConfig(reference).modelEffort).toBe("");
+    expect(readConfig({ ...reference, MODEL_REASONING_EFFORT: "low" }).modelEffort).toBe("low");
   });
 });
 

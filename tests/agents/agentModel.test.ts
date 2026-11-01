@@ -42,6 +42,14 @@ describe("backoff policy", () => {
 });
 
 describe("createModel retries", () => {
+  it.each([undefined, "low"])("sends reasoning effort only when configured (%s)", async (reasoningEffort) => {
+    let body: Record<string, unknown> = {};
+    const client = createModel({ baseUrl: "http://m.test/v1", model: "stub", reasoningEffort,
+      fetchImpl: async (_input, init) => { body = JSON.parse(String(init?.body)); return ok(); },
+    });
+    await client.chat({ messages: [] });
+    expect(body).toEqual({ model: "stub", messages: [], ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}) });
+  });
   it("forwards shutdown cancellation to the request without retrying it", async () => {
     const controller = new AbortController(), delays = recorder(); let calls = 0;
     const fetchImpl: typeof fetch = async (_input, init) => {
