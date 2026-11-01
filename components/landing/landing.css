@@ -163,7 +163,8 @@ html:has(.landing){-webkit-text-size-adjust:100%;scroll-behavior:smooth}
 .landing .cs-trama-section img{width:calc(var(--u)*170px);height:calc(var(--u)*170px);object-fit:contain}
 .landing .cs-trama-section h2{font-size:calc(var(--u)*38px)}
 .landing .cs-trama-section p{font-size:var(--fs-body);line-height:1.7;max-width:34em;color:var(--cs-muted)}
-.landing .cs-trama-section .cs-muse{margin-top:8px;color:var(--cs-ink)}
+.landing .cs-trama-section .cs-muse{margin-top:calc(var(--u)*10px)}
+.landing .cs-muse strong{display:block;font-weight:600}
 .landing .cs-trama-capabilities{display:flex;gap:19px;flex-wrap:wrap;font-size:var(--fs-label);margin-top:13px;color:var(--cs-blue)}
 .landing .cs-bottom{display:grid;grid-template-columns:1fr 1fr;gap:50px;padding-block:calc(var(--u)*30px) calc(var(--u)*45px);border-top:1px solid var(--cs-line)}
 .landing .cs-faq h3{font-size:var(--fs-body);font-weight:500;margin-bottom:12px}
