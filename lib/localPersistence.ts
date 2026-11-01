@@ -9,6 +9,7 @@ import { searchRecord } from "@/lib/search";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { mark, pageDataSizes, recordHydration } from "@/lib/metrics";
 import { applyOps, diffPageToOps } from "@/lib/pageOps";
+import { scanSearchRecords, type SearchRecord } from "@/lib/localDb";
 
 const WRITE_DELAY_MS = 300, WRITE_CHUNK = 200, MAX_RETRY_MS = 30_000;
 const KV_KEYS = ["rootOrder", "expanded", "syncedBlocks", "reminders", "settings"] as const;
@@ -41,6 +42,12 @@ function requestPersistence(): void {
 }
 
 export function diskAvailable(): boolean { return db !== null; }
+export async function scanStoredSearchRecords(batchSize: number, visit: (record: SearchRecord) => boolean): Promise<boolean> {
+  if (!db) return false;
+  const token = generation;
+  await scanSearchRecords(db, batchSize, (record) => token === generation && visit(record));
+  return token === generation;
+}
 export async function readStoredPage(id: string): Promise<{ page: Page; stale: boolean } | null> {
   const pending = dirtyPages.get(id), memory = useStore.getState().pages[id];
   if (pending && !isShell(pending)) return { page: pending, stale: (pending.revision ?? 0) < (memory?.revision ?? 0) };

@@ -146,3 +146,17 @@ export function isQuotaError(error: unknown): boolean {
   const name = (error as { name?: string } | null)?.name;
   return name === "QuotaExceededError" || name === "NS_ERROR_DOM_QUOTA_REACHED";
 }
+
+export async function scanSearchRecords(db: IDBDatabase, batchSize: number, visit: (record: SearchRecord) => boolean): Promise<void> {
+  let last: string | undefined;
+  for (;;) {
+    const records = await new Promise<SearchRecord[]>((resolve, reject) => {
+      const tx = db.transaction("search", "readonly");
+      const request = tx.objectStore("search").getAll(last === undefined ? undefined : IDBKeyRange.lowerBound(last, true), batchSize);
+      tx.oncomplete = () => resolve(request.result as SearchRecord[]); tx.onabort = () => reject(tx.error);
+    });
+    for (const record of records) if (!visit(record)) return;
+    if (records.length < batchSize) return;
+    last = records[records.length - 1].id;
+  }
+}

@@ -8,14 +8,22 @@ import { withViewTransition } from "@/lib/viewTransition";
 import { getSupabase } from "@/lib/supabase";
 import { useAuthStore } from "@/lib/auth";
 import { hitFromRemote, rankLocal, recentHits, type SearchHit } from "@/lib/search";
+import { mergeHits, searchStoredPages } from "@/lib/localSearch";
 
 export default function SearchModal({ onClose, query, onQueryChange }: { onClose: () => void; query: string; onQueryChange: (query: string) => void }) {
   const pages = useStore((s) => s.pages), synced = useStore((s) => s.syncedBlocks), navigate = useNavigate();
   const wsId = useStore((s) => s.syncWorkspaceId), user = useAuthStore((s) => s.user), serverMode = !!getSupabase() && !!wsId && !!user;
   const [index, setIndex] = useState(0), [remote, setRemote] = useState<{ query: string; hits: SearchHit[] }>({ query: "", hits: [] });
+  const [stored, setStored] = useState<{ query: string; hits: SearchHit[] }>({ query: "", hits: [] });
   // The local ranking answers at once and stays while the server has not answered this query (debounce, round trip, error,
   // offline); the server's hits replace it when they arrive.
-  const results = useMemo(() => !query.trim() ? recentHits(pages) : serverMode && remote.query === query ? remote.hits : rankLocal(pages, synced ?? {}, query), [pages, synced, query, serverMode, remote]);
+  const results = useMemo(() => !query.trim() ? recentHits(pages) : serverMode && remote.query === query ? remote.hits : mergeHits(rankLocal(pages, synced ?? {}, query), stored.query === query ? stored.hits : []), [pages, synced, query, serverMode, remote, stored]);
+  useEffect(() => {
+    if (!query.trim() || (serverMode && navigator.onLine)) return;
+    let alive = true;
+    const timer = setTimeout(() => { void searchStoredPages(useStore.getState().pages, query, 12, () => alive).then((hits) => { if (alive) setStored({ query, hits }); }); }, 150);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [query, serverMode]);
   useEffect(() => {
     if (!serverMode || !query.trim()) return;
     let alive = true; const timer = setTimeout(() => { void getSupabase()!.rpc("search_workspace", { p_workspace_id: null, p_query: query, p_limit: 20 }).then(({ data, error }) => { if (alive && !error) setRemote({ query, hits: (Array.isArray(data) ? data : []).map(hitFromRemote).filter((h): h is SearchHit => h !== null) }); }); }, 250);
