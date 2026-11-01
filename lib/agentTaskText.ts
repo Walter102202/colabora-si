@@ -5,6 +5,16 @@ import { formatRelative } from "@/lib/utils";
 // Short texts derived from a task or an approval, shared by the cells, the
 // panel and any surface that renders a task outside the workspace.
 
+const SUMMARY_LIMIT = 600;
+
+// What the agent said it did when it delivered: the paragraph a person reads before accepting.
+export function deliverySummary(activities: ActivityRow[]): string {
+  const delivery = [...activities].reverse().find((a) => a.type === "response" && a.body?.submit === true);
+  const text = typeof delivery?.body?.text === "string" ? delivery.body.text.trim() : "";
+  if (!text) return "The work is delivered and ready for you to check.";
+  return text.length > SUMMARY_LIMIT ? `${text.slice(0, SUMMARY_LIMIT).trimEnd()}…` : text;
+}
+
 // Second line under the status badge, by state (what the person most needs to know).
 export function taskSubtitle(task: TaskRow, run: RunRow | null, agentName: string | null): string {
   const stale = run?.stale_at ? `No signals for ${formatRelative(Date.parse(run.last_signal_at))}` : null;

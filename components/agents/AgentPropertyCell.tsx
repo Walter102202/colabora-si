@@ -72,7 +72,8 @@ function TaskPropertyCell({ pageId, dbPageId, kind, isJob, isSubtask }: AgentPro
   }
   if (kind === "agentStatus" && (isJob || isSubtask)) {
     const label = isJob ? JOB_STATE_LABEL[jobState(task, subtasks)] : SUBTASK_STATE_LABEL[subtaskState(task)];
-    return <span className="cell-readonly"><span className={`rounded px-1.5 py-0.5 text-xs ${task?.state === "done" ? "bg-[var(--bgc-green)] text-[var(--c-green)]" : task?.waiting_on === "human" ? "bg-[var(--bgc-yellow)] text-[var(--c-yellow)]" : "bg-bg-secondary text-text-secondary"}`}>{label}</span></span>;
+    const needsYou = task?.waiting_on === "human" || (isJob ? jobWait(task, subtasks).label : subWait(task)) === "You";
+    return <span className="cell-readonly"><span className={`rounded px-1.5 py-0.5 text-xs ${task?.state === "done" ? "bg-[var(--bgc-green)] text-[var(--c-green)]" : needsYou ? "bg-[var(--bgc-yellow)] text-[var(--c-yellow)]" : "bg-bg-secondary text-text-secondary"}`}>{label}</span></span>;
   }
 
   if (kind === "agentDelegate") {

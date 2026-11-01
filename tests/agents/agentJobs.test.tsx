@@ -107,10 +107,16 @@ it("keeps a person's subtask choice optional and lets a Lead work too", () => {
   act(() => choices[1].click()); expect(onChoose).toHaveBeenCalledWith(lead.id);
 });
 
-it("renders jobs in four board lanes with progress and a working substage", () => {
+it("gives a delivered job its own lane, waiting on the person", () => {
+  act(() => root.render(<JobsBoard jobs={[{ id: "job", title: "Pages research", lead, state: "ready_for_review", waiting: { label: "You", count: 1 } }]} onOpen={vi.fn()} />));
+  expect(container.querySelector('section[aria-label="Ready to accept"]')?.textContent).toContain("Pages research");
+  expect(container.querySelector('section[aria-label="Working"]')?.textContent).not.toContain("Pages research");
+});
+
+it("renders jobs in five board lanes with progress and a working substage", () => {
   const onOpen = vi.fn();
   act(() => root.render(<JobsBoard jobs={[{ id: "job", title: "Market research", lead, state: "waiting_workers", progress: { done: 1, total: 4 }, waiting: { label: "Worker", count: 0 } }]} onOpen={onOpen} />));
-  expect([...container.querySelectorAll("section")].map((lane) => lane.getAttribute("aria-label"))).toEqual(["Needs a Lead", "Ready", "Working", "Done"]);
+  expect([...container.querySelectorAll("section")].map((lane) => lane.getAttribute("aria-label"))).toEqual(["Needs a Lead", "Ready", "Working", "Ready to accept", "Done"]);
   expect(container.querySelector('section[aria-label="Working"]')?.textContent).toContain("Market research");
   expect(container.textContent).toContain("1/4");
   act(() => (container.querySelector('button[aria-label="Open Market research"]') as HTMLButtonElement).click());

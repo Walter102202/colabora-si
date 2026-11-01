@@ -11,6 +11,7 @@ export { MergeRule } from "@/components/agents/panel/MergeRule";
 export { DecisionCard } from "@/components/agents/panel/DecisionCard";
 export { LeadReviewCard } from "@/components/agents/panel/LeadReviewCard";
 export type { FindingStatus, ReviewFinding, ReviewVerdict } from "@/components/agents/panel/LeadReviewCard";
+export { AcceptCard } from "@/components/agents/panel/AcceptCard";
 export { SubtaskList } from "@/components/agents/panel/SubtaskList";
 export type { SubtaskItem } from "@/components/agents/panel/SubtaskList";
 export { StatusBadge } from "@/components/agents/panel/StatusBadge";
