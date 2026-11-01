@@ -1,4 +1,5 @@
 import type { PageOp, WorkspaceOp } from "@/lib/pageOps";
+import { isShell } from "@/lib/pageShell";
 
 export interface OpsQueue {
   enqueue(pageId: string, ops: PageOp[]): void;
@@ -19,6 +20,7 @@ export class MemoryQueue implements OpsQueue {
     const previous = this.pending.get(pageId);
     const entries = [...(previous?.entries ?? [])];
     for (let op of ops) {
+      if (op.op === "replace_page" && isShell(op.page)) throw new Error("replace_page_needs_a_body");
       if ("rev" in op && op.rev !== undefined) {
         const id = "id" in op ? op.id : op.rowId;
         const prior = entries.map((e) => e.op).findLast((p) => "rev" in p && ("id" in p ? p.id : p.rowId) === id);

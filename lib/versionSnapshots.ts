@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useStore } from "@/lib/store";
 import { isApplyingExternal } from "@/lib/externalApply";
 import { foreignPageIds } from "@/lib/foreignPages";
+import { isShell } from "@/lib/pageShell";
 
 export const SNAPSHOT_IDLE_MS = 30_000;
 export interface SnapshotClock { now(): number; setTimeout(fn: () => void, ms: number): unknown; clearTimeout(handle: unknown): void }
@@ -39,6 +40,7 @@ export function useIdleSnapshot(pageId: string): void {
     const unsubscribe = useStore.subscribe((state, prev) => {
       if (isApplyingExternal() || foreignPageIds.has(pageId)) return;
       const a = state.pages[pageId], b = prev.pages[pageId];
+      if (isShell(a) !== isShell(b)) return;
       if (a && b && a !== b && (a.blocks !== b.blocks || a.title !== b.title || a.database !== b.database)) timer.edited();
     });
     return () => { unsubscribe(); timer.dispose(); };

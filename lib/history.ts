@@ -1,5 +1,6 @@
 import { applyRemotePatch, useStore, type RemotePatch } from "@/lib/store";
-import type { WorkspaceState } from "@/lib/types";
+import type { Page, WorkspaceState } from "@/lib/types";
+import { isShell, overlayMeta } from "@/lib/pageShell";
 
 type Snapshot = Pick<WorkspaceState, "pages" | "rootOrder" | "syncedBlocks">;
 const past: Snapshot[] = [];
@@ -38,6 +39,14 @@ export function initHistory(): void {
     prev = current;
   });
 }
+function keepLoaded(target: Record<string, Page>, current: Record<string, Page>): Record<string, Page> {
+  let pages = target;
+  for (const id in target) if (isShell(target[id]) && current[id] && !isShell(current[id])) {
+    if (pages === target) pages = { ...target };
+    pages[id] = overlayMeta(current[id], target[id]);
+  }
+  return pages;
+}
 function travel(from: Snapshot[], to: Snapshot[]) {
   if (!from.length) return;
   flushBurst();
@@ -49,7 +58,7 @@ function travel(from: Snapshot[], to: Snapshot[]) {
       const active = document.activeElement as HTMLElement | null;
       if (active?.isContentEditable || active?.tagName === "TEXTAREA") active.blur();
     }
-    useStore.setState(target);
+    useStore.setState({ ...target, pages: keepLoaded(target.pages, useStore.getState().pages) });
   } finally { isTimeTraveling = false; }
 }
 export function undo(): void { travel(past, future); }

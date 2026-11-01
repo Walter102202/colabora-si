@@ -6,6 +6,8 @@ import * as pm from "@/lib/pageMutations";
 import * as dm from "@/lib/dbMutations";
 import { createPageFromTemplate as materializeTemplate, sanitizeBlocks, seedWorkspace } from "@/lib/seed";
 import { useAuthStore } from "@/lib/auth";
+import { isShell, overlayMeta } from "@/lib/pageShell";
+import { ensurePageBodies, notifyPageUnavailable } from "@/lib/pageBodies";
 
 import { collectSubtreeFileIds, collectTrashFileIds, scheduleBlobGc } from "@/lib/fileStore";
 export interface RemotePatch {
@@ -22,6 +24,7 @@ interface Actions {
   setSyncWorkspaceId: (id: string | null, userId?: string | null) => void;
   applyRemotePages: (patch: RemotePatch) => void;
   applyLocalPages: (patch: RemotePatch) => void;
+  hydratePages: (pages: Page[]) => void;
 
   // páginas
   createPage: (parentId?: string | null, patch?: Partial<Page>) => string;
@@ -122,12 +125,27 @@ function cleanPage(page: Page): Page {
 }
 
 export const useStore = create<Store>()((set, get) => {
-  const mutate = (id: string, fn: (page: Page) => Page) => set((state) => {
+  const mutateMeta = (id: string, fn: (page: Page) => Page) => set((state) => {
     const page = state.pages[id];
     if (!page) return state;
     const next = fn(page);
     return next === page ? state : { pages: { ...state.pages, [id]: next } };
   });
+  const whenLoaded = (ids: string[], run: () => void) => {
+    if (!ids.length) { run(); return; }
+    const { syncUserId, syncWorkspaceId } = get();
+    void ensurePageBodies(ids).then((result) => {
+      const current = get();
+      if (current.syncUserId !== syncUserId || current.syncWorkspaceId !== syncWorkspaceId) return;
+      if (result === "ready" && ids.every((id) => current.pages[id] && !isShell(current.pages[id]))) run();
+      else notifyPageUnavailable();
+    });
+  };
+  const mutate = (id: string, fn: (page: Page) => Page) => whenLoaded(isShell(get().pages[id]) ? [id] : [], () => mutateMeta(id, fn));
+  const databaseParent = (id: string) => {
+    const pages = get().pages, parent = pages[pages[id]?.parentId ?? ""];
+    return parent?.database && isShell(parent) ? [parent.id] : [];
+  };
   const attach = (page: Page, pages: Record<string, Page> = { [page.id]: page }) => set((state) => ({
     pages: { ...state.pages, ...pages },
     rootOrder: page.parentId === null ? [...state.rootOrder, page.id] : state.rootOrder,
@@ -144,6 +162,16 @@ export const useStore = create<Store>()((set, get) => {
     ...seedWorkspace(), expanded: {}, syncWorkspaceId: null, syncUserId: null,
     setSyncWorkspaceId: (id, userId = null) => set({ syncWorkspaceId: id, syncUserId: userId }),
     applyLocalPages: (patch) => set((state) => applyRemotePatch(state, patch)),
+    hydratePages: (full) => set((state) => {
+      let pages = state.pages;
+      for (const page of full) {
+        const current = pages[page.id];
+        if (!current || !isShell(current) || isShell(page)) continue;
+        if (pages === state.pages) pages = { ...state.pages };
+        pages[page.id] = overlayMeta(page, current);
+      }
+      return pages === state.pages ? state : { pages };
+    }),
     applyRemotePages: (patch) => set((state) => applyRemotePatch(state, {
       ...patch,
       ...(patch.pages ? { pages: Object.fromEntries(Object.entries(patch.pages).map(([id, page]) => [id, page ? cleanPage(page) : null])) } : {}),
@@ -166,20 +194,23 @@ export const useStore = create<Store>()((set, get) => {
     },
     applyTemplate: (pageId, plan) => {
       const old = get().pages[pageId];
-      if (!old) return;
+      if (!old || isShell(old)) return;
       const result = materializeTemplate(plan, old.parentId);
       const children = Object.fromEntries(Object.values(result.pages).filter((p) => p.id !== result.page.id).map((p) => [p.id, { ...p, parentId: pageId }]));
       const database = result.page.database ? { ...result.page.database, properties: result.page.database.properties.map((p) => p.relationDbId === result.page.id ? { ...p, relationDbId: pageId } : p) } : old.database;
       set((state) => ({ pages: { ...state.pages, ...children, [pageId]: pm.touch({ ...old, title: old.title || plan.title, icon: old.icon ?? plan.icon, blocks: result.page.blocks, database }) } }));
     },
-    updatePage: (id, patch) => set((state) => {
-      const page = state.pages[id]; if (!page) return state;
-      const pages = { ...state.pages, [id]: pm.touch({ ...page, ...patch, ...(patch.blocks ? { blocks: sanitizeBlocks(patch.blocks) } : {}), ...(patch.database ? { database: cleanPage({ ...page, database: patch.database }).database } : {}) }) };
-      const parent = pages[page.parentId ?? ""];
-      if (patch.title !== undefined && parent?.database) pages[parent.id] = pm.touch({ ...parent, database: { ...parent.database, rows: parent.database.rows.map((row) => row.pageId === id ? { ...row, cells: { ...row.cells, title: patch.title } } : row) } });
-      return { pages };
-    }),
-    deletePage: (id) => set((state) => !state.pages[id] ? state : ({ pages: pm.softDeleteTree(state.pages, id, Date.now()), rootOrder: state.rootOrder.filter((key) => key !== id) })),
+    updatePage: (id, patch) => {
+      const page = get().pages[id], body = patch.blocks || patch.database || patch.comments || patch.versions;
+      whenLoaded([...(body && isShell(page) ? [id] : []), ...(patch.title !== undefined ? databaseParent(id) : [])], () => set((state) => {
+        const page = state.pages[id]; if (!page) return state;
+        const pages = { ...state.pages, [id]: pm.touch({ ...page, ...patch, ...(patch.blocks ? { blocks: sanitizeBlocks(patch.blocks) } : {}), ...(patch.database ? { database: cleanPage({ ...page, database: patch.database }).database } : {}) }) };
+        const parent = pages[page.parentId ?? ""];
+        if (patch.title !== undefined && parent?.database) pages[parent.id] = pm.touch({ ...parent, database: { ...parent.database, rows: parent.database.rows.map((row) => row.pageId === id ? { ...row, cells: { ...row.cells, title: patch.title } } : row) } });
+        return { pages };
+      }));
+    },
+    deletePage: (id) => whenLoaded(databaseParent(id), () => set((state) => !state.pages[id] ? state : ({ pages: pm.softDeleteTree(state.pages, id, Date.now()), rootOrder: state.rootOrder.filter((key) => key !== id) }))),
     restorePage: (id) => set((state) => {
       if (!state.pages[id]) return state;
       const pages = pm.restoreTree(state.pages, id, Date.now());
@@ -187,13 +218,15 @@ export const useStore = create<Store>()((set, get) => {
     }),
     permanentlyDelete: (id) => { const ids = collectSubtreeFileIds(id); set((state) => !state.pages[id] ? state : ({ pages: pm.purgeTree(state.pages, id), rootOrder: state.rootOrder.filter((key) => key !== id) })); scheduleBlobGc(ids); },
     emptyTrash: () => { const ids = collectTrashFileIds(); set((state) => ({ pages: Object.fromEntries(Object.entries(state.pages).filter(([, page]) => !page.isDeleted)) })); scheduleBlobGc(ids); },
-    toggleFavorite: (id) => mutate(id, (page) => pm.touch({ ...page, isFavorite: !page.isFavorite })),
+    toggleFavorite: (id) => mutateMeta(id, (page) => pm.touch({ ...page, isFavorite: !page.isFavorite })),
     movePage: (id, parentId, index) => set((state) => {
       const next = pm.moveInTree(state.pages, state.rootOrder, id, parentId, index);
       return next.pages === state.pages ? state : { ...next, expanded: parentId ? { ...state.expanded, [parentId]: true } : state.expanded };
     }),
     duplicatePage: (id) => {
-      const result = pm.duplicateDeep(get().pages, id);
+      const pages = get().pages, parent = pages[pages[id]?.parentId ?? ""];
+      if ([...pm.treeIds(pages, id)].some((key) => !pages[key].isDeleted && isShell(pages[key])) || (parent?.database && isShell(parent))) return null;
+      const result = pm.duplicateDeep(pages, id);
       if (!result.newId) return null;
       const copy = result.pages[result.newId];
       set((state) => ({ pages: result.pages, rootOrder: copy.parentId === null ? [...state.rootOrder, copy.id] : state.rootOrder }));
@@ -260,11 +293,11 @@ export const useStore = create<Store>()((set, get) => {
     }),
     addRow: (pageId, patch = {}) => {
       const page = get().pages[pageId];
-      return page ? addRowResult(pageId, dm.addRow(page, patch)) : "";
+      return page && !isShell(page) ? addRowResult(pageId, dm.addRow(page, patch)) : "";
     },
     updateCell: (pageId, rowId, propertyId, value) => set((state) => {
       const page = state.pages[pageId];
-      if (!page) return state;
+      if (!page || isShell(page)) return state;
       const result = dm.updateCell(page, rowId, propertyId, value);
       if (result.page === page) return state;
       const pages = { ...state.pages, [pageId]: result.page };
@@ -273,18 +306,19 @@ export const useStore = create<Store>()((set, get) => {
       return { pages };
     }),
     deleteRow: (pageId, rowId) => set((state) => {
+      if (isShell(state.pages[pageId])) return state;
       const row = state.pages[pageId]?.database?.rows.find((r) => r.id === rowId);
       return row ? { pages: pm.softDeleteTree(state.pages, row.pageId, Date.now()) } : state;
     }),
     deleteRows: (pageId, ids) => set((state) => {
-      const page = state.pages[pageId]; if (!page?.database || page.locked) return state;
+      const page = state.pages[pageId]; if (!page?.database || page.locked || isShell(page)) return state;
       let pages = state.pages;
       for (const row of page.database.rows.filter((r) => ids.includes(r.id))) pages = pm.softDeleteTree(pages, row.pageId, Date.now());
       return { pages };
     }),
     updateCells: (pageId, ids, propertyId, value) => set((state) => {
       const page = state.pages[pageId], prop = page?.database?.properties.find((p) => p.id === propertyId);
-      if (!page?.database || page.locked || !prop || !["text", "number", "select", "status", "checkbox", "date", "url", "email", "phone"].includes(prop.type)) return state;
+      if (!page?.database || page.locked || isShell(page) || !prop || !["text", "number", "select", "status", "checkbox", "date", "url", "email", "phone"].includes(prop.type)) return state;
       if (page.database.properties.some((p) => p.type === "agentStatus") && ["Lead", "Done when", "Output", "Cost", "Run"].includes(prop.name)) return state;
       const rows = page.database.rows.map((row) => ids.includes(row.id) ? { ...row, cells: { ...row.cells, [propertyId]: value } } : row);
       const pages = { ...state.pages, [pageId]: pm.touch({ ...page, database: { ...page.database, rows } }) };
@@ -301,10 +335,11 @@ export const useStore = create<Store>()((set, get) => {
     setDbLocked: (id, locked) => mutate(id, (page) => dm.setDbLocked(page, locked)),
     addRowFromTemplate: (id, templateId) => {
       const page = get().pages[id];
-      return page ? addRowResult(id, dm.addRowFromTemplate(page, templateId)) : "";
+      return page && !isShell(page) ? addRowResult(id, dm.addRowFromTemplate(page, templateId)) : "";
     },
     saveRowAsTemplate: (id, rowId, name) => mutate(id, (page) => {
       const row = page.database?.rows.find((r) => r.id === rowId);
+      if (row && isShell(get().pages[row.pageId])) return page;
       return dm.saveRowAsTemplate(page, rowId, name, row ? get().pages[row.pageId] : undefined);
     }),
     deleteRowTemplate: (id, templateId) => mutate(id, (page) => dm.deleteRowTemplate(page, templateId)),

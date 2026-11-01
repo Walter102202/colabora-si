@@ -1,9 +1,9 @@
 import { mark, measureSince, reportStartup } from "@/lib/metrics";
-import { clearLocalPages, setCloudCheck } from "@/lib/localPersistence";
+import { clearLocalPages, readStoredPage, setCloudCheck } from "@/lib/localPersistence";
 import { create } from "zustand";
 import type { RealtimeChannel, SupabaseClient, User } from "@supabase/supabase-js";
 import type { Block, BlockAttr, Page, Reminder, WorkspaceState } from "@/lib/types";
-import { applyOps, applyWorkspaceOps, diffPageToOps, type OpResult, type PageOp, type WorkspaceOp } from "@/lib/pageOps";
+import { applyOps, applyWorkspaceOps, diffPageToOps, shellOps, type OpResult, type PageOp, type WorkspaceOp } from "@/lib/pageOps";
 import { clearStoredOps, IndexedDbQueue, MemoryQueue } from "@/lib/opsQueue";
 import { pageFromRow, mergePageDecision, mergeReminders, type PageRow, type WorkspaceRow, type ReminderRow } from "@/lib/syncMerge";
 import { getSupabase } from "@/lib/supabase";
@@ -11,6 +11,7 @@ import { useStore, type RemotePatch, type Store } from "@/lib/store";
 import { clearHistory, pauseHistory, resumeHistory, rebaseHistory } from "@/lib/history";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { applyingExternal, isApplyingExternal } from "@/lib/externalApply";
+import { isShell, overlayMeta } from "@/lib/pageShell";
 import { DEFAULT_SETTINGS } from "@/lib/factories";
 import { savePageRecovery, useBlockConflicts, type BlockConflict } from "@/lib/syncConflicts";
 
@@ -67,28 +68,48 @@ export class PageSyncEngine {
   private remoteChanges = new Map<string, number>();
   constructor(readonly queue: MemoryQueue, readonly client: string, private actor: BlockAttr, private adapter: PageSyncAdapter) {}
   receive(row: PageRow, force = false): boolean {
+    const remote = pageFromRow(row);
+    if (remote && isShell(remote)) {
+      if (row.revision < this.queue.getRevision(row.id) || (!force && row.revision === this.queue.getRevision(row.id))) return false;
+      if (!this.queue.isDeleted(row.id) && !this.queue.peek(row.id).length) this.adapter.apply(row.id, remote, false);
+      return true;
+    }
     if (!force && row.data?._client === this.client) { this.queue.setRevision(row.id, row.revision); return false; }
     if (row.revision < this.queue.getRevision(row.id) || (!force && row.revision === this.queue.getRevision(row.id))) return false;
     if (row.data?._client !== this.client) this.remoteChanges.set(row.id, (this.remoteChanges.get(row.id) ?? 0) + 1);
     this.queue.setRevision(row.id, row.revision);
     if (this.queue.isDeleted(row.id)) return false;
-    const remote = pageFromRow(row);
     if (!remote) { if (row.deleted_at) { this.queue.clearPage(row.id); this.adapter.apply(row.id, null); } return !!row.deleted_at; }
     const pending = this.queue.peek(row.id);
     this.adapter.apply(row.id, pending.length ? { ...applyOps(remote, pending, this.actor).page, revision: row.revision } : remote, row.data?._client !== this.client);
     return true;
   }
   async flushPage(id: string): Promise<void> {
+    let conflicts = 0;
     while (this.queue.peek(id).length) {
-      const ops = this.queue.peek(id).slice(0, 200), key = this.queue.batchKey(id, ops.length);
+      const pending = this.queue.peek(id), tree = pending.findIndex((op) => op.op === "set_tree");
+      if (tree === 0) {
+        const outcome = await this.flushTree(id);
+        if (outcome === "sent") conflicts = 0;
+        else if (++conflicts >= 3) {
+          const local = this.adapter.getPage(id);
+          if (local) await this.adapter.pageConflict(id, local);
+          this.queue.ack(id, 1); await this.queue.settled(); conflicts = 0;
+        }
+        continue;
+      }
+      const ops = pending.slice(0, tree < 0 ? 200 : Math.min(tree, 200)), key = this.queue.batchKey(id, ops.length);
       await this.queue.settled();
       const baseRevision = this.queue.getRevision(id), remoteChange = this.remoteChanges.get(id);
       let response: OpsReply;
       try { response = await this.adapter.send(id, ops, this.client, key); }
       catch (error) {
         if (!isPageConflict(error)) throw error;
-        const count = this.queue.peek(id).length;
-        const local = this.adapter.getPage(id) ?? ops.find((op) => op.op === "replace_page")?.page;
+        const rejected = this.queue.peek(id), count = rejected.length;
+        const memory = this.adapter.getPage(id);
+        const replacementIndex = rejected.findLastIndex((op) => op.op === "replace_page"), replacement = rejected[replacementIndex];
+        const queued = replacement?.op === "replace_page" ? applyOps(replacement.page, rejected.slice(replacementIndex + 1), this.actor).page : undefined;
+        const local = memory && !isShell(memory) ? memory : queued ?? memory;
         if (!local) throw error;
         // Retain the whole rejected local copy before discarding operations built on it.
         await this.adapter.pageConflict(id, local);
@@ -119,6 +140,20 @@ export class PageSyncEngine {
     }
     const row = await this.adapter.read(id);
     if (row) this.receive(row, true);
+  }
+  private async flushTree(id: string): Promise<"sent" | "conflict"> {
+    const op = this.queue.peek(id)[0] as Extract<PageOp, { op: "set_tree" }>;
+    const row = await this.adapter.read(id), page = row ? pageFromRow(row) : null;
+    if (!row || !page) { this.queue.ack(id, 1); await this.queue.settled(); return "sent"; }
+    if (isShell(page)) throw new Error("replace_page_needs_a_body");
+    const key = this.queue.batchKey(id, 1);
+    await this.queue.settled();
+    try {
+      const response = await this.adapter.send(id, [{ op: "replace_page", page: { ...page, parentId: op.parentId, isDeleted: op.isDeleted, rowOrigin: op.rowOrigin }, revision: row.revision }], this.client, key);
+      this.queue.ack(id, 1);
+      if (response.revision === row.revision + 1) this.queue.advanceReplacements(id, row.revision, response.revision);
+      this.queue.setRevision(id, response.revision); await this.queue.settled(); return "sent";
+    } catch (error) { if (isPageConflict(error)) return "conflict"; throw error; }
   }
 }
 
@@ -155,10 +190,13 @@ function onStoreChange(state: Store): void {
   if (isApplyingExternal() || !last || !queue) { last = state; return; }
   const before = last; last = state;
   if (before.pages !== state.pages) for (const id of new Set([...Object.keys(before.pages), ...Object.keys(state.pages)])) {
-    if (foreignPageIds.has(id) || before.pages[id] === state.pages[id]) continue;
+    const prev = before.pages[id], next = state.pages[id];
+    if (foreignPageIds.has(id) || prev === next) continue;
     lastEditAt.set(id, Date.now());
-    if (!state.pages[id]) queue.markDeleted(id);
-    else if (before.pages[id]) queue.enqueue(id, diffPageToOps(before.pages[id], state.pages[id]));
+    if (!next) queue.markDeleted(id);
+    else if (prev && isShell(prev) && !isShell(next)) queue.enqueue(id, [{ op: "replace_page", page: next, revision: prev.revision ?? 0 }]);
+    else if (prev && !isShell(prev) && isShell(next)) continue;
+    else if (prev) queue.enqueue(id, isShell(next) ? shellOps(prev, next) : diffPageToOps(prev, next));
   }
   const workspaceOps = workspaceDiff(before, state); if (workspaceOps.length) queue.enqueueWorkspace(workspaceOps);
   if (before.pages !== state.pages || before.rootOrder !== state.rootOrder || before.settings !== state.settings || before.syncedBlocks !== state.syncedBlocks || before.reminders !== state.reminders) scheduleFlush();
@@ -177,7 +215,26 @@ async function readPage(sb: SupabaseClient, id: string): Promise<PageRow | null>
   const { data, error } = await sb.from("pages").select(PAGE_COLS).eq("workspace_id", wsId).eq("id", id).maybeSingle();
   if (error) throw error; return data as PageRow | null;
 }
+async function loadFullPage(id: string): Promise<Page | null> {
+  const page = useStore.getState().pages[id];
+  if (!page) return null;
+  if (!isShell(page)) return page;
+  const token = generation, stored = await readStoredPage(id);
+  if (token !== generation) return null;
+  const current = useStore.getState().pages[id];
+  if (!current) return null;
+  if (!isShell(current)) return current;
+  return stored ? overlayMeta(stored.page, current) : null;
+}
+export async function refreshPageFromCloud(_id: string): Promise<boolean> { void _id; return false; }
 async function insertPage(sb: SupabaseClient, page: Page): Promise<void> {
+  if (isShell(page)) {
+    const token = generation;
+    const loaded = await loadFullPage(page.id);
+    if (token !== generation) throw SYNC_CANCELLED;
+    if (!loaded) throw new Error("page_body_unavailable");
+    page = loaded;
+  }
   const count = queue!.peek(page.id).length;
   const stamp = (blocks: Block[]): Block[] => blocks.map((b) => ({ ...b, rev: b.rev ?? 1, ...(b.columns ? { columns: b.columns.map((c) => ({ ...c, blocks: stamp(c.blocks) })) } : {}) }));
   const content = { ...page, blocks: stamp(page.blocks), ...(page.database ? { database: { ...page.database, rows: page.database.rows.map((r) => ({ ...r, rev: r.rev ?? 1 })) } } : {}), _client: CLIENT_TAG };
@@ -400,15 +457,22 @@ async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise
   } else if (choice === "local") {
     queue!.clearAll();
     const serverRevision = new Map(rows.map((r) => [r.id, r.revision]));
-    for (const page of Object.values(current.pages)) if (!foreignPageIds.has(page.id) && known.has(page.id)) queue!.enqueue(page.id, [{ op: "replace_page", page, revision: serverRevision.get(page.id) ?? page.revision ?? 0 }]);
+    for (const local of Object.values(current.pages)) if (!foreignPageIds.has(local.id) && known.has(local.id)) {
+      const page = await loadFullPage(local.id);
+      if (token !== generation) throw SYNC_CANCELLED;
+      if (page) queue!.enqueue(page.id, [{ op: "replace_page", page, revision: serverRevision.get(page.id) ?? page.revision ?? 0 }]);
+    }
     for (const row of rows) if (!current.pages[row.id]) queue!.markDeleted(row.id);
     queue!.enqueueWorkspace([{ op: "set_root_order", rootOrder: current.rootOrder }, { op: "set_settings", patch: current.settings ?? DEFAULT_SETTINGS }, ...Object.entries(current.syncedBlocks ?? {}).map(([key, blocks]): WorkspaceOp => ({ op: "synced_set", key, blocks }))]);
   } else {
     for (const row of rows) {
       if (queue!.isDeleted(row.id)) continue;
       const decision = mergePageDecision(current.pages[row.id], row, foreignPageIds.has(row.id));
-      if (decision.kind === "push") queue!.enqueue(row.id, [{ op: "replace_page", page: decision.page, revision: row.revision }]);
-      else engine!.receive(row, true);
+      if (decision.kind === "push") {
+        const page = await loadFullPage(row.id);
+        if (token !== generation) throw SYNC_CANCELLED;
+        if (page) queue!.enqueue(row.id, [{ op: "replace_page", page, revision: row.revision }]);
+      } else engine!.receive(row, true);
     }
     handleWorkspaceRow(workspace, true);
     const s = useStore.getState(); if (JSON.stringify(s.rootOrder) !== JSON.stringify(workspace.root_order)) queue!.enqueueWorkspace([{ op: "set_root_order", rootOrder: s.rootOrder }]);
@@ -503,11 +567,16 @@ export async function forceFullPush(): Promise<void> {
   if (!started || !ready || !wsId || !queue || pushing) throw new Error("Sync is not ready");
   if (!window.confirm("Replace the cloud workspace with this device's copy? Pages that only exist in the cloud will be deleted.")) return;
   const sb = getSupabase(); if (!sb) throw new Error("Not connected");
-  const serverRows = await fetchAllPages(sb);
+  const token = generation, serverRows = await fetchAllPages(sb);
+  if (token !== generation) throw SYNC_CANCELLED;
   for (const row of serverRows) known.add(row.id);
   const serverRevision = new Map(serverRows.map((r) => [r.id, r.revision]));
   const s = useStore.getState(); queue.clearAll();
-  for (const page of Object.values(s.pages)) if (!foreignPageIds.has(page.id) && known.has(page.id)) queue.enqueue(page.id, [{ op: "replace_page", page, revision: serverRevision.get(page.id) ?? page.revision ?? 0 }]);
+  for (const local of Object.values(s.pages)) if (!foreignPageIds.has(local.id) && known.has(local.id)) {
+    const page = await loadFullPage(local.id);
+    if (token !== generation) throw SYNC_CANCELLED;
+    if (page) queue.enqueue(page.id, [{ op: "replace_page", page, revision: serverRevision.get(page.id) ?? page.revision ?? 0 }]);
+  }
   for (const id of known) if (!s.pages[id]) queue.markDeleted(id);
   queue.enqueueWorkspace([{ op: "set_root_order", rootOrder: s.rootOrder }, { op: "set_settings", patch: s.settings ?? DEFAULT_SETTINGS }, ...Object.entries(s.syncedBlocks ?? {}).map(([key, blocks]): WorkspaceOp => ({ op: "synced_set", key, blocks }))]);
   await flush(); if (useSyncStatus.getState().status === "error") throw new Error("Sync failed");

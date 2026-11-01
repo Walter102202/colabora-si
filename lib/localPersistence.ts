@@ -41,6 +41,21 @@ function requestPersistence(): void {
 }
 
 export function diskAvailable(): boolean { return db !== null; }
+export async function readStoredPage(id: string): Promise<{ page: Page; stale: boolean } | null> {
+  const pending = dirtyPages.get(id), memory = useStore.getState().pages[id];
+  if (pending && !isShell(pending)) return { page: pending, stale: (pending.revision ?? 0) < (memory?.revision ?? 0) };
+  if (!db || pending === null) return null;
+  const token = generation;
+  const stored = await readPages(db, [id], [id], []);
+  if (token !== generation) return null;
+  const meta = stored.metas.get(id), body = stored.bodies.get(id);
+  if (!meta || meta.bodyRev === null || !body) return null;
+  // A newer edit may have arrived while IndexedDB was reading.
+  const latest = dirtyPages.get(id);
+  if (latest === null) return null;
+  const page = latest && !isShell(latest) ? latest : joinPage(meta, body);
+  return { page, stale: (page.revision ?? 0) < (useStore.getState().pages[id]?.revision ?? meta.revision ?? 0) };
+}
 export function hasPendingLocalWrites(): boolean { return dirtyPages.size > 0 || dirtyKv.size > 0 || flushing !== null; }
 export function fullWrite(page: Page, remote = false): Extract<PageWrite, { kind: "full" }> {
   return { kind: "full", id: page.id, ...splitPage(page), search: searchRecord(page, useStore.getState().syncedBlocks ?? {}), remote };
