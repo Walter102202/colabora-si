@@ -7,7 +7,7 @@ import { ConnectAgent } from "@/components/agents/connect/ConnectAgent";
 import Shell from "@/components/Shell";
 
 const f = vi.hoisted(() => ({ configured: true, copy: vi.fn(), tramaMounts: 0 }));
-vi.mock("@/lib/supabase", () => ({ isSupabaseConfigured: () => f.configured }));
+vi.mock("@/lib/supabase", () => ({ isSupabaseConfigured: () => f.configured, getSupabase: () => null }));
 vi.mock("@/lib/agentsStore", () => ({ mcpUrls: () => ({ mcpUrl: "https://example.test/functions/v1/mcp" }) }));
 vi.mock("@/lib/store", () => ({ useStore: (selector: (state: object) => unknown) => selector({ syncWorkspaceId: "w", pages: {} }), getBreadcrumb: () => [] }));
 vi.mock("@/lib/auth", () => ({ initAuth: () => {}, useAuthStore: Object.assign((selector: (state: object) => unknown) => selector({ user: null }), { getState: () => ({ user: null }), subscribe: () => () => {} }) }));
@@ -26,7 +26,7 @@ vi.mock("@/components/agents/InboxBell", () => ({ InboxBell: () => { useEffect((
 let root: Root, container: HTMLDivElement;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  f.configured = true; f.tramaMounts = 0; f.copy.mockReset().mockResolvedValue(undefined);
+  f.configured = true; f.tramaMounts = 0; f.copy.mockReset().mockResolvedValue(undefined); sessionStorage.clear();
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: f.copy } });
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });

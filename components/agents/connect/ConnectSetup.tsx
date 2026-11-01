@@ -3,9 +3,9 @@ import type { ReactNode } from "react";
 import { setupMessage, type ConnectCatalogEntry } from "@/lib/agentConnectCatalog";
 import { ConnectNotice } from "./ConnectNotice";
 
-export function ConnectSetup({ entry, serverUrl, copied, copyError, onCopy, onChange, onOpen, children }: {
+export function ConnectSetup({ entry, serverUrl, copied, copyError, onCopy, onChange, onOpen, children, content }: {
   entry: ConnectCatalogEntry; serverUrl: string; copied: boolean; copyError: boolean;
-  onCopy: () => void; onChange: () => void; onOpen?: () => void; children?: ReactNode;
+  onCopy: () => void; onChange: () => void; onOpen?: () => void; children?: ReactNode; content?: ReactNode;
 }) {
   const labels = entry.route === "own" ? ["Create its token", "Add the settings", "Start your agent"]
     : entry.route === "message" ? ["Copy the message", `Paste it into ${entry.name}`, "Approve in your browser"]
@@ -19,14 +19,14 @@ export function ConnectSetup({ entry, serverUrl, copied, copyError, onCopy, onCh
     </div>
     <p className="mb-7 text-text-secondary">{entry.helper}</p>
     <ol aria-label="Connection steps" className="grid grid-cols-3 gap-2.5 text-xs text-text-secondary">{labels.map((label, index) => <li key={label} aria-current={index === 0 ? "step" : undefined} className="min-w-0"><div className={`mb-2.5 h-1 rounded ${index === 0 ? "bg-accent" : "bg-border"}`} />{index + 1}. {label}</li>)}</ol>
-    <section aria-label={entry.route === "message" ? "Setup message" : entry.route === "own" ? "Agent details" : "Connection details"} className="mt-7 overflow-hidden rounded-xl border border-border">
+    {content ?? <section aria-label={entry.route === "message" ? "Setup message" : entry.route === "own" ? "Agent details" : "Connection details"} className="mt-7 overflow-hidden rounded-xl border border-border">
       {entry.route === "own" ? children : <>
         {entry.route === "message" ? <pre className="whitespace-pre-wrap break-words bg-bg-secondary p-5 font-mono text-[13px] leading-relaxed [overflow-wrap:anywhere]">{setupMessage(entry)}</pre>
           : <dl className="space-y-3 bg-bg-secondary p-5 text-sm"><div><dt className="text-xs text-text-secondary">Name</dt><dd>colabora.si</dd></div><div><dt className="text-xs text-text-secondary">Server URL</dt><dd className="break-all font-mono text-[13px]">{serverUrl}</dd></div><div><dt className="text-xs text-text-secondary">Authentication</dt><dd>OAuth</dd></div></dl>}
         <div className="p-3">{entry.route === "message" ? <button data-setup-action type="button" onClick={onCopy} className="min-h-11 w-full rounded-lg bg-accent px-4 font-semibold text-white">Copy setup message</button>
           : <a href={entry.url} onClick={onOpen} target="_blank" rel="noopener noreferrer" className="flex min-h-11 items-center justify-center rounded-lg bg-accent px-4 font-semibold text-white">{entry.action}</a>}</div>
       </>}
-    </section>
+    </section>}
     {copied ? <p role="status" className="mt-3 text-sm">Copied — paste into {entry.name}</p> : null}
     {copyError ? <p role="alert" className="mt-3 text-sm">We couldn’t copy the message. Select it below and copy it yourself.</p> : null}
     <p className="mt-4 text-center text-sm text-text-secondary">{entry.route === "own" ? "Can it sign in through a browser? Use the server URL instead." : "You’ll review page access before it connects."}</p>
