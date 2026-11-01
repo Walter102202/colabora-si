@@ -9,6 +9,7 @@ create table public.agent_row_plans (
 create index agent_row_plans_workspace_idx on public.agent_row_plans(workspace_id);
 create index agent_row_plans_worker_idx on public.agent_row_plans(worker_agent_id);
 alter table public.agent_row_plans enable row level security;
+alter publication supabase_realtime add table public.agent_row_plans;
 revoke all on public.agent_row_plans from public,anon,authenticated;
 grant select on public.agent_row_plans to authenticated;
 create policy "read plans with their row" on public.agent_row_plans for select to authenticated

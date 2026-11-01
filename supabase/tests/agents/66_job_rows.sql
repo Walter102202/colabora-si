@@ -1,6 +1,7 @@
 -- People add rows; a Lead adopts them without changing the chosen Worker or page.
 begin;
 select no_plan();
+select ok(exists(select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='agent_row_plans'),'human Worker choices reach other sessions through Realtime');
 select tests.fixture() as f \gset
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid,'rows-lead@agents.invalid','lead','page_A') as lead \gset
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid,'rows-other@agents.invalid','worker','page_A') as other \gset
