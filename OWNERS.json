@@ -108,11 +108,23 @@
     ]
   },
   "branchExceptions": {
-    "a/product-privacy": ["OWNERS.json"],
-    "a/product-recovery": ["OWNERS.json"],
-    "b/product-data": ["OWNERS.json", "supabase/functions/_shared/lib/types.ts"],
-    "b/product-table": ["OWNERS.json", "supabase/functions/_shared/lib/types.ts"],
-    "b/product-blocks": ["OWNERS.json"],
+    "a/product-privacy": [
+      "OWNERS.json"
+    ],
+    "a/product-recovery": [
+      "OWNERS.json"
+    ],
+    "b/product-data": [
+      "OWNERS.json",
+      "supabase/functions/_shared/lib/types.ts"
+    ],
+    "b/product-table": [
+      "OWNERS.json",
+      "supabase/functions/_shared/lib/types.ts"
+    ],
+    "b/product-blocks": [
+      "OWNERS.json"
+    ],
     "a/connect": [
       "README.md",
       "AGENTS.md",
@@ -289,6 +301,59 @@
       "CLAUDE.md",
       "public/llms.txt",
       "supabase/config.toml"
+    ],
+    "infra/product-interactions": [
+      "OWNERS.json",
+      "app/globals.css",
+      "components/BlockEditor.tsx",
+      "components/MovePageModal.tsx",
+      "components/PageView.tsx",
+      "components/SharedPageView.tsx",
+      "components/SidebarItem.tsx",
+      "components/blocks/BlockDragContext.ts",
+      "components/blocks/BlockDragProvider.tsx",
+      "components/blocks/BlockItem.tsx",
+      "components/blocks/BlockMenu.tsx",
+      "components/blocks/ColumnsBlock.tsx",
+      "components/blocks/NestedEditor.tsx",
+      "components/blocks/PageLinkBlock.tsx",
+      "components/database/DatabaseRows.tsx",
+      "components/database/ReadOnlyDatabaseView.tsx",
+      "components/database/RowSelectionToolbar.tsx",
+      "components/database/TableView.tsx",
+      "lib/agentTasks.ts",
+      "lib/blockOps.ts",
+      "lib/dbMutations.ts",
+      "lib/dbOps.ts",
+      "lib/fileStore.ts",
+      "lib/history.ts",
+      "lib/opsQueue.ts",
+      "lib/pageMutations.ts",
+      "lib/pageOps.ts",
+      "lib/store.ts",
+      "lib/sync.ts",
+      "lib/syncConflicts.ts",
+      "lib/types.ts",
+      "supabase/functions/_shared/cardHtml.ts",
+      "supabase/functions/_shared/lib/types.ts",
+      "supabase/functions/_shared/tools/ai.test.ts",
+      "supabase/functions/_shared/tools/read.ts",
+      "supabase/migrations/20261101131228_0055_page_content_privacy.sql",
+      "supabase/tests/agents/49_private_pages.sql",
+      "supabase/tests/agents/66_page_content_privacy.sql",
+      "tests/agents/agentTasksSubscribe.test.ts",
+      "tests/clone/blockEditor.test.ts",
+      "tests/clone/blockOps.test.ts",
+      "tests/clone/dbMutations.test.ts",
+      "tests/clone/dbOps.test.ts",
+      "tests/clone/fileStore.test.ts",
+      "tests/clone/pageMutations.test.ts",
+      "tests/clone/pageOps.test.ts",
+      "tests/clone/sharedPageSync.test.tsx",
+      "tests/clone/store.test.ts",
+      "tests/clone/syncAccountSwitch.test.ts",
+      "tests/clone/syncEngine.test.ts",
+      "tests/clone/tableView.test.ts"
     ]
   }
 }
