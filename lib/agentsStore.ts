@@ -71,7 +71,7 @@ export interface AgentsState {
   grants: GrantRow[];
   tokens: TokenRow[];
   load: (workspaceId?: string | null) => Promise<void>;
-  createAgent: (input: NewAgentInput) => Promise<{ agentId: string; token: string }>;
+  createAgent: (input: NewAgentInput, options?: { issueToken?: boolean }) => Promise<{ agentId: string; token: string | null }>;
   enablePlatformAgent: () => Promise<{ agentId: string; token: string }>;
   issueToken: (agentId: string, name: string) => Promise<string>;
   revokeToken: (tokenId: string) => Promise<void>;
@@ -141,7 +141,7 @@ export const useAgentsStore = create<AgentsState>()((set, get) => ({
     }
   },
 
-  async createAgent(input) {
+  async createAgent(input, { issueToken = true } = {}) {
     const client = getAgentClient();
     const ws = get().workspaceId;
     if (!client || !ws) throw new Error("Sign in to manage agents.");
@@ -166,7 +166,7 @@ export const useAgentsStore = create<AgentsState>()((set, get) => ({
     for (const g of input.grants) {
       await rpc("grant_agent_page", { p_agent_id: agentId, p_page_id: g.pageId, p_scopes: g.scopes, p_inherit: g.inherit });
     }
-    const token = await get().issueToken(agentId, "default");
+    const token = issueToken ? await get().issueToken(agentId, "default") : null;
     await get().load();
     return { agentId, token };
   },

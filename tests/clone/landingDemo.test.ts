@@ -1,96 +1,158 @@
 import { describe, expect, it } from "vitest";
-import { demoReducer, demoReview, demoSignature, demoStatus, demoTimers, demoWorkReply, initialDemo, type DemoEvent, type DemoState } from "@/lib/landingDemo";
+import { DEMO_END, DEMO_STEPS, demoBlocks, demoDelay, demoNote, demoOutcome, demoReducer, demoStart, demoStatus, demoStep, type DemoEvent, type DemoState } from "@/lib/landingDemo";
 
-const play = (events: DemoEvent[], from: DemoState = initialDemo) => events.reduce(demoReducer, from);
+const play = (events: DemoEvent[], from: DemoState = demoStart(false)) => events.reduce(demoReducer, from);
+const at = (beat: number) => play([{ type: "goto", beat }]);
+const atCard = () => at(DEMO_END);
+const titles = (state: DemoState) => demoBlocks(state).map((block) => block.title);
 
-// Runs every timer the state asks for until the clock has nothing left to do.
-function letTimeRun(from: DemoState, reducedMotion = false): DemoState {
+// Lets the clock run until it stops on its own or comes back to the first beat.
+function letTimeRun(from: DemoState): { state: DemoState; spent: number } {
   let state = from;
-  for (let guard = 0; guard < 20; guard += 1) {
-    const timers = demoTimers(state.activity, reducedMotion);
-    if (!timers.length) return state;
-    state = play(timers.map((timer) => timer.event), state);
+  let spent = 0;
+  for (let guard = 0; guard < 40; guard += 1) {
+    const delay = demoDelay(state);
+    if (delay === null) return { state, spent };
+    spent += delay;
+    state = demoReducer(state, { type: "tick" });
+    if (state.beat === 0) return { state, spent };
   }
   throw new Error("the demo clock never stops");
 }
 
-const atReview = () => play([{ type: "goto", step: 2 }]);
-
-describe("the example", () => {
-  it("starts at the brief with nothing accepted", () => {
-    expect(demoStatus(initialDemo)).toEqual({ text: "Brief ready", tone: "brief" });
-    expect(initialDemo.accepted).toBe(false);
+describe("the clock", () => {
+  it("shows Claude Code half a second longer than the work around it", () => {
+    expect(Array.from({ length: DEMO_END }, (_, beat) => demoDelay(at(beat)))).toEqual([1200, 900, 1000, 1900, 1100, 1900, 1100, 1800, 1700]);
   });
 
-  it("drafts block by block after Do it and stops at ready for review", () => {
-    let state = play([{ type: "start" }]);
-    expect(state.step).toBe(0);
-    state = play([{ type: "draft" }], state);
-    expect([state.step, state.draftBlocks, demoStatus(state).text]).toEqual([1, 0, "Working"]);
-    expect(demoSignature(state)).toBe("Trama · run 4abf5433 (running) · Just now");
-    expect(demoWorkReply(state)).toBe("On it. I’ll add the draft to this page.");
-    state = play([{ type: "block" }, { type: "block" }, { type: "block" }, { type: "block" }, { type: "drafted" }], state);
-    expect([state.draftBlocks, state.activity, demoStatus(state).text]).toEqual([3, "idle", "Ready for review"]);
-    expect(demoSignature(state)).toBe("Trama · run 4abf5433 (completed) · Just now");
+  it("replays 5 s after the card appears when nobody decides", () => {
+    expect(demoDelay(atCard())).toBe(5000);
+    expect(demoReducer(atCard(), { type: "tick" }).beat).toBe(0);
   });
 
-  it.each([false, true])("never accepts on a timer (reduced motion: %s)", (reducedMotion) => {
-    const delivered = letTimeRun(play([{ type: "start" }]), reducedMotion);
-    expect([delivered.step, delivered.activity, delivered.accepted]).toEqual([1, "idle", false]);
-    const revised = letTimeRun(play([{ type: "goto", step: 2 }, { type: "send", text: "Shorter" }], delivered), reducedMotion);
-    expect([revised.accepted, revised.version]).toEqual([false, 2]);
+  it("replays 3 s after a decision", () => {
+    const decided = play([{ type: "choose", choice: "approved" }], atCard());
+    expect(demoDelay(decided)).toBe(3000);
+    expect(demoReducer(decided, { type: "tick" })).toEqual(demoStart(false));
   });
 
-  it("accepts on the click, in review only", () => {
-    expect(play([{ type: "accept" }]).accepted).toBe(false);
-    expect(play([{ type: "goto", step: 1 }, { type: "accept" }]).accepted).toBe(false);
-    const state = play([{ type: "accept" }], atReview());
-    expect(state.accepted).toBe(true);
-    expect(demoStatus(state)).toEqual({ text: "Done · accepted", tone: "done" });
-    expect(demoReview(state).reply).toBe("Version 1 is accepted. The task is closed.");
+  it("runs a whole round in 17.6 s and never decides on its own", () => {
+    const { state, spent } = letTimeRun(demoStart(false));
+    expect(spent).toBe(17600);
+    expect(state).toEqual(demoStart(false));
   });
 
-  it("does not accept while the agent is revising", () => {
-    const state = play([{ type: "send", text: "Shorter" }, { type: "accept" }], atReview());
-    expect(state.accepted).toBe(false);
+  it.each([{ pointer: true }, { focused: true }])("keeps an undecided card while a hand is on it: %j", (hand) => {
+    const held = play([{ type: "hand", ...hand }], atCard());
+    expect(demoDelay(held)).toBeNull();
+    expect(demoReducer(held, { type: "tick" })).toBe(held);
   });
 
-  it("revises from a note and asks for review again", () => {
-    const sent = play([{ type: "send", text: "  Shorter please  " }], atReview());
-    expect([sent.note, demoStatus(sent).text, demoReview(sent).note]).toEqual(["Shorter please", "Working", "Trama has your feedback."]);
-    const revised = play([{ type: "revised" }], sent);
-    expect([revised.version, revised.note, demoStatus(revised).text]).toEqual([2, null, "Ready for review"]);
-    expect(demoReview(revised).reply).toBe("Version 2 is on the page, ready for your review.");
-    expect(demoSignature(revised)).toBe("Trama · run 9e20c1f7 (completed) · Just now");
+  it("gives a full 5 s again when the hand leaves", () => {
+    const left = play([{ type: "hand", pointer: true }, { type: "hand", pointer: false }], atCard());
+    expect(demoDelay(left)).toBe(5000);
   });
 
-  it("ignores a blank note and a note after accepting", () => {
-    expect(play([{ type: "send", text: "   " }], atReview()).activity).toBe("idle");
-    expect(play([{ type: "accept" }, { type: "send", text: "Change it" }], atReview()).activity).toBe("idle");
+  it("does not stop the work for a hand on the window", () => {
+    expect(demoDelay(play([{ type: "hand", pointer: true }], at(3)))).toBe(1900);
   });
 
-  it("shortens a long note", () => {
-    const state = play([{ type: "send", text: "x".repeat(200) }], atReview());
-    expect(state.note).toHaveLength(118);
-    expect(state.note?.endsWith("…")).toBe(true);
+  it("replays after a decision even with a hand on the window", () => {
+    expect(demoDelay(play([{ type: "hand", pointer: true }, { type: "hand", focused: true }, { type: "choose", choice: "rejected" }], atCard()))).toBe(3000);
   });
 
-  it("lands a revision in progress when the visitor moves on", () => {
-    const state = play([{ type: "send", text: "Shorter" }, { type: "goto", step: 1 }], atReview());
-    expect([state.step, state.activity, state.version, state.note]).toEqual([1, "idle", 2, null]);
+  it("forgets keyboard focus when the clock starts over, because the focused element is gone", () => {
+    const decided = play([{ type: "hand", focused: true, pointer: true }, { type: "choose", choice: "approved" }], atCard());
+    expect(demoReducer(decided, { type: "tick" })).toMatchObject({ focused: false, pointer: true });
   });
 
-  it("drops a pending start when the visitor jumps ahead", () => {
-    const state = play([{ type: "start" }, { type: "goto", step: 2 }, { type: "draft" }]);
-    expect([state.step, state.activity]).toEqual([2, "idle"]);
+  it("keeps keyboard focus on a step, which is still there after the jump", () => {
+    expect(play([{ type: "hand", focused: true }, { type: "goto", beat: DEMO_END }])).toMatchObject({ focused: true });
+  });
+});
+
+describe("the decision", () => {
+  it("only exists on the card", () => {
+    expect(play([{ type: "choose", choice: "approved" }], at(8)).choice).toBeNull();
+    expect(play([{ type: "choose", choice: "approved" }, { type: "choose", choice: "rejected" }], atCard()).choice).toBe("approved");
   });
 
-  it("resets the decision when the visitor returns to the brief", () => {
-    const state = play([{ type: "send", text: "Shorter" }, { type: "revised" }, { type: "accept" }, { type: "goto", step: 0 }], atReview());
-    expect(state).toEqual(initialDemo);
+  it("says what approving did", () => {
+    const state = play([{ type: "choose", choice: "approved" }], atCard());
+    expect(demoStatus(state)).toEqual({ text: "Done", tone: "done" });
+    expect(demoOutcome("approved")).toEqual({ title: "Approved by you.", text: "Codex merged pull request #128." });
+    expect(demoNote(state)).toBe("Fixed by Codex · Reviewed by Claude Code · Approved by you");
   });
 
-  it("keeps the signature's age while the visitor explores", () => {
-    expect(demoSignature(play([{ type: "goto", step: 1 }]))).toBe("Trama · run 4abf5433 (completed) · 2m ago");
+  it("says what rejecting did", () => {
+    const state = play([{ type: "choose", choice: "rejected" }], atCard());
+    expect(demoStatus(state)).toEqual({ text: "Working", tone: "working" });
+    expect(demoOutcome("rejected")).toEqual({ title: "Rejected by you.", text: "Nothing was merged." });
+    expect(demoNote(state)).toBe("Fixed by Codex · Reviewed by Claude Code");
+  });
+});
+
+describe("the task", () => {
+  it("starts from the goal alone", () => {
+    expect(titles(demoStart(false))).toEqual(["Goal"]);
+  });
+
+  it("adds what broke, then the fix, then the Lead's approval", () => {
+    expect(titles(at(1))).toEqual(["Goal", "What broke"]);
+    expect(titles(at(2))).toEqual(["Goal", "What broke", "The fix"]);
+    expect(titles(at(6))).toEqual(["Goal", "What broke", "The fix"]);
+    expect(titles(at(7))).toEqual(["Goal", "What broke", "The fix", "Approved · by Claude Code · deliverable v3 · brief v1"]);
+  });
+
+  it("shows two requests from Claude Code to Codex, each answered in a new run", () => {
+    const fix = (beat: number) => demoBlocks(at(beat))[2];
+    expect(fix(2)).toMatchObject({ text: "Trim the address before saving it.", sign: "Codex · run 4abf5433 (running) · Just now" });
+    expect(fix(2).ask).toBeUndefined();
+    expect(fix(3)).toMatchObject({ ask: "Claude Code: Add a test for this case.", sign: "Codex · run 4abf5433 (completed) · Just now" });
+    expect(fix(4)).toMatchObject({ text: "Trim the address before saving it. Test added.", sign: "Codex · run 9e20c1f7 (running) · Just now" });
+    expect(fix(4).ask).toBeUndefined();
+    expect(fix(5)).toMatchObject({ ask: "Claude Code: Apply it to login too.", sign: "Codex · run 9e20c1f7 (completed) · Just now" });
+    expect(fix(6)).toMatchObject({ text: "Trim the address in signup and login before saving it. Test added.", sign: "Codex · run c71d0a32 (running) · Just now" });
+    expect(fix(7).sign).toBe("Codex · run c71d0a32 (completed) · Just now");
+  });
+
+  it("records the Lead's approval with its evidence", () => {
+    expect(demoBlocks(at(7))[3]).toMatchObject({ by: "Claude Code", checks: [{ text: "Signup and login accept a trailing space", tag: "verified" }, { text: "Tests pass", tag: "CI passed" }] });
+  });
+
+  it("marks only agent blocks with their author", () => {
+    expect(demoBlocks(at(7)).map((block) => block.by)).toEqual([undefined, "Codex", "Codex", "Claude Code"]);
+  });
+
+  it.each([
+    [0, "Working", "working"], [2, "Working", "working"],
+    [3, "Lead reviewing · round 1 of 2", "review"], [4, "Working · round 1 of 2", "working"],
+    [5, "Lead reviewing · round 2 of 2", "review"], [6, "Working · round 2 of 2", "working"],
+    [7, "Approved · by Claude Code", "review"], [8, "Needs your decision", "decision"], [9, "Needs your decision", "decision"],
+  ])("states beat %i as %s", (beat, text, tone) => {
+    expect(demoStatus(at(beat))).toEqual({ text, tone });
+  });
+});
+
+describe("the stepper", () => {
+  it("follows the clock", () => {
+    expect([0, 1, 7, 8, DEMO_END].map((beat) => demoStep(beat))).toEqual([0, 1, 1, 2, 2]);
+  });
+
+  it("jumps to the start of each part and clears a decision", () => {
+    const decided = play([{ type: "choose", choice: "approved" }], atCard());
+    expect(DEMO_STEPS.map((step) => play([{ type: "goto", beat: step.beat }], decided)).map(({ beat, choice }) => [beat, choice])).toEqual([[0, null], [1, null], [8, null]]);
+  });
+});
+
+describe("without motion", () => {
+  it("opens on the decision", () => {
+    expect(demoStart(true).beat).toBe(DEMO_END);
+    expect(demoStatus(demoStart(true)).text).toBe("Needs your decision");
+  });
+
+  it("gives each step a finished picture", () => {
+    expect(DEMO_STEPS.map((step) => step.still)).toEqual([0, 7, DEMO_END]);
+    expect(demoBlocks(at(DEMO_STEPS[1].still)).every((block) => !block.sign?.includes("running"))).toBe(true);
   });
 });

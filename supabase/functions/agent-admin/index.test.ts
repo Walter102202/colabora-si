@@ -232,7 +232,7 @@ Deno.test('ci_connect requires its pepper and propagates caller authorization fa
 });
 
 Deno.test('every admin action rejects an OAuth chat before any privileged operation', async () => {
-  for (const action of ['create_agent', 'rotate_login', 'revoke_agent', 'enable_platform_agent', 'ci_connect', 'oauth_read', 'oauth_approve', 'oauth_deny', 'oauth_disconnect']) {
+  for (const action of ['connect_agent', 'connect_own_agent', 'create_agent', 'rotate_login', 'revoke_agent', 'enable_platform_agent', 'ci_connect', 'oauth_read', 'oauth_approve', 'oauth_deny', 'oauth_disconnect']) {
     const { deps, calls } = makeDeps();
     deps.verifyCaller = async () => ({ userId: HUMAN, principalType: 'human', clientId: 'chat-client' });
     const res = await handleAgentAdmin(new Request('http://localhost/functions/v1/agent-admin', {
@@ -250,7 +250,7 @@ Deno.test('admin actions reject verified OAuth MFA tokens without client_id', as
     exp: Math.floor(Date.now() / 1000) + 3600, app_metadata: {},
     amr: [{ method: 'oauth_provider/authorization_code' }, { method: 'totp' }] };
   const token = `e30.${btoa(JSON.stringify(claims))}.signature`;
-  for (const action of ['create_agent', 'rotate_login', 'revoke_agent', 'enable_platform_agent', 'ci_connect', 'oauth_read', 'oauth_approve', 'oauth_deny', 'oauth_disconnect']) {
+  for (const action of ['connect_agent', 'connect_own_agent', 'create_agent', 'rotate_login', 'revoke_agent', 'enable_platform_agent', 'ci_connect', 'oauth_read', 'oauth_approve', 'oauth_deny', 'oauth_disconnect']) {
     const { deps, calls } = makeDeps();
     deps.verifyCaller = async () => {
       const { principal } = await verifyBearer(new Request('http://localhost', { headers: { Authorization: `Bearer ${token}` } }),
@@ -326,4 +326,95 @@ Deno.test('OAuth remembered consent records its link before returning and reject
   const refused = await handleAgentAdmin(req(), deps);
   assert.equal(refused.status, 403);
   assert.ok(!(await refused.text()).includes('remembered'));
+});
+function connectRequest(action = 'connect_agent', fields: Record<string, unknown> = {}, token = 'human-jwt') {
+  return new Request('http://localhost/functions/v1/agent-admin', { method: 'POST', headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ action, workspace_id: WORKSPACE, name: ' Connector ', authorization_id: 'authz', ...fields }) });
+}
+function connectDeps(opts: { member?: boolean; remembered?: boolean; fail?: string; existing?: boolean; metaMissing?: boolean } = {}) {
+  const f = makeDeps(opts), api = f.deps.caller('human-jwt');
+  let exists = opts.existing ?? false;
+  const service = f.deps.serviceRpc;
+  api.getAgent = async () => exists ? { id: AGENT_ID, workspace_id: WORKSPACE, auth_user_id: AUTH_USER, connection: {} } : null;
+  api.rpc = async (fn, args) => {
+    f.calls.push({ op: fn, args: [args] });
+    if (fn === opts.fail) throw { code: 'PT403', message: 'forbidden' };
+    if (fn === 'oauth_human_context') {
+      if (opts.metaMissing) throw { code: 'PT404', message: 'not_found' };
+      return { client_id: 'client' };
+    }
+    if (fn === 'connect_claim') return AGENT_ID;
+    if (fn === 'connect_agent_finish') return { agent_id: AGENT_ID, page_id: 'starter' };
+    if (fn === 'oauth_agent_context') return { auth_user_id: AUTH_USER };
+    return null;
+  };
+  f.deps.caller = () => api;
+  f.deps.serviceRpc = async (fn, args) => {
+    if (fn === 'oauth_authorization_context') return { client_id: 'client', redirect_uri: 'cursor://cb', user_id: AUTH_USER };
+    if (fn === opts.fail) throw { code: 'PT403', message: 'forbidden' };
+    const result = await service(fn, args); exists = true; return result;
+  };
+  f.deps.signInAgent = async () => {
+    f.calls.push({ op: 'signInAgent', args: [] });
+    return { read: async () => { f.calls.push({ op: 'read', args: [] }); return opts.remembered ? { redirect_url: 'cursor://cb' } : {}; },
+      approve: async () => { f.calls.push({ op: 'approve', args: [] }); return { redirect_url: 'cursor://cb' }; },
+      deny: async () => ({}), disconnect: async () => {} };
+  };
+  return f;
+}
+for (const action of ['connect_agent', 'connect_own_agent']) {
+  Deno.test(`${action}: authorization, validation and role propagation`, async () => {
+    const agent = connectDeps();
+    const deniedAgent = await handleAgentAdmin(connectRequest(action, {}, 'agent-jwt'), agent.deps);
+    assert.equal(deniedAgent.status, 403); assert.equal((await deniedAgent.json()).error, 'humans_only'); assert.deepEqual(agent.calls, []);
+    for (const fields of [{ role: 'admin' }, { name: ' ' }, { workspace_id: 'bad' }, { name: 'x'.repeat(81) }]) {
+      const f = connectDeps();
+      assert.equal((await handleAgentAdmin(connectRequest(action, fields), f.deps)).status, 400); assert.equal(f.calls.length, 0);
+    }
+    const denied = connectDeps({ member: false });
+    assert.equal((await handleAgentAdmin(connectRequest(action), denied.deps)).status, 403);
+    assert.ok(!denied.calls.some(c => c.op === 'createUser'));
+    for (const role of [undefined, 'lead']) {
+      const f = connectDeps();
+      assert.equal((await handleAgentAdmin(connectRequest(action, { role }), f.deps)).status, 200);
+      const args = f.calls.find(c => c.op === 'serviceRpc' && c.args[0] === 'create_agent')!.args[1] as Record<string, unknown>;
+      assert.equal(args.p_role, role ?? 'worker'); assert.equal(args.p_name, 'Connector');
+      assert.ok(f.calls.findIndex(c => c.op === 'connect_agent_finish') < f.calls.findIndex(c => c.op === 'connect_agent_approved'));
+      assert.ok(!f.calls.some(c => c.args[0] === 'issue_agent_token'));
+    }
+  });
+  Deno.test(`${action}: failed creation or starter setup cleans up, never approves`, async () => {
+    for (const fail of ['create_agent', 'connect_agent_finish']) {
+      const f = connectDeps({ fail });
+      assert.equal((await handleAgentAdmin(connectRequest(action), f.deps)).status, 403);
+      assert.equal(f.calls.at(-1)?.op, 'deleteUser');
+      assert.ok(!f.calls.some(c => c.op === 'approve' || c.op === 'connect_agent_approved'));
+    }
+  });
+}
+Deno.test('connect_agent: ordered flow, remembered consent and retry keep one agent', async () => {
+  for (const remembered of [false, true]) {
+    const f = connectDeps({ remembered });
+    const result = await handleAgentAdmin(connectRequest(), f.deps);
+    assert.equal(result.status, 200);
+    assert.deepEqual(await result.json(), { redirect_url: 'cursor://cb', agent_id: AGENT_ID, page_id: 'starter' });
+    const ops = f.calls.map(c => c.op);
+    assert.deepEqual(ops.slice(0, 6), ['canManageWorkspace', 'oauth_human_context', 'connect_claim', 'createUser', 'updateUserById', 'serviceRpc']);
+    assert.ok(ops.indexOf('connect_agent_finish') < ops.indexOf('signInAgent'));
+    assert.equal(ops.includes('approve'), !remembered);
+    assert.ok(ops.indexOf('set_oauth_app') < ops.indexOf('connect_agent_approved'));
+    assert.equal((await handleAgentAdmin(connectRequest(), f.deps)).status, 200);
+    assert.equal(f.calls.filter(c => c.op === 'createUser').length, 1);
+  }
+  const retry = connectDeps({ existing: true, metaMissing: true });
+  assert.equal((await handleAgentAdmin(connectRequest(), retry.deps)).status, 200);
+  assert.equal((retry.calls.find(c => c.op === 'connect_claim')!.args[0] as Record<string, unknown>).p_client_id, null);
+});
+Deno.test('connect_agent: existing agent keeps its role and foreign agent fails before login', async () => {
+  const f = connectDeps({ existing: true });
+  assert.equal((await handleAgentAdmin(connectRequest('connect_agent', { agent_id: AGENT_ID, role: 'lead' }), f.deps)).status, 200);
+  assert.ok(!f.calls.some(c => c.op === 'createUser' || c.op === 'connect_claim'));
+  const denied = connectDeps({ fail: 'oauth_agent_context', existing: true });
+  assert.equal((await handleAgentAdmin(connectRequest('connect_agent', { agent_id: AGENT_ID }), denied.deps)).status, 403);
+  assert.ok(!denied.calls.some(c => c.op === 'signInAgent' || c.op === 'createUser'));
 });

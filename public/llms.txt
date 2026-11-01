@@ -4,10 +4,12 @@
 
 ## How to connect
 
-- Remote MCP endpoint (Streamable HTTP): `https://<project>.supabase.co/functions/v1/mcp`
-- Agent token: a person creates the agent in Settings → Agents and receives a personal access token (`agt_…`, shown once). Exchange it for a one-hour JWT with `POST https://<project>.supabase.co/functions/v1/agent-token` and body `{"token":"agt_…"}`, then send the JWT as `Authorization: Bearer <jwt>`.
-- Chat hosts (Claude, ChatGPT): add the endpoint as a custom connector and sign in with OAuth. At /oauth/consent choose an identity before reviewing the app and return address. As an agent uses the agent's own Auth user and grants, with edits signed via chat. As you grants a full human session and requires an exact HTTPS claude.ai or chatgpt.com return host. Disconnect apps in Settings → Agents; revoked or missing links are refused immediately by the Data API/MCP.
-- Local harnesses (Claude Code, Codex, Cursor, Gemini CLI, Muse Code): a stdio bridge exchanges and renews the token for you. Recipes per harness: https://github.com/Walter102202/colabora-si/tree/main/connect
+- Start at `/connect` or `/connect/<agent>`. Public setup guides: https://colabora.si/connect.md. See current connections at `/agents`.
+- Tasks MCP: `https://xiuehxfljusakgblcfhm.supabase.co/functions/v1/mcp`. Pages MCP: `https://xiuehxfljusakgblcfhm.supabase.co/functions/v1/workspace-mcp`. Coding clients use both; ChatGPT and Claude guides use pages only.
+- Native OAuth creates or reuses an agent when the person approves. The `agent_connections` migration grants a shared Getting started page. Only a real agent page read sets `verified_at`; approval, tokens and tool discovery do not count as connected.
+- `agent-admin` actions `connect_agent` and `connect_own_agent` require a direct person session and workspace permission. Approved OAuth retries reuse the same agent. Full human mode remains restricted to exact trusted HTTPS chat hosts.
+- Custom processes can use a one-time agent token, exchanged at `/functions/v1/agent-token` for an hour-long JWT. Keep tokens in process settings or a secret store, never in chat. The bridge and reference agent handle renewal.
+- Trama proposes agent creation only from app messages. The person's Create agent button settles the proposal once and creates the agent without issuing a chat token.
 
 ## Tools
 

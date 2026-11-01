@@ -1,0 +1,33 @@
+Product names and logos belong to their respective owners.
+
+claude-code.svg, codex.svg, chatgpt.svg are copied from @lobehub/icons-static-svg 1.101.0.
+Unmodified product-source downloads:
+claude.svg: https://claude.com/icon.svg
+muse-code.svg: https://introducing.muse.ai/landing/MuseLogo.svg
+gemini-cli.svg: https://geminicli.com/brandassets/gemini-cli-icon_full-color.svg
+antigravity.svg: https://antigravity.google/assets/image/brand/antigravity-icon__full-color.svg
+hermes.svg: https://raw.githubusercontent.com/NousResearch/hermes-agent/main/assets/nous-girl-black.svg
+openclaw.svg: https://openclaw.ai/brand/openclaw-mascot.svg
+cursor.svg: General Logos/Cube/SVG/CUBE_2D_LIGHT.svg from https://ptht05hbb1ssoooe.public.blob.vercel-storage.com/assets/brand/cursor-brand-assets.zip
+
+MIT License
+
+Copyright (c) 2023 LobeHub
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

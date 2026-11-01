@@ -3,7 +3,7 @@ import { create } from "zustand";
 import type { RealtimeChannel, SupabaseClient, User } from "@supabase/supabase-js";
 import type { Block, BlockAttr, Page, Reminder, WorkspaceState } from "@/lib/types";
 import { applyOps, applyWorkspaceOps, diffPageToOps, type OpResult, type PageOp, type WorkspaceOp } from "@/lib/pageOps";
-import { IndexedDbQueue, MemoryQueue } from "@/lib/opsQueue";
+import { clearStoredOps, IndexedDbQueue, MemoryQueue } from "@/lib/opsQueue";
 import { pageFromRow, mergePageDecision, mergeReminders, type PageRow, type WorkspaceRow, type ReminderRow } from "@/lib/syncMerge";
 import { getSupabase } from "@/lib/supabase";
 import { useStore, type RemotePatch, type Store } from "@/lib/store";
@@ -12,7 +12,7 @@ import { foreignPageIds } from "@/lib/foreignPages";
 import { DEFAULT_SETTINGS } from "@/lib/factories";
 import { useBlockConflicts, type BlockConflict } from "@/lib/syncConflicts";
 
-import { onFileSyncStart, onFileSyncStop } from "@/lib/fileStore";
+import { clearLocalFiles, hasPendingUploads, onFileSyncStart, onFileSyncStop } from "@/lib/fileStore";
 export const CLIENT_TAG = Math.random().toString(36).slice(2) + Date.now().toString(36);
 const DEBOUNCE_MS = 1500, MAX_RETRIES = 5, ACTIVE_EDIT_MS = 2000, DELETE_ECHO_TTL_MS = 120000;
 const PAGE_COLS = "id,parent_id,data,deleted_at,updated_at,revision,last_edited_by,last_edited_by_type,last_edit_run_id";
@@ -40,6 +40,7 @@ export type ConflictChoice = "merge" | "server" | "local";
 export interface ConflictPrompt { serverPageCount: number; localPageCount: number; resolve: (choice: ConflictChoice) => void }
 export const useSyncConflict = create<{ prompt: ConflictPrompt | null }>(() => ({ prompt: null }));
 const SYNC_CANCELLED = Symbol("sync-cancelled");
+const SIGN_OUT_FLUSH_MS = 4000;
 let conflictReject: (() => void) | null = null;
 function askConflictChoice(serverPageCount: number, localPageCount: number): Promise<ConflictChoice> {
   return new Promise((resolve, reject) => {
@@ -294,14 +295,26 @@ function makeEngine(sb: SupabaseClient, user: User): PageSyncEngine {
     pageConflict: (id) => { if (token === generation) useBlockConflicts.getState().notePageReload(id); },
   });
 }
+// One account's pages never stay for the next one. Runs with sync stopped, so nothing here reaches the cloud.
+async function clearLocalCopy(): Promise<void> {
+  pauseHistory();
+  try { useStore.getState().clearLocalWorkspace(); }
+  finally { resumeHistory(); }
+  last = useStore.getState();
+  await Promise.allSettled([clearStoredOps(), clearLocalFiles()]);
+}
 async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise<void> {
   mark("colabora:bootstrap:start");
-  const initial = useStore.getState(), switched = !!initial.syncUserId && initial.syncUserId !== user.id;
-  let linked = switched ? null : initial.syncWorkspaceId;
+  const previousUser = useStore.getState().syncUserId;
+  if (previousUser && previousUser !== user.id) await clearLocalCopy();
+  const initial = useStore.getState();
+  let linked = initial.syncWorkspaceId;
+  let acceptedInvitation = false;
   const invitation = sessionStorage.getItem("colabora-invitation");
   if (invitation) {
     const result = await sb.rpc("accept_invitation", { p_token: invitation });
     if (result.error) throw result.error;
+    acceptedInvitation = true;
     linked = result.data; sessionStorage.removeItem("colabora-invitation");
     const url = new URL(location.href); url.searchParams.delete("invite"); history.replaceState(history.state, "", url);
   }
@@ -318,7 +331,6 @@ async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise
   if (token !== generation) throw SYNC_CANCELLED;
   const meaningful = Object.values(initial.pages).some((p) => !p.isDeleted && !foreignPageIds.has(p.id) && p.updatedAt > p.createdAt);
   if (!workspace) {
-    if (switched && meaningful && await askConflictChoice(0, Object.keys(initial.pages).length) === "server") applyRemote({ pages: Object.fromEntries(Object.keys(initial.pages).filter((id) => !foreignPageIds.has(id)).map((id) => [id, null])), rootOrder: [], reminders: [] });
     const s = useStore.getState();
     const created = await sb.from("workspaces").insert({ name: "My Workspace", owner_id: user.id, root_order: s.rootOrder, synced_blocks: s.syncedBlocks ?? {}, settings: s.settings ?? DEFAULT_SETTINGS }).select(WS_COLS).single();
     if (created.error) throw created.error; workspace = created.data as WorkspaceRow;
@@ -329,8 +341,8 @@ async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise
   if (token !== generation) throw SYNC_CANCELLED;
   const rows = await fetchAllPages(sb); if (token !== generation) throw SYNC_CANCELLED;
   rows.forEach((r) => { known.add(r.id); advance("pages", r.updated_at); });
-  let choice: ConflictChoice = !linked && !meaningful && rows.some((r) => r.data && !r.deleted_at) ? "server" : "merge";
-  if (!linked && meaningful && (switched || rows.some((r) => r.data && !r.deleted_at))) choice = await askConflictChoice(rows.filter((r) => r.data && !r.deleted_at).length, Object.values(useStore.getState().pages).filter((p) => !p.isDeleted && !foreignPageIds.has(p.id)).length);
+  let choice: ConflictChoice = (!linked || acceptedInvitation) && !meaningful && rows.some((r) => r.data && !r.deleted_at) ? "server" : "merge";
+  if (!linked && meaningful && rows.some((r) => r.data && !r.deleted_at)) choice = await askConflictChoice(rows.filter((r) => r.data && !r.deleted_at).length, Object.values(useStore.getState().pages).filter((p) => !p.isDeleted && !foreignPageIds.has(p.id)).length);
   if (token !== generation) throw SYNC_CANCELLED;
   const current = useStore.getState();
   if (choice === "server") {
@@ -405,6 +417,28 @@ export function stopSync(): void {
   last = null; pushing = dirty = applyingRemote = false; attempts = lastWorkspaceRevision = 0;
   fetchedPages = fetchBytes = 0;
   known.clear(); for (const key of Object.keys(cursors)) delete cursors[key as PullFlow]; lastEditAt.clear(); recentlyDeleted.clear(); deferred.clear(); setStatus("idle");
+}
+function hasUnsyncedEdits(): boolean {
+  if (!queue) return false;
+  const local = queue;
+  return local.peekWorkspace().length > 0
+    || local.pageIds().some((id) => !foreignPageIds.has(id) && (local.isDeleted(id) || local.peek(id).length > 0))
+    || Object.values(useStore.getState().pages).some((page) => !foreignPageIds.has(page.id) && !known.has(page.id) && !page.isDeleted)
+    || hasPendingUploads();
+}
+export async function settleBeforeSignOut(timeoutMs = SIGN_OUT_FLUSH_MS): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+  for (;;) {
+    await flush();
+    if (!pushing && !hasUnsyncedEdits()) return true;
+    if (Date.now() >= deadline || !navigator.onLine) return false;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+}
+export async function discardLocalCopy(): Promise<void> {
+  stopSync();
+  await clearLocalCopy();
 }
 export async function forceFullPush(): Promise<void> {
   if (!started || !ready || !wsId || !queue || pushing) throw new Error("Sync is not ready");

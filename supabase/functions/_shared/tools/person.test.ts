@@ -41,7 +41,7 @@ Deno.test('reply hands the run and the seq to SQL', async () => {
 });
 
 Deno.test('the skill hands the run, the message and the wording to SQL, and a refusal is an answer', async () => {
-  const h = harness({ saved: false, reason: 'not_requested', hint: 'No guardé nada.' });
+  const h = harness({ saved: false, reason: 'not_requested', hint: 'No guardÃ© nada.' });
   const out = await tool('save_to_notes').handler({ run_id: 'r', message_id: 'm', text: 'hola' }, h.ctx);
   assert.deepEqual(h.calls[0], { name: 'save_to_notes', args: { p_run_id: 'r', p_message_id: 'm', p_text: 'hola' } });
   assert.equal(out.text, 'Not saved.');
@@ -57,4 +57,13 @@ Deno.test('assistRequest returns the thread as it came', async () => {
 
 Deno.test('neither tool is offered as read-only', () => {
   for (const t of personTools) assert.notEqual(t.annotations?.readOnlyHint, true);
+});
+
+Deno.test('reply passes an agent proposal to the six-argument SQL contract', async () => {
+  const h = harness();
+  const proposal = { message_id: 'm', name: 'Helper', role: 'worker', harness: 'codex' };
+  await tool('reply_person_message').handler({ run_id: 'r', text: 'Review', through_seq: 7, propose_agent: proposal }, h.ctx);
+  assert.deepEqual(h.calls[0].args.p_propose_agent, proposal);
+  assert.equal(h.calls[0].args.p_propose_message_id, null);
+  assert.equal(h.calls[0].args.p_usage, null);
 });

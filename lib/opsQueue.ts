@@ -132,3 +132,18 @@ export class IndexedDbQueue extends MemoryQueue {
   async settled(): Promise<void> { await this.ready; await this.writes; }
   async close(): Promise<void> { this.closed = true; try { await this.settled(); } finally { this.release?.(); this.db?.close(); } }
 }
+
+export async function clearStoredOps(): Promise<void> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open("colabora-sync", 1);
+    request.onupgradeneeded = () => { request.result.createObjectStore("ops"); request.result.createObjectStore("revisions"); };
+    request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(["ops", "revisions"], "readwrite");
+      tx.objectStore("ops").clear(); tx.objectStore("revisions").clear();
+      tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error);
+    });
+  } finally { db.close(); }
+}

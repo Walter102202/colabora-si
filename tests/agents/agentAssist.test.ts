@@ -31,6 +31,18 @@ describe("the model and the channel tools", () => {
     expect(h.mcp.calls.find((c) => c.name === "reply_person_message")?.args.propose_message_id).toBe(matching ? ID : undefined);
     expect(saves(h)).toEqual([]);
   });
+  it.each(["valid", "missing", "wrong id", "role", "harness", "name"])("agent proposals validate %s without granting creation", async (variant) => {
+    const args = { message_id: ID, name: "Helper", role: "worker", harness: "codex" };
+    if (variant === "wrong id") args.message_id = "00000000-0000-4000-8000-000000000002";
+    if (variant === "role") args.role = "admin";
+    if (variant === "harness") args.harness = "unknown";
+    if (variant === "name") args.name = " ";
+    const h = assist({ kind: "assist", messages: [{ id: ID, from: "person", text: "Create an agent" }], through_seq: 7, ...(variant === "missing" ? {} : { agent_proposal_message_id: ID }) }, {}, [{ tool_calls: [toolCall("propose_agent", args)] }, { content: "Please review it." }]);
+    await runRequest(h.opts);
+    expect((h.model.requests[0].tools ?? []).some((t: { function: { name: string } }) => t.function.name === "propose_agent")).toBe(variant !== "missing");
+    expect(h.mcp.calls.find((c) => c.name === "reply_person_message")?.args.propose_agent).toEqual(variant === "valid" ? args : undefined);
+    expect(JSON.parse(String(h.model.requests[1].messages.at(-1).content))).toMatchObject({ proposed: variant === "valid", requires_person: true });
+  });
   it("offers no tool when nobody asked to save", async () => {
     const h = assist({ kind: "assist", task_id: "t", messages: [{ id: ID, from: "person", text: "hola" }], through_seq: 7 });
     await runRequest(h.opts);
@@ -47,9 +59,9 @@ describe("the model and the channel tools", () => {
     expect(h.mcp.calls.at(-1)).toMatchObject({ name: "reply_person_message", args: { text: "Listo." } });
   });
   it("passes the model's own wording when it gives one", async () => {
-    const h = assist({ kind: "assist", task_id: "t", messages: [asked], through_seq: 7 }, {}, [{ tool_calls: [toolCall("save_to_notes", { message_id: ID, text: "El código es 1234" })] }, { content: "Listo." }]);
+    const h = assist({ kind: "assist", task_id: "t", messages: [asked], through_seq: 7 }, {}, [{ tool_calls: [toolCall("save_to_notes", { message_id: ID, text: "El cÃ³digo es 1234" })] }, { content: "Listo." }]);
     await runRequest(h.opts);
-    expect(saves(h)[0].args).toEqual({ run_id: "run", message_id: ID, text: "El código es 1234" });
+    expect(saves(h)[0].args).toEqual({ run_id: "run", message_id: ID, text: "El cÃ³digo es 1234" });
   });
   it("does not lose the note of a model that skipped the call", async () => {
     const h = assist({ kind: "assist", task_id: "t", messages: [asked], through_seq: 7 });
@@ -63,13 +75,13 @@ describe("the model and the channel tools", () => {
     expect(saves(h)[0].args).toEqual({ run_id: "run", message_id: ID, text: "El resumen." });
   });
   it("adds the server's hint when the runtime's own call was refused", async () => {
-    const h = assist({ kind: "assist", task_id: "t", messages: [{ ...asked, save: { problem: "no_target" } }], through_seq: 7 }, { save_to_notes: () => ({ saved: false, reason: "no_target", hint: "No sé qué guardar." }) });
+    const h = assist({ kind: "assist", task_id: "t", messages: [{ ...asked, save: { problem: "no_target" } }], through_seq: 7 }, { save_to_notes: () => ({ saved: false, reason: "no_target", hint: "No sÃ© quÃ© guardar." }) });
     await runRequest(h.opts);
-    expect(h.mcp.calls.at(-1)).toMatchObject({ name: "reply_person_message", args: { text: "Hola.\n\nNo sé qué guardar." } });
+    expect(h.mcp.calls.at(-1)).toMatchObject({ name: "reply_person_message", args: { text: "Hola.\n\nNo sÃ© quÃ© guardar." } });
   });
   it("hands a fooled model's call to the server, which decides", async () => {
     const other = "00000000-0000-4000-8000-000000000002";
-    const h = assist({ kind: "assist", task_id: "t", messages: [asked], through_seq: 7 }, { save_to_notes: (a) => (a.message_id === other ? { saved: false, reason: "not_requested", hint: "No guardé nada." } : { saved: true }) },
+    const h = assist({ kind: "assist", task_id: "t", messages: [asked], through_seq: 7 }, { save_to_notes: (a) => (a.message_id === other ? { saved: false, reason: "not_requested", hint: "No guardÃ© nada." } : { saved: true }) },
       [{ tool_calls: [toolCall("save_to_notes", { message_id: other })] }, { content: "No pude." }]);
     await runRequest(h.opts);
     expect(saves(h).map((c: { args: Record<string, unknown> }) => c.args.message_id)).toEqual([other, ID]);

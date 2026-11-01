@@ -16,6 +16,10 @@ export const MAX_BODY_BYTES = 1024 * 1024;
 export const MAX_TEXT_CHARS = 100_000;
 export const DEFAULT_TOOL_BUDGET_MS = 20_000;
 const PRM_SUFFIX = '/.well-known/oauth-protected-resource';
+/** 2026 era: results the spec makes cacheable, so each must state ttlMs and cacheScope. */
+const CACHEABLE_METHODS = new Set([
+  'server/discover', 'tools/list', 'prompts/list', 'prompts/get', 'resources/list', 'resources/templates/list', 'resources/read',
+]);
 
 export type Era = '2025' | '2026';
 
@@ -297,7 +301,7 @@ async function callTool(state: RequestState, params: Record<string, unknown>) {
     const result: Record<string, unknown> = toolResult(out);
     if (state.era === '2026') {
       result.ttlMs = tool.cacheTtlMs ?? 0;
-      result.cacheScope = 'session';
+      result.cacheScope = 'private';
     }
     return result;
   } catch (err) {
@@ -419,7 +423,12 @@ async function handleMessage(state: RequestState, msg: unknown): Promise<Record<
   try {
     const result = await dispatch(state, msg.method, msg.params ?? {});
     if (state.era === '2026' && result && typeof result === 'object') {
-      (result as Record<string, unknown>).resultType = msg.method;
+      const era2026 = result as Record<string, unknown>;
+      era2026.resultType = 'complete';
+      if (CACHEABLE_METHODS.has(msg.method)) {
+        era2026.ttlMs = 0;
+        era2026.cacheScope = 'private';
+      }
     }
     return { jsonrpc: '2.0', id, result };
   } catch (err) {

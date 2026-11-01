@@ -1,4 +1,7 @@
 {
+  "git": {
+    "deploymentEnabled": { "**": false, "main": true }
+  },
   "daemons": {
     "trama": {
       "root": "agent/",

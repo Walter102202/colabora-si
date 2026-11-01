@@ -1,6 +1,6 @@
-import { LANDING_URL } from "@/lib/routes";
+import { LANDING_URL, SET_PASSWORD_URL } from "@/lib/routes";
 
-export type Entry = "landing" | "workspace";
+export type Entry = "landing" | "workspace" | "setPassword";
 
 export interface EntryInput {
   pathname: string;
@@ -20,6 +20,7 @@ const AUTH_TOKEN_KEY = /^sb-.+-auth-token$/;
 export function chooseEntry({ pathname, search, hash, hasBackend, hasSession }: EntryInput): Entry {
   const path = pathname.replace(/\/+$/, "") || "/";
   if (path === LANDING_URL) return "landing";
+  if (path === SET_PASSWORD_URL) return "setPassword";
   if (path !== "/" || !hasBackend || hasSession) return "workspace";
   const query = new URLSearchParams(search);
   if (APP_QUERY.some((name) => query.has(name))) return "workspace";

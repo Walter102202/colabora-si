@@ -14,7 +14,7 @@ export interface PersonMessage {
   body: string;
   forwarded: boolean;
   needs_reply?: boolean;
-  outcome: { kind?: string; note_id?: string; page_id?: string; message_id?: string } | null;
+  outcome: { kind?: string; note_id?: string; page_id?: string; message_id?: string; name?: string; harness?: string; role?: "worker" | "lead" } | null;
   created_at: string;
 }
 
@@ -57,6 +57,23 @@ export function mergeMessages(current: PersonMessage[], incoming: PersonMessage[
 }
 
 const COLUMNS = "id,seq,workspace_id,direction,channel,kind,body,forwarded,needs_reply,outcome,created_at";
+
+export async function settleAgentProposal(messageId: string, accept: boolean): Promise<{ name: string; harness: string; role: "worker" | "lead" }> {
+  const client = getAgentClient();
+  if (!client) throw new Error("Sign in to manage agents.");
+  const { data, error } = await client.rpc("settle_agent_proposal", { p_message_id: messageId, p_accept: accept });
+  if (error) throw new Error(error.message);
+  return data;
+}
+export async function refreshAgentConversation(workspaceId: string): Promise<void> {
+  const client = getAgentClient(), version = generation;
+  if (!client) return;
+  const { data, error } = await client.from("agent_messages").select(COLUMNS).eq("workspace_id", workspaceId).order("seq", { ascending: false }).limit(50);
+  if (error) throw error;
+  if (version === generation && useAgentConversation.getState().workspaceId === workspaceId && data) {
+    useAgentConversation.setState({ messages: mergeMessages(useAgentConversation.getState().messages, data as unknown as PersonMessage[]) });
+  }
+}
 
 export const useAgentConversation = create<AgentConversationState>()((set, get) => ({
   workspaceId: null,

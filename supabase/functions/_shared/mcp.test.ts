@@ -122,17 +122,41 @@ Deno.test('2025 era initialize issues an Mcp-Session-Id and negotiates the versi
 Deno.test('2026 era: server/discover, resultType, cacheable tool results, no batches', async () => {
   const h = { 'MCP-Protocol-Version': '2026-07-28' };
   const discover = await call(post({ jsonrpc: '2.0', id: 1, method: 'server/discover' }, h));
-  assert.equal(discover.body.result.resultType, 'server/discover');
+  assert.equal(discover.body.result.resultType, 'complete');
   assert.equal(discover.body.result.tools.length, 2);
   const tool = await call(post({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'echo', arguments: { text: 'hi' } } }, h));
-  assert.equal(tool.body.result.resultType, 'tools/call');
+  assert.equal(tool.body.result.resultType, 'complete');
   assert.equal(tool.body.result.ttlMs, 30_000);
-  assert.equal(tool.body.result.cacheScope, 'session');
+  assert.equal(tool.body.result.cacheScope, 'private');
   const batch = await call(post([{ jsonrpc: '2.0', id: 1, method: 'ping' }], h));
   assert.equal(batch.body.error.code, -32600);
   const bad = await handleMcp(post({ jsonrpc: '2.0', id: 3, method: 'ping' }, { 'MCP-Protocol-Version': '1999-01-01' }), server, deps());
   assert.equal(bad.status, 400);
   assert.equal((await bad.json()).error, 'unsupported_protocol_version');
+});
+
+Deno.test('2026 era: lists, reads and discovery are complete, private results that are never assumed fresh', async () => {
+  const h = { 'MCP-Protocol-Version': '2026-07-28' };
+  const read = {
+    ...server,
+    prompts: [{ name: 'hi', title: 'Hi', description: 'Hi.', arguments: [], get: () => Promise.resolve({ description: 'Hi.', messages: [] }) }],
+    resources: { ...server.resources, read: () => Promise.resolve({ uri: 'x://y', mimeType: 'text/plain', text: 'z' }) },
+  } as McpServer;
+  const calls: [string, Record<string, unknown>?][] = [
+    ['server/discover'], ['tools/list'], ['prompts/list'], ['prompts/get', { name: 'hi' }],
+    ['resources/list'], ['resources/templates/list'], ['resources/read', { uri: 'x://y' }],
+  ];
+  for (const [method, params] of calls) {
+    const { body } = await call(post({ jsonrpc: '2.0', id: 1, method, params }, h), read);
+    assert.equal(body.result.resultType, 'complete', method);
+    assert.equal(body.result.ttlMs, 0, method);
+    assert.equal(body.result.cacheScope, 'private', method);
+  }
+  const ping = await call(post({ jsonrpc: '2.0', id: 2, method: 'ping' }, h));
+  assert.deepEqual(ping.body.result, { resultType: 'complete' });
+  const legacy = await call(post({ jsonrpc: '2.0', id: 3, method: 'tools/list' }));
+  assert.equal('resultType' in legacy.body.result, false);
+  assert.equal('ttlMs' in legacy.body.result, false);
 });
 
 Deno.test('Origin outside the allowlist is 403; allowed origin gets CORS', async () => {

@@ -86,6 +86,17 @@ it("ST-1 seed has four roots and the Agent Tasks contract", () => {
   expect(tasks.database!.views.map((v) => v.name)).toEqual(["Table", "Waiting on you", "Working", "Board"]);
 });
 
+it("clearing the local copy leaves the default pages and no account", () => {
+  reset({ mine: page({ id: "mine" }) }, ["mine"]);
+  useStore.setState({ syncUserId: "user", syncWorkspaceId: "workspace", reminders: [{ id: "reminder" } as never] });
+  useStore.getState().clearLocalWorkspace();
+  const state = useStore.getState();
+  expect(state.pages.mine).toBeUndefined();
+  expect(state.rootOrder).toHaveLength(4);
+  expect(state.syncUserId).toBeNull(); expect(state.syncWorkspaceId).toBeNull();
+  expect(state.reminders).toEqual([]); expect(state.settings).toBeUndefined();
+});
+
 it("persists the initial page IDs before any edit so direct links survive a reload", async () => {
   const seed = seedWorkspace(); reset(seed.pages, seed.rootOrder);
   localStorage.removeItem("colabora-workspace");

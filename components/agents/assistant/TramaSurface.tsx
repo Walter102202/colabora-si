@@ -15,7 +15,9 @@ import { useLocation, useNavigate } from "react-router";
 import { AssistantThreadView } from "@/components/agents/assistant/AssistantThreadView";
 import { VoiceButton } from "@/components/agents/assistant/VoiceButton";
 import { getAgentClient } from "@/lib/agentClient";
-import { type Draft, type PersonMessage, useAgentConversation } from "@/lib/agentConversation";
+import { refreshAgentConversation, settleAgentProposal, type Draft, type PersonMessage, useAgentConversation } from "@/lib/agentConversation";
+import { agentInputFor } from "@/lib/agentDefaults";
+import { foreignPageIds } from "@/lib/foreignPages";
 import { MAX_RECORDING_MS, type Recorder, startRecorder, uploadWav, voiceFailure, voiceReducer } from "@/lib/agentVoice";
 import { HOME_URL, settingsUrl, taskUrl, pageUrl } from "@/lib/routes";
 
@@ -42,6 +44,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const runs = useAgentTasks((s) => s.runs);
   const subscribeTasks = useAgentTasks((s) => s.subscribe);
   const currentPage = useStore((s) => pageId ? s.pages[pageId] : undefined);
+  const taskDatabase = useStore((s) => s.syncWorkspaceId === workspaceId ? Object.values(s.pages).filter((page) => !page.isDeleted && !foreignPageIds.has(page.id)).sort((a, b) => a.createdAt - b.createdAt).find((page) => page.database?.properties.some((property) => property.type === "agentStatus")) : undefined);
   const trama = agentWorkspace === workspaceId ? agents.find((a) => isTrama(a) && !a.revoked_at) : undefined;
   const [folded, setFolded] = useState(() => { try { return localStorage.getItem("trama-folded") === "1"; } catch { return false; } });
   const [selected, setSelected] = useState(false);
@@ -152,6 +155,26 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
     setOpen(true);
     void submit({ clientId: crypto.randomUUID(), body, context: { ...(pageId ? { page_id: pageId } : {}), ...(pageId && selection.current ? { selection: { page_id: pageId, text: selection.current } } : {}) } });
   };
+
+  async function settleAgent(message: PersonMessage, accept: boolean) {
+    if (proposalLock.current) return;
+    proposalLock.current = true; setProposing(message.id); setProposalError(null);
+    try {
+      const proposal = await settleAgentProposal(message.id, accept);
+      if (accept) {
+        await loadAgents(workspaceId);
+        const state = useAgentsStore.getState();
+        if (state.workspaceId !== workspaceId || state.status !== "ready") throw new Error("Workspace unavailable");
+        await state.createAgent(agentInputFor(proposal.name, proposal.harness, proposal.role,
+          taskDatabase ? [{ pageId: taskDatabase.id, scopes: ["read", "write", "comment"], inherit: true }] : []), { issueToken: false });
+      }
+    } catch (e) {
+      if (!(e instanceof Error && e.message.includes("already_settled"))) setProposalError("We couldn’t create this agent. You can add it in Settings → Agents.");
+    } finally {
+      await refreshAgentConversation(workspaceId).catch(() => {});
+      proposalLock.current = false; setProposing(null);
+    }
+  }
 
   // Capture the selection before moving focus into the conversation.
   const openConversation = () => {
@@ -310,6 +333,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
           onDraft={(text) => { setDraft(text); if (!text) { pasted.current = false; clip.current = null; if (voice.phase === "review") dispatch({ type: "reset" }); } }}
           onPaste={onPaste} onSend={() => void submit()} onUndo={(id) => void undo(id)}
           onPropose={(message) => void propose(message)} proposing={proposing}
+          onSettleAgent={(message, accept) => void settleAgent(message, accept)} hasTaskDatabase={Boolean(taskDatabase)} agentProposalError={proposalError?.startsWith("We couldn’t create this agent.")}
           onOpenNotes={() => { void openNotes().then((id) => { if (id) { close(); void navigate(pageUrl(id)); } }); }}
           voice={<VoiceButton state={voice} elapsedMs={elapsed} onPress={() => void press()} onStop={() => void finish()} onCancel={cancel} onRetry={retry} />}
         />
