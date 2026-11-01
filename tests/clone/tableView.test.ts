@@ -58,17 +58,28 @@ const subtaskTasks = {
   dropped: { row_page_id: "dropped", state: "cancelled" as const, delegate_agent_id: "worker", parent_task_id: "job", updated_at: "2026-11-01T00:00:00Z" },
 };
 function mountSubtasks(readOnly: boolean) {
-  const status = prop({ id: "state", name: "Status", type: "agentStatus" });
-  const source = db([prop({ id: "title", name: "Task" }), status], ["job", "first", "second", "dropped"].map((id) => row({ title: id }, id)));
-  const query = databaseTaskValues(source, subtaskTasks, []);
-  act(() => root.render(createElement(TableView, { ops: opsFor(source, readOnly), database: source, queryDatabase: query, view: view({ type: "table", hiddenProps: ["state"] }), rows: query.rows, pages: {} })));
-  return { source, query, indents: () => [...container.querySelectorAll("tbody tr td:first-child > div")].slice(0, 4).map((cell) => (cell as HTMLElement).style.paddingLeft) };
+  const lead = prop({ id: "lead", name: "Lead", type: "person" }), status = prop({ id: "state", name: "Status", type: "agentStatus" });
+  const source = db([prop({ id: "title", name: "Task" }), lead, status], ["job", "first", "second", "dropped"].map((id) => row({ title: id }, id)));
+  const query = databaseTaskValues(source, subtaskTasks, [{ id: "lead", name: "Claude Code", role: "lead" }]);
+  act(() => root.render(createElement(TableView, { ops: opsFor(source, readOnly), database: source, queryDatabase: query, view: view({ type: "table" }), rows: query.rows, pages: {} })));
+  const cells = (column: number) => [...container.querySelectorAll("tbody tr")].slice(0, 4).map((tr) => tr.children[column] as HTMLElement);
+  return { source, query, cells, indents: () => cells(0).map((cell) => (cell.firstElementChild as HTMLElement).style.paddingLeft) };
 }
 it.each([false, true])("a plan's subtasks hang under the task that started them (read only: %s)", (readOnly) => {
   const table = mountSubtasks(readOnly);
   expect(table.indents()).toEqual(["0px", "18px", "18px", "18px"]);
   expect(container.querySelectorAll('[aria-label="Collapse sub-items"]').length).toBe(1);
-  expect(container.querySelector('[title="1 of 2 subtasks done"]')?.textContent).toBe("1/2");
+});
+it("the task's row shows its progress beside the status and stands out from its subtasks", () => {
+  const table = mountSubtasks(true);
+  expect(table.cells(2)[0].querySelector('[title="1 of 2 subtasks done"]')?.textContent).toBe("1/2");
+  expect(table.cells(0)[0].querySelector('[title="1 of 2 subtasks done"]')).toBeNull();
+  expect(table.cells(0)[0].querySelector(".font-semibold")).not.toBeNull();
+  expect(table.cells(0)[1].querySelector(".font-semibold")).toBeNull();
+});
+it("subtasks do not repeat the Lead of their task", () => {
+  const table = mountSubtasks(true);
+  expect(table.cells(1).map((cell) => cell.textContent)).toEqual(["Claude Code", "", "", ""]);
 });
 it("nesting subtasks changes what is shown, never the stored rows", () => {
   const { source, query } = mountSubtasks(true);

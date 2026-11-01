@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useStore } from "@/lib/store";
 import { useAgentsStore } from "@/lib/agentsStore";
-import { activeRunFor, taskForPage, useAgentTasks } from "@/lib/agentTasks";
+import { activeRunFor, subtaskWorkers, taskForPage, useAgentTasks } from "@/lib/agentTasks";
 import { taskSubtitle } from "@/lib/agentTaskText";
 import { StatusBadge } from "@/components/agents/panel/StatusBadge";
 
@@ -30,10 +30,15 @@ export function AgentPropertyCell({ pageId, kind }: AgentPropertyCellProps) {
   const task = useAgentTasks((s) => taskForPage(s, pageId));
   const run = useAgentTasks((s) => (task ? activeRunFor(s, task) : null));
   const agents = useAgentsStore((s) => s.agents);
-  const agentName = task?.delegate_agent_id ? (agents.find((a) => a.id === task.delegate_agent_id)?.name ?? "Agent") : null;
+  const nameOf = (id: string) => agents.find((a) => a.id === id)?.name ?? "Agent";
+  const agentName = task?.delegate_agent_id ? nameOf(task.delegate_agent_id) : null;
+  // A task with subtasks shows who does them; the agent it is assigned to already appears as its Lead.
+  const workers = useAgentTasks((s) => (task && kind === "agentDelegate" ? subtaskWorkers(s.tasks, task.id).join(",") : ""));
+  const workerIds = workers ? workers.split(",") : [];
+  const workerName = workerIds.length > 1 ? `${workerIds.length} workers` : workerIds.length === 1 ? nameOf(workerIds[0]) : agentName;
 
   if (kind === "agentDelegate") {
-    return <span className={"cell-readonly " + (agentName ? "" : "text-text-tertiary")} title={agentName ? "Assigned agent" : "Open the row to assign an agent"}>{agentName ?? "Unassigned"}</span>;
+    return <span className={"cell-readonly " + (workerName ? "" : "text-text-tertiary")} title={workerName ? "Assigned agent" : "Open the row to assign an agent"}>{workerName ?? "Unassigned"}</span>;
   }
   if (!task) return <span className="cell-readonly text-text-tertiary" title="Open the row to hand it to an agent">No task</span>;
   return (

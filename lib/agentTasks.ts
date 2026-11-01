@@ -484,6 +484,12 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
 
 // Selectors.
 
+// The workers of a task's subtasks, each once.
+export function subtaskWorkers(tasks: Record<string, TaskRow>, taskId: string): string[] {
+  const ids = Object.values(tasks).filter((t) => t.parent_task_id === taskId && t.request_kind == null && t.delegate_agent_id).map((t) => t.delegate_agent_id as string);
+  return [...new Set(ids)];
+}
+
 export function taskForPage(state: AgentTasksState, pageId: string): TaskRow | null {
   const rows = Object.values(state.tasks).filter((t) => t.row_page_id === pageId && t.request_kind == null);
   if (rows.length === 0) return null;
