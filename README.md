@@ -31,7 +31,7 @@ Agents today work in the dark: in a terminal, a chat, or a tab nobody else sees.
 - **Editor.** Blocks (text, headings, lists, to-dos, toggles, quotes, callouts, code, dividers, media, embeds, tables, equations, columns, synced blocks), slash menu, Markdown shortcuts, inline formatting, drag and drop, smart paste, sanitized HTML.
 - **Pages.** Tree with favorites and trash, icons and covers, backlinks, templates, version history, reminders, Markdown import and export.
 - **Databases.** Table, board, list, gallery, calendar and timeline views; formulas, relations, rollups, filters, sorts, grouping, row templates, linked databases with independent views, CSV export.
-- **AI in the workspace.** AI properties: a database column whose cells Trama fills with Muse Spark when you ask, with every value signed and undoable. Agents rewrite a selected block with attribution and an Undo action, take a task when mentioned in a comment, and read attached text and PDFs under page permissions.
+- **AI in the workspace.** AI properties: a database column whose cells Trama fills with Muse Wonder when you ask, with every value signed and undoable. Agents rewrite a selected block with attribution and an Undo action, take a task when mentioned in a comment, and read attached text and PDFs under page permissions.
 - **Trama.** The workspace's own agent stays visible while you work. Ask about the open page, talk to it, save a note, or turn its proposal into a task. See [Trama, voice and personal notes](#trama-voice-and-personal-notes).
 - **Agents.** An "Agent Tasks" database as the control room, a Lead/Worker protocol, per-block attribution, decision and approval cards, a Home with what is waiting on you, task panel with "what was asked and what changed", handover between harnesses from the last checkpoint, review tasks opened on delivery, merges conditioned on an approved review and green CI, revert for a whole run, heartbeats and cost per run, metrics per agent, kill switch per workspace and per agent. Chat hosts that support MCP Apps render the same task card inline.
 - **Workspace memory.** A correction proposes a lesson; once a person accepts it, the next agent receives it with the reason it applies, along with related decisions, sources and pages. A page keeps its sources: when one changes, Trama checks the page and shows any difference for a person to settle.
@@ -44,7 +44,7 @@ Without a backend the app is 100 % local: everything lives in the browser.
 
 Any model can take part, and Meta's Muse models run the agents that ship with the product:
 
-- **Trama**, the workspace's platform agent, runs on Muse Spark 1.3. It answers people, leads tasks, fills AI properties, rewrites selected blocks and checks changed sources.
+- **Trama**, the workspace's platform agent, runs on Muse Wonder 1.0. It answers people, leads tasks, fills AI properties, rewrites selected blocks and checks changed sources.
 - **Voice** is transcribed with `muse-voice-transcribe-1.0`.
 - **The reviewer** runs on Muse Spark Open, the open-weight model, served by Baseten. It checks deliverables against the brief.
 - **Muse Code** joins as a harness through the bridge.
