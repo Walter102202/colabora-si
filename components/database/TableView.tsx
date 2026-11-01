@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import { Plus, Trash2 } from "lucide-react";
 import Cell from "@/components/database/cells/Cell";
 import { flattenTree, isAutoProperty, TYPE_ICONS, TYPE_LABELS, visibleProperties, type ViewProps } from "@/lib/dbView";
+import { subtaskProgress } from "@/lib/databaseTaskValues";
 import { newId } from "@/lib/factories";
 import type { DbProperty, PropertyType } from "@/lib/types";
 import { groupRows } from "@/lib/dbCompute";
@@ -27,10 +28,10 @@ export default function TableView({ ops, database, queryDatabase = database, vie
     setMenu(menu ? { ...menu, propertyId: ops.database.properties.at(-1)?.id } : null);
   };
   const addInGroup = (key: string | null) => { const id = ops.addRow(); if (id && groupProp && key !== null) ops.updateCell(id, groupProp.id, key); };
-  const items: TableItem[] = [];
+  const items: TableItem[] = [], progress = subtaskProgress(database, queryDatabase);
   for (const group of groups) {
     if (groupProp) items.push({ kind: "group", group });
-    for (const entry of ops.readOnly ? group.rows.map((row) => ({ row, depth: 0, hasChildren: false })) : flattenTree(group.rows, collapsed)) items.push({ kind: "row", ...entry });
+    for (const entry of flattenTree(group.rows, collapsed)) items.push({ kind: "row", ...entry });
     if (!group.rows.length && ops.readOnly) items.push({ kind: "empty", group });
     if (!ops.readOnly) items.push({ kind: "new", group });
   }
@@ -51,7 +52,7 @@ export default function TableView({ ops, database, queryDatabase = database, vie
       if (item.kind === "empty") return <tr key={`empty-${item.group.key ?? "__none"}`} aria-rowindex={rowIndex}><td colSpan={properties.length + 1} className="text-text-tertiary">Empty</td></tr>;
       if (item.kind === "new") return <tr key={`new-${item.group.key ?? "__none"}`} aria-rowindex={rowIndex}><td colSpan={properties.length + 1}><button className="new-row" onClick={() => addInGroup(item.group.key)}>+ New</button></td></tr>;
       const { row, depth, hasChildren } = item;
-      return <tr key={row.id} aria-rowindex={rowIndex} className={rowColorClass(row, view, queryDatabase, pages)}>{properties.map((prop) => <td key={prop.id}><div className="flex items-center" style={{ paddingLeft: prop.id === "title" ? depth * 18 : 0 }}>{prop.id === "title" && hasChildren && <button aria-label={collapsed.has(row.id) ? "Expand sub-items" : "Collapse sub-items"} onClick={() => { const next = new Set(collapsed); if (next.has(row.id)) next.delete(row.id); else next.add(row.id); setCollapsed(next); }}>{collapsed.has(row.id) ? "▸" : "▾"}</button>}<div className="min-w-0 flex-1">{ops.readOnly && prop.id === "title" && canOpenRow && !canOpenRow(row) ? <span className="cell-readonly">{String(row.cells.title || pages[row.pageId]?.title || "Untitled")}</span> : <Cell ops={ops} database={database} row={row} property={prop} pages={pages} />}</div></div></td>)}<td className="row-actions">{!ops.readOnly && <><button className="icon-button" aria-label="New sub-item" onClick={() => { ops.addRow({ parentRowId: row.id }); const next = new Set(collapsed); next.delete(row.id); setCollapsed(next); }}>↳</button><button className="icon-button" aria-label="Save row as template" onClick={() => ops.saveRowAsTemplate(row.id, String(row.cells.title || pages[row.pageId]?.title || "Row"))}>♧</button><button className="icon-button" aria-label="Delete row" onClick={() => ops.deleteRow(row.id)}><Trash2 size={14} /></button></>}</td></tr>;
+      return <tr key={row.id} aria-rowindex={rowIndex} className={rowColorClass(row, view, queryDatabase, pages)}>{properties.map((prop) => <td key={prop.id}><div className="flex items-center" style={{ paddingLeft: prop.id === "title" ? depth * 18 : 0 }}>{prop.id === "title" && hasChildren && <button aria-label={collapsed.has(row.id) ? "Expand sub-items" : "Collapse sub-items"} onClick={() => { const next = new Set(collapsed); if (next.has(row.id)) next.delete(row.id); else next.add(row.id); setCollapsed(next); }}>{collapsed.has(row.id) ? "▸" : "▾"}</button>}<div className="min-w-0 flex-1">{ops.readOnly && prop.id === "title" && canOpenRow && !canOpenRow(row) ? <span className="cell-readonly">{String(row.cells.title || pages[row.pageId]?.title || "Untitled")}</span> : <Cell ops={ops} database={database} row={row} property={prop} pages={pages} />}</div>{prop.id === "title" && progress[row.id] && <span className="ml-2 shrink-0 text-xs text-text-tertiary" title={`${progress[row.id].done} of ${progress[row.id].total} subtasks done`}>{progress[row.id].done}/{progress[row.id].total}</span>}</div></td>)}<td className="row-actions">{!ops.readOnly && <><button className="icon-button" aria-label="New sub-item" onClick={() => { ops.addRow({ parentRowId: row.id }); const next = new Set(collapsed); next.delete(row.id); setCollapsed(next); }}>↳</button><button className="icon-button" aria-label="Save row as template" onClick={() => ops.saveRowAsTemplate(row.id, String(row.cells.title || pages[row.pageId]?.title || "Row"))}>♧</button><button className="icon-button" aria-label="Delete row" onClick={() => ops.deleteRow(row.id)}><Trash2 size={14} /></button></>}</td></tr>;
     })}
     {padBottom > 0 && <tr aria-hidden="true"><td colSpan={properties.length + 1} style={{ height: padBottom, padding: 0, border: 0 }} /></tr>}
   </tbody>{(!ops.readOnly || properties.some((p) => view.aggregations?.[p.id] && view.aggregations[p.id] !== "none")) && <tfoot><tr>{properties.map((prop) => <td key={prop.id}><AggregationCell queryDatabase={queryDatabase} ops={ops} database={database} view={view} rows={rows} pages={pages} property={prop} /></td>)}<td /></tr></tfoot>}</table>

@@ -7,6 +7,7 @@ import Cell from "@/components/database/cells/Cell";
 import type { DbOps } from "@/lib/dbOps";
 import type { Database } from "@/lib/types";
 import { VIRTUAL_THRESHOLD } from "@/lib/virtualWindow";
+import { databaseTaskValues } from "@/lib/databaseTaskValues";
 import { db, prop, row, view } from "./fixtures";
 
 // happy-dom lays nothing out: every box is 0 px high, so the measured window is the overscan alone. The claims here are
@@ -48,4 +49,34 @@ it("VW-9 a text cell that unmounts with a pending edit commits it", () => {
   input.value = "typed, not yet blurred";
   act(() => root.render(null)); // the row scrolled out of the window: no blur is fired for a removed input
   expect(updateCell).toHaveBeenCalledWith(database.rows[0].id, "notes", "typed, not yet blurred");
+});
+
+const subtaskTasks = {
+  job: { row_page_id: "job", state: "working" as const, delegate_agent_id: "lead", parent_task_id: null, updated_at: "2026-11-01T00:00:00Z" },
+  first: { row_page_id: "first", state: "done" as const, delegate_agent_id: "worker", parent_task_id: "job", updated_at: "2026-11-01T00:00:00Z" },
+  second: { row_page_id: "second", state: "working" as const, delegate_agent_id: "worker", parent_task_id: "job", updated_at: "2026-11-01T00:00:00Z" },
+  dropped: { row_page_id: "dropped", state: "cancelled" as const, delegate_agent_id: "worker", parent_task_id: "job", updated_at: "2026-11-01T00:00:00Z" },
+};
+function mountSubtasks(readOnly: boolean) {
+  const status = prop({ id: "state", name: "Status", type: "agentStatus" });
+  const source = db([prop({ id: "title", name: "Task" }), status], ["job", "first", "second", "dropped"].map((id) => row({ title: id }, id)));
+  const query = databaseTaskValues(source, subtaskTasks, []);
+  act(() => root.render(createElement(TableView, { ops: opsFor(source, readOnly), database: source, queryDatabase: query, view: view({ type: "table", hiddenProps: ["state"] }), rows: query.rows, pages: {} })));
+  return { source, query, indents: () => [...container.querySelectorAll("tbody tr td:first-child > div")].slice(0, 4).map((cell) => (cell as HTMLElement).style.paddingLeft) };
+}
+it.each([false, true])("a plan's subtasks hang under the task that started them (read only: %s)", (readOnly) => {
+  const table = mountSubtasks(readOnly);
+  expect(table.indents()).toEqual(["0px", "18px", "18px", "18px"]);
+  expect(container.querySelectorAll('[aria-label="Collapse sub-items"]').length).toBe(1);
+  expect(container.querySelector('[title="1 of 2 subtasks done"]')?.textContent).toBe("1/2");
+});
+it("nesting subtasks changes what is shown, never the stored rows", () => {
+  const { source, query } = mountSubtasks(true);
+  expect(query.rows.map((r) => r.parentRowId)).toEqual([undefined, query.rows[0].id, query.rows[0].id, query.rows[0].id]);
+  expect(source.rows.every((r) => r.parentRowId === undefined)).toBe(true);
+});
+it("a subtask whose parent row is not in this database stays at the top level", () => {
+  const status = prop({ id: "state", name: "Status", type: "agentStatus" });
+  const source = db([status], [row({}, "second")]);
+  expect(databaseTaskValues(source, subtaskTasks, []).rows[0].parentRowId).toBeUndefined();
 });
