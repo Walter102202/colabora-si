@@ -66,7 +66,10 @@ export type MessageSignal = "continue" | "feedback" | "stop";
 export async function assignJob(rowPageId: string, leadAgentId: string, workerAgentIds: string[]): Promise<{ task_id: string; granted_agents: { id: string; name: string }[] }> {
   const result = await rpc<{ task_id: string; granted_agents: { id: string; name: string }[] }>("assign_job", {
     p_row_page_id: rowPageId, p_lead_agent_id: leadAgentId, p_worker_agent_ids: workerAgentIds,
-  }, { job_started: "This job has started. You can add Workers, but cannot change its Lead." });
+  }, {
+    job_started: "This job has started. You can add Workers, but cannot change its Lead.",
+    invalid_input: "Name this job first. The Lead finds it by its name.",
+  });
   await refresh(result.task_id);
   return result;
 }

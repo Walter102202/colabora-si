@@ -78,6 +78,11 @@ it("the assignment action uses the server RPC and preserves its access result", 
   await expect(actions.assignJob("job", "lead", ["worker"])).resolves.toEqual({ task_id: task.id, granted_agents: [] });
   expect(f.rpc).toHaveBeenCalledWith("assign_job", { p_row_page_id: "job", p_lead_agent_id: "lead", p_worker_agent_ids: ["worker"] });
 });
+it("asks for a name when the job has none", async () => {
+  const actions = await vi.importActual<typeof import("@/lib/agentActions")>("@/lib/agentActions");
+  f.rpc.mockResolvedValueOnce({ data: null, error: { message: "invalid_input" } });
+  await expect(actions.assignJob("job", "lead", [])).rejects.toThrow("Name this job first. The Lead finds it by its name.");
+});
 it("a job's own page also chooses a Lead instead of bypassing job assignment", async () => {
   await act(async () => root.render(createElement(MemoryRouter, {}, createElement(RowPanel, { pageId: "job" }))));
   expect(container.textContent).toContain("Choose a Lead");
