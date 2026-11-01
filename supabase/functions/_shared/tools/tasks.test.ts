@@ -217,6 +217,16 @@ Deno.test('get_task with after_seq returns only newer activities, ascending, wit
   assert.equal(out.structured.next_seq, 3);
 });
 
+Deno.test('get_task gives the assigned Lead pending human rows without claiming them', async () => {
+  const pending = [{ row_page_id: 'human-row', row_id: 'row-2', title: 'Compare our prices', worker_agent_id: 'agent-2' }];
+  const h = harness(world(), { principal: { type: 'agent', userId: 'u-agent', agentId: 'agent-1', workspaceId: 'w1', clientId: null },
+    onRpc: ({ fn, params }) => { if (fn === 'get_pending_job_rows') { assert.equal(params.p_task_id, 't1'); return { data: pending }; } } });
+  const result = await tool('get_task').handler({ task_id: 't1' }, h.ctx);
+  assert.deepEqual(result.structured.pending_rows, pending);
+  assert.match(result.text, /1 human subtask/);
+  assert.equal(h.rpcs.some(call => call.fn === 'create_subtask'), false);
+});
+
 Deno.test('get_task without after_seq keeps the last N activities and reports next_seq', async () => {
   const h = harness(world());
   const out = await tool('get_task').handler({ task_id: 't1' }, h.ctx);

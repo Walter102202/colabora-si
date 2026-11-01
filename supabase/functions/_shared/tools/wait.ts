@@ -281,7 +281,7 @@ const waitForTask: ToolDef = {
 // wait_for_my_tasks
 // ---------------------------------------------------------------------------
 
-export type Reason = 'handover' | 'queued' | 'feedback' | 'brief' | 'approval_decided' | 'stop' | 'closed' | 'under_review' | 'ready_for_review' | 'updated';
+export type Reason = 'handover' | 'queued' | 'feedback' | 'brief' | 'approval_decided' | 'stop' | 'closed' | 'under_review' | 'ready_for_review' | 'updated' | 'pending_row';
 
 interface Cursor {
   /** High-water timestamp (normalized, microseconds, UTC). */
@@ -627,6 +627,27 @@ async function changesSince(ctx: ToolContext, cursor: Cursor, ids?: string[]): P
   return { tasks: out, cursor: next };
 }
 
+// Human rows change the database page, not the task cursor. Inspect them on every full poll
+// until the Lead adopts them; the RPC enforces the current Lead and row-read boundaries.
+async function pendingHumanRows(ctx: ToolContext, ids?: string[]) {
+  const out: (ReturnType<typeof myTaskView> & { pending_rows: Row[] })[] = [];
+  if (!ctx.principal.agentId || ids?.length === 0) return out;
+  for (let offset = 0;; offset += 100) {
+    const jobs = await must(ctx.db.select<Row>({ table: 'agent_tasks', columns: TASK_FIELDS,
+      filters: [myTasksFilter(ctx), ...jobFilter(ids), { col: 'parent_task_id', op: 'is', value: null },
+        { col: 'request_kind', op: 'is', value: null }, { col: 'state', op: 'in', value: ['queued', 'working', 'input_required', 'ready_for_review'] }],
+      order: [{ column: 'id', ascending: true }], limit: 100, offset })) ?? [];
+    for (const job of jobs) {
+      const pending = await must(ctx.db.rpc<Row[]>('get_pending_job_rows', { p_task_id: job.id })) ?? [];
+      if (pending.length) out.push({ ...myTaskView(job, 'pending_row', 0), pending_rows: pending });
+    }
+    if (jobs.length < 100) break;
+  }
+  const sessions = await lastSessions(ctx, out.map(task => String(task.task_id)));
+  for (const task of out) task.session_id = sessions.get(String(task.task_id)) ?? null;
+  return out;
+}
+
 const waitForMyTasks: ToolDef = {
   name: 'wait_for_my_tasks',
   title: 'Wait until any of my tasks needs me',
@@ -655,7 +676,8 @@ const waitForMyTasks: ToolDef = {
           brief_version: { type: 'integer' },
           pending_prompts: { type: 'integer' },
           notice: { type: 'object', description: 'An addressed review, verdict, minor-findings or environment-release event. payload carries subject ids and data; ack_cursor acknowledges only this notice after delivery, using the existing after parameter.' },
-          reason: { type: 'string', enum: ['handover', 'queued', 'feedback', 'brief', 'approval_decided', 'stop', 'closed', 'under_review', 'ready_for_review', 'updated'] },
+          reason: { type: 'string', enum: ['handover', 'queued', 'feedback', 'brief', 'approval_decided', 'stop', 'closed', 'under_review', 'ready_for_review', 'updated', 'pending_row'] },
+          pending_rows: { type: 'array', items: { type: 'object' } },
         },
       },
     },
@@ -674,6 +696,7 @@ const waitForMyTasks: ToolDef = {
       const notices = await newEvents(ctx, { ...baseline, k: [] }, true);
       // Without a cursor, return undelivered notices; retained delivered history is only a baseline for deduplication.
       tasks.push(...await leadNotices(ctx, notices.fresh.filter(e => ['queued','leased'].includes(String(e.status)) || normTs(String(e.created_at)) > baseline.t), ids));
+      tasks.push(...await pendingHumanRows(ctx, ids));
       cursor.e = notices.mark;
       if (tasks.length) {
         await markJobDelivered(ctx, ids);
@@ -712,6 +735,7 @@ const waitForMyTasks: ToolDef = {
         const delta = await changesSince(ctx, cursor, ids);
         cursor = { ...delta.cursor, ...(signal.fresh.length ? {e:signal.mark} : cursor.e ? {e:cursor.e} : {}) };
         delta.tasks.push(...await leadNotices(ctx,signal.fresh,ids));
+        delta.tasks.push(...await pendingHumanRows(ctx, ids));
         lastFull = ctx.now();
         if (delta.tasks.length) {
           await markJobDelivered(ctx, ids);

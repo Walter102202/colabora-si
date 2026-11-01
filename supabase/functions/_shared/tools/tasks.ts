@@ -151,6 +151,7 @@ const getTask: ToolDef = {
     ci_checks: { type: 'array', items: { type: 'object' }, description: 'GitHub CI evidence for each ci criterion, when present.' },
     artifacts: { type: 'array', items: { type: 'object' } },
     approvals_pending: { type: 'array', items: { type: 'object' } },
+    pending_rows: { type: 'array', items: { type: 'object' }, description: 'Human subtasks for the assigned Lead to adopt, preserving their chosen Worker.' },
     activities: { type: 'array', items: { type: 'object' } },
     next_seq: { type: 'integer', description: 'Pass as after_seq on the next call to read only what is newer.' },
     ...CARD_OUTPUT,
@@ -165,10 +166,13 @@ const getTask: ToolDef = {
       includeEphemeral: bool(args.include_ephemeral) ?? false,
       afterSeq: num(args.after_seq),
     });
+    const pending = ctx.principal.agentId && t.task.delegate_agent_id === ctx.principal.agentId && !t.task.parent_task_id
+      ? await must(ctx.db.rpc<Row[]>('get_pending_job_rows', { p_task_id: args.task_id })) ?? [] : [];
     return {
       text: `Task "${String(t.task.title || t.task.id)}": ${String(t.task.state)}, brief v${String(t.task.brief_version)}, ` +
-        `${plural(t.artifacts.length, 'artifact')}, ${plural(t.approvals_pending.length, 'pending approval')}.`,
-      structured: { ...t },
+        `${plural(t.artifacts.length, 'artifact')}, ${plural(t.approvals_pending.length, 'pending approval')}.` +
+        (pending.length ? ` ${plural(pending.length, 'human subtask')} to adopt; keep each chosen Worker.` : ''),
+      structured: { ...t, pending_rows: pending },
     };
   },
 };
