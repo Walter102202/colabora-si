@@ -468,6 +468,9 @@ td:hover .cell-remind, .cell-remind:focus-visible { opacity: 1; }
 .row-selection-toolbar input, .row-selection-toolbar select { max-width: 200px; border: 1px solid var(--border); border-radius: 4px; padding: 4px; background: var(--bg); }
 /* Block movement and the quiet trailing insertion surface. */
 .block-item.selected-block > .block-gutter { opacity: 1; }
+.page-block-item > .block-gutter { opacity: 1; }
+.page-link-block[draggable="true"] { cursor: grab; }
+.page-link-block[draggable="true"]:active { cursor: grabbing; }
 .block-gutter button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .block-insert-area { display: block; width: 100%; min-height: 52px; text-align: left; cursor: text; background: transparent; color: var(--text-tertiary); }
 .block-insert-area:hover, .block-insert-area:focus-visible { background: transparent; }
