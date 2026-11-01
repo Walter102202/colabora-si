@@ -4,6 +4,8 @@ export type ConsentState =
   | { kind: "redirect"; url: string }
   | { kind: "ask"; authorizationId: string; clientId: string; clientName: string; redirectUri: string; redirectHost: string; redirectIsApp: boolean; email: string };
 export interface LinkableAgent { id: string; name: string; workspace_id: string; role: string }
+export interface ConsentContext { clientId: string; clientName: string; redirectUri: string; redirectHost: string; redirectIsApp: boolean }
+export interface ConnectWorkspace { id: string; name: string }
 export interface ConnectedApp { clientId: string; name: string; agentId: string | null; agentName: string | null; redirectHost: string; linked: boolean; revoked: boolean }
 
 const BLOCKED = new Set(["javascript:", "data:", "vbscript:"]);
@@ -37,6 +39,31 @@ async function adminAction(client: SupabaseClient, body: Record<string, unknown>
 async function recordHumanApp(client: SupabaseClient, clientId: string, name: string, uri: string) {
   const { error } = await client.rpc("set_oauth_app", { p_client_id: clientId, p_agent_id: null, p_client_name: name, p_redirect_uri: uri });
   if (error) throw error;
+}
+
+export async function consentContext(client: SupabaseClient, authorizationId: string): Promise<ConsentContext> {
+  const { data, error } = await client.rpc("oauth_human_context", { p_authorization_id: authorizationId });
+  if (error) throw error;
+  return { clientId: data.client_id, clientName: data.client_name || "An app", redirectUri: data.redirect_uri,
+    redirectHost: hostOf(data.redirect_uri), redirectIsApp: !["http:", "https:"].includes(new URL(data.redirect_uri).protocol) };
+}
+export async function connectWorkspaces(client: SupabaseClient): Promise<ConnectWorkspace[]> {
+  const { data, error } = await client.rpc("connect_workspaces");
+  if (error) throw error;
+  return data ?? [];
+}
+export async function connectAgent(client: SupabaseClient, input: { authorizationId: string; workspaceId: string; name?: string; agentId?: string; role?: "worker" | "lead" }): Promise<string> {
+  return (await adminAction(client, { action: "connect_agent", authorization_id: input.authorizationId, workspace_id: input.workspaceId,
+    name: input.name, agent_id: input.agentId, role: input.role })).redirect_url;
+}
+export async function cancelConsent(client: SupabaseClient, authorizationId: string, clientId: string): Promise<string> {
+  const revoked = await client.auth.oauth.revokeGrant({ clientId });
+  if (revoked.error && revoked.error.status !== 404) throw revoked.error;
+  const read = await client.auth.oauth.getAuthorizationDetails(authorizationId);
+  if (read.error) throw read.error;
+  const { data, error } = await client.auth.oauth.denyAuthorization(authorizationId, { skipBrowserRedirect: true });
+  if (error) throw error;
+  return data.redirect_url;
 }
 
 /** Identity is selected before this call: only the chosen principal reads the authorization in Auth. */

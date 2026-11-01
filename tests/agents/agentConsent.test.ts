@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, it, vi } from "vitest";
-import { approveConsent, connectedApps, denyConsent, disconnectApp, hostOf, loadConsent, safeRedirect, trustedHumanRedirect } from "@/lib/agentConsent";
+import { approveConsent, cancelConsent, connectAgent, connectWorkspaces, consentContext, connectedApps, denyConsent, disconnectApp, hostOf, loadConsent, safeRedirect, trustedHumanRedirect } from "@/lib/agentConsent";
 
 function fake() {
   const oauth = { getAuthorizationDetails: vi.fn(), approveAuthorization: vi.fn(), denyAuthorization: vi.fn(), revokeGrant: vi.fn() };
@@ -9,6 +9,30 @@ function fake() {
   return { oauth, rpc, invoke, client: { auth: { oauth }, functions: { invoke }, rpc } as unknown as SupabaseClient };
 }
 describe("OAuth consent", () => {
+  it("reads connection context and workspaces without consuming the authorization", async () => {
+    const f = fake();
+    expect(await consentContext(f.client, "a")).toEqual({ clientId: "c", clientName: "App", redirectUri: "https://claude.ai/cb", redirectHost: "https://claude.ai", redirectIsApp: false });
+    f.rpc.mockResolvedValue({ data: [{ id: "w", name: "Work" }], error: null });
+    expect(await connectWorkspaces(f.client)).toEqual([{ id: "w", name: "Work" }]);
+    expect(f.oauth.getAuthorizationDetails).not.toHaveBeenCalled(); expect(f.invoke).not.toHaveBeenCalled();
+  });
+  it("connects a named lead through agent-admin", async () => {
+    const f = fake(); f.invoke.mockResolvedValue({ data: { redirect_url: "cursor://cb" }, error: null });
+    expect(await connectAgent(f.client, { authorizationId: "a", workspaceId: "w", name: "Lead", role: "lead" })).toBe("cursor://cb");
+    expect(f.invoke).toHaveBeenCalledWith("agent-admin", { body: { action: "connect_agent", authorization_id: "a", workspace_id: "w", name: "Lead", role: "lead", agent_id: undefined } });
+  });
+  it("cancels by revoking remembered consent before reading and denying", async () => {
+    const f = fake(); const order: string[] = [];
+    f.oauth.revokeGrant.mockImplementation(async () => { order.push("revoke"); return { error: { status: 404 } }; });
+    f.oauth.getAuthorizationDetails.mockImplementation(async () => { order.push("read"); return { data: {}, error: null }; });
+    f.oauth.denyAuthorization.mockImplementation(async () => { order.push("deny"); return { data: { redirect_url: "cursor://cb?error=access_denied" }, error: null }; });
+    expect(await cancelConsent(f.client, "a", "c")).toContain("access_denied");
+    expect(order).toEqual(["revoke", "read", "deny"]);
+    expect(f.oauth.denyAuthorization).toHaveBeenCalledWith("a", { skipBrowserRedirect: true });
+    expect(f.invoke).not.toHaveBeenCalled(); expect(f.rpc).not.toHaveBeenCalled();
+    f.oauth.revokeGrant.mockResolvedValue({ error: { status: 403 } });
+    await expect(cancelConsent(f.client, "a", "c")).rejects.toEqual({ status: 403 });
+  });
   it.each(["evilapp://claude.ai/cb", "web+evil://claude.ai/cb", "intent://claude.ai/cb", "http://127.0.0.1:9/cb", "http://localhost:3000/cb"])
     ("shows the entire non-HTTPS destination %s", (uri) => expect(hostOf(uri)).toBe(uri));
   it("reads details before asking, showing the real redirect host", async () => {
