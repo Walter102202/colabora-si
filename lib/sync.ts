@@ -1,5 +1,5 @@
 import { mark, measureSince, reportStartup } from "@/lib/metrics";
-import { clearLocalPages, diskAvailable, forgetLocalBodies, readStoredPage, setCloudCheck } from "@/lib/localPersistence";
+import { clearLocalPages, diskAvailable, diskHealthy, flushLocalWrites, forgetLocalBodies, hasMissingBodies, readStoredPage, setCloudCheck, staleBodyIds, useLocalHealth } from "@/lib/localPersistence";
 import { create } from "zustand";
 import type { RealtimeChannel, SupabaseClient, User } from "@supabase/supabase-js";
 import type { Block, BlockAttr, Page, Reminder, WorkspaceState } from "@/lib/types";
@@ -173,6 +173,74 @@ let syncedRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let lastWorkspaceRevision = 0, pendingRetryUser: User | null = null;
 const known = new Set<string>(), lastEditAt = new Map<string, number>(), recentlyDeleted = new Map<string, number>(), deferred = new Map<string, PageRow>();
 const cursors: Partial<Record<PullFlow, string>> = {};
+const FILL_BATCH = 50, FILL_PAUSE_MS = 250;
+let bodyRun = 0, bodyFill: { promise: Promise<boolean>; lockMissed: boolean } | null = null;
+let unsubscribeBodyHealth: (() => void) | null = null;
+let bodyPause: { timer: ReturnType<typeof setTimeout>; done: () => void } | null = null;
+function canFillBodies(token: number, run: number): boolean {
+  return token === generation && run === bodyRun && started && ready && !!queue && !!wsId && navigator.onLine && diskHealthy();
+}
+function cancelBodyDownload(): void {
+  bodyRun++; bodyFill = null;
+  if (bodyPause) { clearTimeout(bodyPause.timer); bodyPause.done(); bodyPause = null; }
+}
+async function fillBodies(sb: SupabaseClient, token: number, run: number): Promise<boolean> {
+  if (!canFillBodies(token, run)) return false;
+  const ids = await staleBodyIds();
+  for (let i = 0; i < ids.length; i += FILL_BATCH) {
+    if (!canFillBodies(token, run)) return false;
+    const { data, error } = await sb.from("pages").select(PAGE_COLS).eq("workspace_id", wsId).in("id", ids.slice(i, i + FILL_BATCH));
+    if (error || !canFillBodies(token, run)) return false;
+    const pages: Record<string, Page | null> = {}, current = useStore.getState().pages;
+    for (const row of data as PageRow[]) {
+      if (!row.data || !current[row.id] || foreignPageIds.has(row.id) || queue!.peek(row.id).length || queue!.isDeleted(row.id)) continue;
+      if (row.revision < Math.max(queue!.getRevision(row.id), current[row.id].revision ?? 0)) continue;
+      pages[row.id] = pageFromRow(row); queue!.setRevision(row.id, row.revision);
+    }
+    if (Object.keys(pages).length) applyRemote({ pages }, false);
+    // A fulfilled request is not a saved offline copy.
+    await flushLocalWrites();
+    if (!canFillBodies(token, run)) return false;
+    if (i + FILL_BATCH < ids.length) await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => { if (bodyPause?.timer === timer) bodyPause = null; resolve(); }, FILL_PAUSE_MS);
+      bodyPause = { timer, done: resolve };
+    });
+  }
+  if (!canFillBodies(token, run)) return false;
+  await flushLocalWrites();
+  const missing = await hasMissingBodies();
+  return canFillBodies(token, run) && !missing;
+}
+function startBodyDownload(waitForLock = false): Promise<boolean> {
+  if (bodyFill) return bodyFill.promise;
+  const token = generation, run = bodyRun, sb = getSupabase();
+  if (!sb || !canFillBodies(token, run)) return Promise.resolve(false);
+  const job = { promise: Promise.resolve(false), lockMissed: false };
+  const work = async () => {
+    if (!navigator.locks) return fillBodies(sb, token, run);
+    return navigator.locks.request("colabora-body-fill", waitForLock ? {} : { ifAvailable: true }, (lock) => {
+      if (!lock) { job.lockMissed = true; return false; }
+      return fillBodies(sb, token, run);
+    });
+  };
+  job.promise = work().catch(() => false).finally(() => { if (bodyFill === job) bodyFill = null; });
+  bodyFill = job;
+  return job.promise;
+}
+export async function finishBodyDownload(): Promise<boolean> {
+  const token = generation, job = bodyFill;
+  try {
+    if (job) {
+      await job.promise;
+      if (token !== generation) return false;
+      if (job.lockMissed) await startBodyDownload(true);
+    } else await startBodyDownload(true);
+    if (token !== generation) return false;
+    await flushLocalWrites();
+    const missing = await hasMissingBodies();
+    return token === generation && !missing;
+  } catch { return false; }
+}
 function advance(flow: PullFlow, iso: string): void { if (!cursors[flow] || Date.parse(iso) > Date.parse(cursors[flow]!)) cursors[flow] = iso; }
 export const isApplyingRemote = isApplyingExternal;
 function applyRemote(patch: RemotePatch, rebase = true): void {
@@ -407,7 +475,7 @@ async function pullSince(): Promise<void> {
     if (token === generation) { await refreshSyncedBlocks(sb); if (token === generation) scheduleFlush(0); }
   } catch { if (token === generation) setStatus(navigator.onLine ? "error" : "offline"); }
 }
-const online = () => { attempts = 0; if (pendingRetryUser) { const user = pendingRetryUser; pendingRetryUser = null; void initSync(user); } else { setStatus("syncing"); void pullSince(); } };
+const online = () => { attempts = 0; if (pendingRetryUser) { const user = pendingRetryUser; pendingRetryUser = null; void initSync(user); } else { const token = generation; setStatus("syncing"); void pullSince().then(() => { if (token === generation) void startBodyDownload(); }); } };
 const offline = () => setStatus("offline");
 function startRealtime(sb: SupabaseClient): void {
   if (wsId) onFileSyncStart(wsId);
@@ -560,6 +628,7 @@ export async function initSync(user: User): Promise<void> {
   if (started && currentUserId === user.id) return;
   if (started) stopSync(); const sb = getSupabase(); if (!sb) return;
   started = true; currentUserId = user.id; last = useStore.getState(); const token = ++generation;
+  unsubscribeBodyHealth = useLocalHealth.subscribe((next, previous) => { if (next.health === "ok" && previous.health !== "ok") void startBodyDownload(); });
   setStatus("syncing"); window.addEventListener("online", online); window.addEventListener("offline", offline);
   try {
     const local = useStore.getState();
@@ -570,7 +639,7 @@ export async function initSync(user: User): Promise<void> {
     }
     if (navigator.locks) await navigator.locks.request("colabora-sync-bootstrap", () => bootstrap(sb, user, token)); else await bootstrap(sb, user, token);
     if (token !== generation) return;
-    ready = true; startRealtime(sb); setStatus(navigator.onLine ? "synced" : "offline"); scheduleFlush(0);
+    ready = true; startRealtime(sb); setStatus(navigator.onLine ? "synced" : "offline"); scheduleFlush(0); void startBodyDownload();
   } catch (error) {
     if (error === SYNC_CANCELLED || token !== generation) return;
     if (queue && wsId) { ready = true; startRealtime(sb); setStatus(navigator.onLine ? "error" : "offline"); return; }
@@ -580,6 +649,7 @@ export async function initSync(user: User): Promise<void> {
   }
 }
 export function stopSync(): void {
+  cancelBodyDownload(); unsubscribeBodyHealth?.(); unsubscribeBodyHealth = null;
   onFileSyncStop();
   if (syncedRefreshTimer) clearTimeout(syncedRefreshTimer); syncedRefreshTimer = null;
   generation++; started = ready = false; currentUserId = wsId = null; pendingRetryUser = null;
@@ -637,6 +707,7 @@ export async function forceFullPull(): Promise<void> {
   const sb = getSupabase(); if (!started || !ready || !wsId || !queue || !sb || pushing) throw new Error("Sync is not ready");
   if (!window.confirm("Replace this device's workspace with the cloud copy? Unsynced local changes will be discarded.")) return;
   const token = generation;
+  cancelBodyDownload();
   setStatus("syncing"); queue.clearAll();
   try {
     const rows = await fetchAllPages(sb), pages: Record<string, Page | null> = Object.fromEntries(Object.keys(useStore.getState().pages).filter((id) => !foreignPageIds.has(id)).map((id) => [id, null]));
@@ -645,6 +716,6 @@ export async function forceFullPull(): Promise<void> {
     rows.forEach((row) => { pages[row.id] = pageFromRow(row); if (!isShell(pages[row.id])) queue!.setRevision(row.id, row.revision); known.add(row.id); });
     applyRemote({ pages, replaceLoaded: true }); const workspace = await sb.from("workspaces").select(WS_COLS).eq("id", wsId).single();
     if (token !== generation) throw SYNC_CANCELLED;
-    if (workspace.error) throw workspace.error; handleWorkspaceRow(workspace.data as WorkspaceRow, true); await refreshSyncedBlocks(sb); setStatus("synced");
+    if (workspace.error) throw workspace.error; handleWorkspaceRow(workspace.data as WorkspaceRow, true); await refreshSyncedBlocks(sb); setStatus("synced"); void startBodyDownload();
   } catch (error) { if (token === generation) setStatus(navigator.onLine ? "error" : "offline"); throw error; }
 }

@@ -42,6 +42,15 @@ function requestPersistence(): void {
 }
 
 export function diskAvailable(): boolean { return db !== null; }
+export function diskHealthy(): boolean { return diskAvailable() && useLocalHealth.getState().health === "ok"; }
+export async function staleBodyIds(): Promise<string[]> {
+  await flushLocalWrites();
+  if (!db) return [];
+  const token = generation, stored = await readWorkspace(db);
+  if (token !== generation) throw new StaleEpochError();
+  return stored.metas.filter((meta) => meta.bodyRev === null || meta.bodyRev < (meta.revision ?? 0))
+    .sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id)).map((meta) => meta.id);
+}
 export async function storedReferrers(id: string): Promise<string[]> {
   if (!db) return [];
   const token = generation, ids = await referrers(db, id);

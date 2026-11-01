@@ -15,11 +15,12 @@ import { cleanupUnusedFiles, getFile, referencedFileIds, putFile } from "@/lib/f
 import { readZip, writeZip } from "@/lib/zip";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { isSupabaseConfigured } from "@/lib/supabase";
-import { forceFullPull, forceFullPush, useSyncStatus } from "@/lib/sync";
+import { finishBodyDownload, forceFullPull, forceFullPush, useSyncStatus } from "@/lib/sync";
 import MembersSettings from "@/components/MembersSettings";
 import PushSettings from "@/components/PushSettings";
 import { readFullWorkspace } from "@/lib/localPersistence";
 async function workspaceExport() {
+  await finishBodyDownload();
   const { pages, missing } = await readFullWorkspace();
   if (missing) throw new Error(`${missing} pages aren't on this device yet. Stay online until they finish downloading, then export again.`);
   const s = useStore.getState();
