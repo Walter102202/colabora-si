@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Block, BlockAttr, DbRow } from "@/lib/types";
+import type { Block, BlockAttr, DbRow, Page } from "@/lib/types";
 import type { CellValue } from "@/lib/pageOps";
 import { useStore } from "@/lib/store";
 import { newId } from "@/lib/factories";
@@ -39,3 +39,32 @@ export const useBlockConflicts = create<Conflicts>((set, get) => ({
     set((s) => ({ byPage: { ...s.byPage, [pageId]: (s.byPage[pageId] ?? []).filter((c) => c.id !== id) } }));
   },
 }));
+
+export interface PageRecovery { id: string; at: number; page: Page }
+const recoveryKey = (userId: string, pageId: string) => `colabora-recovery:${userId}:${pageId}`;
+export const usePageRecoveries = create<{ copies: Record<string, PageRecovery[]>; errors: Record<string, string> }>(() => ({ copies: {}, errors: {} }));
+export function loadPageRecoveries(userId: string, pageId: string): void {
+  const key = recoveryKey(userId, pageId);
+  try {
+    const copies = JSON.parse(localStorage.getItem(key) ?? "[]") as PageRecovery[];
+    usePageRecoveries.setState((s) => ({ copies: { ...s.copies, [key]: copies }, errors: { ...s.errors, [key]: "" } }));
+  } catch { usePageRecoveries.setState((s) => ({ errors: { ...s.errors, [key]: "Could not read the saved local copy." } })); }
+}
+export function pageRecoveryCopies(userId: string, pageId: string): PageRecovery[] | undefined {
+  return usePageRecoveries.getState().copies[recoveryKey(userId, pageId)];
+}
+export function savePageRecovery(userId: string, page: Page): void {
+  const key = recoveryKey(userId, page.id);
+  const copies = JSON.parse(localStorage.getItem(key) ?? "[]") as PageRecovery[];
+  const next = [...copies, { id: crypto.randomUUID(), at: Date.now(), page }];
+  // A storage failure leaves the queue intact, so it cannot silently discard this work.
+  localStorage.setItem(key, JSON.stringify(next));
+  usePageRecoveries.setState((s) => ({ copies: { ...s.copies, [key]: next } }));
+  useBlockConflicts.getState().notePageReload(page.id);
+}
+export function dismissPageRecovery(userId: string, pageId: string, id: string): void {
+  const key = recoveryKey(userId, pageId);
+  const next = (JSON.parse(localStorage.getItem(key) ?? "[]") as PageRecovery[]).filter((copy) => copy.id !== id);
+  if (next.length) localStorage.setItem(key, JSON.stringify(next)); else localStorage.removeItem(key);
+  usePageRecoveries.setState((s) => ({ copies: { ...s.copies, [key]: next } }));
+}

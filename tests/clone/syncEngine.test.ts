@@ -21,15 +21,15 @@ function setup() {
     server = { ...result.page, revision: server.revision! + 1 }; clientTag = tag;
     return { revision: server.revision!, results: result.results };
   };
-  const client = (tag: string) => {
+  const client = (tag: string, failRecovery = false) => {
     let local: Page | null = structuredClone(server), applies = 0;
-    const queue = new MemoryQueue(), conflicts: BlockConflict[] = [], conflictsPage: string[] = [];
+    const queue = new MemoryQueue(), conflicts: BlockConflict[] = [], conflictsPage: string[] = [], recovered: Page[] = [];
     queue.setRevision("p", 1);
     const engine = new PageSyncEngine(queue, tag, { by: "human", id: tag, at: T }, {
-      getPage: () => local ?? undefined, apply: (_id, value) => { local = value; applies++; }, send, read: async () => row(), conflict: (_id, conflict) => conflicts.push(conflict), pageConflict: (id) => { conflictsPage.push(id); },
+      getPage: () => local ?? undefined, apply: (_id, value) => { local = value; applies++; }, send, read: async () => row(), conflict: (_id, conflict) => conflicts.push(conflict), pageConflict: (id, page) => { if (failRecovery) throw new Error("Storage full"); conflictsPage.push(id); recovered.push(structuredClone(page)); },
     });
     const edit = (ops: PageOp[]) => { queue.enqueue("p", ops); local = applyOps(local!, ops, { by: "human", id: tag, at: T }).page; };
-    return { engine, queue, conflicts, edit, local: () => local!, applies: () => applies, pageConflicts: () => conflictsPage };
+    return { engine, queue, conflicts, edit, local: () => local!, applies: () => applies, recovered, pageConflicts: () => conflictsPage };
   };
   return { client, row, calls, server: () => server, send };
 }
@@ -90,6 +90,34 @@ it("SE-8 a replace_page queued behind a full batch is not a conflict", async () 
   await local.engine.flushPage("p");
   expect(s.server().title).toBe("Mine");
   expect(local.pageConflicts()).toEqual([]);
+});
+it("rejects a replacement after receiving the newer remote revision and keeps the rejected copy", async () => {
+  const s = setup(), local = s.client("one");
+  local.edit([{ op: "replace_page", page: { ...local.local(), title: "My unsaved layout" }, revision: 1 }]);
+  await s.send("p", [{ op: "insert_block", after: "b", block: b("paragraph", { id: "remote", html: "New remote work" }) }], "other");
+  local.engine.receive(s.row());
+  await local.engine.flushPage("p");
+  expect(s.server().blocks.at(-1)?.html).toBe("New remote work");
+  expect(s.server().title).toBe("Untitled");
+  expect(local.recovered[0].title).toBe("My unsaved layout");
+});
+it("does not advance a queued replacement across an unobserved remote write", async () => {
+  const s = setup(), local = s.client("one");
+  local.edit(Array.from({ length: 200 }, (_, i) => ({ op: "set_page", patch: { title: `Local ${i}` } })));
+  local.edit([{ op: "replace_page", page: { ...local.local(), title: "Old layout" }, revision: 1 }]);
+  await s.send("p", [{ op: "insert_block", after: "b", block: b("paragraph", { id: "remote" }) }], "other");
+  await local.engine.flushPage("p");
+  expect(s.server().blocks.at(-1)?.id).toBe("remote");
+  expect(local.pageConflicts()).toEqual(["p"]);
+});
+it("keeps the rejected operations queued if the recovery copy cannot be saved", async () => {
+  const s = setup(), local = s.client("one", true);
+  local.edit([{ op: "replace_page", page: { ...local.local(), title: "Unsaved" }, revision: 1 }]);
+  await s.send("p", [{ op: "set_page", patch: { title: "Remote" } }], "other");
+  await expect(local.engine.flushPage("p")).rejects.toThrow("Storage full");
+  expect(local.queue.peek("p")).toHaveLength(1);
+  expect(local.local().title).toBe("Unsaved");
+  expect(s.server().title).toBe("Remote");
 });
 it("SE-9 shared-page transport preserves page conflicts and masks other failures", async () => {
   const conflict = { code: "PT409", message: "page_conflict" };

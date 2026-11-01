@@ -1,5 +1,6 @@
 import { useIdleSnapshot } from "@/lib/versionSnapshots";
-import { useBlockConflicts } from "@/lib/syncConflicts";
+import { dismissPageRecovery, loadPageRecoveries, pageRecoveryCopies, usePageRecoveries, useBlockConflicts } from "@/lib/syncConflicts";
+import { useAuthStore } from "@/lib/auth";
 import { lazy, Suspense } from "react";
 import { pageUrl } from "@/lib/routes";
 import { useEffect, useRef, useState } from "react";
@@ -44,7 +45,8 @@ export default function PageView({ pageId }: { pageId: string }) {
     <div className="page-heading">{page.icon && <div className="relative mb-5"><button className="page-icon-button" disabled={page.locked} aria-label="Change page icon" onClick={() => setIconPicker(!iconPicker)}><Emoji emoji={page.icon} size={68} /></button>{iconPicker && <Suspense fallback={null}><EmojiPicker onSelect={(icon) => update(pageId, { icon })} onRemove={() => update(pageId, { icon: null })} onClose={() => setIconPicker(false)} /></Suspense>}</div>}
       <div className="page-hover-controls">{!page.icon && !page.locked && <button onClick={() => update(pageId, { icon: "📄" })}>Add icon</button>}{!page.cover && !page.locked && <button onClick={() => update(pageId, { cover: COVER_GRADIENTS[0] })}>Add cover</button>}</div>
       {page.locked && <div className="mb-2 rounded bg-bg-secondary px-2.5 py-1 text-xs text-text-secondary">Page locked — editing is disabled. <button className="text-accent" onClick={() => useStore.getState().updatePage(pageId, { locked: false })}>Unlock</button></div>}
-      {reloaded && <p role="status" className="mb-2 rounded bg-bg-secondary px-2.5 py-1 text-xs text-text-secondary">This page changed in the cloud before your copy was saved, so the cloud version was reloaded. <button className="text-accent" onClick={() => useBlockConflicts.getState().dismissPageReload(pageId)}>Dismiss</button></p>}
+      <PageRecoveryNotice pageId={pageId} />
+      {reloaded && <p role="status" className="mb-2 rounded bg-bg-secondary px-2.5 py-1 text-xs text-text-secondary">This page changed in the cloud. The cloud version was reloaded. <button className="text-accent" onClick={() => useBlockConflicts.getState().dismissPageReload(pageId)}>Dismiss</button></p>}
       <div ref={title} className="title-edit" contentEditable={!page.locked} suppressContentEditableWarning role="textbox" tabIndex={0} aria-label="Page title" data-placeholder="Untitled" spellCheck={spellCheck} onInput={(event) => useStore.getState().updatePage(pageId, { title: event.currentTarget.textContent?.replace(/\n/g, "") ?? "" })} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "ArrowDown") { event.preventDefault(); document.querySelector<HTMLElement>('[data-block-id] [contenteditable="true"]')?.focus(); } }} />
     </div>
     {parent && row && <RowProperties ops={buildDbOps(parent.id)} row={row} pages={pages} />}
@@ -56,4 +58,26 @@ export default function PageView({ pageId }: { pageId: string }) {
     <div className="mt-8 border-t border-border pt-4"><CommentThread pageId={pageId} /></div>
     <div className="mt-8 text-xs text-text-tertiary">{!page.database && <>{stats.words} {stats.words === 1 ? "word" : "words"} · {stats.blocks} {stats.blocks === 1 ? "block" : "blocks"} · {stats.mins} min read · </>}Edited {formatRelative(page.updatedAt)}</div>
   </div></div>;
+}
+
+export function PageRecoveryNotice({ pageId, userId: account }: { pageId: string; userId?: string }) {
+  const signedIn = useAuthStore((s) => s.user?.id), userId = account ?? signedIn;
+  const copies = usePageRecoveries((s) => userId ? s.copies[`colabora-recovery:${userId}:${pageId}`] : undefined);
+  const savedError = usePageRecoveries((s) => userId ? s.errors[`colabora-recovery:${userId}:${pageId}`] : undefined);
+  const [actionError, setError] = useState("");
+  const error = savedError || actionError;
+  useEffect(() => { if (userId) loadPageRecoveries(userId, pageId); }, [userId, pageId]);
+  if (!userId || (!copies?.length && !error)) return null;
+  return <section aria-label="Saved local copies" className="mb-2 rounded bg-bg-secondary px-3 py-2 text-sm">
+    <p>Your unsaved copy is kept on this device. Download it to recover your work.</p>
+    {copies?.map((copy) => <div key={copy.id}>
+      <button className="text-accent mr-3" onClick={() => {
+        const saved = pageRecoveryCopies(userId, pageId)?.find((item) => item.id === copy.id); if (!saved) return;
+        const url = URL.createObjectURL(new Blob([JSON.stringify(saved.page, null, 2)], { type: "application/json" }));
+        const a = document.createElement("a"); a.href = url; a.download = `page-${pageId}-${copy.at}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }}>Download local copy ({new Date(copy.at).toLocaleString()})</button>
+      <button onClick={() => { if (confirm("Delete this saved local copy from this device?")) { try { dismissPageRecovery(userId, pageId, copy.id); } catch { setError("Could not remove the saved copy."); } } }}>Delete saved copy</button>
+    </div>)}
+    {error && <p role="alert">{error}</p>}
+  </section>;
 }
