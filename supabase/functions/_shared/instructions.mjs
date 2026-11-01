@@ -9,4 +9,5 @@ export const INSTRUCTIONS = [
   '5. request_input with options for decisions. request_approval before irreversible outside actions; wait unless approved. Never infer permission.',
   '6. add_artifact and submit_for_review with evidence for each done-when criterion. A person closes tasks. Reviewers instead record review_task and end their turn.',
   '7. Re-read changed briefs. After delegating, wait_for_task; use hand_over if leaving. Lead notices carry review/environment details: inspect their task ids. After delivery acknowledge with after:notice.ack_cursor; next_cursor is only for scanning.',
+  '8. When a person says "Work on <job> as Lead" or "as worker", call join_job first. The job decides your role, not the chat: if join_job refuses, say why and stop. Work only on that job, and pass job_id to wait_for_my_tasks. Respect a Worker a person set on a subtask and keep a person\'s subtasks.',
 ].join('\n');
