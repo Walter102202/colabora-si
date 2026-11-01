@@ -1,0 +1,93 @@
+-- Direct human job assignment preserves row permissions and grants atomically.
+begin;
+select no_plan();
+select tests.fixture() as f \gset
+select tests.make_agent((:'f'::jsonb->>'ws')::uuid,'jobs-lead@agents.invalid','lead','page_A') as lead \gset
+select tests.make_agent((:'f'::jsonb->>'ws')::uuid,'jobs-other@agents.invalid','lead','page_A') as other \gset
+select tests.make_agent((:'f'::jsonb->>'ws')::uuid,'jobs-new@agents.invalid','worker','page_A') as newcomer \gset
+select tests.make_page((:'f'::jsonb->>'ws')::uuid,'jobs-db',null,'{"id":"jobs-db","title":"Launch plan","blocks":[],"database":{"properties":[{"id":"status","type":"agentStatus"}],"rows":[{"id":"job-row","pageId":"jobs-row"},{"id":"job-sub","pageId":"jobs-sub","parentRowId":"job-row"}]}}');
+select tests.make_page((:'f'::jsonb->>'ws')::uuid,'jobs-row','jobs-db','{"id":"jobs-row","title":"Market research","blocks":[]}');
+select tests.make_page((:'f'::jsonb->>'ws')::uuid,'jobs-sub','jobs-db');
+insert into public.agent_connections(workspace_id,agent_id,page_id,created_by,verified_at)
+select (:'f'::jsonb->>'ws')::uuid,id,'page_A',(:'f'::jsonb->>'owner')::uuid,now() from public.agents where workspace_id=(:'f'::jsonb->>'ws')::uuid;
+insert into public.agent_oauth_links(user_id,client_id,as_human) values ((:'f'::jsonb->>'owner')::uuid,'jobs-chat',true);
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid,(:'f'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.assign_job(%L,%L,%L::uuid[])','jobs-row',:'lead'::jsonb->>'agent','{}')),'humans_only','agent cannot assign a Lead');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid,'jobs-chat');
+select is(tests.error_of(format('select public.assign_job(%L,%L,%L::uuid[])','jobs-row',:'lead'::jsonb->>'agent','{}')),'direct_session_required','chat cannot assign');
+select tests.reset_role();
+select tests.set_anon();
+select is(tests.sqlstate_of(format('select public.assign_job(%L,%L,%L::uuid[])','jobs-row',:'lead'::jsonb->>'agent','{}')),'42501','anon cannot assign');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'viewer')::uuid);
+select is(tests.error_of(format('select public.assign_job(%L,%L,%L::uuid[])','jobs-row',:'lead'::jsonb->>'agent','{}')),'forbidden','read-only member cannot assign');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('select public.assign_job(%L,%L,%L::uuid[])','jobs-sub',:'lead'::jsonb->>'agent','{}')),'not_a_job','nested row cannot become a job');
+select is(tests.error_of(format('select public.assign_job(%L,%L,%L::uuid[])','page_A1',:'lead'::jsonb->>'agent','{}')),'not_a_job','ordinary page cannot become a job');
+select is(tests.error_of(format('select public.assign_job(%L,%L,%L::uuid[])','jobs-row',:'f'::jsonb->>'agent','{}')),'lead_required','worker cannot become Lead via assignment');
+select tests.reset_role();
+-- Each unavailable identity is rejected before any grant or task is stored.
+create temporary table unavailable(id uuid);
+insert into unavailable values ((:'newcomer'::jsonb->>'agent')::uuid);
+grant select on unavailable to authenticated;
+update public.agents set status='paused' where id in (select id from unavailable);
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('select public.assign_job(%L,%L,%L::uuid[])','jobs-row',:'lead'::jsonb->>'agent',array[(select id from unavailable)])),'agent_not_available','paused worker refused');
+select tests.reset_role();
+update public.agents set status='enabled',revoked_at=now() where id in (select id from unavailable);
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('select public.assign_job(%L,%L,%L::uuid[])','jobs-row',:'lead'::jsonb->>'agent',array[(select id from unavailable)])),'agent_not_available','revoked worker refused');
+select tests.reset_role();
+update public.agents set revoked_at=null,is_platform=true where id in (select id from unavailable);
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('select public.assign_job(%L,%L,%L::uuid[])','jobs-row',:'lead'::jsonb->>'agent',array[(select id from unavailable)])),'agent_not_available','platform worker refused');
+select tests.reset_role();
+update public.agents set is_platform=false where id in (select id from unavailable);
+update public.agent_connections set verified_at=null where agent_id in (select id from unavailable);
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('select public.assign_job(%L,%L,%L::uuid[])','jobs-row',:'lead'::jsonb->>'agent',array[(select id from unavailable)])),'agent_not_available','unverified worker refused');
+select tests.reset_role();
+select is((select count(*)::int from public.agent_tasks where row_page_id='jobs-row'),0,'rejections create no task');
+select is((select count(*)::int from public.agent_grants where page_id='jobs-db'),0,'rejections create no grants');
+update public.agent_connections set verified_at=now() where agent_id in (select id from unavailable);
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select tests.reset_role();
+insert into public.page_shares(page_id,user_id,level) values ('jobs-row',(:'f'::jsonb->>'viewer')::uuid,'edit'),('jobs-db',(:'f'::jsonb->>'viewer')::uuid,'edit');
+select tests.set_human((:'f'::jsonb->>'viewer')::uuid);
+select is(tests.error_of(format('select public.assign_job(%L,%L,%L::uuid[])','jobs-row',:'lead'::jsonb->>'agent','{}')),'owner_required','shared database writer cannot grant agents access');
+select tests.reset_role();
+select is((select count(*)::int from public.agent_grants where page_id='jobs-db'),0,'grant denial is atomic');
+insert into public.private_pages(page_id,workspace_id,owner_user_id,root_page_id) values ('jobs-row',(:'f'::jsonb->>'ws')::uuid,(:'f'::jsonb->>'owner')::uuid,'jobs-row');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('select public.assign_job(%L,%L,%L::uuid[])','jobs-row',:'lead'::jsonb->>'agent','{}')),'forbidden','owner cannot expose a private row by job assignment');
+select tests.reset_role();
+delete from public.private_pages where page_id='jobs-row';
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.assign_job('jobs-row',(:'lead'::jsonb->>'agent')::uuid,array[(:'f'::jsonb->>'agent')::uuid]) as assigned \gset
+select is(jsonb_array_length(:'assigned'::jsonb->'granted_agents'),2,'new database access is reported');
+select is(public.assign_job('jobs-row',(:'lead'::jsonb->>'agent')::uuid,array[(:'f'::jsonb->>'agent')::uuid])->>'task_id',:'assigned'::jsonb->>'task_id','retry keeps one task');
+select tests.reset_role();
+select is((select state from public.agent_tasks where id=(:'assigned'::jsonb->>'task_id')::uuid),'queued','assignment queues work');
+select is((select objective from public.task_briefs where task_id=(:'assigned'::jsonb->>'task_id')::uuid),'Market research','brief objective uses real row title');
+select ok((select bool_and(inherit and scopes @> array['read','write','comment']) from public.agent_grants where page_id='jobs-db'),'full inheritable database access granted');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.assign_job('jobs-row',(:'other'::jsonb->>'agent')::uuid,array[(:'f'::jsonb->>'agent')::uuid]);
+select tests.reset_role();
+select is((select delegate_agent_id from public.agent_tasks where id=(:'assigned'::jsonb->>'task_id')::uuid),(:'other'::jsonb->>'agent')::uuid,'queued Lead can change');
+select tests.set_agent((:'other'::jsonb->>'user')::uuid,(:'other'::jsonb->>'agent')::uuid);
+select public.claim_task((:'assigned'::jsonb->>'task_id')::uuid,'custom');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('select public.assign_job(%L,%L,%L::uuid[])','jobs-row',:'lead'::jsonb->>'agent',array[(:'f'::jsonb->>'agent')::uuid])),'job_started','started Lead cannot change');
+select is(tests.error_of(format('select public.assign_job(%L,%L,%L::uuid[])','jobs-row',:'other'::jsonb->>'agent','{}')),'job_started','started workers cannot be removed');
+select public.assign_job('jobs-row',(:'other'::jsonb->>'agent')::uuid,array[(:'f'::jsonb->>'agent')::uuid,(:'newcomer'::jsonb->>'agent')::uuid]);
+select tests.reset_role();
+select is((select cardinality(named_worker_ids) from public.agent_tasks where id=(:'assigned'::jsonb->>'task_id')::uuid),2,'started job accepts another worker');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.sqlstate_of(format('update public.agent_tasks set named_worker_ids=%L::uuid[] where id=%L','{}',:'assigned'::jsonb->>'task_id')),'','direct update runs under RLS');
+select tests.reset_role();
+select is((select cardinality(named_worker_ids) from public.agent_tasks where id=(:'assigned'::jsonb->>'task_id')::uuid),2,'direct update changes no task');
+select * from finish();
+rollback;
