@@ -1,9 +1,28 @@
-import type { Actor, Block, Page, Reminder, WorkspaceSettings } from "@/lib/types";
+import type { Actor, Block, DbProperty, DbView, Page, PageFont, Reminder, WorkspaceSettings } from "@/lib/types";
+import { shellFromMeta, type PageMeta } from "@/lib/pageShell";
 
 export interface PageRow {
   id: string; parent_id?: string | null; data: (Page & { _client?: string }) | null;
   deleted_at: string | null; updated_at: string; revision: number;
   last_edited_by?: string | null; last_edited_by_type?: Actor["type"] | "system" | null; last_edit_run_id?: string | null;
+}
+export interface PageMetaRow extends Omit<PageRow, "data"> {
+  data_id: string | null; title: string | null; icon: string | null; cover: string | null; coverPosition: number | null;
+  rowOrigin: Page["rowOrigin"] | null; fullWidth: boolean | null; smallText: boolean | null; locked: boolean | null; font: PageFont | null; isFavorite: boolean | null;
+  isDeleted: boolean | null; createdAt: number | null; dbId: string | null; dbProperties: DbProperty[] | null; dbViews: DbView[] | null; dbLocked: boolean | null;
+}
+export function rowFromMeta(row: PageMetaRow): PageRow {
+  const { data_id, title, icon, cover, coverPosition, rowOrigin, fullWidth, smallText, locked, font, isFavorite, isDeleted, createdAt, dbId, dbProperties, dbViews, dbLocked, ...columns } = row;
+  if (!data_id && columns.deleted_at) return { ...columns, data: null };
+  const updatedAt = Date.parse(columns.updated_at);
+  const meta: PageMeta = {
+    id: columns.id, title: title ?? "", icon: icon ?? null, cover: cover ?? null, ...(coverPosition == null ? {} : { coverPosition }),
+    ...(rowOrigin ? { rowOrigin } : {}), parentId: columns.parent_id ?? null, isFavorite: !!isFavorite, isDeleted: !!isDeleted, fullWidth: !!fullWidth, smallText: !!smallText,
+    ...(locked ? { locked } : {}), ...(font ? { font } : {}), createdAt: createdAt ?? updatedAt, updatedAt, revision: columns.revision,
+    ...(dbId ? { database: { id: dbId, properties: dbProperties ?? [], views: dbViews ?? [], ...(dbLocked ? { locked: dbLocked } : {}) } } : {}),
+    bodyRev: null, links: [],
+  };
+  return { ...columns, data: shellFromMeta(meta) };
 }
 export interface WorkspaceRow {
   id: string; name: string; root_order: string[] | null; synced_blocks: Record<string, Block[]> | null;

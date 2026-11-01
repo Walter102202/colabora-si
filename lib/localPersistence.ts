@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { applyingExternal, isApplyingExternal } from "@/lib/externalApply";
 import { isShell, joinPage, overlayMeta, shellFromMeta, splitPage } from "@/lib/pageShell";
-import { claimWorkspace, countRecords, isQuotaError, LOCAL_DB, openLocalDb, readPages, readWorkspace, StaleEpochError, writeBatch, wipeLocalDb, type PageReconciler, type PageWrite, type StoredWorkspace } from "@/lib/localDb";
+import { claimWorkspace, countRecords, invalidateBodies, isQuotaError, LOCAL_DB, openLocalDb, readPages, readWorkspace, StaleEpochError, writeBatch, wipeLocalDb, type PageReconciler, type PageWrite, type StoredWorkspace } from "@/lib/localDb";
 import { searchRecord } from "@/lib/search";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { mark, pageDataSizes, recordHydration } from "@/lib/metrics";
@@ -165,7 +165,7 @@ function onStoreChange(state: Store, prev: Store): void {
     for (const id in state.pages) {
       const before = prev.pages[id], after = state.pages[id];
       if (before === after) continue;
-      if (before && isShell(before) !== isShell(after) && isApplyingExternal()) continue;
+      if (before && isShell(before) && !isShell(after) && isApplyingExternal()) continue;
       if (!isApplyingExternal()) {
         lastEdit.set(id, Date.now());
         if (before && !isShell(before) && !isShell(after) && !writtenBase.has(id)) writtenBase.set(id, before);
@@ -469,6 +469,34 @@ export async function clearLocalPages(): Promise<void> {
   try { previousChannel?.postMessage({ type: "cleared", tab: TAB }); } catch { /* Epoch checks still reject old writers. */ }
   finally { previousChannel?.close(); }
   if (cleared) unmarkClearPending();
+}
+
+export async function forgetLocalBodies(): Promise<void> {
+  if (!db) return;
+  const initialGeneration = generation;
+  // Settle an issued transaction before invalidation; a failed write stays pending.
+  await flushLocalWrites().catch(() => {});
+  if (initialGeneration !== generation || !db) throw new StaleEpochError();
+  const connection = db, currentEpoch = epoch, before = useStore.getState();
+  const pending = new Map(dirtyPages), kv = new Map(dirtyKv), bases = new Map(writtenBase), remote = new Set(remotePages);
+  stopWriter(); const token = generation;
+  try {
+    await invalidateBodies(connection, currentEpoch);
+    if (token !== generation) throw new StaleEpochError();
+    startWriter(connection, currentEpoch); setHealth("ok");
+  } catch (error) {
+    if (token === generation) {
+      startWriter(connection, currentEpoch);
+      for (const [id, page] of pending) dirtyPages.set(id, page);
+      for (const [key, value] of kv) dirtyKv.set(key, value);
+      for (const [id, page] of bases) writtenBase.set(id, page);
+      for (const id of remote) remotePages.add(id);
+      onStoreChange(useStore.getState(), before);
+      setHealth(isQuotaError(error) ? "full" : "failing");
+      if (hasPendingLocalWrites()) schedule();
+    }
+    throw error;
+  }
 }
 
 async function hydrate(): Promise<void> {

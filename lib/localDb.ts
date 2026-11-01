@@ -146,6 +146,20 @@ export function countRecords(db: IDBDatabase): Promise<{ meta: number; bodies: n
   });
 }
 
+export function invalidateBodies(db: IDBDatabase, epoch: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([...STORES], "readwrite"); let stale = false;
+    tx.oncomplete = () => resolve(); tx.onabort = () => reject(stale ? new StaleEpochError() : tx.error);
+    const check = tx.objectStore("kv").get("epoch");
+    check.onsuccess = () => {
+      if (check.result !== epoch) { stale = true; tx.abort(); return; }
+      tx.objectStore("bodies").clear(); tx.objectStore("search").clear();
+      const meta = tx.objectStore("meta"), records = meta.getAll();
+      records.onsuccess = () => { for (const value of records.result as PageMeta[]) meta.put({ ...value, bodyRev: null, links: [] }); };
+    };
+  });
+}
+
 export function isQuotaError(error: unknown): boolean {
   const name = (error as { name?: string } | null)?.name;
   return name === "QuotaExceededError" || name === "NS_ERROR_DOM_QUOTA_REACHED";

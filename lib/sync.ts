@@ -1,17 +1,18 @@
 import { mark, measureSince, reportStartup } from "@/lib/metrics";
-import { clearLocalPages, readStoredPage, setCloudCheck } from "@/lib/localPersistence";
+import { clearLocalPages, diskAvailable, forgetLocalBodies, readStoredPage, setCloudCheck } from "@/lib/localPersistence";
 import { create } from "zustand";
 import type { RealtimeChannel, SupabaseClient, User } from "@supabase/supabase-js";
 import type { Block, BlockAttr, Page, Reminder, WorkspaceState } from "@/lib/types";
 import { applyOps, applyWorkspaceOps, diffPageToOps, shellOps, type OpResult, type PageOp, type WorkspaceOp } from "@/lib/pageOps";
 import { clearStoredOps, IndexedDbQueue, MemoryQueue } from "@/lib/opsQueue";
-import { pageFromRow, mergePageDecision, mergeReminders, type PageRow, type WorkspaceRow, type ReminderRow } from "@/lib/syncMerge";
+import { pageFromRow, rowFromMeta, mergePageDecision, mergeReminders, type PageRow, type PageMetaRow, type WorkspaceRow, type ReminderRow } from "@/lib/syncMerge";
 import { getSupabase } from "@/lib/supabase";
 import { useStore, type RemotePatch, type Store } from "@/lib/store";
 import { clearHistory, pauseHistory, resumeHistory, rebaseHistory } from "@/lib/history";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { applyingExternal, isApplyingExternal } from "@/lib/externalApply";
 import { isShell, overlayMeta } from "@/lib/pageShell";
+import { opening } from "@/lib/pageBodies";
 import { DEFAULT_SETTINGS } from "@/lib/factories";
 import { savePageRecovery, useBlockConflicts, type BlockConflict } from "@/lib/syncConflicts";
 
@@ -19,6 +20,11 @@ import { clearLocalFiles, hasPendingUploads, onFileSyncStart, onFileSyncStop } f
 export const CLIENT_TAG = Math.random().toString(36).slice(2) + Date.now().toString(36);
 const DEBOUNCE_MS = 1500, MAX_RETRIES = 5, ACTIVE_EDIT_MS = 2000, DELETE_ECHO_TTL_MS = 120000;
 const PAGE_COLS = "id,parent_id,data,deleted_at,updated_at,revision,last_edited_by,last_edited_by_type,last_edit_run_id";
+export const PAGE_META_COLS = "id,parent_id,deleted_at,updated_at,revision,last_edited_by,last_edited_by_type,last_edit_run_id,"
+  + "data_id:data->>id,title:data->>title,icon:data->icon,cover:data->cover,coverPosition:data->coverPosition,"
+  + "rowOrigin:data->rowOrigin,fullWidth:data->fullWidth,smallText:data->smallText,locked:data->locked,font:data->font,isFavorite:data->isFavorite,"
+  + "isDeleted:data->isDeleted,createdAt:data->createdAt,dbId:data->database->id,dbProperties:data->database->properties,"
+  + "dbViews:data->database->views,dbLocked:data->database->locked";
 const WS_COLS = "id,name,root_order,synced_blocks,settings,updated_at,revision";
 const REMINDER_COLS = "id,page_id,block_id,body,remind_at,notified,deleted_at";
 export const PULL_OVERLAP_MS = 15_000, PULL_BATCH = 500, PULL_MAX_BATCHES = 40;
@@ -170,7 +176,12 @@ const cursors: Partial<Record<PullFlow, string>> = {};
 function advance(flow: PullFlow, iso: string): void { if (!cursors[flow] || Date.parse(iso) > Date.parse(cursors[flow]!)) cursors[flow] = iso; }
 export const isApplyingRemote = isApplyingExternal;
 function applyRemote(patch: RemotePatch, rebase = true): void {
-  const stored = applyingExternal(() => useStore.getState().applyRemotePages(patch));
+  const current = useStore.getState(), effective = { ...patch };
+  for (const key of ["rootOrder", "syncedBlocks", "settings", "reminders"] as const) {
+    if (effective[key] !== undefined && (effective[key] === current[key] || JSON.stringify(effective[key]) === JSON.stringify(current[key]))) delete effective[key];
+  }
+  if (!Object.keys(effective).length) { last = current; return; }
+  const stored = applyingExternal(() => useStore.getState().applyRemotePages(effective));
   if (rebase) rebaseHistory(stored); last = useStore.getState();
 }
 function scheduleFlush(ms = DEBOUNCE_MS): void {
@@ -201,13 +212,13 @@ function onStoreChange(state: Store): void {
   const workspaceOps = workspaceDiff(before, state); if (workspaceOps.length) queue.enqueueWorkspace(workspaceOps);
   if (before.pages !== state.pages || before.rootOrder !== state.rootOrder || before.settings !== state.settings || before.syncedBlocks !== state.syncedBlocks || before.reminders !== state.reminders) scheduleFlush();
 }
-async function fetchAllPages(sb: SupabaseClient): Promise<PageRow[]> {
+async function fetchAllPages(sb: SupabaseClient, withBodies = !diskAvailable()): Promise<PageRow[]> {
   mark("colabora:pages:fetch:start");
   const rows: PageRow[] = [];
   for (let from = 0; ; from += 500) {
-    const result = await sb.from("pages").select(PAGE_COLS).eq("workspace_id", wsId).order("id").range(from, from + 499);
+    const result = await sb.from("pages").select(withBodies ? PAGE_COLS : PAGE_META_COLS).eq("workspace_id", wsId).order("id").range(from, from + 499);
     if (result.error) throw result.error;
-    rows.push(...result.data as PageRow[]);
+    rows.push(...(withBodies ? result.data as unknown as PageRow[] : (result.data as unknown as PageMetaRow[]).map(rowFromMeta)));
     if (result.data.length < 500) { measureSince("colabora:pages:fetch", "colabora:pages:fetch:start"); fetchedPages = rows.length; if (import.meta.env.DEV) fetchBytes = new TextEncoder().encode(JSON.stringify(rows)).byteLength; return rows; }
   }
 }
@@ -226,7 +237,15 @@ async function loadFullPage(id: string): Promise<Page | null> {
   if (!isShell(current)) return current;
   return stored ? overlayMeta(stored.page, current) : null;
 }
-export async function refreshPageFromCloud(_id: string): Promise<boolean> { void _id; return false; }
+export async function refreshPageFromCloud(id: string): Promise<boolean> {
+  const sb = getSupabase(), currentEngine = engine, token = generation;
+  if (!sb || !ready || !currentEngine || !wsId || !navigator.onLine) return false;
+  const wasOpening = opening.has(id); opening.add(id);
+  try {
+    const row = await readPage(sb, id);
+    return token === generation && currentEngine === engine && !!row?.data && currentEngine.receive(row, true);
+  } finally { if (!wasOpening) opening.delete(id); }
+}
 async function insertPage(sb: SupabaseClient, page: Page): Promise<void> {
   if (isShell(page)) {
     const token = generation;
@@ -320,7 +339,25 @@ function handlePageRow(row: PageRow): void {
     if (!deferTimer) deferTimer = setTimeout(() => { deferTimer = null; const rows = [...deferred.values()]; deferred.clear(); rows.forEach(handlePageRow); }, ACTIVE_EDIT_MS + 500);
     return;
   }
-  if (!row.data) { const sb = getSupabase(), token = generation; if (sb) void readPage(sb, row.id).then((fresh) => { if (fresh && token === generation) handlePageRow(fresh); }); return; }
+  if (!row.data) {
+    const shell = useStore.getState().pages[row.id];
+    if (isShell(shell)) {
+      if (!queue.isDeleted(row.id) && !queue.peek(row.id).length && row.revision > (shell.revision ?? 0)) applyRemote({ pages: { [row.id]: { ...shell, revision: row.revision } } }, false);
+      return;
+    }
+    const sb = getSupabase(), token = generation;
+    if (sb) void readPage(sb, row.id).then((fresh) => { if (fresh && token === generation) handlePageRow(fresh); });
+    return;
+  }
+  const local = useStore.getState().pages[row.id];
+  if (isShell(row.data) && local && row.revision === local.revision && Date.parse(row.updated_at) === local.updatedAt) return;
+  if (isShell(row.data) && local && !isShell(local)) {
+    if (row.revision > (local.revision ?? 0)) {
+      const sb = getSupabase(), token = generation;
+      if (sb) void readPage(sb, row.id).then((fresh) => { if (fresh && token === generation) handlePageRow(fresh); });
+    }
+    return;
+  }
   engine.receive(row);
 }
 function handleWorkspaceRow(row: WorkspaceRow, force = false): void {
@@ -359,7 +396,8 @@ async function pullSince(): Promise<void> {
       // into the engine and store that the new generation created.
       await pullFlow(async (since, from, to) => {
         if (token !== generation) throw SYNC_CANCELLED;
-        return sb.from("pages").select(PAGE_COLS).eq("workspace_id", wsId).gte("updated_at", since).order("updated_at").order("id").range(from, to).then(({ data, error }) => { if (error) throw error; return data as PageRow[]; });
+        const withBodies = !diskAvailable();
+        return sb.from("pages").select(withBodies ? PAGE_COLS : PAGE_META_COLS).eq("workspace_id", wsId).gte("updated_at", since).order("updated_at").order("id").range(from, to).then(({ data, error }) => { if (error) throw error; return withBodies ? data as unknown as PageRow[] : (data as unknown as PageMetaRow[]).map(rowFromMeta); });
       }, step.since, (row) => { if (token === generation) handlePageRow(row); });
       if (token !== generation) return;
     }
@@ -451,9 +489,10 @@ async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise
   const current = useStore.getState();
   if (choice === "server") {
     queue!.clearAll();
+    await forgetLocalBodies(); if (token !== generation) throw SYNC_CANCELLED;
     const pages: Record<string, Page | null> = Object.fromEntries(Object.keys(current.pages).filter((id) => !foreignPageIds.has(id)).map((id) => [id, null]));
-    rows.forEach((row) => { pages[row.id] = pageFromRow(row); queue!.setRevision(row.id, row.revision); });
-    applyRemote({ pages, rootOrder: workspace.root_order ?? [], syncedBlocks: {}, settings: workspace.settings ?? DEFAULT_SETTINGS, reminders: [] });
+    rows.forEach((row) => { pages[row.id] = pageFromRow(row); if (!isShell(pages[row.id])) queue!.setRevision(row.id, row.revision); });
+    applyRemote({ pages, rootOrder: workspace.root_order ?? [], syncedBlocks: {}, settings: workspace.settings ?? DEFAULT_SETTINGS, reminders: [], replaceLoaded: true });
   } else if (choice === "local") {
     queue!.clearAll();
     const serverRevision = new Map(rows.map((r) => [r.id, r.revision]));
@@ -465,15 +504,28 @@ async function bootstrap(sb: SupabaseClient, user: User, token: number): Promise
     for (const row of rows) if (!current.pages[row.id]) queue!.markDeleted(row.id);
     queue!.enqueueWorkspace([{ op: "set_root_order", rootOrder: current.rootOrder }, { op: "set_settings", patch: current.settings ?? DEFAULT_SETTINGS }, ...Object.entries(current.syncedBlocks ?? {}).map(([key, blocks]): WorkspaceOp => ({ op: "synced_set", key, blocks }))]);
   } else {
+    const refresh: string[] = [], metaPatch: Record<string, Page> = {};
     for (const row of rows) {
       if (queue!.isDeleted(row.id)) continue;
-      const decision = mergePageDecision(current.pages[row.id], row, foreignPageIds.has(row.id));
+      const local = current.pages[row.id], decision = mergePageDecision(local, row, foreignPageIds.has(row.id));
       if (decision.kind === "push") {
         const page = await loadFullPage(row.id);
         if (token !== generation) throw SYNC_CANCELLED;
         if (page) queue!.enqueue(row.id, [{ op: "replace_page", page, revision: row.revision }]);
-      } else engine!.receive(row, true);
+        continue;
+      }
+      if (foreignPageIds.has(row.id)) continue;
+      if (decision.kind === "apply" && isShell(decision.page) && local && !isShell(local)) {
+        if (row.revision > (local.revision ?? 0)) refresh.push(row.id);
+        continue;
+      }
+      if (decision.kind !== "apply" || !isShell(decision.page)) { engine!.receive(row, true); continue; }
+      if (local && local.revision === row.revision && local.updatedAt === decision.serverMs) continue;
+      if (!queue!.peek(row.id).length && row.revision >= queue!.getRevision(row.id)) metaPatch[row.id] = decision.page;
     }
+    if (Object.keys(metaPatch).length) applyRemote({ pages: metaPatch }, false);
+    await Promise.all(refresh.map((id) => readPage(sb, id).then((fresh) => { if (fresh && token === generation) engine!.receive(fresh, true); })));
+    if (token !== generation) throw SYNC_CANCELLED;
     handleWorkspaceRow(workspace, true);
     const s = useStore.getState(); if (JSON.stringify(s.rootOrder) !== JSON.stringify(workspace.root_order)) queue!.enqueueWorkspace([{ op: "set_root_order", rootOrder: s.rootOrder }]);
   }
@@ -584,11 +636,15 @@ export async function forceFullPush(): Promise<void> {
 export async function forceFullPull(): Promise<void> {
   const sb = getSupabase(); if (!started || !ready || !wsId || !queue || !sb || pushing) throw new Error("Sync is not ready");
   if (!window.confirm("Replace this device's workspace with the cloud copy? Unsynced local changes will be discarded.")) return;
+  const token = generation;
   setStatus("syncing"); queue.clearAll();
   try {
     const rows = await fetchAllPages(sb), pages: Record<string, Page | null> = Object.fromEntries(Object.keys(useStore.getState().pages).filter((id) => !foreignPageIds.has(id)).map((id) => [id, null]));
-    rows.forEach((row) => { pages[row.id] = pageFromRow(row); queue!.setRevision(row.id, row.revision); known.add(row.id); });
-    applyRemote({ pages }); const workspace = await sb.from("workspaces").select(WS_COLS).eq("id", wsId).single();
+    if (token !== generation) throw SYNC_CANCELLED;
+    await forgetLocalBodies(); if (token !== generation) throw SYNC_CANCELLED;
+    rows.forEach((row) => { pages[row.id] = pageFromRow(row); if (!isShell(pages[row.id])) queue!.setRevision(row.id, row.revision); known.add(row.id); });
+    applyRemote({ pages, replaceLoaded: true }); const workspace = await sb.from("workspaces").select(WS_COLS).eq("id", wsId).single();
+    if (token !== generation) throw SYNC_CANCELLED;
     if (workspace.error) throw workspace.error; handleWorkspaceRow(workspace.data as WorkspaceRow, true); await refreshSyncedBlocks(sb); setStatus("synced");
-  } catch (error) { setStatus(navigator.onLine ? "error" : "offline"); throw error; }
+  } catch (error) { if (token === generation) setStatus(navigator.onLine ? "error" : "offline"); throw error; }
 }
