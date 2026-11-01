@@ -2,6 +2,7 @@ import { useStore } from "@/lib/store";
 import { isShell } from "@/lib/pageShell";
 import { applyingExternal } from "@/lib/externalApply";
 import { readStoredPage } from "@/lib/localPersistence";
+import type { Page } from "@/lib/types";
 
 export type BodyState = "ready" | "unavailable";
 export const opening = new Set<string>();
@@ -42,4 +43,17 @@ async function load(id: string): Promise<BodyState> {
 export async function ensurePageBodies(ids: string[]): Promise<BodyState> {
   const results = await Promise.all([...new Set(ids)].map(ensurePageBody));
   return results.includes("unavailable") ? "unavailable" : "ready";
+}
+
+export function databaseDeps(rootId: string, pages: Record<string, Page>): string[] {
+  const seen = new Set<string>(), pending = [rootId];
+  while (pending.length) {
+    const id = pending.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const property of pages[id]?.database?.properties ?? []) {
+      if (property.type === "relation" && property.relationDbId) pending.push(property.relationDbId);
+    }
+  }
+  return [...seen];
 }

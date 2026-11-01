@@ -22,6 +22,9 @@ import CoverPicker from "@/components/CoverPicker";
 const EmojiPicker = lazy(() => import("@/components/EmojiPicker"));
 import { withViewTransition } from "@/lib/viewTransition";
 import { taskForPage, useAgentTasks } from "@/lib/agentTasks";
+import { usePageBodies } from "@/lib/usePageBodies";
+import { databaseDeps } from "@/lib/pageBodies";
+import type { Page } from "@/lib/types";
 export default function PageView({ pageId }: { pageId: string }) {
   const page = useStore((s) => s.pages[pageId]), pages = useStore((s) => s.pages), spellCheck = useStore((s) => s.settings?.spellcheck ?? true), title = useRef<HTMLDivElement>(null);
   const task = useAgentTasks((state) => taskForPage(state, pageId));
@@ -29,12 +32,15 @@ export default function PageView({ pageId }: { pageId: string }) {
   const [params] = useSearchParams();
   const [iconPicker, setIconPicker] = useState(false);
   const drag = useRef<{ pointer: number; y: number; pos: number; height: number } | null>(null);
-  useEffect(() => { if (title.current && document.activeElement !== title.current && title.current.textContent !== page?.title) title.current.textContent = page?.title ?? ""; }, [pageId, page?.title]);
+  const host = page?.parentId && pages[page.parentId]?.database ? page.parentId : null;
+  const bodies = usePageBodies(host ? [pageId, ...databaseDeps(host, pages)] : [pageId]);
+  useEffect(() => { if (title.current && document.activeElement !== title.current && title.current.textContent !== page?.title) title.current.textContent = page?.title ?? ""; }, [pageId, page?.title, bodies]);
   useIdleSnapshot(pageId);
   const reloaded = useBlockConflicts((s) => s.pageReloads[pageId]);
   if (!page) return <div className="empty-state">Page not found.</div>;
+  if (bodies !== "ready") return <PageBodyPlaceholder page={page} state={bodies} />;
   const stats = pageStats(page, pages);
-  const parent = Object.values(pages).find((p) => !p.isDeleted && p.database?.rows.some((row) => row.pageId === pageId));
+  const parent = host && !pages[host].isDeleted ? pages[host] : undefined;
   const row = parent?.database?.rows.find((r) => r.pageId === pageId);
   const job = row && !row.parentRowId && !task?.parent_task_id && parent?.database?.properties.some((property) => property.type === "agentStatus");
   const cover = safeCover(page.cover), gradient = cover?.startsWith("linear-gradient"), update = useStore.getState().updatePage;
@@ -62,6 +68,19 @@ export default function PageView({ pageId }: { pageId: string }) {
     <div className="mt-8 border-t border-border pt-4"><CommentThread pageId={pageId} /></div>
     <div className="mt-8 text-xs text-text-tertiary">{!page.database && <>{stats.words} {stats.words === 1 ? "word" : "words"} · {stats.blocks} {stats.blocks === 1 ? "block" : "blocks"} · {stats.mins} min read · </>}Edited {formatRelative(page.updatedAt)}</div>
   </div></div>;
+}
+
+function PageBodyPlaceholder({ page, state }: { page: Page; state: "loading" | "unavailable" }) {
+  return <div className="h-full overflow-y-auto scrollbar-thin">
+    <title>{`${page.title || "Untitled"} · colabora.si`}</title>
+    <div className={`page-content font-page-${page.font ?? "default"}`} style={{ maxWidth: page.fullWidth ? "none" : undefined }}>
+      {page.icon && <div className="mb-5"><Emoji emoji={page.icon} size={68} /></div>}
+      <PageRecoveryNotice pageId={page.id} />
+      <h1 className="title-edit">{page.title || "Untitled"}</h1>
+      {state === "loading" ? <div className="page-body-skeleton" aria-busy="true" aria-label="Loading page"><div /><div /><div /></div>
+        : <p className="mt-4 text-text-secondary">This page isn&apos;t on this device yet. Connect to the internet to open it.</p>}
+    </div>
+  </div>;
 }
 
 export function PageRecoveryNotice({ pageId, userId: account }: { pageId: string; userId?: string }) {

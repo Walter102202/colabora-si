@@ -18,10 +18,13 @@ import { JobAccessNote } from "@/components/agents/AgentPropertyCell";
 import { JobsBoard } from "@/components/agents/panel/JobsBoard";
 import { jobState, jobWait } from "@/lib/agentJobs";
 import { connectedRows } from "@/lib/agentConnect";
+import { databaseDeps } from "@/lib/pageBodies";
+import { usePageBodies } from "@/lib/usePageBodies";
 const VIEW_NAMES: Record<DbViewType, string> = { table: "Table", board: "Board", list: "List", gallery: "Gallery", calendar: "Calendar", timeline: "Timeline" };
 const COLORS = ["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
 export default function DatabaseView({ pageId, locked = false, linkedPageId, linkedBlockId }: { pageId: string; locked?: boolean; linkedPageId?: string; linkedBlockId?: string }) {
   const pages = useStore((s) => s.pages), page = pages[pageId];
+  const bodies = usePageBodies(databaseDeps(pageId, pages));
   const [active, setActive] = useState(0), [search, setSearch] = useState(""), [searching, setSearching] = useState(false), [panel, setPanel] = useState("");
   const ops = useMemo(() => {
     const base = linkedPageId && linkedBlockId ? buildLinkedDbOps(pageId, linkedPageId, linkedBlockId) : buildDbOps(pageId);
@@ -29,7 +32,7 @@ export default function DatabaseView({ pageId, locked = false, linkedPageId, lin
   }, [pageId, locked, linkedPageId, linkedBlockId]);
   const database = page?.database ? ops.database : undefined;
   const tasks = useAgentTasks((s) => s.tasks), briefs = useAgentTasks((s) => s.briefs), agents = useAgentsStore((s) => s.agents);
-  const queryDatabase = useMemo(() => database ? databaseTaskValues(database, tasks, agents, briefs) : undefined, [database, tasks, agents, briefs]);
+  const queryDatabase = useMemo(() => bodies === "ready" && database ? databaseTaskValues(database, tasks, agents, briefs) : undefined, [bodies, database, tasks, agents, briefs]);
   const agentTable = database?.properties.some((property) => property.type === "agentStatus");
   const view = database?.views[active] ?? database?.views[0];
   const rows = useMemo(() => {
@@ -45,6 +48,8 @@ export default function DatabaseView({ pageId, locked = false, linkedPageId, lin
     }
     return sortRows(filterRows(source, waiting || working ? { ...view, filters: [] } : view, queryDatabase, pages).filter((row) => !search.trim() || rowSearchText(row, queryDatabase, pages).includes(search.trim().toLowerCase())), view, queryDatabase, pages);
   }, [queryDatabase, view, pages, search, agentTable, database]);
+  if (bodies === "loading") return <div className="database-view" aria-busy="true"><div className="database-skeleton" /></div>;
+  if (bodies === "unavailable") return <div className="empty-block">This database isn&apos;t on this device yet. Connect to the internet to open it.</div>;
   if (!database || !view) return null;
   const condition = (): FilterCondition => ({ id: newId(), propertyId: database.properties[0].id, operator: operatorsFor(database.properties[0].type)[0], value: "" });
   const patchFilter = (id: string, patch: Partial<FilterCondition>) => ops.updateView(view.id, { filters: (view.filters ?? []).map((f) => f.id === id ? { ...f, ...patch } : f) });
