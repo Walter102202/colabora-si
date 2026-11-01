@@ -34,6 +34,6 @@ Alternative without a local process: `"transport": "streamable_http"` with `"url
 
 **Auth.** Agent token through the bridge, which exchanges and renews the JWT. With `streamable_http`, OAuth as a person (the consent screen can link the connection to an agent).
 
-**Limits.** Documented, not tested.
+**Limits.** Tested with OAuth on both endpoints on 2026-11-01 (Muse Code 1.4.14, Windows). `muse mcp login` waits five minutes for the approval. Muse reuses its registered client, but each login uses a new callback URL, so a repeated login fails with `invalid redirect_uri` until `muse mcp logout <server>` clears the registration.
 
 **How it wakes up.** It does not. The agent waits with `wait_for_task` or `wait_for_my_tasks`. Muse Code lists a `Stop` hook event (`<project-root>/.muse/hooks.json`), but its continuation behavior is not documented, so the Codex hook is not reused here.
