@@ -4,7 +4,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import { useNavigate } from "react-router";
 import { useStore } from "@/lib/store";
 import { createBlock, newId } from "@/lib/factories";
-import { applyType, indentBlock, mergeWithPrevious, numbering, outdentBlock, splitBlock, visibleBlocks, type BlockOps } from "@/lib/blockOps";
+import { applyType, blockSubtreeEnd, indentBlock, mergeWithPrevious, numbering, outdentBlock, splitBlock, visibleBlocks, type BlockOps } from "@/lib/blockOps";
 import { caretOffset, insertMentionNode, isCaretAtEnd, isCaretAtStart, setCaretAtOffset, splitAtCaret, textBeforeCaret } from "@/lib/caret";
 import { filterSlashItems, MARKDOWN_SHORTCUTS, NON_TEXT, type SlashItem } from "@/lib/blockMeta";
 import { runShortcut, shortcutFormat } from "@/lib/formatting";
@@ -13,6 +13,8 @@ import { cloneWithNewIds } from "@/lib/pageMutations";
 import { sanitizeHtml, stripHtml } from "@/lib/utils";
 import type { Block, BlockType, Page } from "@/lib/types";
 import type { EditableHandle } from "@/components/Editable";
+import { useBlockDrag } from "@/components/blocks/BlockDragContext";
+import { BlockDragProvider } from "@/components/blocks/BlockDragProvider";
 import BlockItem from "@/components/blocks/BlockItem";
 import BlockMenu from "@/components/blocks/BlockMenu";
 import SlashMenu from "@/components/SlashMenu";
@@ -38,10 +40,16 @@ export default function BlockEditor({ pageId }: { pageId: string }) {
   if (!page) return null;
   return <><EditorSurface key={pageId} pageId={pageId} blocks={page.blocks} pages={pages} locked={page.locked} spellCheck={spellCheck} actorId={actorId} onChange={(blocks) => useStore.getState().setBlocks(pageId, blocks)} /><DeletedBlockConflicts pageId={pageId} blocks={page.blocks} /></>;
 }
-interface SurfaceProps { pageId: string; blocks: Block[]; onChange: (blocks: Block[]) => void; locked?: boolean; spellCheck?: boolean; actorId?: string; nested?: boolean; pages?: Record<string, Page> }
+interface SurfaceProps { pageId: string; blocks: Block[]; onChange: (blocks: Block[]) => void; locked?: boolean; spellCheck?: boolean; actorId?: string; nested?: boolean; columnId?: string; pages?: Record<string, Page> }
 type SlashState = { id: string; query: string; index: number; rect: DOMRect };
 type Focus = { id: string; offset?: number; end?: boolean };
-export function EditorSurface({ pageId, blocks, onChange, locked = false, spellCheck = true, actorId = "local", nested = false, pages = {} }: SurfaceProps) {
+export function EditorSurface(props: SurfaceProps) {
+  const inherited = useBlockDrag();
+  if (inherited && props.columnId) return <EditorSurfaceContent {...props} />;
+  return <BlockDragProvider blocks={props.blocks} onChange={props.onChange} locked={props.locked}><EditorSurfaceContent {...props} /></BlockDragProvider>;
+}
+function EditorSurfaceContent({ pageId, blocks, onChange, locked = false, spellCheck = true, actorId = "local", nested = false, columnId, pages = {} }: SurfaceProps) {
+  const drag = useBlockDrag()!, registerSurface = drag.register;
   const container = useRef<HTMLDivElement>(null), handles = useRef(new Map<string, EditableHandle>()), latest = useRef({ blocks, onChange, locked, actorId, pages });
   const navigate = useNavigate();
   const active = useRef<string | null>(null), pending = useRef<Focus | null>(null), slashRef = useRef<SlashState | null>(null);
@@ -56,12 +64,20 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
   const [datePick, setDatePick] = useState<SlashState | null>(null);
   const [dateChip, setDateChip] = useState<{ iso: string; rect: DOMRect } | null>(null), dateChipElement = useRef<HTMLElement | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]), selected = useRef<string[]>([]), selAnchor = useRef<string | null>(null), selHead = useRef<string | null>(null);
-  const [draggingId, setDraggingId] = useState<string | null>(null), [dropTarget, setDropTarget] = useState<BlockOps["dropTarget"]>(null), dragState = useRef<{ id: string | null; target: BlockOps["dropTarget"] }>({ id: null, target: null });
+  const draggingId = drag.state.ids[0] ?? null;
+  const dropTarget = useMemo(() => drag.state.target?.columnId === (columnId ?? null) && drag.state.target.id ? { id: drag.state.target.id, position: drag.state.target.position } : null, [drag.state.target, columnId]);
   const visible = useMemo(() => nested ? blocks : visibleBlocks(blocks), [blocks, nested]), ordinals = useMemo(() => numbering(blocks), [blocks]);
   const selectBlocks = useCallback((ids: string[], anchor: string | null = ids[0] ?? null, head: string | null = ids.at(-1) ?? null) => {
     selected.current = ids; setSelectedIds(ids); selAnchor.current = anchor; selHead.current = head;
     if (ids.length) (document.activeElement as HTMLElement | null)?.blur();
   }, []);
+  useLayoutEffect(() => registerSurface(columnId ?? null, {
+    snapshot: () => latest.current.blocks.map((block) => {
+      const handle = handles.current.get(block.id), html = handle ? sanitizeHtml(handle.getHtml()) : block.html;
+      return html === block.html ? block : { ...block, html, attr: { by: "human", id: latest.current.actorId, at: Date.now() } };
+    }),
+    clearSelection: () => selectBlocks([]),
+  }), [registerSurface, columnId, selectBlocks]);
   const selectRange = useCallback((anchor: string, head: string) => {
     const ids = visibleBlocks(latest.current.blocks).map((b) => b.id), a = ids.indexOf(anchor), b = ids.indexOf(head);
     if (a >= 0 && b >= 0) selectBlocks(ids.slice(Math.min(a, b), Math.max(a, b) + 1), anchor, head);
@@ -205,21 +221,19 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
       openComments: (id, anchor) => setComments({ id, rect: anchor.getBoundingClientRect() }),
       addBlockBelow: add,
       onBlockMouseDown: (id, event) => {
-        if (nested || latest.current.locked || (event.target as HTMLElement).closest<HTMLElement>("[data-block-id]")?.dataset.blockId !== id) return;
-        if (event.shiftKey) { event.preventDefault(); selectRange(selAnchor.current ?? active.current ?? id, id); } else selectBlocks([]);
+        if (latest.current.locked || (event.target as HTMLElement).closest<HTMLElement>("[data-block-id]")?.dataset.blockId !== id) return;
+        if (event.shiftKey) { event.preventDefault(); selectRange(selAnchor.current ?? active.current ?? id, id); } else if (!(event.target as HTMLElement).closest(".block-gutter")) selectBlocks([]);
       },
-      onDragStart: (id) => { dragState.current = { id, target: null }; setDraggingId(id); setDropTarget(null); setSelection(null); },
+      onDragStart: (id) => { drag.start(selected.current.includes(id) ? selected.current : [id]); setSelection(null); },
       onDragOverBlock: (id, event) => {
-        if (nested) event.stopPropagation();
-        if (!dragState.current.id || dragState.current.id === id) return;
-        event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(), target = { id, position: event.clientY < rect.top + rect.height / 2 ? "above" as const : "below" as const };
-        dragState.current.target = target; setDropTarget(target);
+        event.stopPropagation();
+        if (!drag.state.ids.length) return;
+        event.preventDefault();
+        const rect = event.currentTarget.getBoundingClientRect();
+        drag.target({ columnId: columnId ?? null, id, position: event.clientY < rect.top + rect.height / 2 ? "above" : "below" });
       },
-      onDrop: () => {
-        const { id, target } = dragState.current;
-        if (id && target) { const moved = list().find((b) => b.id === id), next = list().filter((b) => b.id !== id), index = next.findIndex((b) => b.id === target.id); if (moved && index >= 0) { next.splice(index + (target.position === "below" ? 1 : 0), 0, moved); commit(next); } }
-        dragState.current = { id: null, target: null }; setDraggingId(null); setDropTarget(null);
-      },
+      onDrop: () => drag.finish(),
+      onDragCancel: () => drag.finish(true),
       handleKeyDown: (id, event) => {
         if (event.nativeEvent.isComposing || latest.current.locked) return;
         const handle = handles.current.get(id), block = list().find((b) => b.id === id);
@@ -336,7 +350,7 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
         commit(next, { id: placed.at(-1)?.id ?? id, end: true });
       },
     };
-  }, [pageId, locked, ordinals, nested, selectMention, selectEmoji, selectBlocks, selectRange, draggingId, dropTarget]);
+  }, [pageId, locked, ordinals, nested, selectMention, selectEmoji, selectBlocks, selectRange, draggingId, dropTarget, drag, columnId]);
   const deleteSelected = useCallback(() => {
     if (latest.current.locked) return;
     const list = latest.current.blocks, first = list.findIndex((b) => selected.current.includes(b.id));
@@ -359,7 +373,7 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
     });
   }, [deleteSelected]);
   useEffect(() => {
-    if (nested || !selectedIds.length) return;
+    if (!selectedIds.length) return;
     const keydown = (event: KeyboardEvent) => {
       const mod = event.ctrlKey || event.metaKey, key = event.key.toLowerCase();
       if (!["escape", "enter", "arrowup", "arrowdown", "backspace", "delete"].includes(key) && !(mod && ["a", "d", "c", "x"].includes(key))) return;
@@ -391,7 +405,7 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
   const changeType = (id: string, type: BlockType) => ops.convert(id, type);
   const selectSlash = (item: SlashItem) => ops.chooseSlash(item);
   const menuBlock = menu ? blocks.find((b) => b.id === menu.id) : undefined;
-  return <div role="presentation" aria-label="Page blocks" ref={container} className={`block-editor ${nested ? "nested-editor" : ""}`} onMouseDown={(event) => { if (!event.shiftKey && selected.current.length) selectBlocks([]); }} onClickCapture={(event) => {
+  return <div role="presentation" aria-label="Page blocks" ref={container} className={`block-editor ${nested ? "nested-editor" : ""}`} onMouseDown={(event) => { if (!event.shiftKey && selected.current.length && !(event.target as HTMLElement).closest(".block-gutter")) selectBlocks([]); }} onClickCapture={(event) => {
     const target = event.target as HTMLElement, link = target.closest<HTMLAnchorElement>("a.mention[data-page]"), chip = target.closest<HTMLElement>("span.date-mention[data-date]");
     if (link?.dataset.page && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) { event.preventDefault(); withViewTransition(() => navigate(pageUrl(link.dataset.page!))); }
     const equation = target.closest<HTMLElement>(".inline-eq[data-eq]");
@@ -402,10 +416,14 @@ export function EditorSurface({ pageId, blocks, onChange, locked = false, spellC
       const next = [...latest.current.blocks], index = next.findIndex((b) => b.id === id);
       next.splice(index + 1, 0, ...cloneWithNewIds(inserted)); latest.current.blocks = next; latest.current.onChange(next);
     }} />)}
-    {!locked && <button className="block h-24 w-full cursor-text" aria-label="Add a block" onClick={() => { const last = blocks.at(-1); if (last?.type === "paragraph" && !last.html) handles.current.get(last.id)?.focus(); else if (last) ops.addBlockBelow(last.id); else { const next = createBlock(); pending.current = { id: next.id }; onChange([next]); } }} />}
+    {!locked && <button className={`block-insert-area ${drag.state.target?.columnId === (columnId ?? null) && !drag.state.target.id ? "block-insert-target" : ""}`} aria-label="Add a block" onDragOver={(event) => { if (!draggingId) return; event.preventDefault(); event.stopPropagation(); drag.target({ columnId: columnId ?? null, position: "below" }); }} onDrop={(event) => { if (!draggingId) return; event.preventDefault(); event.stopPropagation(); drag.finish(); }} onClick={() => { const last = blocks.at(-1); if (last?.type === "paragraph" && !last.html) handles.current.get(last.id)?.focus(); else if (last) ops.addBlockBelow(last.id); else { const next = createBlock(); pending.current = { id: next.id }; onChange([next]); } }}><span>+ Add a block</span></button>}
     {slash && <SlashMenu nested={nested} query={slash.query} index={slash.index} rect={slash.rect} onIndex={(index) => { const next = { ...slash, index }; slashRef.current = next; setSlash(next); }} onSelect={selectSlash} />}
     {emoji && <Suspense fallback={null}><EmojiMenu query={emoji.query} index={emoji.index} rect={emoji.rect} onSelect={selectEmoji} onIndex={(index) => { const next = { ...emoji, index }; emojiRef.current = next; setEmoji(next); }} /></Suspense>}
-    {menu && menuBlock && <BlockMenu block={menuBlock} rect={menu.rect} onClose={() => setMenu(null)} onType={(type) => changeType(menu.id, type)} onUpdate={(patch) => ops.updateBlock(menu.id, patch)} onComment={() => { setComments(menu); setMenu(null); }} onDuplicate={() => { const next = [...blocks], copy = cloneWithNewIds([menuBlock])[0]; next.splice(next.findIndex((b) => b.id === menu.id) + 1, 0, copy); pending.current = { id: copy.id, end: true }; onChange(next); }} onDelete={() => { const next = blocks.filter((b) => b.id !== menu.id); onChange(next.length ? next : [createBlock()]); }} />}
+    {menu && menuBlock && <BlockMenu block={menuBlock} rect={menu.rect} onClose={() => setMenu(null)} onType={(type) => changeType(menu.id, type)} onUpdate={(patch) => ops.updateBlock(menu.id, patch)} onComment={() => { setComments(menu); setMenu(null); }} onMove={(direction) => {
+      const index = blocks.findIndex((block) => block.id === menu.id);
+      if (direction === "out") drag.move([menu.id], { columnId: null, position: "below" });
+      else { const target = blocks[direction === "up" ? index - 1 : blockSubtreeEnd(blocks, index)]; if (target) drag.move([menu.id], { columnId: columnId ?? null, id: target.id, position: direction === "up" ? "above" : "below" }); }
+    }} canMoveOut={!!columnId} columns={drag.columns.filter((column) => column.id !== columnId)} onMoveToColumn={(id) => drag.move([menu.id], { columnId: id, position: "below" })} onDuplicate={() => { const next = [...blocks], copy = cloneWithNewIds([menuBlock])[0]; next.splice(next.findIndex((b) => b.id === menu.id) + 1, 0, copy); pending.current = { id: copy.id, end: true }; onChange(next); }} onDelete={() => { const next = blocks.filter((b) => b.id !== menu.id); onChange(next.length ? next : [createBlock()]); }} />}
     {selectedIds.length > 1 && <div role="toolbar" aria-label="Selected blocks" className="block-selection-toolbar" onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}><span>{selectedIds.length} selected</span>{!locked && <button onClick={duplicateSelected}>Duplicate</button>}<button onClick={() => copySelected(false)}>Copy</button>{!locked && <button className="danger" onClick={deleteSelected}>Delete</button>}<button aria-label="Clear selection" onClick={() => selectBlocks([])}>×</button></div>}
     {selection && !slash && !mention && !emoji && <InlineToolbar key={selection.link ? "link" : "format"} range={selection.range} rect={selection.rect} aiTarget={selection.blockId ? { pageId, blockId: selection.blockId } : undefined} initialLink={selection.link} locked={locked} onClose={() => setSelection(null)} onTurnInto={(type) => { if (active.current) changeType(active.current, type); }} onComment={() => { if (active.current) setComments({ id: active.current, rect: selection.rect }); setSelection(null); }} onChange={() => { for (const [id, handle] of handles.current) if (handle.el?.contains(selection.range.commonAncestorContainer)) ops.saveBlock(id, handle.getHtml()); }} />}
     {comments && <BlockCommentsPopover pageId={pageId} blockId={comments.id} rect={comments.rect} onClose={() => setComments(null)} />}

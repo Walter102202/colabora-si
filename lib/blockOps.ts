@@ -22,10 +22,64 @@ export interface BlockOps {
   onDragStart: (id: string) => void;
   onDragOverBlock: (id: string, e: React.DragEvent) => void;
   onDrop: () => void;
+  onDragCancel?: () => void;
   dropTarget: { id: string; position: "above" | "below" } | null;
   draggingId: string | null;
   numbering: Record<string, number>;
   locked?: boolean;
+}
+
+export interface BlockDestination { columnId: string | null; id?: string; position: "above" | "below" }
+
+export function blockSubtreeEnd(blocks: Block[], index: number): number {
+  const block = blocks[index];
+  if (!block) return index;
+  const level = block.toggleable && block.type.startsWith("heading") ? Number(block.type.at(-1)) : 0;
+  let end = index + 1;
+  while (end < blocks.length) {
+    const child = blocks[end];
+    if (level ? child.type.startsWith("heading") && Number(child.type.at(-1)) <= level : child.indent <= block.indent) break;
+    end++;
+  }
+  return end;
+}
+
+/** Move a selection and its descendants in one page update, without cloning identities. */
+export function movePageBlocks(blocks: Block[], ids: string[], destination: BlockDestination): Block[] {
+  let source: Block[] | undefined, target: Block[] | undefined;
+  const visit = (list: Block[], columnId: string | null) => {
+    if (list.some((block) => block.id === ids[0])) source = list;
+    if (columnId === destination.columnId) target = list;
+    for (const block of list) for (const column of block.columns ?? []) visit(column.blocks, column.id);
+  };
+  visit(blocks, null);
+  if (!source || !target || !ids.length || ids.some((id) => !source!.some((block) => block.id === id))) return blocks;
+  const moving = new Set(ids);
+  for (let index = 0; index < source.length; index++) {
+    const block = source[index];
+    if (!moving.has(block.id)) continue;
+    const end = blockSubtreeEnd(source, index);
+    for (let next = index + 1; next < end; next++) moving.add(source[next].id);
+    index = end - 1;
+  }
+  const moved = source.filter((block) => moving.has(block.id));
+  if (destination.id && moving.has(destination.id)) return blocks;
+  const containsTarget = (list: Block[]): boolean => list.some((block) => (block.columns ?? []).some((column) => column.id === destination.columnId || containsTarget(column.blocks)));
+  if (containsTarget(moved)) return blocks;
+  const remaining = target.filter((block) => !moving.has(block.id));
+  let index = destination.id ? remaining.findIndex((block) => block.id === destination.id) : remaining.length;
+  if (index < 0) return blocks;
+  const anchor = remaining[index];
+  if (anchor && destination.position === "below") index = blockSubtreeEnd(remaining, index);
+  const delta = (anchor?.indent ?? 0) - Math.min(...moved.map((block) => block.indent));
+  const inserted = moved.map((block) => delta ? { ...block, indent: block.indent + delta } : block);
+  const rewrite = (list: Block[]): Block[] => {
+    let next = list === source ? list.filter((block) => !moving.has(block.id)) : [...list];
+    if (list === target) next.splice(index, 0, ...inserted);
+    next = next.map((block) => block.columns ? { ...block, columns: block.columns.map((column) => ({ ...column, blocks: rewrite(column.blocks) })) } : block);
+    return next;
+  };
+  return rewrite(blocks);
 }
 function computeVisible(blocks: Block[]): { visible: Block[]; numbering: Record<string, number> } {
   const vis: Block[] = [];
