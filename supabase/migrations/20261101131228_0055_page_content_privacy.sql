@@ -114,14 +114,14 @@ revoke all on function private.file_reference_pages(text) from public,anon,authe
 
 -- Old created_by values were client supplied; do not trust them as staging ownership.
 alter table public.files add column uploaded_by uuid references auth.users(id) on delete set null;
-create function private.can_read_file(p_file text,p_ws uuid)
+create function private.can_read_file(p_file text,p_ws uuid,p_uploaded_by uuid default null)
 returns boolean language sql stable security definer set search_path='' as $$
   select exists(select 1 from private.file_reference_pages(p_file) r join public.pages p on p.id=r.page_id
     where r.workspace_id=p_ws and p.data is not null and p.deleted_at is null
       and (p.published or private.can_read_page(p.id,p.workspace_id)))
   or (private.is_human_editor(p_ws)
     and not exists(select 1 from private.file_reference_pages(p_file))
-    and exists(select 1 from public.files f where f.id=p_file and f.workspace_id=p_ws and f.uploaded_by=auth.uid()));
+    and coalesce(p_uploaded_by,(select f.uploaded_by from public.files f where f.id=p_file and f.workspace_id=p_ws))=auth.uid());
 $$;
 create function private.can_write_file(p_file text,p_ws uuid,p_delete boolean default false)
 returns boolean language sql stable security definer set search_path='' as $$
@@ -131,8 +131,8 @@ returns boolean language sql stable security definer set search_path='' as $$
         where r.workspace_id<>p_ws or r.page_id is null or not private.can_write_page(r.page_id,r.workspace_id))
     else exists(select 1 from public.files f where f.id=p_file and f.workspace_id=p_ws and f.uploaded_by=auth.uid()) end);
 $$;
-revoke all on function private.can_read_file(text,uuid),private.can_write_file(text,uuid,boolean) from public;
-grant execute on function private.can_read_file(text,uuid) to anon,authenticated;
+revoke all on function private.can_read_file(text,uuid,uuid),private.can_write_file(text,uuid,boolean) from public;
+grant execute on function private.can_read_file(text,uuid,uuid) to anon,authenticated;
 grant execute on function private.can_write_file(text,uuid,boolean) to authenticated;
 
 create function private.protect_file_identity()
@@ -152,7 +152,8 @@ create trigger files_protect_identity before insert or update on public.files fo
 
 drop policy "anyone resolves file location" on public.files;
 create policy "file readers resolve location" on public.files for select to anon,authenticated
-using(private.can_read_file(id,workspace_id));
+-- Use the stamped row value: an upsert RETURNING check cannot re-query its new row yet.
+using(private.can_read_file(id,workspace_id,uploaded_by));
 create function private.can_register_file(p_file text,p_ws uuid)
 returns boolean language sql stable security definer set search_path='' as $$
   select private.is_human_editor(p_ws) and not exists(
@@ -206,7 +207,9 @@ begin
     where jsonb_typeof(value)='string' and length(value#>>'{}')>0 loop
     if p_existing_page is not null and exists(select 1 from public.page_files pf where pf.page_id=p_existing_page and pf.file_id=f) then continue; end if;
     select workspace_id into ws from public.files where id=f;
-    if found and (ws<>p_ws or not private.can_read_file(f,ws)) then
+    -- Restoring a reference may precede restoring its archived source page. Writers can
+    -- reuse that file; the separate read policy still keeps archived bytes inaccessible.
+    if found and (ws<>p_ws or not (private.can_read_file(f,ws) or private.can_write_file(f,ws))) then
       raise exception using errcode='PT403',message='forbidden_file_reference';
     end if;
     if ws is null and exists(select 1 from private.file_reference_pages(f) r
