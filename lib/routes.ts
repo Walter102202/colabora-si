@@ -2,6 +2,8 @@ export type SettingsTab = "account" | "members" | "agents" | "appearance" | "edi
 export interface PageLinkOptions { task?: string; peek?: string; }
 export const HOME_URL = "/";
 export const LANDING_URL = "/landing";
+export const LANDING_LOGIN_URL = "/landing#login";
+export const SET_PASSWORD_URL = "/set-password";
 export const LINKED_URL = "/linked";
 export const MCP_PAT_URL = "/mcp-pat";
 
