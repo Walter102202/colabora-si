@@ -26,6 +26,29 @@ Deno.test('claim_task does not promise to reopen done tasks', () => {
   assert.match(tool('claim_task').description, /only a person reopens it/);
 });
 
+Deno.test('join_job forwards the requested identity and reports each server outcome without assigning itself', async () => {
+  const base = { job_id: 'job-a', title: 'Market research', database: { id: 'db', title: 'Launch plan' } };
+  const cases = [
+    { as: 'lead', data: { ...base, status: 'joined' }, text: 'Found Market research in Launch plan.' },
+    { as: 'worker', data: { ...base, status: 'joined' }, text: 'Working on Market research in Launch plan.' },
+    { as: 'lead', data: { ...base, status: 'other_lead', lead_name: 'Claude Code' }, text: 'Refused: this job names Claude Code as Lead.' },
+    { as: 'worker', data: { ...base, status: 'no_lead' }, text: 'Refused: this job has no Lead yet. A person must choose the Lead on its row.' },
+    { as: 'lead', data: { status: 'ambiguous', jobs: [base, { ...base, job_id: 'job-b' }] }, text: 'Two jobs are called Market research. Which one?' },
+    { as: 'worker', data: { status: 'not_found' }, text: 'No job called Market research was found in pages you can read.' },
+  ];
+  for (const c of cases) {
+    const calls: string[] = [];
+    const result = await tool('join_job').handler({ name: 'Market research', as: c.as, job_id: 'job-a' }, ctxWith((fn, args) => {
+      calls.push(fn);
+      assert.deepEqual(args, { p_name: 'Market research', p_as: c.as, p_job_id: 'job-a' });
+      return Promise.resolve({ data: c.data, error: null });
+    }));
+    assert.deepEqual(calls, ['join_job']);
+    assert.equal(result.text, c.text);
+    assert.deepEqual(result.structured, c.data);
+  }
+});
+
 Deno.test('submit_for_review ends the worker turn when a reviewer has the delivery', async () => {
   const data = { task_state: 'ready_for_review', review_task_id: 'review-1' };
   const out = await tool('submit_for_review').handler({ run_id: 'run-1', summary: 'Done', artifact_ids: ['art-1'] },

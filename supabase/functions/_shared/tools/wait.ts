@@ -15,7 +15,6 @@ export const SLOW_POLL_MS = 10_000;
 export const MAX_WAIT_S = 120;
 export const DEFAULT_WAIT_S = 50;
 const PROGRESS_EVERY_MS = 30_000;
-const CLOSED = new Set(['done', 'failed', 'cancelled']);
 
 function timeoutOf(args: Record<string, unknown>): number {
   const t = num(args.timeout_s);
@@ -325,6 +324,45 @@ export function decodeTaskCursor(raw: string): Cursor {
 
 const TASK_FIELDS = 'id,title,state,review_state,waiting_on,brief_version,brief_stale,active_run_id,updated_at,depends_on_task_ids,request_kind';
 
+const jobFilter = (ids: string[] | undefined, col = 'id'): Filter[] => ids === undefined ? [] : [{ col, op: 'in', value: ids }];
+
+/** Resolve the readable job tree on each full scan, including subtasks created while waiting. */
+async function jobTaskIds(ctx: ToolContext, jobId: string | undefined): Promise<string[] | undefined> {
+  if (!jobId) return undefined;
+  const root = await must(ctx.db.select<Row>({ table: 'agent_tasks', columns: 'id',
+    filters: [{ col: 'id', op: 'eq', value: jobId }, { col: 'parent_task_id', op: 'is', value: null }, { col: 'request_kind', op: 'is', value: null }], limit: 1 }));
+  if (!root?.length) return [];
+  const ids = new Set([jobId]);
+  const pending = [jobId];
+  while (pending.length) {
+    const parents = pending.splice(0, 100);
+    for (let offset = 0;; offset += 100) {
+      const children = await must(ctx.db.select<Row>({ table: 'agent_tasks', columns: 'id',
+        filters: [{ col: 'parent_task_id', op: 'in', value: parents }], order: [{ column: 'id', ascending: true }], limit: 100, offset })) ?? [];
+      for (const child of children) if (!ids.has(String(child.id))) { ids.add(String(child.id)); pending.push(String(child.id)); }
+      if (children.length < 100) break;
+    }
+  }
+  return [...ids];
+}
+
+/** A session following one job must leave other jobs' dispatch events for their own sessions. */
+async function markJobDelivered(ctx: ToolContext, ids: string[] | undefined): Promise<void> {
+  if (ids === undefined) return markDelivered(ctx);
+  if (!ids.length || !ctx.principal.agentId) return;
+  try {
+    const events: Row[] = [];
+    for (let offset = 0;; offset += 100) {
+      const page = await must(ctx.db.select<Row>({ table: 'agent_events', columns: 'event_id,type,payload',
+        filters: [{ col: 'agent_id', op: 'eq', value: ctx.principal.agentId }, ...jobFilter(ids, 'task_id'),
+          { col: 'status', op: 'in', value: ['queued', 'leased'] }], order: [{ column: 'event_id', ascending: true }], limit: 100, offset })) ?? [];
+      events.push(...page.filter(event => !isLeadEvent(event)));
+      if (page.length < 100) break;
+    }
+    if (events.length) await must(ctx.db.rpc('mark_events_delivered', { p_event_ids: events.map(event => event.event_id) }));
+  } catch { /* Delivery bookkeeping cannot hide readable tasks. */ }
+}
+
 /** Agents resolve dependencies under the same assignment boundary as claim_task, even across RLS-hidden pages. */
 export async function openDependencies(ctx: ToolContext, tasks: Row[]): Promise<Map<string, string[]>> {
   if (ctx.principal.agentId) {
@@ -445,11 +483,11 @@ function myTaskView(task: Row, reason: Reason, prompts: number, blockedBy: strin
 }
 
 /** Addressed Lead notices are data even when the parent row itself did not change. */
-async function leadNotices(ctx: ToolContext, events: Row[]): Promise<ReturnType<typeof myTaskView>[]> {
+async function leadNotices(ctx: ToolContext, events: Row[], ids?: string[]): Promise<ReturnType<typeof myTaskView>[]> {
   const notices = events.filter(isLeadEvent);
   if (!notices.length || !ctx.principal.agentId) return [];
   const parents = await must(ctx.db.select<Row>({ table:'agent_tasks',columns:TASK_FIELDS,
-    filters:[myTasksFilter(ctx),{col:'id',op:'in',value:[...new Set(notices.map(event=>String(event.task_id)))]}] })) ?? [];
+    filters:[myTasksFilter(ctx),...jobFilter(ids),{col:'id',op:'in',value:[...new Set(notices.map(event=>String(event.task_id)))]}] })) ?? [];
   const sessions = await lastSessions(ctx, parents.map(task=>String(task.id)));
   return notices.flatMap((event) => {
     const task = parents.find(parent=>parent.id===event.task_id);
@@ -462,27 +500,27 @@ async function leadNotices(ctx: ToolContext, events: Row[]): Promise<ReturnType<
 }
 
 /** Tasks that need the agent right now (no cursor yet), and a cursor at the current high-water mark. */
-async function initialState(ctx: ToolContext) {
+async function initialState(ctx: ToolContext, ids?: string[]) {
   const mine = myTasksFilter(ctx);
   const [open, latest, latestPrompt] = await Promise.all([
     must(ctx.db.select<Row>({
       table: 'agent_tasks',
       columns: TASK_FIELDS,
-      filters: [mine, { col: 'state', op: 'in', value: ['queued', 'working', 'input_required', 'ready_for_review'] }],
+      filters: [mine, ...jobFilter(ids), { col: 'state', op: 'in', value: ['queued', 'working', 'input_required', 'ready_for_review'] }],
       order: [{ column: 'updated_at', ascending: true }],
       limit: 100,
     })),
     must(ctx.db.select<Row>({
       table: 'agent_tasks',
       columns: 'id,updated_at',
-      filters: [mine],
+      filters: [mine, ...jobFilter(ids)],
       order: [{ column: 'updated_at', ascending: false }],
       limit: 1,
     })),
     must(ctx.db.select<Row>({
       table: 'agent_activities',
       columns: 'task_id,seq,created_at',
-      filters: [{ col: 'type', op: 'eq', value: 'prompt' }],
+      filters: [{ col: 'type', op: 'eq', value: 'prompt' }, ...jobFilter(ids, 'task_id')],
       order: [{ column: 'created_at', ascending: false }],
       limit: 1,
     })),
@@ -515,20 +553,20 @@ interface Delta {
 }
 
 /** Changes after the cursor: tasks updated, and prompts posted on my tasks. */
-async function changesSince(ctx: ToolContext, cursor: Cursor): Promise<Delta> {
+async function changesSince(ctx: ToolContext, cursor: Cursor, ids?: string[]): Promise<Delta> {
   const mine = myTasksFilter(ctx);
   const [updated, prompts] = await Promise.all([
     must(ctx.db.select<Row>({
       table: 'agent_tasks',
       columns: TASK_FIELDS,
-      filters: [mine, { col: 'updated_at', op: 'gte', value: cursor.t }],
+      filters: [mine, ...jobFilter(ids), { col: 'updated_at', op: 'gte', value: cursor.t }],
       order: [{ column: 'updated_at', ascending: true }],
       limit: 100,
     })),
     must(ctx.db.select<Row>({
       table: 'agent_activities',
       columns: 'task_id,seq,body,author_type,created_at',
-      filters: [{ col: 'type', op: 'eq', value: 'prompt' }, { col: 'created_at', op: 'gte', value: cursor.t }],
+      filters: [...jobFilter(ids, 'task_id'), { col: 'type', op: 'eq', value: 'prompt' }, { col: 'created_at', op: 'gte', value: cursor.t }],
       order: [{ column: 'created_at', ascending: true }],
       limit: 100,
     })),
@@ -561,7 +599,7 @@ async function changesSince(ctx: ToolContext, cursor: Cursor): Promise<Delta> {
     const extra = await must(ctx.db.select<Row>({
       table: 'agent_tasks',
       columns: TASK_FIELDS,
-      filters: [mine, { col: 'id', op: 'in', value: missing }],
+      filters: [mine, ...jobFilter(ids), { col: 'id', op: 'in', value: missing }],
     }));
     for (const t of extra ?? []) tasks.set(String(t.id), t);
   }
@@ -593,11 +631,12 @@ const waitForMyTasks: ToolDef = {
   name: 'wait_for_my_tasks',
   title: 'Wait until any of my tasks needs me',
   description:
-    'Without `after`: answers at once with your pending tasks and a cursor. With `after` (the next_cursor of the previous ' +
+    'With job_id: only that job and its subtasks, including notices; keep passing it on every call. Without `after`: answers at once with your pending tasks and a cursor. With `after` (the next_cursor of the previous ' +
     'call): holds until a task assigned to you is queued, gets feedback, a new brief, an approval decision, a stop, or is ' +
     'closed; or until timeout_s (default 50, max 120). Lead notices also carry reviews in progress, verdicts, minor findings and environment releases. After delivering a notice to its model/session, acknowledge only it with after:notice.ack_cursor and timeout_s:0. Acknowledgements return no new scan cursor. On changed:false call again with the same scan cursor.',
   inputSchema: object({
     after: { type: 'string' },
+    job_id: { type: 'string', minLength: 1, description: 'Follow only the job returned by join_job and its subtasks. Omit to follow all your tasks.' },
     timeout_s: { type: 'integer', minimum: 0, maximum: MAX_WAIT_S, default: DEFAULT_WAIT_S },
   }),
   outputSchema: output({
@@ -627,15 +666,17 @@ const waitForMyTasks: ToolDef = {
   budgetMs: (args) => timeoutOf(args) * 1000 + 15_000,
   async handler(args, ctx) {
     const after = str(args.after);
+    const jobId = str(args.job_id);
     if (!after) {
+      const ids = await jobTaskIds(ctx, jobId);
       const baseline = await latestEventMark(ctx);
-      const { tasks, cursor } = await initialState(ctx);
+      const { tasks, cursor } = await initialState(ctx, ids);
       const notices = await newEvents(ctx, { ...baseline, k: [] }, true);
       // Without a cursor, return undelivered notices; retained delivered history is only a baseline for deduplication.
-      tasks.push(...await leadNotices(ctx, notices.fresh.filter(e => ['queued','leased'].includes(String(e.status)) || normTs(String(e.created_at)) > baseline.t)));
+      tasks.push(...await leadNotices(ctx, notices.fresh.filter(e => ['queued','leased'].includes(String(e.status)) || normTs(String(e.created_at)) > baseline.t), ids));
       cursor.e = notices.mark;
       if (tasks.length) {
-        await markDelivered(ctx);
+        await markJobDelivered(ctx, ids);
       }
       return {
         text: tasks.length ? `${plural(tasks.length, 'task')} need you.` : 'Nothing pending. Wait again with next_cursor.',
@@ -645,6 +686,12 @@ const waitForMyTasks: ToolDef = {
     let cursor = decodeTaskCursor(after);
     if (cursor.a?.length) {
       if (!ctx.principal.agentId) throw new ToolError('forbidden','Only the recipient agent can acknowledge a notice.');
+      if (jobId) {
+        const ids = await jobTaskIds(ctx, jobId);
+        const events = await must(ctx.db.select<Row>({ table: 'agent_events', columns: 'event_id',
+          filters: [{ col: 'agent_id', op: 'eq', value: ctx.principal.agentId }, ...jobFilter(ids, 'task_id'), { col: 'event_id', op: 'in', value: cursor.a }] })) ?? [];
+        if (cursor.a.some(id => !events.some(event => event.event_id === id))) throw new ToolError('forbidden', 'Cannot acknowledge a notice outside this job.');
+      }
       await must(ctx.db.rpc('mark_events_delivered',{p_event_ids:cursor.a}));
       return {text:'Notice delivery acknowledged. Continue with your previous scan cursor.',structured:{changed:false,tasks:[]}};
     }
@@ -661,12 +708,13 @@ const waitForMyTasks: ToolDef = {
       mark = signal.mark;
       const full = lastFull === -Infinity || signal.fresh.length > 0 || ctx.now() - lastFull >= SLOW_POLL_MS;
       if (full) {
-        const delta = await changesSince(ctx, cursor);
+        const ids = await jobTaskIds(ctx, jobId);
+        const delta = await changesSince(ctx, cursor, ids);
         cursor = { ...delta.cursor, ...(signal.fresh.length ? {e:signal.mark} : cursor.e ? {e:cursor.e} : {}) };
-        delta.tasks.push(...await leadNotices(ctx,signal.fresh));
+        delta.tasks.push(...await leadNotices(ctx,signal.fresh,ids));
         lastFull = ctx.now();
         if (delta.tasks.length) {
-          await markDelivered(ctx);
+          await markJobDelivered(ctx, ids);
           return {
             text: delta.tasks.map((t) => `${String(t.task_id)} ${t.reason} (${String(t.state)})`).join('; '),
             structured: { changed: true, tasks: delta.tasks, next_cursor: encodeTaskCursor(cursor) },
