@@ -33,8 +33,7 @@ describe("card host bridge: handshake", () => {
     expect(init.params).toEqual({
       appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
       protocolVersion: UI_PROTOCOL_VERSION,
-      clientInfo: { name: "card", version: "9" },
-      capabilities: {},
+      appInfo: { name: "card", version: "9" },
     });
     expect(h.sent.length).toBe(1);
 
@@ -134,7 +133,7 @@ describe("card host bridge: requests to the host", () => {
     await open;
 
     const msg = host.sendMessage("Approved the email.");
-    expect(h.last()).toMatchObject({ method: "ui/message", params: { role: "user", content: { type: "text", text: "Approved the email." } } });
+    expect(h.last()).toMatchObject({ method: "ui/message", params: { role: "user", content: [{ type: "text", text: "Approved the email." }] } });
     h.reply(h.last().id, {});
     await msg;
 
