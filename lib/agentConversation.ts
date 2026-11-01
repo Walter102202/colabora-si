@@ -164,7 +164,7 @@ export const useAgentConversation = create<AgentConversationState>()((set, get) 
     try {
       const { error } = await client.rpc("start_new_conversation", { p_workspace_id: workspaceId });
       if (version !== generation || error) return false;
-      set({ failed: null });
+      // A failed send may be the only remaining copy of the person's text and retry key.
       await refreshAgentConversation(workspaceId);
       return version === generation;
     } catch { return false; }

@@ -35,9 +35,10 @@ it.each(["success", "rpc error", "refresh error", "switched"])("reset action han
   expect(await resetting).toBe(outcome === "success");
   expect(rpc).toHaveBeenCalledExactlyOnceWith("start_new_conversation", { p_workspace_id: "w" });
   if (outcome === "success") {
-    expect(useAgentConversation.getState().failed).toBeNull();
+    expect(useAgentConversation.getState().failed).toEqual({ clientId: "draft", body: "retry", context: {} });
     expect(currentThread(useAgentConversation.getState().messages)).toEqual([]);
   }
   if (outcome === "switched") expect(useAgentConversation.getState().messages).toEqual([]);
+  if (outcome === "refresh error") expect(useAgentConversation.getState().failed?.body).toBe("retry");
   release();
 });
