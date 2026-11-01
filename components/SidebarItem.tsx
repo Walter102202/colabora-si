@@ -10,7 +10,7 @@ import Emoji from "@/components/Emoji";
 export default function SidebarItem({ pageId, depth = 0 }: { pageId: string; depth?: number }) {
   const pages = useStore((s) => s.pages), expanded = useStore((s) => s.expanded[pageId] ?? false);
   const navigate = useNavigate(), pathname = useLocation().pathname;
-  const [menu, setMenu] = useState(false), [renaming, setRenaming] = useState(false), [dragOver, setDragOver] = useState(false);
+  const [menu, setMenu] = useState(false), [renaming, setRenaming] = useState(false), [dragOver, setDragOver] = useState(false), [error, setError] = useState("");
   const page = pages[pageId];
   if (!page || page.isDeleted || depth > 100) return null;
   const children = getChildren(pages, pageId), active = pathname === pageUrl(pageId);
@@ -20,7 +20,7 @@ export default function SidebarItem({ pageId, depth = 0 }: { pageId: string; dep
     <div role="presentation" aria-label={page.title || "Untitled"} className={`sidebar-row group ${active ? "active" : ""} ${dragOver ? "drop-target" : ""}`} style={{ paddingLeft: 8 + depth * 14 }} draggable={!renaming}
       onDragStart={(event) => { event.dataTransfer.setData("text/page-id", pageId); event.stopPropagation(); }}
       onDragOver={(event) => { if (event.dataTransfer.types.includes("text/page-id")) { event.preventDefault(); event.stopPropagation(); setDragOver(true); } }}
-      onDragLeave={() => setDragOver(false)} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); setDragOver(false); const id = event.dataTransfer.getData("text/page-id"); if (id && id !== pageId) useStore.getState().movePage(id, pageId); }}>
+      onDragLeave={() => setDragOver(false)} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); setDragOver(false); const id = event.dataTransfer.getData("text/page-id"); if (id && id !== pageId) { try { useStore.getState().movePage(id, pageId); setError(""); } catch (error) { setError(error instanceof Error ? error.message : "Could not move this page."); } } }}>
       <button className="tree-toggle icon-button" aria-label={`${expanded ? "Collapse" : "Expand"} ${page.title || "Untitled"}`} onClick={() => useStore.getState().setExpanded(pageId, !expanded)}>
         <span className="tree-icon">{page.icon ? <Emoji emoji={page.icon} /> : <FileText size={16} />}</span>
         <ChevronRight className={`tree-chevron ${expanded ? "rotate-90" : ""}`} size={14} />
@@ -36,6 +36,6 @@ export default function SidebarItem({ pageId, depth = 0 }: { pageId: string; dep
       <button role="menuitem" onClick={() => action(() => { void navigator.clipboard.writeText(location.origin + pageUrl(pageId)); })}>Copy link</button>
       <button role="menuitem" className="danger" onClick={() => action(() => { useStore.getState().deletePage(pageId); if (active) navigate("/"); })}><Trash2 size={15} />Delete</button>
     </div></>}
-    {expanded && (children.length ? children.map((child) => <SidebarItem key={child.id} pageId={child.id} depth={depth + 1} />) : <div className="py-1 text-xs text-text-tertiary" style={{ paddingLeft: 8 + (depth + 1) * 14 + 28 }}>No pages inside</div>)}
+    {error && <p role="alert" className="danger px-3 text-xs">{error}</p>}{expanded && (children.length ? children.map((child) => <SidebarItem key={child.id} pageId={child.id} depth={depth + 1} />) : <div className="py-1 text-xs text-text-tertiary" style={{ paddingLeft: 8 + (depth + 1) * 14 + 28 }}>No pages inside</div>)}
   </div>;
 }

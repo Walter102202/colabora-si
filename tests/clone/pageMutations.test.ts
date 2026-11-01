@@ -36,3 +36,16 @@ it("PM-4 duplicates row pages, nested ids and internal relations", () => {
   expect(child.blocks[0].columns![0].blocks[0].id).not.toBe(nested.columns![0].blocks[0].id);
   expect(pages.r1.parentId).toBe("a");
 });
+
+it("duplicates owned descendants and inline databases but keeps explicit linked views pointing to their source", () => {
+  const database = page({ id: "db", parentId: "home", database: db([], [row({ title: "Item" }, "item")]) });
+  const pages = { home: page({ id: "home", blocks: [b("database", { pageId: "db" }), b("database", { pageId: "db", linkedViews: [] })] }),
+    db: database, item: page({ id: "item", parentId: "db" }), nested: page({ id: "nested", parentId: "item" }) };
+  const result = duplicateDeep(pages, "home"), copy = result.pages[result.newId!];
+  const databaseId = copy.blocks[0].pageId!;
+  expect(databaseId).not.toBe("db"); expect(copy.blocks[1].pageId).toBe("db");
+  const rowPage = result.pages[result.pages[databaseId].database!.rows[0].pageId];
+  expect(rowPage.parentId).toBe(databaseId);
+  expect(Object.values(result.pages).some((p) => p.id !== "nested" && p.parentId === rowPage.id)).toBe(true);
+  expect(pages.db).toBe(database);
+});

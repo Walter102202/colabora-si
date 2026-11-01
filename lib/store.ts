@@ -176,7 +176,13 @@ export const useStore = create<Store>()(persist((set, get) => {
       const database = result.page.database ? { ...result.page.database, properties: result.page.database.properties.map((p) => p.relationDbId === result.page.id ? { ...p, relationDbId: pageId } : p) } : old.database;
       set((state) => ({ pages: { ...state.pages, ...children, [pageId]: pm.touch({ ...old, title: old.title || plan.title, icon: old.icon ?? plan.icon, blocks: result.page.blocks, database }) } }));
     },
-    updatePage: (id, patch) => mutate(id, (page) => pm.touch({ ...page, ...patch, ...(patch.blocks ? { blocks: sanitizeBlocks(patch.blocks) } : {}), ...(patch.database ? { database: cleanPage({ ...page, database: patch.database }).database } : {}) })),
+    updatePage: (id, patch) => set((state) => {
+      const page = state.pages[id]; if (!page) return state;
+      const pages = { ...state.pages, [id]: pm.touch({ ...page, ...patch, ...(patch.blocks ? { blocks: sanitizeBlocks(patch.blocks) } : {}), ...(patch.database ? { database: cleanPage({ ...page, database: patch.database }).database } : {}) }) };
+      const parent = pages[page.parentId ?? ""];
+      if (patch.title !== undefined && parent?.database) pages[parent.id] = pm.touch({ ...parent, database: { ...parent.database, rows: parent.database.rows.map((row) => row.pageId === id ? { ...row, cells: { ...row.cells, title: patch.title } } : row) } });
+      return { pages };
+    }),
     deletePage: (id) => set((state) => !state.pages[id] ? state : ({ pages: pm.softDeleteTree(state.pages, id, Date.now()), rootOrder: state.rootOrder.filter((key) => key !== id) })),
     restorePage: (id) => set((state) => {
       if (!state.pages[id]) return state;
@@ -271,12 +277,8 @@ export const useStore = create<Store>()(persist((set, get) => {
       return { pages };
     }),
     deleteRow: (pageId, rowId) => set((state) => {
-      const page = state.pages[pageId];
-      if (!page) return state;
-      const result = dm.deleteRow(page, rowId);
-      if (result.page === page) return state;
-      const pages = { ...state.pages, [pageId]: result.page };
-      return { pages: result.rowPageId ? pm.softDeleteTree(pages, result.rowPageId, Date.now()) : pages };
+      const row = state.pages[pageId]?.database?.rows.find((r) => r.id === rowId);
+      return row ? { pages: pm.softDeleteTree(state.pages, row.pageId, Date.now()) } : state;
     }),
     addProperty: (id, prop) => mutate(id, (page) => dm.addProperty(page, prop)),
     updateProperty: (id, propId, patch) => mutate(id, (page) => dm.updateProperty(page, propId, patch)),
