@@ -2,12 +2,16 @@
 
 import { useEffect, useRef, useState } from "react";
 import { HARNESS_SNIPPETS, snippetFor } from "@/lib/agentSnippets";
-import type { AgentKind, NewAgentInput } from "@/lib/agentsStore";
+import type { AgentKind, AgentRole, NewAgentInput } from "@/lib/agentsStore";
 import { ConnectionSnippet } from "@/components/agents/settings/ConnectionSnippet";
 
 const STEPS = ["Harness", "Paste", "Done"] as const;
 const DEFAULT_CAPABILITIES: Record<string, boolean> = { start: false, continue: false, cancel: false, events: false, approval: true, cost: false, files: false };
 const RESUME_HARNESSES = new Set(["claude-code", "codex", "cursor", "gemini-cli", "agent"]);
+const ROLES: Record<AgentRole, { label: string; help: string }> = {
+  worker: { label: "Worker", help: "Works on the tasks it is given." },
+  lead: { label: "Lead", help: "Creates tasks, delegates them to other agents and reviews their work." },
+};
 
 const HARNESS_KIND: Record<string, AgentKind> = {
   "claude-code": "acp_local",
@@ -23,6 +27,7 @@ export function NewAgentWizard({ onCancel, onCreate, busy }: { onCancel: () => v
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [harness, setHarness] = useState<string>(HARNESS_SNIPPETS[0].id);
+  const [role, setRole] = useState<AgentRole>("worker");
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (step === 0) nameRef.current?.focus();
@@ -35,7 +40,7 @@ export function NewAgentWizard({ onCancel, onCreate, busy }: { onCancel: () => v
     onCreate({
       name: name.trim(),
       kind: HARNESS_KIND[harness] ?? "acp_local",
-      role: "worker",
+      role,
       capabilities: { ...DEFAULT_CAPABILITIES, resume: RESUME_HARNESSES.has(harness) },
       monthly_budget_usd: null,
       rate_limit_per_min: 120,
@@ -71,6 +76,13 @@ export function NewAgentWizard({ onCancel, onCreate, busy }: { onCancel: () => v
               {HARNESS_SNIPPETS.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
             </select>
           </div>
+          <div className="space-y-1">
+            <label className="block text-text-secondary" htmlFor="new-agent-role">Role</label>
+            <select id="new-agent-role" className="w-full rounded border border-border bg-bg px-2 py-1" value={role} onChange={(e) => setRole(e.target.value as AgentRole)}>
+              {(Object.keys(ROLES) as AgentRole[]).map((r) => <option key={r} value={r}>{ROLES[r].label}</option>)}
+            </select>
+            <p className="text-xs text-text-tertiary">{ROLES[role].help}</p>
+          </div>
         </div>
       )}
 
@@ -83,7 +95,7 @@ export function NewAgentWizard({ onCancel, onCreate, busy }: { onCancel: () => v
 
       {step === 2 && (
         <div className="space-y-2">
-          <p>{name} on {snippet.name}.</p>
+          <p>{name} on {snippet.name}, as {ROLES[role].label}.</p>
           <p className="text-text-secondary">Access to pages, budget and limits are set afterwards in the agent detail.</p>
         </div>
       )}
