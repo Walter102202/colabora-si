@@ -201,7 +201,7 @@ components/     UI; components/agents/ holds the agent-layer surfaces, component
 lib/            domain types, store, pure engines (markdown, formulas, block operations, sync)
 supabase/
   migrations/   numbered SQL, one concern per file: core, agents, tasks, writes, control, dispatch, Lead, decisions, metrics, AI, OAuth, CI evidence, review policy, lessons, page sources, private pages, notes, voice
-  functions/    mcp, agent-token, trama-runtime, agent-admin, agent-dispatch, agent-webhook, github-webhook, voice-transcribe, pub-html, send-reminders, send-email, waitlist, waitlist-invites
+  functions/    mcp, agent-token, trama-runtime, agent-admin, agent-dispatch, agent-webhook, github-webhook, voice-transcribe, pub-html, send-reminders, send-email, account-link, waitlist, waitlist-invites
   tests/        pgTAP suites (clone/, agents/)
   seeds/        demo workspace and demo agents
 agent/          reference agent over an OpenAI-compatible model slot
@@ -237,3 +237,26 @@ See [`AGENTS.md`](AGENTS.md) for how the repository is organized, built and veri
 ## License
 
 MIT
+
+## Account access and workspace invitations
+
+Log in offers **Forgot password?**. Expired links offer **Send me a new link**. Both return "If that email has an account, we sent a link." Existing people receive an invitation or recovery email through Resend; unknown addresses and agents receive nothing. Password links are consumed only when the form is submitted, and accounts with TOTP must verify their authenticator code. Workspace invitations preserve their token through password setup and join the intended workspace on Home.
+
+Configure `RESEND_API_KEY` and `APP_URL` in the Edge Function environment. Keep the existing `project_url`/`cron_secret` dispatch configuration for pg_net. No Resend credentials belong in the database. Auth generates links but sends no email: SMTP, dashboard templates and the Send Email Hook are not part of this flow. The email copy assumes Auth email OTP expiry is 86400 seconds. A workspace invitation remains valid for seven days; renewing an expired Auth link does not extend that deadline.
+
+Each owner may invite one new person across all their workspaces. Reinviting the same normalized email or changing its role uses the original slot. Removing invitations or members does not refund it. Recipients present before migration 0053 are exempt. Direct member insertion is limited to creating the owner's own row; other membership/invitation creation uses `invite_member` and `accept_invitation`. Direct ownership transfer is disabled while this access limit applies.
+
+The one server setting is `private.invite_allowance.maximum`. From an authorized administrative SQL session, raise it with:
+
+```sql
+update private.invite_allowance set maximum = 2 where singleton;
+```
+
+To manually release one owner's slot while retaining that person's exemption:
+
+```sql
+update private.invite_recipients set counted = false
+where owner_id = '<owner UUID>' and email = lower(btrim('<recipient email>'));
+```
+
+This changes only quota accounting; it does not remove membership or invalidate a pending invite. The current UI message says "You can invite 1 person for now." Update that copy when raising the server allowance. Migration 0052 is reserved for plan-connect; 0053 may land on main only after that gap is filled. No `supabase config push` is needed for this change.
