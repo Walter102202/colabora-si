@@ -121,3 +121,28 @@ begin
     'kind', case when v_prev.direction = 'out' then 'reply' when v_prev.kind = 'voice' then 'voice' else 'message' end,
     'message_id', v_prev.id, 'forwarded', v_prev.forwarded));
 end $$;
+
+create or replace function private.store_person_message(p_ws uuid, p_user uuid, p_agent uuid, p_channel text, p_external text, p_body text,
+  p_kind text, p_forwarded boolean, p_pasted boolean, p_clip uuid, p_context jsonb, p_tz text)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_msg public.agent_messages%rowtype; v_old public.agent_messages%rowtype; v_outcome jsonb; v_reply text;
+begin
+  if p_body is null or btrim(p_body) = '' or char_length(p_body) > 20000 or p_kind is null or p_kind not in ('text','voice') then
+    raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'body';
+  end if;
+  -- Allocate the message sequence only after any concurrent cut has committed.
+  perform pg_advisory_xact_lock(hashtextextended('conversation:' || p_ws::text || ':' || p_user::text, 0));
+  insert into public.agent_messages (workspace_id, user_id, agent_id, direction, channel, kind, body, forwarded, pasted, external_id, context)
+  values (p_ws, p_user, p_agent, 'in', p_channel, p_kind, p_body, coalesce(p_forwarded, false), coalesce(p_pasted, false), p_external, coalesce(p_context, '{}'::jsonb))
+  on conflict (workspace_id, user_id, channel, external_id) where external_id is not null do nothing
+  returning * into v_msg;
+  if v_msg.id is null then
+    select * into v_old from public.agent_messages
+     where workspace_id = p_ws and user_id = p_user and channel = p_channel and external_id = p_external;
+    return jsonb_build_object('message_id', v_old.id, 'duplicate', true, 'outcome', v_old.outcome);
+  end if;
+  v_msg := private.bind_voice_clip(p_clip, v_msg);
+  v_outcome := private.handle_person_message(v_msg, p_context, p_tz);
+  select body into v_reply from public.agent_messages where reply_to_id = v_msg.id and direction = 'out' order by seq desc limit 1;
+  return jsonb_strip_nulls(jsonb_build_object('message_id', v_msg.id, 'duplicate', false, 'outcome', v_outcome, 'reply', v_reply));
+end $$;

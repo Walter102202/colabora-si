@@ -1,5 +1,5 @@
 begin;
-select plan(21);
+select plan(22);
 select tests.fixture() as f \gset
 select (:'f'::jsonb->>'ws') as ws, (:'f'::jsonb->>'owner') as owner, (:'f'::jsonb->>'viewer') as viewer,
        (:'f'::jsonb->>'agent') as agent, (:'f'::jsonb->>'agent_user') as agent_user \gset
@@ -23,6 +23,10 @@ select tests.reset_role();
 select tests.set_human(:'owner');
 select public.post_agent_message(:'ws', 'Old topic', gen_random_uuid());
 select tests.reset_role();
+select ok(exists(select 1 from pg_locks where locktype = 'advisory' and pid = pg_backend_pid() and granted
+  and classid::bigint = ((hashtextextended('conversation:' || :'ws' || ':' || :'owner', 0) >> 32) & 4294967295)
+  and objid::bigint = (hashtextextended('conversation:' || :'ws' || ':' || :'owner', 0) & 4294967295)),
+  'an uncommitted send holds the conversation lock against concurrent resets');
 select id as req from public.agent_tasks where owner_user_id = :'owner' and request_kind = 'assist' \gset
 select tests.set_agent(:'pu', :'pa');
 select public.claim_task(:'req', 'platform')->>'run_id' as run \gset
