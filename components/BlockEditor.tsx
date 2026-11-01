@@ -34,13 +34,13 @@ import type { EmojiEntry } from "@/lib/emojiData";
 import { putFile } from "@/lib/fileStore";
 import { requestNotifyPermission } from "@/lib/push";
 
-export default function BlockEditor({ pageId }: { pageId: string }) {
+export default function BlockEditor({ pageId, emptyHint }: { pageId: string; emptyHint?: string }) {
   const page = useStore((s) => s.pages[pageId]), spellCheck = useStore((s) => s.settings?.spellcheck ?? true), actorId = useStore((s) => s.syncUserId ?? "local");
   const pages = useStore((s) => s.pages);
   if (!page) return null;
-  return <><EditorSurface key={pageId} pageId={pageId} blocks={page.blocks} pages={pages} locked={page.locked} spellCheck={spellCheck} actorId={actorId} onChange={(blocks) => useStore.getState().setBlocks(pageId, blocks)} /><DeletedBlockConflicts pageId={pageId} blocks={page.blocks} /></>;
+  return <><EditorSurface key={pageId} pageId={pageId} blocks={page.blocks} emptyHint={emptyHint} pages={pages} locked={page.locked} spellCheck={spellCheck} actorId={actorId} onChange={(blocks) => useStore.getState().setBlocks(pageId, blocks)} /><DeletedBlockConflicts pageId={pageId} blocks={page.blocks} /></>;
 }
-interface SurfaceProps { pageId: string; blocks: Block[]; onChange: (blocks: Block[]) => void; locked?: boolean; spellCheck?: boolean; actorId?: string; nested?: boolean; columnId?: string; pages?: Record<string, Page> }
+interface SurfaceProps { pageId: string; blocks: Block[]; onChange: (blocks: Block[]) => void; emptyHint?: string; locked?: boolean; spellCheck?: boolean; actorId?: string; nested?: boolean; columnId?: string; pages?: Record<string, Page> }
 type SlashState = { id: string; query: string; index: number; rect: DOMRect };
 type Focus = { id: string; offset?: number; end?: boolean };
 export function EditorSurface(props: SurfaceProps) {
@@ -48,7 +48,7 @@ export function EditorSurface(props: SurfaceProps) {
   if (inherited && props.columnId) return <EditorSurfaceContent {...props} />;
   return <BlockDragProvider blocks={props.blocks} onChange={props.onChange} locked={props.locked}><EditorSurfaceContent {...props} /></BlockDragProvider>;
 }
-function EditorSurfaceContent({ pageId, blocks, onChange, locked = false, spellCheck = true, actorId = "local", nested = false, columnId, pages = {} }: SurfaceProps) {
+function EditorSurfaceContent({ pageId, blocks, onChange, emptyHint, locked = false, spellCheck = true, actorId = "local", nested = false, columnId, pages = {} }: SurfaceProps) {
   const drag = useBlockDrag()!, registerSurface = drag.register;
   const container = useRef<HTMLDivElement>(null), handles = useRef(new Map<string, EditableHandle>()), latest = useRef({ blocks, onChange, locked, actorId, pages });
   const navigate = useNavigate();
@@ -412,7 +412,7 @@ function EditorSurfaceContent({ pageId, blocks, onChange, locked = false, spellC
     if (equation && !locked) { event.preventDefault(); equationElement.current = equation; setEquationEdit({ source: equation.dataset.eq ?? "", rect: equation.getBoundingClientRect() }); }
     if (chip && !locked) { event.preventDefault(); dateChipElement.current = chip; setDateChip({ iso: chip.dataset.date!, rect: chip.getBoundingClientRect() }); }
   }}>
-    {visible.map((block) => <BlockItem key={block.id} block={block} ops={ops} selected={selectedIds.includes(block.id)} ordinal={ordinals[block.id]} spellCheck={spellCheck} pages={pages} commentCount={pages[pageId]?.comments?.filter((c) => (c.anchorId ?? c.blockId) === block.id && !c.resolved).length ?? 0} insertBlocks={(id, inserted) => {
+    {visible.map((block) => <BlockItem key={block.id} block={block} ops={ops} emptyHint={blocks.length === 1 ? emptyHint : undefined} selected={selectedIds.includes(block.id)} ordinal={ordinals[block.id]} spellCheck={spellCheck} pages={pages} commentCount={pages[pageId]?.comments?.filter((c) => (c.anchorId ?? c.blockId) === block.id && !c.resolved).length ?? 0} insertBlocks={(id, inserted) => {
       const next = [...latest.current.blocks], index = next.findIndex((b) => b.id === id);
       next.splice(index + 1, 0, ...cloneWithNewIds(inserted)); latest.current.blocks = next; latest.current.onChange(next);
     }} />)}

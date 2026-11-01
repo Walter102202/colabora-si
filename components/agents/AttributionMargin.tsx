@@ -5,9 +5,9 @@ import { useAgentsStore } from "@/lib/agentsStore";
 import { useAgentTasks } from "@/lib/agentTasks";
 import { formatRelative } from "@/lib/utils";
 
-// Agent layer plug. Mounted by the block wrapper of the editor, to the left of
-// the drag handle. A colored dot with the agent and run that last edited the
-// block; nothing for human edits.
+// Agent layer plug. Mounted by the block wrapper of the editor. A thin line
+// beside the text says an agent last edited the block, and hovering the block
+// names it. Nothing for human edits.
 export interface AttributionMarginProps {
   blockId: string;
   attr?: BlockAttr;
@@ -23,11 +23,15 @@ export function AttributionMargin({ attr }: AttributionMarginProps) {
   const when = attr.at ? ` · ${formatRelative(attr.at)}` : "";
   const status = run ? ` (${run.status})` : "";
   return (
-    <span
-      contentEditable={false}
-      aria-label={`Edited by ${name}`}
-      title={`${name}${runLabel}${attr.via ? " · via chat" : ""}${status}${when}`}
-      className="attribution-margin absolute -left-5 top-2 h-2 w-2 rounded-full bg-accent"
-    />
+    <>
+      <span
+        contentEditable={false}
+        role="img"
+        aria-label={`Edited by ${name}`}
+        title={`${name}${runLabel}${attr.via ? " · via chat" : ""}${status}${when}`}
+        className="attribution-margin"
+      />
+      <span contentEditable={false} aria-hidden="true" className="attribution-name">Edited by {name}</span>
+    </>
   );
 }

@@ -57,9 +57,8 @@ export default function PageView({ pageId }: { pageId: string }) {
     {parent && row && <RowProperties ops={buildDbOps(parent.id)} row={row} pages={pages} />}
     {(row || params.has("task")) && <RowPanel pageId={pageId} />}
     {getSupabase() && <AiRequestToasts pageId={pageId} />}
-    {!page.database && !page.locked && page.blocks.length <= 1 && (page.blocks[0]?.type ?? "paragraph") === "paragraph" && !page.blocks[0]?.html && <button className="mt-3 text-sm text-text-tertiary" onClick={() => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind: "template", pageId } }))}>Start with a template</button>}
-    {job && <div className="mt-6"><h2 className="text-xl font-semibold">Plan</h2><p className="mt-1 text-sm text-text-secondary">The Lead reads this page when it starts.</p></div>}
-    <div className="pt-2">{page.database ? <Suspense fallback={null}><DatabaseView pageId={pageId} locked={page.locked} /></Suspense> : <BlockEditor pageId={pageId} />}</div>
+    {!job && !page.database && !page.locked && page.blocks.length <= 1 && (page.blocks[0]?.type ?? "paragraph") === "paragraph" && !page.blocks[0]?.html && <button className="mt-3 text-sm text-text-tertiary" onClick={() => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind: "template", pageId } }))}>Start with a template</button>}
+    <div className="pt-2">{page.database ? <Suspense fallback={null}><DatabaseView pageId={pageId} locked={page.locked} /></Suspense> : <BlockEditor pageId={pageId} emptyHint={job ? "Write the plan here. The Lead reads it when it starts." : undefined} />}</div>
     {!!subpages.length && <div className="mt-1">{subpages.map((child) => <PageLinkBlock key={child.id} page={child} />)}</div>}
     {!!stats.backlinks.length &&<section className="mt-10 border-t border-border pt-4"><h3 className="mb-2 text-xs uppercase text-text-tertiary">↳ {stats.backlinks.length} linked {stats.backlinks.length === 1 ? "reference" : "references"}</h3>{stats.backlinks.map((linked) => <button key={linked.id} className="page-link-block" onClick={() => withViewTransition(() => navigate(pageUrl(linked.id)))}><Emoji emoji={linked.icon ?? "📄"} /><span className="border-b border-border">{linked.title || "Untitled"}</span></button>)}</section>}
     <div className="mt-8 border-t border-border pt-4"><CommentThread pageId={pageId} /></div>

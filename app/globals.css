@@ -183,7 +183,15 @@ button:hover { background-color: var(--bg-hover); }
 .slash-item.active { background: var(--bg-hover); }.slash-icon { display: grid; place-items: center; width: 40px; height: 40px; flex-shrink: 0; border: 1px solid var(--border); border-radius: 6px; font-size: 20px; }
 .inline-toolbar { position: fixed; display: flex; align-items: center; gap: 2px; }
 .inline-toolbar > button { width: auto; min-width: 28px; height: 28px; padding: 2px 6px; justify-content: center; }
-.agent-dot { position: absolute; left: -56px; top: 12px; width: 5px; height: 5px; border-radius: 50%; background: var(--c-purple); }
+/* One quiet line in the gap between the drag handle and the text. Blocks in a row join into one line, and a heading starts it at its own text. */
+.attribution-margin { position: absolute; left: -6px; top: 0; bottom: 0; width: 2px; background: var(--c-purple); opacity: .4; }
+.block-item:has(.block-heading1) > .attribution-margin { top: 22px; }
+.block-item:has(.block-heading2) > .attribution-margin { top: 14px; }
+.block-item:has(.block-heading3) > .attribution-margin { top: 10px; }
+.block-item:hover > .attribution-margin { opacity: 1; }
+.attribution-name { position: absolute; right: 0; top: -13px; z-index: 1; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text-secondary); font-size: 11px; line-height: 16px; white-space: nowrap; opacity: 0; pointer-events: none; }
+@media (hover: hover) { .block-item:hover > .attribution-name { opacity: 1; } }
+@media print { .attribution-margin, .attribution-name { display: none; } }
 .selected-block { background: var(--bg-selected); }
 .tc-gray { color: var(--c-gray); }.bc-gray { background-color: var(--bgc-gray); }
 .tc-brown { color: var(--c-brown); }.bc-brown { background-color: var(--bgc-brown); }
