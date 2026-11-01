@@ -106,13 +106,13 @@ export function AgentsSettingsTab() {
         )}
         <button type="button" className="shrink-0 rounded bg-accent px-3 py-1 text-sm text-white" onClick={() => setView({ kind: "new" })}>New agent</button>
       </div>
-      <AutonomySettings key={syncWorkspaceId} workspaceId={syncWorkspaceId} />
+      <AutonomySettings key={`autonomy-${syncWorkspaceId}`} workspaceId={syncWorkspaceId} />
       <a href={CONNECT_URL} className="inline-block text-sm text-accent hover:underline">Connect an agent</a>
       <AgentList agents={agents} onOpen={(id) => setView({ kind: "detail", id })} />
       {syncWorkspaceId && <LessonsList workspaceId={syncWorkspaceId} />}
       {syncWorkspaceId && <TelegramConnection workspaceId={syncWorkspaceId} />}
       <ConnectedApps />
-      <CiConnections key={syncWorkspaceId} workspaceId={syncWorkspaceId} />
+      <CiConnections key={`ci-${syncWorkspaceId}`} workspaceId={syncWorkspaceId} />
       <EnvironmentList key={`environment-${syncWorkspaceId}`} workspaceId={syncWorkspaceId} />
     </div>
   );
