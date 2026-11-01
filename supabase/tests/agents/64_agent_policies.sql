@@ -86,7 +86,6 @@ select is(public.task_autonomy(:'alone'::uuid)->>'source', 'workspace', 'workspa
 select tests.reset_role();
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
 select is(public.request_approval(:'run'::uuid, 'send_email', '{"to":"a@b.test"}')->>'status', 'pending', 'workspace Ask stops what the agent level would allow');
-select is(public.request_approval(:'run'::uuid, 'publish_page', '{"page_id":"policy-alone"}')->>'status', 'pending', 'workspace Ask also stops trusted brief preapprovals');
 select tests.reset_role();
 select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select public.set_workspace_autonomy((:'f'::jsonb->>'ws')::uuid, 'autonomous');

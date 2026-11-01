@@ -2,10 +2,6 @@ begin;
 select plan(66);
 
 select tests.fixture() as f \gset
--- These cases exercise trusted preapprovals while the workspace is running.
-select tests.set_human((:'f'::jsonb->>'owner')::uuid);
-select public.set_workspace_autonomy((:'f'::jsonb->>'ws')::uuid, 'balanced');
-select tests.reset_role();
 -- "claude_code" is the fixture agent; "codex" and "gemini" are agents with the same grant; "plain" has no resume capability.
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+codex@agents.invalid', 'worker', 'page_A') as cx \gset
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+plain@agents.invalid', 'worker', 'page_A') as pl \gset

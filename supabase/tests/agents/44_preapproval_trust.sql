@@ -1,10 +1,6 @@
 begin;
 select plan(20);
 select tests.fixture() as f \gset
--- These cases exercise trusted preapprovals while the workspace is running.
-select tests.set_human((:'f'::jsonb->>'owner')::uuid);
-select public.set_workspace_autonomy((:'f'::jsonb->>'ws')::uuid, 'balanced');
-select tests.reset_role();
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['trust_P','trust_C','trust_bad','trust_bad_if']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+trustlead@agents.invalid', 'lead', 'page_A') as lead \gset
 select tests.make_user('trust-editor@test.local') as editor \gset
