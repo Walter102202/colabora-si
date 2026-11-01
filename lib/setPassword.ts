@@ -7,6 +7,8 @@ export const SET_PASSWORD_MIN = 8;
 export interface InviteLink {
   tokenHash: string;
   email: string;
+  type: "invite" | "recovery";
+  invite: string | null;
 }
 
 interface AuthProblem {
@@ -16,16 +18,21 @@ interface AuthProblem {
 }
 
 export interface PasswordAuth {
-  verifyOtp(params: { token_hash: string; type: "invite" }): Promise<{ error: AuthProblem | null }>;
+  verifyOtp(params: { token_hash: string; type: "invite" | "recovery" }): Promise<{ error: AuthProblem | null }>;
   updateUser(attrs: { password: string }): Promise<{ error: AuthProblem | null }>;
+  mfa?: {
+    getAuthenticatorAssuranceLevel(): Promise<{ data: { currentLevel: string | null; nextLevel: string | null } | null; error: AuthProblem | null }>;
+    listFactors(): Promise<{ data: { totp: { id: string; status: string }[] } | null; error: AuthProblem | null }>;
+  };
 }
 
 export type SubmitResult =
   | { kind: "done" }
   | { kind: "expired" }
+  | { kind: "mfa"; factorId: string }
   | { kind: "problem"; message: string; verified: boolean };
 
-function fragmentEmail(hash: string): string {
+export function fragmentEmail(hash: string): string {
   try {
     return decodeURIComponent(hash.replace(/^#/, ""));
   } catch {
@@ -36,8 +43,9 @@ function fragmentEmail(hash: string): string {
 export function parseInviteLink(search: string, hash: string): InviteLink | null {
   const query = new URLSearchParams(search);
   const tokenHash = query.get("token_hash");
-  if (!tokenHash || query.get("type") !== "invite") return null;
-  return { tokenHash, email: fragmentEmail(hash) };
+  const type = query.get("type");
+  if (!tokenHash || (type !== "invite" && type !== "recovery")) return null;
+  return { tokenHash, email: fragmentEmail(hash), type, invite: query.get("invite") };
 }
 
 export function passwordProblem(password: string): string {
@@ -53,12 +61,23 @@ function unreachable({ name, status = 0 }: AuthProblem): boolean {
 }
 
 // `verified` survives a refused password: the token is already spent and the session it opened is the one that may set it.
-export async function submitPassword(auth: PasswordAuth, tokenHash: string, password: string, verified: boolean): Promise<SubmitResult> {
+export async function submitPassword(auth: PasswordAuth, tokenHash: string, password: string, verified: boolean, type: "invite" | "recovery" = "invite"): Promise<SubmitResult> {
   if (!verified) {
-    const { error } = await auth.verifyOtp({ token_hash: tokenHash, type: "invite" });
+    const { error } = await auth.verifyOtp({ token_hash: tokenHash, type });
     if (error) return unreachable(error) ? { kind: "problem", message: retryable(error), verified: false } : { kind: "expired" };
+  }
+  if (auth.mfa) {
+    const { data, error } = await auth.mfa.getAuthenticatorAssuranceLevel();
+    if (error) return { kind: "problem", message: retryable(error), verified: true };
+    if (data?.nextLevel === "aal2" && data.currentLevel !== "aal2") {
+      const factors = await auth.mfa.listFactors();
+      const factor = factors.data?.totp.find((item) => item.status === "verified");
+      if (factor) return { kind: "mfa", factorId: factor.id };
+      return { kind: "problem", message: "Two-factor authentication is required to change your password.", verified: true };
+    }
   }
   const { error } = await auth.updateUser({ password });
   if (!error) return { kind: "done" };
-  return { kind: "problem", message: unreachable(error) ? retryable(error) : "Choose a stronger password.", verified: true };
+  const message = error.code === "insufficient_aal" ? "Two-factor authentication is required to change your password." : error.code === "same_password" ? "Choose a password different from your current one." : unreachable(error) ? retryable(error) : "Choose a stronger password.";
+  return { kind: "problem", message, verified: true };
 }

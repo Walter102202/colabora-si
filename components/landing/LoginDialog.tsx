@@ -2,6 +2,7 @@ import { useState, type FormEvent, type RefObject } from "react";
 import { LOGIN_MISMATCH, LOGIN_UNREACHABLE, loginProblem } from "@/lib/landingAccess";
 import { HOME_URL } from "@/lib/routes";
 import { LandingDialog } from "./LandingDialog";
+import { AccountLinkForm } from "./AccountLinkForm";
 
 export function LoginDialog({ dialogRef, emailRef, onWaitlist }: {
   dialogRef: RefObject<HTMLDialogElement | null>;
@@ -12,6 +13,7 @@ export function LoginDialog({ dialogRef, emailRef, onWaitlist }: {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [forgot, setForgot] = useState(false);
 
   async function logIn(event: FormEvent) {
     event.preventDefault();
@@ -36,13 +38,14 @@ export function LoginDialog({ dialogRef, emailRef, onWaitlist }: {
 
   return (
     <LandingDialog dialogRef={dialogRef} className="cs-dlg" bodyClassName="cs-dlg__in" labelledBy="cs-login-t">
-      <h2 className="cs-dlg__t" id="cs-login-t">Log in</h2>
-      <form onSubmit={(event) => void logIn(event)} noValidate>
+      <h2 className="cs-dlg__t" id="cs-login-t">{forgot ? "Reset your password." : "Log in"}</h2>
+      {forgot ? <AccountLinkForm initialEmail={email} /> : <form onSubmit={(event) => void logIn(event)} noValidate>
         <div className="cs-field"><label htmlFor="cs-li-email">Email</label><input ref={emailRef} id="cs-li-email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></div>
         <div className="cs-field"><label htmlFor="cs-li-pass">Password</label><input id="cs-li-pass" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></div>
         <p className="cs-err" role="alert">{error}</p>
         <button className="cs-primary" type="submit" disabled={busy}>{busy ? "Logging in…" : "Log in"}</button>
-      </form>
+      </form>}
+      <p className="cs-alt"><button className="cs-linkbtn" type="button" onClick={() => setForgot(!forgot)}>{forgot ? "Back to log in" : "Forgot password?"}</button></p>
       <p className="cs-alt">No invite yet? <button className="cs-linkbtn" type="button" onClick={() => { dialogRef.current?.close(); onWaitlist(email.trim()); }}>Join the waitlist</button></p>
     </LandingDialog>
   );

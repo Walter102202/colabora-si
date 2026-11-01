@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SET_PASSWORD_MIN, parseInviteLink, passwordProblem, submitPassword, type PasswordAuth } from "@/lib/setPassword";
 
-const link = { tokenHash: "hash", email: "ana@company.co" };
+const link = { tokenHash: "hash", email: "ana@company.co", type: "invite", invite: null };
 const ok = { error: null };
 
 function auth(verify: Awaited<ReturnType<PasswordAuth["verifyOtp"]>> = ok, update: Awaited<ReturnType<PasswordAuth["updateUser"]>> = ok) {
@@ -19,14 +19,14 @@ describe("parseInviteLink", () => {
   });
 
   it("works without the address", () => {
-    expect(parseInviteLink("?token_hash=hash&type=invite", "")).toEqual({ tokenHash: "hash", email: "" });
+    expect(parseInviteLink("?token_hash=hash&type=invite", "")).toEqual({ tokenHash: "hash", email: "", type: "invite", invite: null });
   });
 
   it("does not break on a damaged address", () => {
-    expect(parseInviteLink("?token_hash=hash&type=invite", "#%E0%A4%A")).toEqual({ tokenHash: "hash", email: "" });
+    expect(parseInviteLink("?token_hash=hash&type=invite", "#%E0%A4%A")).toEqual({ tokenHash: "hash", email: "", type: "invite", invite: null });
   });
 
-  it.each(["", "?token_hash=hash", "?type=invite", "?token_hash=&type=invite", "?token_hash=hash&type=recovery"])("refuses %s", (search) => {
+  it.each(["", "?token_hash=hash", "?type=invite", "?token_hash=&type=invite", "?token_hash=hash&type=magiclink"])("refuses %s", (search) => {
     expect(parseInviteLink(search, "")).toBeNull();
   });
 });
@@ -73,4 +73,21 @@ describe("submitPassword", () => {
     const { client } = auth(ok, { error: { status: 503 } });
     expect(await submitPassword(client, "hash", "long enough", false)).toEqual({ kind: "problem", message: "We couldn’t reach the server. Check your connection and try again.", verified: true });
   });
+});
+
+
+it("retains recovery type and workspace invitation", async () => {
+  expect(parseInviteLink("?token_hash=h&type=recovery&invite=workspace", "#a%40b.co")).toEqual({ tokenHash: "h", email: "a@b.co", type: "recovery", invite: "workspace" });
+  const { client, calls } = auth();
+  await submitPassword(client, "h", "long enough", false, "recovery");
+  expect(calls[0]).toEqual(["verify", { token_hash: "h", type: "recovery" }]);
+});
+it("asks for TOTP before updating the password and preserves the verified token", async () => {
+  const { client, calls } = auth();
+  client.mfa = {
+    getAuthenticatorAssuranceLevel: async () => ({ data: { currentLevel: "aal1", nextLevel: "aal2" }, error: null }),
+    listFactors: async () => ({ data: { totp: [{ id: "factor", status: "verified" }] }, error: null }),
+  };
+  expect(await submitPassword(client, "h", "long enough", false, "recovery")).toEqual({ kind: "mfa", factorId: "factor" });
+  expect(calls).toHaveLength(1);
 });
