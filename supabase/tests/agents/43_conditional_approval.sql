@@ -1,6 +1,10 @@
 begin;
-select plan(67);
+select plan(68);
 select tests.fixture() as f \gset
+-- These cases exercise trusted preapprovals while the workspace is running.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.set_workspace_autonomy((:'f'::jsonb->>'ws')::uuid, 'balanced');
+select tests.reset_role();
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, p, 'page_A') from unnest(array['page_P','page_S','page_O','page_X']) p;
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+condlead@agents.invalid', 'lead', 'page_A') as lead \gset
 select tests.reset_role();
@@ -18,6 +22,8 @@ select public.create_agent_task('page_S', '{"objective":"Sub","done_when":[{"id"
 select public.create_agent_task('page_O', '{"objective":"No CI","done_when":[{"id":"c1","text":"Works","check":"lead"}]}'::jsonb,
                                 (:'f'::jsonb->>'agent')::uuid, :'parent'::uuid) ->> 'task_id' as noci \gset
 select public.create_agent_task('page_X', '{"objective":"Other parent"}'::jsonb, (:'lead'::jsonb->>'agent')::uuid) ->> 'task_id' as other \gset
+-- Keep presets off so these assertions prove the conditional policy, not Balanced publication.
+select public.set_task_autonomy(:'parent'::uuid, 'ask');
 select tests.reset_role();
 
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
@@ -59,6 +65,17 @@ select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
 select public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40)), null, 'Merge?') as res \gset
 select is(:'res'::jsonb->>'status', 'approved', 'approved and green: granted');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.set_workspace_autonomy((:'f'::jsonb->>'ws')::uuid, 'ask');
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is(public.request_approval(:'lr'::uuid, 'git.merge', jsonb_build_object('subtask_id', :'sub', 'repo', 'acme/app', 'head_sha', repeat('a',40), 'case', 'workspace-stop'))->>'status', 'pending', 'workspace Ask stops even a green reviewed conditional action');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.set_workspace_autonomy((:'f'::jsonb->>'ws')::uuid, 'balanced');
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
 select is(:'res'::jsonb->'auto_approved'->>'by', 'condition', 'recorded as a condition');
 select ok(:'res'::jsonb ? 'receipt', 'with a receipt');
 

@@ -3,6 +3,10 @@ begin;
 select plan(26);
 
 select tests.fixture() as f \gset
+-- These cases exercise trusted preapprovals while the workspace is running.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.set_workspace_autonomy((:'f'::jsonb->>'ws')::uuid, 'balanced');
+select tests.reset_role();
 select tests.make_agent((:'f'::jsonb->>'ws')::uuid, 'agent+other@agents.invalid', 'worker', 'page_B') as other \gset
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_DB_B', 'page_B', '{
   "id":"page_DB_B","title":"Hidden leads","parentId":"page_B","blocks":[],
