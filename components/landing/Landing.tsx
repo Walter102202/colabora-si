@@ -24,7 +24,8 @@ export default function Landing() {
 
   // The page renders after the browser looked for the anchor of a shared link.
   useEffect(() => {
-    if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView();
+    if (location.hash === "#login") openLogin();
+    else if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView();
   }, []);
 
   function goToWaitlist(prefill = "") {
