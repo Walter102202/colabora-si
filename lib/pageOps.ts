@@ -182,6 +182,17 @@ export function applyOps(input: Page, ops: PageOp[], actor: BlockAttr): { page: 
 export function diffPageToOps(prev: Page, next: Page): PageOp[] {
   if (prev === next) return [];
   const replacement = (): PageOp[] => [{ op: "replace_page", page: next, revision: prev.revision ?? 0 }];
+  // Reparenting needs one revision-checked update: insert_block cannot reuse an
+  // identity still present in another column, and separate patches can overlap.
+  const containers = (blocks: Block[], parent: string | null = null, result = new Map<string, string | null>()) => {
+    for (const block of blocks) {
+      result.set(block.id, parent);
+      for (const column of block.columns ?? []) containers(column.blocks, column.id, result);
+    }
+    return result;
+  };
+  const beforeContainers = containers(prev.blocks), afterContainers = containers(next.blocks);
+  for (const [id, parent] of afterContainers) if (beforeContainers.has(id) && beforeContainers.get(id) !== parent) return replacement();
   if (next.versions?.[0] !== prev.versions?.[0] && prev.versions?.some((version) => version.id === next.versions?.[0]?.id)) return replacement();
   if (prev.parentId !== next.parentId || prev.isDeleted !== next.isDeleted || !!prev.database !== !!next.database) return replacement();
   if (prev.database && next.database && (prev.database.id !== next.database.id || prev.database.locked !== next.database.locked || !equal(prev.database.rowTemplates, next.database.rowTemplates))) return replacement();

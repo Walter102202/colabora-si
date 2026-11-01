@@ -466,3 +466,16 @@ td:hover .cell-remind, .cell-remind:focus-visible { opacity: 1; }
 .database-table .row-drop-after > td { box-shadow: inset 0 -2px var(--accent); }
 .row-selection-toolbar { position: sticky; left: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px; border-bottom: 1px solid var(--border); background: var(--bg-secondary); font-size: 12px; }
 .row-selection-toolbar input, .row-selection-toolbar select { max-width: 200px; border: 1px solid var(--border); border-radius: 4px; padding: 4px; background: var(--bg); }
+/* Block movement and the quiet trailing insertion surface. */
+.block-item.selected-block > .block-gutter { opacity: 1; }
+.block-gutter button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.block-insert-area { display: block; width: 100%; min-height: 52px; text-align: left; cursor: text; background: transparent; color: var(--text-tertiary); }
+.block-insert-area:hover, .block-insert-area:focus-visible { background: transparent; }
+.block-insert-area span { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; opacity: 0; }
+.block-insert-area:hover span, .block-insert-area:focus-visible span { opacity: 1; background: var(--bg-hover); }
+.block-insert-target { box-shadow: inset 0 2px var(--accent); }
+@media (hover: none) {
+  .block-gutter { opacity: 1; }
+  .block-gutter button { min-height: 30px; }
+  .block-insert-area span { opacity: 1; }
+}

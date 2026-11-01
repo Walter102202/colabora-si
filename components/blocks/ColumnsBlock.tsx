@@ -21,7 +21,7 @@ export default function ColumnsBlock({ block, ops }: { block: Block; ops: BlockO
     }} onPointerUp={end} onPointerCancel={end}><span /></div>}
     <div className="editor-column" style={{ flex: `${widths?.[i] ?? column.width ?? 1} 1 0%` }}>
       {!ops.locked && columns.length > 1 && <button className="column-delete hover-actions icon-button" aria-label="Delete column" onClick={() => ops.updateBlock(block.id, { columns: columns.filter((c) => c.id !== column.id) })}>×</button>}
-      <NestedEditor blocks={column.blocks} pageId={ops.pageId} locked={ops.locked} onChange={(blocks) => ops.updateBlock(block.id, { columns: columns.map((c) => c.id === column.id ? { ...c, blocks } : c) })} />
+      <NestedEditor columnId={column.id} blocks={column.blocks} pageId={ops.pageId} locked={ops.locked} onChange={(blocks) => ops.updateBlock(block.id, { columns: columns.map((c) => c.id === column.id ? { ...c, blocks } : c) })} />
     </div>
   </Fragment>)}{!ops.locked && columns.length < 5 && <button className="hover-actions icon-button" aria-label="Add column" onClick={() => ops.updateBlock(block.id, { columns: [...columns, { id: newId(), blocks: [createBlock()] }] })}>+</button>}</div>;
 }
