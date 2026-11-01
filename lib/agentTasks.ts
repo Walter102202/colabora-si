@@ -17,6 +17,8 @@ export interface TaskRow {
   row_page_id: string;
   title: string;
   delegate_agent_id: string | null;
+  named_worker_ids?: string[];
+  joined_worker_ids?: string[];
   owner_user_id: string;
   parent_task_id: string | null;
   depends_on_task_ids: string[];
