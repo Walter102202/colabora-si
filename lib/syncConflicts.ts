@@ -3,6 +3,8 @@ import type { Block, BlockAttr, DbRow, Page } from "@/lib/types";
 import type { CellValue } from "@/lib/pageOps";
 import { useStore } from "@/lib/store";
 import { newId } from "@/lib/factories";
+import { isShell } from "@/lib/pageShell";
+import { ensurePageBody, notifyPageUnavailable } from "@/lib/pageBodies";
 
 export type BlockConflict = { id: string; theirs: Block | CellValue; by?: BlockAttr; at: number; propertyId?: string; after?: string | null };
 interface Conflicts {
@@ -22,6 +24,13 @@ export const useBlockConflicts = create<Conflicts>((set, get) => ({
   resolve: (pageId, id, choice) => {
     const conflict = get().byPage[pageId]?.find((c) => c.id === id), store = useStore.getState(), page = store.pages[pageId];
     if (!conflict || !page) return;
+    if (isShell(page)) {
+      void ensurePageBody(pageId).then((result) => {
+        if (result === "ready" && !isShell(useStore.getState().pages[pageId])) get().resolve(pageId, id, choice);
+        else notifyPageUnavailable();
+      });
+      return;
+    }
     if (choice !== "mine") {
       if (conflict.propertyId) store.updateCell(pageId, id, conflict.propertyId, conflict.theirs);
       else if (conflict.theirs && typeof conflict.theirs === "object" && "type" in conflict.theirs && "html" in conflict.theirs) {
@@ -54,6 +63,7 @@ export function pageRecoveryCopies(userId: string, pageId: string): PageRecovery
   return usePageRecoveries.getState().copies[recoveryKey(userId, pageId)];
 }
 export function savePageRecovery(userId: string, page: Page): void {
+  if (isShell(page)) { useBlockConflicts.getState().notePageReload(page.id); return; }
   const key = recoveryKey(userId, page.id);
   const copies = JSON.parse(localStorage.getItem(key) ?? "[]") as PageRecovery[];
   const next = [...copies, { id: crypto.randomUUID(), at: Date.now(), page }];

@@ -77,6 +77,8 @@ A task is done when its suites pass, lint, types and build are clean, and the ow
 - State is reachable by URL: pages at `/p/<id>`, a task as `?task=<id>`, settings tabs, search and peeks as query parameters. Build links with `lib/routes.ts`, never by hand.
 - `components/agents/panel/` holds pure views: data and callbacks in, no router, stores or network. The workspace mounts them through `RowPanel`; the MCP App card mounts them in an isolated React root.
 - Every workspace mutation goes through a store action and produces new objects. Rich HTML passes `sanitizeHtml()` before storage; every user-provided URL passes `safeHref()` or `toEmbedSrc()` before rendering.
+- Never read `page.blocks`, `page.comments`, `page.versions` or `database.rows` of a page you did not load: use `ensurePageBodies` from `lib/pageBodies.ts` or `usePageBodies` from `lib/usePageBodies.ts`.
+- Use the loaded import/reset/purge helpers in `lib/pageBodies.ts` before destructive actions so Undo retains the original bodies.
 - Page content reaches the server only as block operations applied by the `apply_page_ops` RPC. The security boundary is Row Level Security plus `SECURITY DEFINER` RPCs, each with a negative pgTAP test.
 - Tests first: Vitest in `tests/<track>/` (add `// @vitest-environment happy-dom` when the DOM is needed), Deno tests next to each function, pgTAP in `supabase/tests/<track>/`.
 
@@ -125,6 +127,7 @@ Props, tool schemas and RPC signatures are contracts: agree a change with the ot
 
 ## Do not
 
+- Treat a page that is not loaded as empty.
 - Commit secrets or `.env*` files; the `.env.example` files are the only versioned ones. Nothing under `.local/` is versioned.
 - Deploy from a branch. `main` is the only source of a deployment; CI pushes migrations and functions from it.
 - Open pull requests or merge. Push the branch and report what changed, how it was verified and what is blocked.

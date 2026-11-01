@@ -7,6 +7,7 @@ import { initHistory, redo, undo } from "@/lib/history";
 import { withViewTransition } from "@/lib/viewTransition";
 import { formatRelative } from "@/lib/utils";
 import Sidebar from "@/components/Sidebar";
+import LocalStorageBanner from "@/components/LocalStorageBanner";
 import Emoji from "@/components/Emoji";
 import { PresenceBadge } from "@/components/agents/PresenceBadge";
 import { InboxBell } from "@/components/agents/InboxBell";
@@ -108,7 +109,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       {user && <HumanNotifications />}<ReminderBell /><InboxBell />
       {page && user && workspaceId && !foreignPageIds.has(page.id) && <button className="action-button" title="Share or publish to the web" onClick={() => request("share", page.id)}>Share</button>}
       {page && <><button className={`icon-button ${page.isFavorite ? "favorite-star" : ""}`} aria-label={page.isFavorite ? "Remove from Favorites" : "Add to Favorites"} onClick={() => useStore.getState().toggleFavorite(page.id)}><Star size={17} fill={page.isFavorite ? "currentColor" : "none"} /></button><button className="icon-button" aria-label="Style, export, and more" onClick={() => request("page-menu", page.id)}><MoreHorizontal size={18} /></button></>}
-    </header><main className="min-h-0 flex-1">{children}</main></div>
+    </header><LocalStorageBanner /><main className="min-h-0 flex-1">{children}</main></div>
     <Suspense fallback={null}>{modal?.kind === "search" && <SearchModal query={params.get("search") ?? ""} onQueryChange={(query) => { void navigate(searchUrl(query, currentUrl), { replace: true }); }} onClose={closeModal} />}
     {modal?.kind === "settings" && <SettingsModal tab={(params.get("settings") ?? "appearance")} onTabChange={(tab) => { void navigate(settingsUrl(tab, currentUrl), { replace: true }); }} onClose={closeModal} />}
     {modal?.kind === "auth" && <AuthModal onClose={closeModal} />}

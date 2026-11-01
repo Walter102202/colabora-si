@@ -6,6 +6,7 @@ import { ChevronRight, Copy, FileText, MoreHorizontal, Plus, Star, Trash2 } from
 import { getChildren, useStore } from "@/lib/store";
 import { withViewTransition } from "@/lib/viewTransition";
 import Emoji from "@/components/Emoji";
+import { duplicatePageLoaded, movePageLoaded } from "@/lib/pageBodies";
 
 export default function SidebarItem({ pageId, depth = 0 }: { pageId: string; depth?: number }) {
   const pages = useStore((s) => s.pages), expanded = useStore((s) => s.expanded[pageId] ?? false);
@@ -20,7 +21,7 @@ export default function SidebarItem({ pageId, depth = 0 }: { pageId: string; dep
     <div role="presentation" aria-label={page.title || "Untitled"} className={`sidebar-row group ${active ? "active" : ""} ${dragOver ? "drop-target" : ""}`} style={{ paddingLeft: 8 + depth * 14 }} draggable={!renaming}
       onDragStart={(event) => { event.dataTransfer.setData("text/page-id", pageId); event.stopPropagation(); }}
       onDragOver={(event) => { if (event.dataTransfer.types.includes("text/page-id")) { event.preventDefault(); event.stopPropagation(); setDragOver(true); } }}
-      onDragLeave={() => setDragOver(false)} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); setDragOver(false); const id = event.dataTransfer.getData("text/page-id"); if (id && id !== pageId) { try { useStore.getState().movePage(id, pageId); setError(""); } catch (error) { setError(error instanceof Error ? error.message : "Could not move this page."); } } }}>
+      onDragLeave={() => setDragOver(false)} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); setDragOver(false); const id = event.dataTransfer.getData("text/page-id"); if (id && id !== pageId) { void movePageLoaded(id, pageId).then(() => setError(""), (error) => setError(error instanceof Error ? error.message : "Could not move this page.")); } }}>
       <button className="tree-toggle icon-button" aria-label={`${expanded ? "Collapse" : "Expand"} ${page.title || "Untitled"}`} onClick={() => useStore.getState().setExpanded(pageId, !expanded)}>
         <span className="tree-icon">{page.icon ? <Emoji emoji={page.icon} /> : <FileText size={16} />}</span>
         <ChevronRight className={`tree-chevron ${expanded ? "rotate-90" : ""}`} size={14} />
@@ -31,7 +32,7 @@ export default function SidebarItem({ pageId, depth = 0 }: { pageId: string; dep
     {menu && <><button className="menu-backdrop" aria-label="Close page actions" onClick={() => setMenu(false)} /><div className="menu-panel absolute left-8 top-7 w-52" role="menu">
       <button role="menuitem" onClick={() => action(() => useStore.getState().toggleFavorite(pageId))}><Star size={15} />{page.isFavorite ? "Remove from Favorites" : "Add to Favorites"}</button>
       <button role="menuitem" onClick={() => action(() => setRenaming(true))}>Rename</button>
-      <button role="menuitem" onClick={() => action(() => { const id = useStore.getState().duplicatePage(pageId); if (id) open(id); })}><Copy size={15} />Duplicate</button>
+      <button role="menuitem" onClick={() => action(() => { void duplicatePageLoaded(pageId).then((id) => { if (id) open(id); }); })}><Copy size={15} />Duplicate</button>
       <button role="menuitem" onClick={() => action(() => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind: "move", pageId } })))}>Move to…</button>
       <button role="menuitem" onClick={() => action(() => { void navigator.clipboard.writeText(location.origin + pageUrl(pageId)); })}>Copy link</button>
       <button role="menuitem" className="danger" onClick={() => action(() => { useStore.getState().deletePage(pageId); if (active) navigate("/"); })}><Trash2 size={15} />Delete</button>

@@ -1,17 +1,19 @@
-import { mark, pageDataSizes, recordHydration } from "@/lib/metrics";
 import { VERSION_CAP } from "@/lib/pageOps";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 import type { Block, BlockType, DbProperty, DbRow, DbView, Page, Reminder, TemplatePlan, WorkspaceSettings, WorkspaceState } from "@/lib/types";
 import { createBlock, createDatabase, createPage as makePage, DEFAULT_SETTINGS, newId } from "@/lib/factories";
 import * as pm from "@/lib/pageMutations";
 import * as dm from "@/lib/dbMutations";
 import { createPageFromTemplate as materializeTemplate, sanitizeBlocks, seedWorkspace } from "@/lib/seed";
-import { foreignPageIds } from "@/lib/foreignPages";
 import { useAuthStore } from "@/lib/auth";
+import { isShell, overlayMeta, shellOf } from "@/lib/pageShell";
+import { ensurePageBodies, notifyPageUnavailable, opening } from "@/lib/pageBodies";
+import { diskAvailable, persistFull } from "@/lib/localPersistence";
+import { historyAction } from "@/lib/history";
 
 import { collectSubtreeFileIds, collectTrashFileIds, scheduleBlobGc } from "@/lib/fileStore";
 export interface RemotePatch {
+  replaceLoaded?: boolean;
   pages?: Record<string, Page | null>;
   rootOrder?: string[];
   syncedBlocks?: Record<string, Block[]>;
@@ -21,10 +23,11 @@ export interface RemotePatch {
 interface SyncState { syncWorkspaceId: string | null; syncUserId: string | null }
 export type Store = WorkspaceState & SyncState & Actions;
 interface Actions {
-  persistInitialWorkspace: () => void;
   // sincronización (§II.7)
   setSyncWorkspaceId: (id: string | null, userId?: string | null) => void;
-  applyRemotePages: (patch: RemotePatch) => void;
+  applyRemotePages: (patch: RemotePatch) => RemotePatch;
+  applyLocalPages: (patch: RemotePatch) => void;
+  hydratePages: (pages: Page[]) => void;
 
   // páginas
   createPage: (parentId?: string | null, patch?: Partial<Page>) => string;
@@ -124,13 +127,32 @@ function cleanPage(page: Page): Page {
   };
 }
 
-export const useStore = create<Store>()(persist((set, get) => {
-  const mutate = (id: string, fn: (page: Page) => Page) => set((state) => {
+export const useStore = create<Store>()((set, get) => {
+  const requireLoaded = (ids: Iterable<string>) => {
+    const pages = get().pages;
+    for (const id of ids) if (isShell(pages[id])) throw new Error("page_not_loaded");
+  };
+  const mutateMeta = (id: string, fn: (page: Page) => Page) => set((state) => {
     const page = state.pages[id];
     if (!page) return state;
     const next = fn(page);
     return next === page ? state : { pages: { ...state.pages, [id]: next } };
   });
+  const whenLoaded = (ids: string[], run: () => void) => {
+    if (!ids.length) { run(); return; }
+    const { syncUserId, syncWorkspaceId } = get();
+    void ensurePageBodies(ids).then((result) => {
+      const current = get();
+      if (current.syncUserId !== syncUserId || current.syncWorkspaceId !== syncWorkspaceId) return;
+      if (result === "ready" && ids.every((id) => current.pages[id] && !isShell(current.pages[id]))) run();
+      else notifyPageUnavailable();
+    });
+  };
+  const mutate = (id: string, fn: (page: Page) => Page) => whenLoaded(isShell(get().pages[id]) ? [id] : [], () => mutateMeta(id, fn));
+  const databaseParent = (id: string) => {
+    const pages = get().pages, parent = pages[pages[id]?.parentId ?? ""];
+    return parent?.database && isShell(parent) ? [parent.id] : [];
+  };
   const attach = (page: Page, pages: Record<string, Page> = { [page.id]: page }) => set((state) => ({
     pages: { ...state.pages, ...pages },
     rootOrder: page.parentId === null ? [...state.rootOrder, page.id] : state.rootOrder,
@@ -145,16 +167,39 @@ export const useStore = create<Store>()(persist((set, get) => {
   };
   return {
     ...seedWorkspace(), expanded: {}, syncWorkspaceId: null, syncUserId: null,
-    persistInitialWorkspace: () => {
-      try {
-        if (!localStorage.getItem("colabora-workspace")) set({});
-      } catch { /* Storage can be unavailable; the workspace remains usable in memory. */ }
-    },
     setSyncWorkspaceId: (id, userId = null) => set({ syncWorkspaceId: id, syncUserId: userId }),
-    applyRemotePages: (patch) => set((state) => applyRemotePatch(state, {
-      ...patch,
-      ...(patch.pages ? { pages: Object.fromEntries(Object.entries(patch.pages).map(([id, page]) => [id, page ? cleanPage(page) : null])) } : {}),
-    })),
+    applyLocalPages: (patch) => set((state) => applyRemotePatch(state, patch)),
+    hydratePages: (full) => set((state) => {
+      let pages = state.pages;
+      for (const page of full) {
+        const current = pages[page.id];
+        if (!current || !isShell(current) || isShell(page)) continue;
+        if (pages === state.pages) pages = { ...state.pages };
+        pages[page.id] = overlayMeta(page, current);
+      }
+      return pages === state.pages ? state : { pages };
+    }),
+    applyRemotePages: (patch) => {
+      const state = get(), toDisk: Page[] = [];
+      let pages: Record<string, Page | null> | undefined;
+      if (patch.pages) {
+        pages = {};
+        for (const [id, page] of Object.entries(patch.pages)) {
+          const current = state.pages[id], loaded = !!current && !isShell(current);
+          if (!page) { pages[id] = null; continue; }
+          if (isShell(page)) { if (!loaded || patch.replaceLoaded) pages[id] = page; continue; }
+          const newerMeta = current && isShell(current) && (current.revision ?? 0) > (page.revision ?? 0);
+          const clean = cleanPage(newerMeta ? overlayMeta(page, current) : page);
+          const keep = !diskAvailable() || loaded || (!newerMeta && opening.has(id));
+          if (!keep || (current && !loaded)) toDisk.push(clean);
+          pages[id] = keep ? clean : newerMeta ? { ...shellOf(clean), revision: current.revision } : shellOf(clean);
+        }
+        persistFull(toDisk);
+      }
+      const stored = { ...patch, ...(pages ? { pages } : {}) };
+      set((current) => applyRemotePatch(current, stored));
+      return stored;
+    },
     createPage: (parentId = null, patch = {}) => {
       const settings = get().settings ?? DEFAULT_SETTINGS;
       const page = cleanPage(makePage({ parentId, smallText: settings.smallTextDefault, fullWidth: settings.fullWidthDefault, font: settings.defaultFont !== "default" ? settings.defaultFont : undefined, ...patch }));
@@ -173,34 +218,49 @@ export const useStore = create<Store>()(persist((set, get) => {
     },
     applyTemplate: (pageId, plan) => {
       const old = get().pages[pageId];
-      if (!old) return;
+      if (!old || isShell(old)) return;
       const result = materializeTemplate(plan, old.parentId);
       const children = Object.fromEntries(Object.values(result.pages).filter((p) => p.id !== result.page.id).map((p) => [p.id, { ...p, parentId: pageId }]));
       const database = result.page.database ? { ...result.page.database, properties: result.page.database.properties.map((p) => p.relationDbId === result.page.id ? { ...p, relationDbId: pageId } : p) } : old.database;
       set((state) => ({ pages: { ...state.pages, ...children, [pageId]: pm.touch({ ...old, title: old.title || plan.title, icon: old.icon ?? plan.icon, blocks: result.page.blocks, database }) } }));
     },
-    updatePage: (id, patch) => set((state) => {
-      const page = state.pages[id]; if (!page) return state;
-      const pages = { ...state.pages, [id]: pm.touch({ ...page, ...patch, ...(patch.blocks ? { blocks: sanitizeBlocks(patch.blocks) } : {}), ...(patch.database ? { database: cleanPage({ ...page, database: patch.database }).database } : {}) }) };
-      const parent = pages[page.parentId ?? ""];
-      if (patch.title !== undefined && parent?.database) pages[parent.id] = pm.touch({ ...parent, database: { ...parent.database, rows: parent.database.rows.map((row) => row.pageId === id ? { ...row, cells: { ...row.cells, title: patch.title } } : row) } });
-      return { pages };
-    }),
-    deletePage: (id) => set((state) => !state.pages[id] ? state : ({ pages: pm.softDeleteTree(state.pages, id, Date.now()), rootOrder: state.rootOrder.filter((key) => key !== id) })),
+    updatePage: (id, patch) => {
+      const page = get().pages[id], body = patch.blocks || patch.database || patch.comments || patch.versions;
+      whenLoaded([...(body && isShell(page) ? [id] : []), ...(patch.title !== undefined ? databaseParent(id) : [])], () => set((state) => {
+        const page = state.pages[id]; if (!page) return state;
+        const pages = { ...state.pages, [id]: pm.touch({ ...page, ...patch, ...(patch.blocks ? { blocks: sanitizeBlocks(patch.blocks) } : {}), ...(patch.database ? { database: cleanPage({ ...page, database: patch.database }).database } : {}) }) };
+        const parent = pages[page.parentId ?? ""];
+        if (patch.title !== undefined && parent?.database) pages[parent.id] = pm.touch({ ...parent, database: { ...parent.database, rows: parent.database.rows.map((row) => row.pageId === id ? { ...row, cells: { ...row.cells, title: patch.title } } : row) } });
+        return { pages };
+      }));
+    },
+    deletePage: (id) => whenLoaded(databaseParent(id), () => set((state) => !state.pages[id] ? state : ({ pages: pm.softDeleteTree(state.pages, id, Date.now()), rootOrder: state.rootOrder.filter((key) => key !== id) }))),
     restorePage: (id) => set((state) => {
       if (!state.pages[id]) return state;
       const pages = pm.restoreTree(state.pages, id, Date.now());
       return { pages, rootOrder: pages[id].parentId === null && !state.rootOrder.includes(id) ? [...state.rootOrder, id] : state.rootOrder };
     }),
-    permanentlyDelete: (id) => { const ids = collectSubtreeFileIds(id); set((state) => !state.pages[id] ? state : ({ pages: pm.purgeTree(state.pages, id), rootOrder: state.rootOrder.filter((key) => key !== id) })); scheduleBlobGc(ids); },
-    emptyTrash: () => { const ids = collectTrashFileIds(); set((state) => ({ pages: Object.fromEntries(Object.entries(state.pages).filter(([, page]) => !page.isDeleted)) })); scheduleBlobGc(ids); },
-    toggleFavorite: (id) => mutate(id, (page) => pm.touch({ ...page, isFavorite: !page.isFavorite })),
+    permanentlyDelete: (id) => {
+      requireLoaded(pm.treeIds(get().pages, id));
+      const files = collectSubtreeFileIds(id);
+      historyAction(() => set((state) => !state.pages[id] ? state : ({ pages: pm.purgeTree(state.pages, id), rootOrder: state.rootOrder.filter((key) => key !== id) })));
+      void files.then((ids) => scheduleBlobGc(ids)).catch(() => {});
+    },
+    emptyTrash: () => {
+      requireLoaded(Object.values(get().pages).filter((page) => page.isDeleted).map((page) => page.id));
+      const files = collectTrashFileIds();
+      historyAction(() => set((state) => ({ pages: Object.fromEntries(Object.entries(state.pages).filter(([, page]) => !page.isDeleted)) })));
+      void files.then((ids) => scheduleBlobGc(ids)).catch(() => {});
+    },
+    toggleFavorite: (id) => mutateMeta(id, (page) => pm.touch({ ...page, isFavorite: !page.isFavorite })),
     movePage: (id, parentId, index) => set((state) => {
       const next = pm.moveInTree(state.pages, state.rootOrder, id, parentId, index);
       return next.pages === state.pages ? state : { ...next, expanded: parentId ? { ...state.expanded, [parentId]: true } : state.expanded };
     }),
     duplicatePage: (id) => {
-      const result = pm.duplicateDeep(get().pages, id);
+      const pages = get().pages, parent = pages[pages[id]?.parentId ?? ""];
+      if ([...pm.treeIds(pages, id)].some((key) => !pages[key].isDeleted && isShell(pages[key])) || (parent?.database && isShell(parent))) return null;
+      const result = pm.duplicateDeep(pages, id);
       if (!result.newId) return null;
       const copy = result.pages[result.newId];
       set((state) => ({ pages: result.pages, rootOrder: copy.parentId === null ? [...state.rootOrder, copy.id] : state.rootOrder }));
@@ -225,8 +285,14 @@ export const useStore = create<Store>()(persist((set, get) => {
     updateReminder: (id, patch) => set((state) => ({ reminders: (state.reminders ?? []).map((r) => r.id === id ? { ...r, ...patch } : r) })),
     deleteReminder: (id) => set((state) => ({ reminders: (state.reminders ?? []).filter((r) => r.id !== id) })),
     updateSettings: (patch) => set((state) => ({ settings: { ...DEFAULT_SETTINGS, ...state.settings, ...patch } })),
-    importWorkspace: (state) => set({ pages: Object.fromEntries(Object.entries(state.pages).map(([id, p]) => [id, cleanPage(p)])), rootOrder: state.rootOrder, expanded: state.expanded ?? {}, syncedBlocks: Object.fromEntries(Object.entries(state.syncedBlocks ?? {}).map(([id, blocks]) => [id, sanitizeBlocks(blocks)])), reminders: state.reminders ?? [], settings: state.settings ? { ...DEFAULT_SETTINGS, ...state.settings } : undefined }),
-    resetWorkspace: () => set({ ...seedWorkspace(), expanded: {}, syncedBlocks: {}, reminders: [] }),
+    importWorkspace: (state) => {
+      requireLoaded(Object.keys(get().pages));
+      historyAction(() => set({ pages: Object.fromEntries(Object.entries(state.pages).map(([id, p]) => [id, cleanPage(p)])), rootOrder: state.rootOrder, expanded: state.expanded ?? {}, syncedBlocks: Object.fromEntries(Object.entries(state.syncedBlocks ?? {}).map(([id, blocks]) => [id, sanitizeBlocks(blocks)])), reminders: state.reminders ?? [], settings: state.settings ? { ...DEFAULT_SETTINGS, ...state.settings } : undefined }));
+    },
+    resetWorkspace: () => {
+      requireLoaded(Object.keys(get().pages));
+      historyAction(() => set({ ...seedWorkspace(), expanded: {}, syncedBlocks: {}, reminders: [] }));
+    },
     clearLocalWorkspace: () => set({ ...seedWorkspace(), expanded: {}, syncedBlocks: {}, reminders: [], settings: undefined, syncWorkspaceId: null, syncUserId: null }),
     saveVersion: (pageId, auto = false) => mutate(pageId, (page) => {
       const last = page.versions?.[0];
@@ -267,11 +333,11 @@ export const useStore = create<Store>()(persist((set, get) => {
     }),
     addRow: (pageId, patch = {}) => {
       const page = get().pages[pageId];
-      return page ? addRowResult(pageId, dm.addRow(page, patch)) : "";
+      return page && !isShell(page) ? addRowResult(pageId, dm.addRow(page, patch)) : "";
     },
     updateCell: (pageId, rowId, propertyId, value) => set((state) => {
       const page = state.pages[pageId];
-      if (!page) return state;
+      if (!page || isShell(page)) return state;
       const result = dm.updateCell(page, rowId, propertyId, value);
       if (result.page === page) return state;
       const pages = { ...state.pages, [pageId]: result.page };
@@ -280,18 +346,19 @@ export const useStore = create<Store>()(persist((set, get) => {
       return { pages };
     }),
     deleteRow: (pageId, rowId) => set((state) => {
+      if (isShell(state.pages[pageId])) return state;
       const row = state.pages[pageId]?.database?.rows.find((r) => r.id === rowId);
       return row ? { pages: pm.softDeleteTree(state.pages, row.pageId, Date.now()) } : state;
     }),
     deleteRows: (pageId, ids) => set((state) => {
-      const page = state.pages[pageId]; if (!page?.database || page.locked) return state;
+      const page = state.pages[pageId]; if (!page?.database || page.locked || isShell(page)) return state;
       let pages = state.pages;
       for (const row of page.database.rows.filter((r) => ids.includes(r.id))) pages = pm.softDeleteTree(pages, row.pageId, Date.now());
       return { pages };
     }),
     updateCells: (pageId, ids, propertyId, value) => set((state) => {
       const page = state.pages[pageId], prop = page?.database?.properties.find((p) => p.id === propertyId);
-      if (!page?.database || page.locked || !prop || !["text", "number", "select", "status", "checkbox", "date", "url", "email", "phone"].includes(prop.type)) return state;
+      if (!page?.database || page.locked || isShell(page) || !prop || !["text", "number", "select", "status", "checkbox", "date", "url", "email", "phone"].includes(prop.type)) return state;
       if (page.database.properties.some((p) => p.type === "agentStatus") && ["Lead", "Done when", "Output", "Cost", "Run"].includes(prop.name)) return state;
       const rows = page.database.rows.map((row) => ids.includes(row.id) ? { ...row, cells: { ...row.cells, [propertyId]: value } } : row);
       const pages = { ...state.pages, [pageId]: pm.touch({ ...page, database: { ...page.database, rows } }) };
@@ -308,25 +375,17 @@ export const useStore = create<Store>()(persist((set, get) => {
     setDbLocked: (id, locked) => mutate(id, (page) => dm.setDbLocked(page, locked)),
     addRowFromTemplate: (id, templateId) => {
       const page = get().pages[id];
-      return page ? addRowResult(id, dm.addRowFromTemplate(page, templateId)) : "";
+      return page && !isShell(page) ? addRowResult(id, dm.addRowFromTemplate(page, templateId)) : "";
     },
     saveRowAsTemplate: (id, rowId, name) => mutate(id, (page) => {
       const row = page.database?.rows.find((r) => r.id === rowId);
+      if (row && isShell(get().pages[row.pageId])) return page;
       return dm.saveRowAsTemplate(page, rowId, name, row ? get().pages[row.pageId] : undefined);
     }),
     deleteRowTemplate: (id, templateId) => mutate(id, (page) => dm.deleteRowTemplate(page, templateId)),
     setSyncedBlocks: (key, blocks) => set((state) => ({ syncedBlocks: { ...state.syncedBlocks, [key]: sanitizeBlocks(blocks) } })),
   };
-}, {
-  name: "colabora-workspace", version: 1,
-  onRehydrateStorage: () => (state) => { mark("colabora:hydrate:end"); if (import.meta.env.DEV && state) recordHydration(pageDataSizes(state.pages)); },
-  partialize: (state): WorkspaceState & SyncState => ({
-    pages: Object.fromEntries(Object.entries(state.pages).filter(([id]) => !foreignPageIds.has(id))),
-    rootOrder: state.rootOrder, expanded: state.expanded, syncedBlocks: state.syncedBlocks,
-    reminders: state.reminders, settings: state.settings, syncWorkspaceId: state.syncWorkspaceId, syncUserId: state.syncUserId,
-  }),
-  migrate: (persisted) => persisted as Store,
-}));
+});
 
 export function getChildren(pages: Record<string, Page>, parentId: string | null): Page[] {
   return Object.values(pages).filter((p) => p.parentId === parentId && !p.isDeleted).sort((a, b) => a.createdAt - b.createdAt);

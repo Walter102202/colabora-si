@@ -10,6 +10,7 @@ export type PageOp =
   | { op: "move_block"; id: string; after: string | null }
   | { op: "delete_block"; id: string; rev?: number }
   | { op: "set_page"; patch: Partial<PageScalars> }                             // title, icon, cover, coverPosition, fullWidth, smallText, locked, font, isFavorite
+  | { op: "set_tree"; parentId: string | null; isDeleted: boolean; rowOrigin?: Page["rowOrigin"] } // Local only: sent as a full, revision-checked server replacement.
   | { op: "db_row_add"; row: DbRow; after: string | null }
   | { op: "db_row_delete"; rowId: string; rev?: number }
   | { op: "db_row_move"; rowId: string; after: string | null; parentRowId?: string | null }
@@ -142,6 +143,7 @@ export function applyOps(input: Page, ops: PageOp[], actor: BlockAttr): { page: 
         if (!inserted) blocks = insertAfter(blocks, moved, null);
         page = { ...page, blocks }; result.rev = moved.rev; break;
       }
+      case "set_tree": page = { ...page, parentId: op.parentId, isDeleted: op.isDeleted, rowOrigin: op.rowOrigin }; break;
       case "set_page": {
         const patch: Partial<PageScalars> = {};
         for (const key of scalarKeys) if (key in op.patch) Object.assign(patch, { [key]: op.patch[key] });
@@ -177,6 +179,16 @@ export function applyOps(input: Page, ops: PageOp[], actor: BlockAttr): { page: 
     results.push(result);
   }
   return { page, results, inverse };
+}
+
+export function shellOps(prev: Page, next: Page): PageOp[] {
+  const ops: PageOp[] = [], patch: Partial<PageScalars> = {};
+  for (const key of scalarKeys) if (!equal(prev[key], next[key])) Object.assign(patch, { [key]: next[key] });
+  if (Object.keys(patch).length) ops.push({ op: "set_page", patch });
+  if (prev.parentId !== next.parentId || prev.isDeleted !== next.isDeleted || prev.rowOrigin !== next.rowOrigin) {
+    ops.push({ op: "set_tree", parentId: next.parentId, isDeleted: next.isDeleted, rowOrigin: next.rowOrigin });
+  }
+  return ops;
 }
 
 export function diffPageToOps(prev: Page, next: Page): PageOp[] {

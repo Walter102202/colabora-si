@@ -1,11 +1,12 @@
 import { createPage, newId } from "@/lib/factories";
 import type { Block, DbRow, Page } from "@/lib/types";
+import { isShell } from "@/lib/pageShell";
 
 export function touch(page: Page, now = Date.now()): Page {
   return { ...page, updatedAt: now };
 }
 
-function treeIds(pages: Record<string, Page>, id: string, deletedOnly = false): Set<string> {
+export function treeIds(pages: Record<string, Page>, id: string, deletedOnly = false): Set<string> {
   const found = new Set<string>();
   const pending = [id];
   while (pending.length) {
@@ -43,7 +44,7 @@ export function restoreTree(pages: Record<string, Page>, id: string, now: number
   for (const key of treeIds(pages, id, true)) next[key] = touch({ ...pages[key], isDeleted: false }, now);
   const parent = page.parentId ? pages[page.parentId] : undefined;
   if (!parent || parent.isDeleted) next[id] = { ...next[id], parentId: null };
-  else if (parent.database && !parent.database.rows.some((r) => r.pageId === id)) {
+  else if (parent.database && !isShell(parent) && !parent.database.rows.some((r) => r.pageId === id)) {
     const saved = page.rowOrigin?.databasePageId === parent.id ? page.rowOrigin : undefined;
     const rows = [...parent.database.rows], row = saved?.row ?? { id: newId(), pageId: id, cells: {} };
     rows.splice(saved?.index ?? rows.length, 0, { ...row, rev: undefined, cells: { ...row.cells, title: page.title }, parentRowId: rows.some((r) => r.id === row.parentRowId) ? row.parentRowId : undefined });
@@ -75,6 +76,7 @@ export function moveInTree(pages: Record<string, Page>, rootOrder: string[], id:
   if (!pages[id] || wouldCycle(pages, id, newParentId)) return { pages, rootOrder };
   if (newParentId && (!pages[newParentId] || pages[newParentId].isDeleted)) return { pages, rootOrder };
   const source = pages[pages[id].parentId ?? ""], destination = pages[newParentId ?? ""];
+  if ([source, destination].some((page) => page?.database && isShell(page))) throw new Error("page_not_loaded");
   if (pages[id].locked || source?.locked || destination?.locked) throw new Error("Unlock the page before moving it.");
   if (pages[id].parentId === newParentId && newParentId !== null) return { pages, rootOrder };
   const next = { ...pages }, now = Date.now();

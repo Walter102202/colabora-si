@@ -1,11 +1,12 @@
 import { computeCell, displayValue } from "@/lib/dbCompute";
 import { stripHtml } from "@/lib/utils";
 import type { Block, Page } from "@/lib/types";
+import type { SearchRecord } from "@/lib/localDb";
 
 export type SearchHitKind = "page" | "row" | "task";
 export interface SearchHit { kind: SearchHitKind; id: string; pageId: string; blockId?: string; title: string; snippet: string; score: number }
 
-function blocksText(blocks: Block[], synced: Record<string, Block[]>, seen = new Set<string>()): string {
+export function blocksText(blocks: Block[], synced: Record<string, Block[]>, seen = new Set<string>()): string {
   const parts: string[] = [];
   for (const b of blocks) {
     if (b.type === "table") for (const row of b.table ?? []) for (const cell of row) parts.push(stripHtml(cell));
@@ -14,6 +15,16 @@ function blocksText(blocks: Block[], synced: Record<string, Block[]>, seen = new
     else parts.push(b.type === "code" ? b.html : stripHtml(b.html));
   }
   return parts.join(" ");
+}
+
+export function searchRecord(page: Page, synced: Record<string, Block[]>): SearchRecord {
+  const cells: Record<string, string> = {};
+  if (page.database) {
+    const database = page.database, pages = { [page.id]: page };
+    const properties = database.properties.filter((p) => p.id !== "title" && ["text", "url", "email", "phone", "person", "select", "multiSelect", "status"].includes(p.type));
+    for (const row of database.rows) cells[row.pageId] = properties.map((p) => displayValue(computeCell(row, p, database, pages), p, database, pages)).join(" ");
+  }
+  return { id: page.id, text: blocksText(page.blocks, synced).slice(0, 65536), comments: (page.comments ?? []).map((c) => c.body).join(" ").slice(0, 65536), cells };
 }
 
 export function rankLocal(pages: Record<string, Page>, synced: Record<string, Block[]>, query: string, limit = 12): SearchHit[] {

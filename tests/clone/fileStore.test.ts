@@ -38,14 +38,14 @@ it("FS-5 a file put before the workspace is known is not reported as uploading",
   expect(useUploadState.getState().uploading).toEqual({});
 });
 
-it("retains files in archived row cells until the row is permanently removed", () => {
+it("retains files in archived row cells until the row is permanently removed", async () => {
   const s = useStore.getState(), dbId = s.createDatabasePage();
   s.addProperty(dbId, { name: "Attachments", type: "files" });
   const propertyId = useStore.getState().pages[dbId].database!.properties.at(-1)!.id;
   const rowId = s.addRow(dbId, { cells: { [propertyId]: [{ fileId: "archived-attachment" }] } });
   const pageId = useStore.getState().pages[dbId].database!.rows[0].pageId;
   s.deleteRows(dbId, [rowId]);
-  expect(listReferencedFileIds()).toContain("archived-attachment");
+  expect(await listReferencedFileIds()).toContain("archived-attachment");
   s.restorePage(pageId);
   expect(useStore.getState().pages[dbId].database!.rows[0].cells[propertyId]).toEqual([{ fileId: "archived-attachment" }]);
 });

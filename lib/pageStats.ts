@@ -80,7 +80,7 @@ export function findBacklinks(pages: Record<string, Page>, targetId: string): Pa
   }
   return [...out].map((id) => pages[id]).filter(Boolean);
 }
-export function pageStats(page: Page, pages: Record<string, Page>) {
+export function pageStats(page: Page) {
   const words = pageWordCount(page.blocks);
-  return { words, blocks: pageBlockCount(page.blocks), mins: Math.max(1, Math.round(words / 200)), backlinks: findBacklinks(pages, page.id) };
+  return { words, blocks: pageBlockCount(page.blocks), mins: Math.max(1, Math.round(words / 200)) };
 }

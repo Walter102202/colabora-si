@@ -13,6 +13,7 @@ import Tooltip from "@/components/Tooltip";
 import { useAuth } from "@/lib/auth";
 
 import { useDirectory } from "@/lib/directory";
+import { movePageLoaded, resetWorkspaceLoaded } from "@/lib/pageBodies";
 import { clearSharedWithMe, refreshSharedWithMe, useShares } from "@/lib/shares";
 export default function Sidebar({ collapse }: { collapse: () => void }) {
   const pages = useStore((s) => s.pages), rootOrder = useStore((s) => s.rootOrder), navigate = useNavigate();
@@ -29,7 +30,7 @@ export default function Sidebar({ collapse }: { collapse: () => void }) {
       <Tooltip label="Collapse sidebar" shortcut="Ctrl+\"><button className="icon-button hover-actions" aria-label="Collapse sidebar" onClick={collapse}><ChevronsLeft size={17} /></button></Tooltip>
       {workspaceMenu && <><button className="menu-backdrop" aria-label="Close workspace menu" onClick={() => setWorkspaceMenu(false)} /><div className="menu-panel absolute left-3 top-12 w-56" role="menu">
         <button role="menuitem" onClick={toggle}>{theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}{theme === "dark" ? "Light mode" : "Dark mode"}</button>
-        <button role="menuitem" className="danger" onClick={() => { if (confirm("Reset the entire workspace? This deletes all pages on this device.")) { useStore.getState().resetWorkspace(); setWorkspaceMenu(false); navigate("/"); } }}>Reset workspace</button>
+        <button role="menuitem" className="danger" onClick={() => { if (confirm("Reset the entire workspace? This deletes all pages on this device.")) { void resetWorkspaceLoaded().then((reset) => { if (reset) { setWorkspaceMenu(false); navigate("/"); } }); } }}>Reset workspace</button>
       </div></>}
     </div>
     <div className="flex items-center gap-1 px-3 pb-2 pt-1.5">
@@ -40,7 +41,7 @@ export default function Sidebar({ collapse }: { collapse: () => void }) {
     <div className="scrollbar-thin mt-2 min-h-0 flex-1 overflow-y-auto px-2">
       {favorites.length > 0 && <section className="mb-5"><div className="section-label">Favorites</div>{favorites.map((page) => <button key={page.id} className="sidebar-row w-full px-2" onClick={() => open(page.id)}><Emoji emoji={page.icon ?? "📄"} /><Star size={13} className="favorite-star" /><span className="truncate">{page.title || "Untitled"}</span></button>)}</section>}
       {user && !!shares.length && <section className="mb-5"><div className="section-label">Shared</div>{shares.map((share) => <button key={share.pageId} className="sidebar-row w-full px-2" onClick={() => withViewTransition(() => navigate(sharedUrl(share.pageId)))}><Emoji emoji={share.icon ?? "📄"} /><span className="min-w-0 flex-1 truncate">{share.title || "Untitled"}</span><span className="text-[10px] uppercase text-text-tertiary">{share.level}</span></button>)}</section>}
-      <div role="presentation" aria-label="Private pages" className="relative flex items-center justify-between" onDragOver={(event) => { if (event.dataTransfer.types.includes("text/page-id")) event.preventDefault(); }} onDrop={(event) => { const id = event.dataTransfer.getData("text/page-id"); if (id) { event.preventDefault(); useStore.getState().movePage(id, null); } }}>
+      <div role="presentation" aria-label="Private pages" className="relative flex items-center justify-between" onDragOver={(event) => { if (event.dataTransfer.types.includes("text/page-id")) event.preventDefault(); }} onDrop={(event) => { const id = event.dataTransfer.getData("text/page-id"); if (id) { event.preventDefault(); void movePageLoaded(id, null).catch((error) => window.alert(error instanceof Error ? error.message : "Could not move this page.")); } }}>
         <div className="section-label">Private</div><button className="icon-button hover-actions" aria-label="Add a page" onClick={() => setAddMenu(!addMenu)}><Plus size={15} /></button>
         {addMenu && <><button className="menu-backdrop" aria-label="Close add page menu" onClick={() => setAddMenu(false)} /><div className="menu-panel absolute right-1 top-7 w-52" role="menu">
           <button role="menuitem" onClick={() => open(useStore.getState().createPage())}>New page</button><button role="menuitem" onClick={() => open(useStore.getState().createDatabasePage())}>New database</button>

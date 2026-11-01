@@ -1,7 +1,9 @@
 import { useEffect } from "react";
 import { useStore } from "@/lib/store";
-import { isApplyingRemote } from "@/lib/sync";
+import { isApplyingExternal } from "@/lib/externalApply";
 import { foreignPageIds } from "@/lib/foreignPages";
+import { isShell } from "@/lib/pageShell";
+import { pauseHistory, resumeHistory } from "@/lib/history";
 
 export const SNAPSHOT_IDLE_MS = 30_000;
 export interface SnapshotClock { now(): number; setTimeout(fn: () => void, ms: number): unknown; clearTimeout(handle: unknown): void }
@@ -35,10 +37,17 @@ export class IdleSnapshotTimer {
 export function useIdleSnapshot(pageId: string): void {
   useEffect(() => {
     if (foreignPageIds.has(pageId)) return;
-    const timer = new IdleSnapshotTimer(() => useStore.getState().saveVersion(pageId, true));
+    const timer = new IdleSnapshotTimer(() => {
+      const state = useStore.getState();
+      if (!state.pages[pageId] || isShell(state.pages[pageId])) return;
+      // Automatic versions are saved and synced without consuming a user's undo step.
+      pauseHistory();
+      try { state.saveVersion(pageId, true); } finally { resumeHistory(); }
+    });
     const unsubscribe = useStore.subscribe((state, prev) => {
-      if (isApplyingRemote() || foreignPageIds.has(pageId)) return;
+      if (isApplyingExternal() || foreignPageIds.has(pageId)) return;
       const a = state.pages[pageId], b = prev.pages[pageId];
+      if (isShell(a) !== isShell(b)) return;
       if (a && b && a !== b && (a.blocks !== b.blocks || a.title !== b.title || a.database !== b.database)) timer.edited();
     });
     return () => { unsubscribe(); timer.dispose(); };
