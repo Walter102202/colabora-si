@@ -216,8 +216,8 @@ export const useStore = create<Store>()((set, get) => {
       const pages = pm.restoreTree(state.pages, id, Date.now());
       return { pages, rootOrder: pages[id].parentId === null && !state.rootOrder.includes(id) ? [...state.rootOrder, id] : state.rootOrder };
     }),
-    permanentlyDelete: (id) => { const ids = collectSubtreeFileIds(id); set((state) => !state.pages[id] ? state : ({ pages: pm.purgeTree(state.pages, id), rootOrder: state.rootOrder.filter((key) => key !== id) })); scheduleBlobGc(ids); },
-    emptyTrash: () => { const ids = collectTrashFileIds(); set((state) => ({ pages: Object.fromEntries(Object.entries(state.pages).filter(([, page]) => !page.isDeleted)) })); scheduleBlobGc(ids); },
+    permanentlyDelete: (id) => { const files = collectSubtreeFileIds(id); set((state) => !state.pages[id] ? state : ({ pages: pm.purgeTree(state.pages, id), rootOrder: state.rootOrder.filter((key) => key !== id) })); void files.then((ids) => scheduleBlobGc(ids)).catch(() => {}); },
+    emptyTrash: () => { const files = collectTrashFileIds(); set((state) => ({ pages: Object.fromEntries(Object.entries(state.pages).filter(([, page]) => !page.isDeleted)) })); void files.then((ids) => scheduleBlobGc(ids)).catch(() => {}); },
     toggleFavorite: (id) => mutateMeta(id, (page) => pm.touch({ ...page, isFavorite: !page.isFavorite })),
     movePage: (id, parentId, index) => set((state) => {
       const next = pm.moveInTree(state.pages, state.rootOrder, id, parentId, index);

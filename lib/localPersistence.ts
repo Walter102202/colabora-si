@@ -63,6 +63,52 @@ export async function readStoredPage(id: string): Promise<{ page: Page; stale: b
   const page = latest && !isShell(latest) ? latest : joinPage(meta, body);
   return { page, stale: (page.revision ?? 0) < (useStore.getState().pages[id]?.revision ?? meta.revision ?? 0) };
 }
+export async function hasMissingBodies(): Promise<boolean> {
+  if (!db) return Object.values(useStore.getState().pages).some(isShell);
+  const token = generation, connection = db;
+  const metas = await new Promise<import("@/lib/pageShell").PageMeta[]>((resolve, reject) => {
+    const tx = connection.transaction("meta", "readonly"), request = tx.objectStore("meta").getAll();
+    tx.oncomplete = () => resolve(request.result); tx.onabort = () => reject(tx.error);
+  });
+  return token !== generation || metas.some((meta) => meta.bodyRev === null || meta.bodyRev < (meta.revision ?? 0));
+}
+export async function scanStoredPages(visit: (page: Page) => void): Promise<void> {
+  if (!db) return;
+  const token = generation, connection = db;
+  const ids = await new Promise<string[]>((resolve, reject) => {
+    const tx = connection.transaction("meta", "readonly"), request = tx.objectStore("meta").getAllKeys();
+    tx.oncomplete = () => resolve(request.result.map(String)); tx.onabort = () => reject(tx.error);
+  });
+  for (let offset = 0; offset < ids.length; offset += WRITE_CHUNK) {
+    if (token !== generation) throw new StaleEpochError();
+    const batch = ids.slice(offset, offset + WRITE_CHUNK), stored = await readPages(connection, batch, batch, []);
+    if (token !== generation) throw new StaleEpochError();
+    for (const meta of stored.metas.values()) {
+      const body = stored.bodies.get(meta.id);
+      if (body && meta.bodyRev !== null) visit(joinPage(meta, body));
+    }
+  }
+}
+// Capture deletion candidates before the synchronous store mutation removes them.
+export async function readLocalPageSnapshot(ids: string[]): Promise<Page[]> {
+  const memory = useStore.getState().pages, pages = new Map<string, Page>();
+  for (const id of ids) {
+    const pending = dirtyPages.get(id), current = memory[id];
+    if (current && !isShell(current)) pages.set(id, current);
+    else if (pending && !isShell(pending)) pages.set(id, current ? overlayMeta(pending, current) : pending);
+  }
+  if (!db) return [...pages.values()];
+  const token = generation, wanted = ids.filter((id) => !pages.has(id));
+  // readPages queues its transaction synchronously, before the caller purges pages.
+  const stored = await readPages(db, wanted, wanted, []);
+  if (token !== generation) return [];
+  for (const meta of stored.metas.values()) {
+    const body = stored.bodies.get(meta.id); if (!body || meta.bodyRev === null) continue;
+    const full = joinPage(meta, body), current = memory[meta.id];
+    pages.set(meta.id, current ? overlayMeta(full, current) : full);
+  }
+  return [...pages.values()];
+}
 export function hasPendingLocalWrites(): boolean { return dirtyPages.size > 0 || dirtyKv.size > 0 || flushing !== null; }
 export function fullWrite(page: Page, remote = false): Extract<PageWrite, { kind: "full" }> {
   return { kind: "full", id: page.id, ...splitPage(page), search: searchRecord(page, useStore.getState().syncedBlocks ?? {}), remote };
