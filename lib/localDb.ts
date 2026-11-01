@@ -12,6 +12,7 @@ export type PageWrite =
   | { kind: "delete"; id: string };
 export interface WriteBatch { pages: PageWrite[]; kv: [string, unknown][] }
 export interface StoredWorkspace { metas: PageMeta[]; kv: Record<string, unknown>; epoch: string }
+export type PageReconciler = (current: { meta: PageMeta; body?: PageBody } | undefined) => Extract<PageWrite, { kind: "full" }> | null;
 
 export function openLocalDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -34,7 +35,7 @@ export function openLocalDb(): Promise<IDBDatabase> {
   });
 }
 
-function applyWrite(tx: IDBTransaction, write: PageWrite): void {
+function applyWrite(tx: IDBTransaction, write: PageWrite, reconcile?: PageReconciler): void {
   const meta = tx.objectStore("meta"), bodies = tx.objectStore("bodies"), search = tx.objectStore("search");
   if (write.kind === "delete") { meta.delete(write.id); bodies.delete(write.id); search.delete(write.id); return; }
   const request = meta.get(write.id);
@@ -45,11 +46,17 @@ function applyWrite(tx: IDBTransaction, write: PageWrite): void {
       return;
     }
     if (write.remote && current?.bodyRev != null && current.bodyRev > (write.meta.bodyRev ?? 0)) return;
-    meta.put(write.meta); bodies.put(write.body); search.put(write.search);
+    const put = (value: Extract<PageWrite, { kind: "full" }> | null) => {
+      if (value) { meta.put(value.meta); bodies.put(value.body); search.put(value.search); }
+    };
+    if (!reconcile) { put(write); return; }
+    // Reconcile inside this transaction: a separate read would race another tab's save.
+    const body = bodies.get(write.id);
+    body.onsuccess = () => put(reconcile(current ? { meta: current, body: body.result as PageBody | undefined } : undefined));
   };
 }
 
-export function writeBatch(db: IDBDatabase, epoch: string, batch: WriteBatch): Promise<void> {
+export function writeBatch(db: IDBDatabase, epoch: string, batch: WriteBatch, reconcilers?: ReadonlyMap<string, PageReconciler>): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction([...STORES], "readwrite"), kv = tx.objectStore("kv");
     let stale = false;
@@ -59,9 +66,22 @@ export function writeBatch(db: IDBDatabase, epoch: string, batch: WriteBatch): P
     request.onsuccess = () => {
       // Read-write transactions serialize this check with wipes from every tab.
       if (request.result !== epoch) { stale = true; tx.abort(); return; }
-      for (const write of batch.pages) applyWrite(tx, write);
+      for (const write of batch.pages) applyWrite(tx, write, reconcilers?.get(write.id));
       for (const [key, value] of batch.kv) kv.put(value, key);
     };
+  });
+}
+
+export function readPages(db: IDBDatabase, ids: string[], wanted: string[], keys: string[]): Promise<{ metas: Map<string, PageMeta>; bodies: Map<string, PageBody>; kv: Record<string, unknown> }> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(["meta", "bodies", "kv"], "readonly");
+    const metas = new Map<string, PageMeta>(), bodies = new Map<string, PageBody>(), kv: Record<string, unknown> = {};
+    for (const id of ids) { const request = tx.objectStore("meta").get(id); request.onsuccess = () => { if (request.result) metas.set(id, request.result as PageMeta); }; }
+    for (const id of wanted) { const request = tx.objectStore("bodies").get(id); request.onsuccess = () => { if (request.result) bodies.set(id, request.result as PageBody); }; }
+    for (const key of keys) if (["rootOrder", "syncedBlocks", "reminders", "settings"].includes(key)) {
+      const request = tx.objectStore("kv").get(key); request.onsuccess = () => { if (request.result !== undefined) kv[key] = request.result; };
+    }
+    tx.oncomplete = () => resolve({ metas, bodies, kv }); tx.onabort = () => reject(tx.error);
   });
 }
 

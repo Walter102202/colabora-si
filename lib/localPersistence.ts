@@ -1,13 +1,14 @@
-import { useStore, type Store } from "@/lib/store";
+import { useStore, type Store, type RemotePatch } from "@/lib/store";
 import type { Page, WorkspaceState } from "@/lib/types";
 import { create } from "zustand";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { applyingExternal, isApplyingExternal } from "@/lib/externalApply";
-import { isShell, joinPage, overlayMeta, splitPage } from "@/lib/pageShell";
-import { claimWorkspace, countRecords, LOCAL_DB, openLocalDb, readBodies, readWorkspace, wipeLocalDb, writeBatch, type PageWrite, type StoredWorkspace } from "@/lib/localDb";
+import { isShell, joinPage, overlayMeta, shellFromMeta, splitPage } from "@/lib/pageShell";
+import { claimWorkspace, countRecords, LOCAL_DB, openLocalDb, readBodies, readPages, readWorkspace, StaleEpochError, writeBatch, wipeLocalDb, type PageReconciler, type PageWrite, type StoredWorkspace } from "@/lib/localDb";
 import { searchRecord } from "@/lib/search";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { mark, pageDataSizes, recordHydration } from "@/lib/metrics";
+import { applyOps, diffPageToOps } from "@/lib/pageOps";
 
 const WRITE_DELAY_MS = 300, WRITE_CHUNK = 200, MAX_RETRY_MS = 30_000;
 const KV_KEYS = ["rootOrder", "expanded", "syncedBlocks", "reminders", "settings"] as const;
@@ -15,10 +16,13 @@ let db: IDBDatabase | null = null, epoch = "", generation = 0;
 let unsubscribe: (() => void) | null = null, removeListeners: (() => void) | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null, flushing: Promise<void> | null = null, retryMs = 1000;
 const dirtyPages = new Map<string, Page | null>(), remotePages = new Set<string>(), dirtyKv = new Map<string, unknown>();
+const TAB = crypto.randomUUID(), ACTIVE_EDIT_MS = 2000;
+const writtenBase = new Map<string, Page>(), lastEdit = new Map<string, number>(), peerTimers = new Map<string, ReturnType<typeof setTimeout>>();
+let channel: BroadcastChannel | null = null, applyingPeer = false;
 
 export function diskAvailable(): boolean { return db !== null; }
 export function hasPendingLocalWrites(): boolean { return dirtyPages.size > 0 || dirtyKv.size > 0 || flushing !== null; }
-export function fullWrite(page: Page, remote = false): PageWrite {
+export function fullWrite(page: Page, remote = false): Extract<PageWrite, { kind: "full" }> {
   return { kind: "full", id: page.id, ...splitPage(page), search: searchRecord(page, useStore.getState().syncedBlocks ?? {}), remote };
 }
 
@@ -34,11 +38,16 @@ function markPage(id: string, page: Page | null): void {
   schedule();
 }
 function onStoreChange(state: Store, prev: Store): void {
+  if (applyingPeer) return;
   if (state.pages !== prev.pages) {
     for (const id in state.pages) {
       const before = prev.pages[id], after = state.pages[id];
       if (before === after) continue;
       if (before && isShell(before) !== isShell(after) && isApplyingExternal()) continue;
+      if (!isApplyingExternal()) {
+        lastEdit.set(id, Date.now());
+        if (before && !isShell(before) && !isShell(after) && !writtenBase.has(id)) writtenBase.set(id, before);
+      }
       remotePages.delete(id);
       markPage(id, after);
     }
@@ -48,6 +57,47 @@ function onStoreChange(state: Store, prev: Store): void {
   if (state.syncWorkspaceId !== prev.syncWorkspaceId || state.syncUserId !== prev.syncUserId) {
     dirtyKv.set("sync", { syncWorkspaceId: state.syncWorkspaceId, syncUserId: state.syncUserId }); schedule();
   }
+}
+
+function reapply(theirs: Page, base: Page, local: Page): Page {
+  if (JSON.stringify(theirs) === JSON.stringify(base)) return local;
+  const ops = diffPageToOps(base, local);
+  if (!ops.length) return theirs;
+  return { ...applyOps(theirs, ops, { by: "human", id: useStore.getState().syncUserId ?? "local", at: local.updatedAt }).page, updatedAt: Math.max(theirs.updatedAt, local.updatedAt) };
+}
+function applyPeer(patch: RemotePatch): void {
+  applyingPeer = true;
+  try { applyingExternal(() => useStore.getState().applyLocalPages(patch)); }
+  finally { applyingPeer = false; }
+}
+function reloadLocalCopy(): void { stopWriter(); if (typeof location !== "undefined") location.reload(); }
+function announce(message: { type: "changed"; pages: string[]; kv: string[] } | { type: "cleared" }): void {
+  try { channel?.postMessage({ ...message, tab: TAB }); } catch { /* A disabled channel does not prevent local saving. */ }
+}
+function deferPeer(id: string, delay: number): void {
+  if (peerTimers.has(id)) return;
+  peerTimers.set(id, setTimeout(() => {
+    peerTimers.delete(id); void applyPeerChange([id], []).catch(() => {});
+  }, delay));
+}
+async function applyPeerChange(ids: string[], keys: string[]): Promise<void> {
+  if (!db) return;
+  const token = generation, wanted = ids.filter((id) => !isShell(useStore.getState().pages[id]));
+  const stored = await readPages(db, ids, wanted, keys);
+  if (token !== generation) return;
+  const state = useStore.getState(), pages: Record<string, Page | null> = {};
+  for (const id of ids) {
+    if (foreignPageIds.has(id)) continue;
+    const remaining = ACTIVE_EDIT_MS - (Date.now() - (lastEdit.get(id) ?? -Infinity));
+    if (remaining > 0 || flushing) { deferPeer(id, Math.max(50, remaining)); continue; }
+    const meta = stored.metas.get(id), current = state.pages[id], body = stored.bodies.get(id);
+    if (!meta) { pages[id] = null; dirtyPages.delete(id); writtenBase.delete(id); continue; }
+    if (!body) { pages[id] = shellFromMeta(meta); continue; }
+    const theirs = joinPage(meta, body), base = writtenBase.get(id);
+    pages[id] = base && current && !isShell(current) ? reapply(theirs, base, current) : theirs;
+    if (base) { writtenBase.set(id, theirs); markPage(id, pages[id]); }
+  }
+  applyPeer({ pages, ...stored.kv } as RemotePatch);
 }
 
 function pageWrite(id: string, page: Page | null, remote: boolean): PageWrite {
@@ -64,17 +114,42 @@ async function writeNow(token: number, connection: IDBDatabase, currentEpoch: st
   while (token === generation && (dirtyPages.size || dirtyKv.size)) {
     const pages = [...dirtyPages].slice(0, WRITE_CHUNK), kv = [...dirtyKv];
     const remote = new Set(pages.filter(([id]) => remotePages.has(id)).map(([id]) => id));
-    for (const [id] of pages) { dirtyPages.delete(id); remotePages.delete(id); }
+    const bases = new Map(pages.flatMap(([id]) => writtenBase.has(id) ? [[id, writtenBase.get(id)!] as const] : []));
+    const reconciled = new Map<string, Page | null>(), reconcilers = new Map<string, PageReconciler>();
+    for (const [id, page] of pages) {
+      const base = bases.get(id);
+      if (base && page && !isShell(page) && !remote.has(id)) reconcilers.set(id, (stored) => {
+        if (!stored) { reconciled.set(id, null); return null; }
+        const merged = stored.body ? reapply(joinPage(stored.meta, stored.body), base, page) : page;
+        reconciled.set(id, merged); return fullWrite(merged);
+      });
+      dirtyPages.delete(id); remotePages.delete(id); writtenBase.delete(id);
+    }
     dirtyKv.clear();
     try {
-      await writeBatch(connection, currentEpoch, { pages: pages.filter(([id]) => !foreignPageIds.has(id)).map(([id, page]) => pageWrite(id, page, remote.has(id))), kv });
-      if (token === generation) retryMs = 1000;
+      await writeBatch(connection, currentEpoch, { pages: pages.filter(([id]) => !foreignPageIds.has(id)).map(([id, page]) => pageWrite(id, page, remote.has(id))), kv }, reconcilers);
+      if (token === generation) {
+        retryMs = 1000;
+        const patch: Record<string, Page | null> = {}, snapshots = new Map(pages), current = useStore.getState().pages;
+        for (const [id, committed] of reconciled) {
+          const snapshot = snapshots.get(id), now = current[id];
+          if (!committed) { patch[id] = null; dirtyPages.delete(id); writtenBase.delete(id); continue; }
+          if (!now || !snapshot || isShell(now) || remotePages.has(id)) continue;
+          const next = now === snapshot ? committed : reapply(committed, snapshot, now);
+          if (next !== now) patch[id] = next;
+          if (dirtyPages.has(id)) { dirtyPages.set(id, next); writtenBase.set(id, committed); }
+        }
+        if (Object.keys(patch).length) applyPeer({ pages: patch });
+        announce({ type: "changed", pages: pages.map(([id]) => id), kv: kv.map(([key]) => key) });
+      }
     } catch (error) {
       if (token === generation) {
+        if (error instanceof StaleEpochError) { reloadLocalCopy(); throw error; }
         for (const [id, page] of pages) if (!foreignPageIds.has(id)) {
           const newer = dirtyPages.get(id);
           if (!dirtyPages.has(id)) { dirtyPages.set(id, page); if (remote.has(id)) remotePages.add(id); }
           else if (page && !isShell(page) && newer && isShell(newer)) dirtyPages.set(id, overlayMeta(page, newer));
+          const base = bases.get(id); if (base) writtenBase.set(id, base);
         }
         for (const [key, value] of kv) if (!dirtyKv.has(key)) dirtyKv.set(key, value);
         if (timer !== null) clearTimeout(timer);
@@ -109,12 +184,28 @@ function stopWriter(): void {
   if (timer !== null) clearTimeout(timer);
   timer = null; flushing = null; db = null; epoch = ""; retryMs = 1000;
   dirtyPages.clear(); remotePages.clear(); dirtyKv.clear();
+  writtenBase.clear(); lastEdit.clear();
+  for (const timer of peerTimers.values()) clearTimeout(timer);
+  peerTimers.clear(); channel?.close(); channel = null;
 }
 
 export function startWriter(connection: IDBDatabase, currentEpoch: string): () => void {
   stopWriter(); db = connection; epoch = currentEpoch;
   const token = generation;
   unsubscribe = useStore.subscribe(onStoreChange);
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      channel = new BroadcastChannel("colabora-local");
+      channel.onmessage = (event: MessageEvent) => {
+        const message = event.data as { type?: string; tab?: string; pages?: unknown; kv?: unknown } | null;
+        if (!message || message.tab === TAB) return;
+        if (message.type === "cleared") { reloadLocalCopy(); return; }
+        if (message.type === "changed" && Array.isArray(message.pages) && Array.isArray(message.kv)) {
+          void applyPeerChange(message.pages.filter((id): id is string => typeof id === "string"), message.kv.filter((key): key is string => typeof key === "string")).catch(() => {});
+        }
+      };
+    }
+  } catch { channel = null; }
   if (typeof window !== "undefined") {
     const flush = () => { void flushLocalWrites().catch(() => {}); };
     const hidden = () => { if (document.visibilityState === "hidden") flush(); };
@@ -219,7 +310,7 @@ async function writeCurrentState(connection: IDBDatabase, currentEpoch: string):
 
 export async function clearLocalPages(): Promise<void> {
   try { localStorage.setItem(CLEAR_PENDING_KEY, "1"); } catch { /* Still clear IndexedDB if localStorage is blocked. */ }
-  const connection = db;
+  const connection = db, previousChannel = channel; channel = null;
   // Invalidates in-flight continuations as well as queued writes before any await.
   stopWriter(); removeLegacy();
   let cleared = false;
@@ -235,6 +326,8 @@ export async function clearLocalPages(): Promise<void> {
     cleared = await deleteLocalDb().then(() => true, () => false);
     startMemoryMode(); setHealth("unavailable");
   }
+  try { previousChannel?.postMessage({ type: "cleared", tab: TAB }); } catch { /* Epoch checks still reject old writers. */ }
+  finally { previousChannel?.close(); }
   if (cleared) unmarkClearPending();
 }
 

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useStore } from "@/lib/store";
-import { isApplyingRemote } from "@/lib/sync";
+import { isApplyingExternal } from "@/lib/externalApply";
 import { foreignPageIds } from "@/lib/foreignPages";
 
 export const SNAPSHOT_IDLE_MS = 30_000;
@@ -37,7 +37,7 @@ export function useIdleSnapshot(pageId: string): void {
     if (foreignPageIds.has(pageId)) return;
     const timer = new IdleSnapshotTimer(() => useStore.getState().saveVersion(pageId, true));
     const unsubscribe = useStore.subscribe((state, prev) => {
-      if (isApplyingRemote() || foreignPageIds.has(pageId)) return;
+      if (isApplyingExternal() || foreignPageIds.has(pageId)) return;
       const a = state.pages[pageId], b = prev.pages[pageId];
       if (a && b && a !== b && (a.blocks !== b.blocks || a.title !== b.title || a.database !== b.database)) timer.edited();
     });

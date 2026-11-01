@@ -21,6 +21,7 @@ interface Actions {
   // sincronización (§II.7)
   setSyncWorkspaceId: (id: string | null, userId?: string | null) => void;
   applyRemotePages: (patch: RemotePatch) => void;
+  applyLocalPages: (patch: RemotePatch) => void;
 
   // páginas
   createPage: (parentId?: string | null, patch?: Partial<Page>) => string;
@@ -142,6 +143,7 @@ export const useStore = create<Store>()((set, get) => {
   return {
     ...seedWorkspace(), expanded: {}, syncWorkspaceId: null, syncUserId: null,
     setSyncWorkspaceId: (id, userId = null) => set({ syncWorkspaceId: id, syncUserId: userId }),
+    applyLocalPages: (patch) => set((state) => applyRemotePatch(state, patch)),
     applyRemotePages: (patch) => set((state) => applyRemotePatch(state, {
       ...patch,
       ...(patch.pages ? { pages: Object.fromEntries(Object.entries(patch.pages).map(([id, page]) => [id, page ? cleanPage(page) : null])) } : {}),

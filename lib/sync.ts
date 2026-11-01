@@ -10,6 +10,7 @@ import { getSupabase } from "@/lib/supabase";
 import { useStore, type RemotePatch, type Store } from "@/lib/store";
 import { clearHistory, pauseHistory, resumeHistory, rebaseHistory } from "@/lib/history";
 import { foreignPageIds } from "@/lib/foreignPages";
+import { applyingExternal, isApplyingExternal } from "@/lib/externalApply";
 import { DEFAULT_SETTINGS } from "@/lib/factories";
 import { savePageRecovery, useBlockConflicts, type BlockConflict } from "@/lib/syncConflicts";
 
@@ -124,7 +125,7 @@ export class PageSyncEngine {
 let fetchedPages = 0, fetchBytes = 0;
 let started = false, ready = false, currentUserId: string | null = null, wsId: string | null = null, generation = 0;
 let queue: IndexedDbQueue | null = null, engine: PageSyncEngine | null = null, channel: RealtimeChannel | null = null;
-let unsubStore: (() => void) | null = null, last: Store | null = null, applyingRemote = false, pushing = false, dirty = false, attempts = 0;
+let unsubStore: (() => void) | null = null, last: Store | null = null, pushing = false, dirty = false, attempts = 0;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null, retryTimer: ReturnType<typeof setTimeout> | null = null, deferTimer: ReturnType<typeof setTimeout> | null = null;
 let syncedRequest = 0;
 let syncedRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -132,11 +133,9 @@ let lastWorkspaceRevision = 0, pendingRetryUser: User | null = null;
 const known = new Set<string>(), lastEditAt = new Map<string, number>(), recentlyDeleted = new Map<string, number>(), deferred = new Map<string, PageRow>();
 const cursors: Partial<Record<PullFlow, string>> = {};
 function advance(flow: PullFlow, iso: string): void { if (!cursors[flow] || Date.parse(iso) > Date.parse(cursors[flow]!)) cursors[flow] = iso; }
-export function isApplyingRemote(): boolean { return applyingRemote; }
+export const isApplyingRemote = isApplyingExternal;
 function applyRemote(patch: RemotePatch, rebase = true): void {
-  applyingRemote = true; pauseHistory();
-  try { useStore.getState().applyRemotePages(patch); }
-  finally { resumeHistory(); applyingRemote = false; }
+  applyingExternal(() => useStore.getState().applyRemotePages(patch));
   if (rebase) rebaseHistory(patch); last = useStore.getState();
 }
 function scheduleFlush(ms = DEBOUNCE_MS): void {
@@ -153,7 +152,7 @@ function workspaceDiff(before: WorkspaceState, after: WorkspaceState): Workspace
   return ops;
 }
 function onStoreChange(state: Store): void {
-  if (applyingRemote || !last || !queue) { last = state; return; }
+  if (isApplyingExternal() || !last || !queue) { last = state; return; }
   const before = last; last = state;
   if (before.pages !== state.pages) for (const id of new Set([...Object.keys(before.pages), ...Object.keys(state.pages)])) {
     if (foreignPageIds.has(id) || before.pages[id] === state.pages[id]) continue;
@@ -465,7 +464,7 @@ export function stopSync(): void {
   debounceTimer = retryTimer = deferTimer = null; unsubStore?.(); unsubStore = null;
   if (channel) void getSupabase()?.removeChannel(channel); channel = null;
   if (queue) void queue.close().catch(() => {}); queue = null; engine = null;
-  last = null; pushing = dirty = applyingRemote = false; attempts = lastWorkspaceRevision = 0;
+  last = null; pushing = dirty = false; attempts = lastWorkspaceRevision = 0;
   fetchedPages = fetchBytes = 0;
   known.clear(); for (const key of Object.keys(cursors)) delete cursors[key as PullFlow]; lastEditAt.clear(); recentlyDeleted.clear(); deferred.clear(); setStatus("idle");
 }
