@@ -84,6 +84,8 @@ it("ignores older remote bodies but accepts a local replacement", async () => {
   expect((await readWorkspace(db)).metas[0].bodyRev).toBe(5);
   await writeBatch(db, epoch, { pages: [full("p", 2)], kv: [] });
   expect((await readWorkspace(db)).metas[0].bodyRev).toBe(2);
+  // A local edit of an offline stale body must not erase knowledge of newer server data.
+  expect((await readWorkspace(db)).metas[0].revision).toBe(5);
 });
 
 it("deletes all three page records and writes kv in the same batch", async () => {

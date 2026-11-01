@@ -47,7 +47,11 @@ function applyWrite(tx: IDBTransaction, write: PageWrite, reconcile?: PageReconc
     }
     if (write.remote && current?.bodyRev != null && current.bodyRev > (write.meta.bodyRev ?? 0)) return;
     const put = (value: Extract<PageWrite, { kind: "full" }> | null) => {
-      if (value) { meta.put(value.meta); bodies.put(value.body); search.put(value.search); }
+      if (value) {
+        // Editing a stale offline body must not erase knowledge of newer server data.
+        const revision = Math.max(current?.revision ?? 0, value.meta.revision ?? 0);
+        meta.put({ ...value.meta, ...(revision ? { revision } : {}) }); bodies.put(value.body); search.put(value.search);
+      }
     };
     if (!reconcile) { put(write); return; }
     // Reconcile inside this transaction: a separate read would race another tab's save.
