@@ -172,7 +172,7 @@ const getTask: ToolDef = {
       text: `Task "${String(t.task.title || t.task.id)}": ${String(t.task.state)}, brief v${String(t.task.brief_version)}, ` +
         `${plural(t.artifacts.length, 'artifact')}, ${plural(t.approvals_pending.length, 'pending approval')}.` +
         (pending.length ? ` ${plural(pending.length, 'human subtask')} to adopt; keep each chosen Worker.` : ''),
-      structured: { ...t, pending_rows: pending },
+      structured: { pending_rows: pending, ...t },
     };
   },
 };

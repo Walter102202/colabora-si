@@ -8,6 +8,11 @@ export const WORLD_TOOLS = [
         "after": {
           "type": "string"
         },
+        "job_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Follow only the job returned by join_job and its subtasks. Omit to follow all your tasks."
+        },
         "timeout_s": {
           "type": "integer",
           "minimum": 0,
