@@ -10,7 +10,8 @@ How to ship a change and operate https://colabora.si. The rules behind it are in
 | Postgres, Auth, Storage, Realtime, Edge Functions (`supabase/`) | Hosted Supabase project `<project-ref>` | By hand, from a clean checkout of `main` (below) |
 | Edge Function secrets | Supabase project settings | `supabase secrets set`, never a file in git |
 | Scheduled ticks (dispatch, reminders, channel notices) | pg_cron inside the hosted database | The migrations, plus the Vault secrets set once by hand |
-| Trama (`agent/fleet.mjs`) and the reviewer (`agent/`) | A host the maintainer runs | The maintainer, outside this repository |
+| Trama (`agent/fleet.mjs`) | Vercel daemon `trama` in `vercel.json`, secrets in the Vercel project | Vercel, on every push to `main` |
+| Other agents (`agent/index.mjs`) | A host the maintainer runs | The maintainer, outside this repository |
 | CI job `check` | GitHub Actions, `.github/workflows/ci.yml` | Every push and pull request |
 
 The `deploy-backend` job in CI has no secrets and skips its steps: it deploys nothing.
@@ -18,7 +19,7 @@ The `deploy-backend` job in CI has no secrets and skips its steps: it deploys no
 ## Ship a change
 
 1. Branch from `main` with the owner prefix (`a/`, `b/`, `infra/`), commit with a scope, push with `git push -u origin <branch>`.
-2. Agents stop here and report. A person opens the pull request and waits for `check` (about 4 minutes when green).
+2. Agents stop here and report. The maintainer opens the pull request, or tells an agent to, and waits for `check` (about 4 minutes when green).
 3. Merge only when `check` is green. Vercel publishes the web app within minutes.
 4. If the change touched `supabase/migrations/` or `supabase/functions/`, deploy the backend now: until then the web app is ahead of its backend.
 
@@ -82,7 +83,7 @@ git switch --detach <good-sha> && npx supabase@2.122.0 functions deploy --projec
 ```
 
 - **Database schema.** Migrations only go forward. Write a new numbered migration that undoes the change, merge it through a pull request and deploy. Never edit or delete a migration that is on `main`.
-- **Data.** Supabase dashboard → Database → Backups restores the whole database to a daily backup. For a few tables, load the dump taken before the push into a local stack and copy the rows back by hand.
+- **Data.** The dump taken before the push is the restore point: load it into a local stack and copy the rows back by hand. Daily backups in the Supabase dashboard exist only on paid plans.
 - **A merge.** `git revert -m 1 <merge-sha>` on a branch, pull request, merge, deploy if the backend changed.
 
 ## When something breaks
@@ -91,8 +92,8 @@ git switch --detach <good-sha> && npx supabase@2.122.0 functions deploy --projec
 2. Broken right after a merge, backend not yet deployed: finish the deploy. If you cannot, promote the previous Vercel deployment.
 3. Broken right after a deploy: roll back the piece that changed (above), then fix forward through a pull request.
 4. `check` red on `main`: `main` is not deployable. Revert the merge or fix forward; do not deploy until it is green.
-5. A secret leaked: rotate it where it lives (Supabase secrets, Vercel settings, GitHub), then redeploy. Rotating `AGENT_LOGIN_PEPPER` breaks every agent login until each one is rotated from Settings → Agents.
-6. An agent misbehaves: pause it, or all agents, from Settings → Agents, then revoke its tokens. Every run keeps its activity log and can be reverted from the task panel.
+5. A secret leaked: rotate it where it lives (Supabase secrets, Vercel settings, GitHub), then redeploy. Rotating `AGENT_LOGIN_PEPPER` breaks every agent login until each one is rotated with the `rotate_login` action of `agent-admin`.
+6. An agent misbehaves: pause it in Settings → Agents, or pause all of them with the RPC `pause_workspace_agents`, then revoke its tokens. Every run keeps its activity log and can be reverted from the task panel.
 7. Write what happened and what fixed it in the pull request that closes the incident.
 
 ## The one emergency exception
