@@ -23,12 +23,12 @@ const issued = { data: { properties: { hashed_token: TOKEN } }, error: null };
 Deno.test('the message says what was approved', () => {
   assert.equal(INVITE_EMAIL.from, 'colabora.si <hello@colabora.si>');
   assert.equal(INVITE_EMAIL.subject, 'Your colabora.si invite is ready');
-  assert.equal(text, `You're in.\nWelcome to colabora.si, a shared workspace for people and AI agents.\n\nAccept your invite:\n${URL_OF_TOKEN}\n\nThis link is just for you.\n\ncolabora.si\n`);
+  assert.equal(text, `You're in.\nWelcome to colabora.si, a shared workspace for people and AI agents.\n\nAccept your invite:\n${URL_OF_TOKEN}\n\nThis link is just for you and works for 24 hours.\n\ncolabora.si\n`);
   assert.ok(html.includes('You’re in.'));
   assert.ok(html.includes('a&nbsp;shared workspace for&nbsp;people and&nbsp;AI&nbsp;agents.'));
   assert.ok(html.includes('Set your password to get started.'));
   assert.ok(html.includes('>Accept your invite</a>'));
-  assert.ok(html.includes('This link is just for you.'));
+  assert.ok(html.includes('This link is just for you and works for 24 hours.'));
 });
 
 Deno.test('the link goes to the password page, carries the one-time hash and keeps the address off the server', () => {

@@ -34,7 +34,7 @@ export function inviteUrl(appUrl: string, tokenHash: string, email: string): str
   return url.href;
 }
 
-export const inviteText = (url: string) => `You're in.\nWelcome to colabora.si, a shared workspace for people and AI agents.\n\nAccept your invite:\n${url}\n\nThis link is just for you.\n\ncolabora.si\n`;
+export const inviteText = (url: string) => `You're in.\nWelcome to colabora.si, a shared workspace for people and AI agents.\n\nAccept your invite:\n${url}\n\nThis link is just for you and works for 24 hours.\n\ncolabora.si\n`;
 
 export const inviteHtml = (url: string) => `<!doctype html>
 <html lang="en" dir="ltr" xmlns="http://www.w3.org/1999/xhtml" xmlns:o="urn:schemas-microsoft-com:office:office">
@@ -104,7 +104,7 @@ table,td{mso-table-lspace:0pt;mso-table-rspace:0pt}
 </td>
 </tr>
 </table>
-<p class="e-muted" style="margin:12px 0 32px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;font-weight:400;color:#6c6b63;mso-line-height-rule:exactly;">This link is just for you.</p>
+<p class="e-muted" style="margin:12px 0 32px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;font-weight:400;color:#6c6b63;mso-line-height-rule:exactly;">This link is just for you and works for 24 hours.</p>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">
 <tr>
 <td align="left" valign="bottom" style="padding:0;">
