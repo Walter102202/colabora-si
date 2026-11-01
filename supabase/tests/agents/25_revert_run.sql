@@ -2,6 +2,10 @@ begin;
 select plan(27);
 
 select tests.fixture() as f \gset
+-- These cases exercise trusted preapprovals while the workspace is running.
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.set_workspace_autonomy((:'f'::jsonb->>'ws')::uuid, 'balanced');
+select tests.reset_role();
 select tests.make_page((:'f'::jsonb->>'ws')::uuid, 'page_A2', 'page_A', jsonb_build_object('id', 'page_A2', 'title', 'page_A2', 'parentId', 'page_A',
   'blocks', jsonb_build_array(jsonb_build_object('id', 'blk_todo', 'type', 'todo', 'html', 'Call the supplier', 'checked', false, 'indent', 0, 'rev', 1))));
 -- One row with 201 cells exercises several inverse operations per selected item.
