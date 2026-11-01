@@ -30,7 +30,7 @@ npx supabase test db supabase/tests/agents/07_approvals.sql                     
 - Card without a chat host: `http://127.0.0.1:3000/apps/card.html?mock=<scenario>` (scenarios in `components/agents/card/mock.ts`).
 - Three checks run only against a served local stack and are not part of `npm test`: `node tests/agents/mcp-smoke.mjs` (needs `MCP_URL`, `AGENT_PAT`, `SMOKE_PAGE_ID`; CI runs it with the seed agent), `tests/agents/sql-concurrency.test.ts` (skips unless `A_DB_URL` is set), and `node tests/agents/loop-e2e.mjs` (reads the local URL/public key from `.env.local`, uses all four seed agents and the seed owner). The loop script refuses hosted endpoints, uses only this checkout's configured database container and performs no real merge, deployment or message to Codex. The seed credentials work only with the local pepper; never print them.
 - `scripts/check-ownership.mjs` counts untracked files too, and skips (exit 0) on `main` or on any branch without an `a/`, `b/` or `infra/` prefix. CI runs it on every push with `--base origin/main`.
-- `main` deploys: Vercel publishes the web app on every push to `main` without waiting for CI; the backend is deployed by hand from a clean checkout of `main` (`RUNBOOK.md`). The `deploy-backend` job has no secrets and skips its steps. The `check` job also runs `tests/agents/mcp-smoke.mjs` against the Edge Functions that `supabase start` serves.
+- `main` deploys: Vercel publishes the web app on every push to `main` without waiting for CI; the backend is deployed by hand from a clean checkout of `main` (`RUNBOOK.md`). The `check` job also runs `tests/agents/mcp-smoke.mjs` against the Edge Functions that `supabase start` serves.
 
 ## Architecture
 

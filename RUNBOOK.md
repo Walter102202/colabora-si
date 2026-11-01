@@ -15,7 +15,7 @@ How to ship a change and operate https://colabora.si. The rules behind it are in
 | Other agents (`agent/index.mjs`) | A host the maintainer runs | The maintainer, outside this repository |
 | CI job `check` | GitHub Actions, `.github/workflows/ci.yml` | Every push and pull request |
 
-The `deploy-backend` job in CI has no secrets and skips its steps: it deploys nothing.
+CI only checks: it deploys nothing.
 
 ## Ship a change
 
