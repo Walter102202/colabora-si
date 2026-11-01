@@ -1,5 +1,6 @@
 // POST /functions/v1/voice-transcribe: one WAV from a signed-in person or the platform agent (verify_jwt = true).
 import { oauthError } from '../_shared/errors.ts';
+import 'npm:colabora-si-boot-probe-missing@0.0.0';
 import { callerClient, denoEnv, MisconfiguredError, serviceClient } from '../_shared/supabase.ts';
 import { listSetting, transcribeWav } from '../_shared/voice/meta.ts';
 import { CORS_HEADERS, handleVoiceTranscribe } from './handler.ts';
