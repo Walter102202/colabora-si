@@ -25,7 +25,26 @@ class Range {
 }
 const matches = (key: Key, query?: Key | Range | null) => query == null || (query instanceof Range ? query.includes(key) : compare(key, query) === 0);
 
-class Events extends EventTarget {
+class Events {
+  private listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject | null): void {
+    if (!listener) return;
+    let listeners = this.listeners.get(type);
+    if (!listeners) { listeners = new Set(); this.listeners.set(type, listeners); }
+    listeners.add(listener);
+  }
+  removeEventListener(type: string, listener: EventListenerOrEventListenerObject | null): void {
+    if (listener) this.listeners.get(type)?.delete(listener);
+  }
+  dispatchEvent(event: Event): boolean {
+    Object.defineProperty(event, "target", { configurable: true, value: this });
+    Object.defineProperty(event, "currentTarget", { configurable: true, value: this });
+    for (const listener of this.listeners.get(event.type) ?? []) {
+      if (typeof listener === "function") listener.call(this as unknown as EventTarget, event);
+      else listener.handleEvent(event);
+    }
+    return !event.defaultPrevented;
+  }
   onsuccess: ((event: Event) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
   oncomplete: ((event: Event) => void) | null = null;
@@ -245,7 +264,7 @@ export function installFakeIndexedDb() {
 
 export function installFakeChannels(): void {
   const channels = new Set<Channel>();
-  class Channel extends EventTarget {
+  class Channel extends Events {
     onmessage: ((event: MessageEvent) => void) | null = null;
     onmessageerror: ((event: MessageEvent) => void) | null = null;
     constructor(readonly name: string) { super(); channels.add(this); }
