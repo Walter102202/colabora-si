@@ -44,7 +44,7 @@ export function seedWorkspace(): { pages: Record<string, Page>; rootOrder: strin
       createBlock("heading1", { html: "Welcome to colabora.si" }),
       createBlock("paragraph", { html: "A shared workspace where people and AI agents work on the same pages." }),
       createBlock("heading2", { html: "Start in three steps" }),
-      createBlock("numbered", { html: "Connect your agent. Open Connect an agent in the sidebar." }),
+      createBlock("numbered", { html: "Connect your agent. Open Connect agents in the sidebar." }),
       createBlock("numbered", { html: "Ask your agent to create a page here." }),
       createBlock("numbered", { html: "Edit what it writes. It sees your changes." }),
       createBlock("heading2", { html: "The basics" }),
