@@ -34,7 +34,7 @@ it("migrates every field atomically, retains recovery and old storage for one bo
 
 it("falls back to the intact legacy copy after an atomic failure and retries next boot", async () => {
   const initial = save(); fake.failNext("QuotaExceededError");
-  let { storage, store } = await modules(); await storage.hydrateWorkspace();
+  const { store } = await modules(); let { storage } = await modules(); await storage.hydrateWorkspace();
   expect(storage.useLocalHealth.getState().health).toBe("unavailable"); expect(storage.diskAvailable()).toBe(false);
   expect(store.getState().pages).toEqual(initial.pages);
   for (const name of ["meta", "bodies", "search", "kv"]) expect(fake.dump(name)).toEqual([]);
@@ -89,7 +89,7 @@ it("two migrating tabs commit a single complete copy", async () => {
 it("rejects a migration count mismatch and permits a clean retry from retained legacy data", async () => {
   const initial = save(), adapter = await import("@/lib/localDb");
   const count = vi.spyOn(adapter, "countRecords").mockResolvedValueOnce({ meta: 49, bodies: 50 });
-  let { storage, store } = await modules(); await storage.hydrateWorkspace(); count.mockRestore();
+  const { store } = await modules(); let { storage } = await modules(); await storage.hydrateWorkspace(); count.mockRestore();
   expect(storage.useLocalHealth.getState().health).toBe("unavailable");
   expect(store.getState().pages).toEqual(initial.pages); expect(localStorage.getItem("colabora-workspace")).not.toBeNull();
   for (const name of ["meta", "bodies", "search", "kv"]) expect(fake.dump(name)).toEqual([]);
