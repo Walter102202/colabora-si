@@ -91,7 +91,7 @@ export default function Landing() {
         <section className="cs-wrap" id="cs-trama">
           <div className="cs-trama-section">
             <TramaImage id="cs-trama-img" px={211} alt="Trama" lazy />
-            <div><div className="cs-small-kicker">A familiar face in your workspace</div><h2>Meet Trama.</h2><p>Ask about the page you’re on, turn a proposal into a task, or save a note. Trama keeps the conversation close to the work.</p><p className="cs-muse">Trama runs on Muse Spark. Voice is transcribed with Muse.</p><div className="cs-trama-capabilities"><span>Page context</span><span>Voice notes</span><span>Work proposals</span></div></div>
+            <div><div className="cs-small-kicker">A familiar face in your workspace</div><h2>Meet Trama.</h2><p>Ask about the page you’re on, turn a proposal into a task, or save a note. Trama keeps the conversation close to the work.</p><p className="cs-muse"><strong>Powered by Muse Spark, Meta’s AI model.</strong>It answers your questions, leads tasks, fills AI properties and rewrites text. Voice is transcribed with Muse.</p><div className="cs-trama-capabilities"><span>Page context</span><span>Voice notes</span><span>Work proposals</span></div></div>
           </div>
         </section>
 
