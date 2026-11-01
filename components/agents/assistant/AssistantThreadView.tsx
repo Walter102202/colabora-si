@@ -27,15 +27,20 @@ export interface AssistantThreadViewProps {
   onRetrySend: (() => void) | null;
   onUndo: (noteId: string) => void;
   onOpenNotes: () => void;
+  onNewConversation?: () => void;
+  resetting?: boolean;
 }
 
 // Pure view of the conversation with the workspace agent. P12 mounts it in its own surface.
-export function AssistantThreadView({ messages, draft, reviewing, busy = false, error, voice, avatar, empty, onPropose, onSettleAgent, hasTaskDatabase, agentProposalError, proposing, onDraft, onPaste, onSend, onRetrySend, onUndo, onOpenNotes }: AssistantThreadViewProps) {
+export function AssistantThreadView({ messages, draft, reviewing, busy = false, error, voice, avatar, empty, onPropose, onSettleAgent, hasTaskDatabase, agentProposalError, proposing, onDraft, onPaste, onSend, onRetrySend, onUndo, onOpenNotes, onNewConversation, resetting }: AssistantThreadViewProps) {
   return (
     <div className="flex min-h-0 h-96 max-h-[60vh] w-full flex-col gap-2 text-sm">
       <div className="flex items-center justify-between gap-2 px-1">
         <span className="flex items-center gap-2 font-medium">{avatar}Trama</span>
-        <button type="button" className="text-xs text-text-secondary underline" onClick={onOpenNotes}>Open notes</button>
+        <span className="flex gap-3">
+          {onNewConversation && messages.length > 0 && <button type="button" className="text-xs text-text-secondary underline disabled:opacity-50" disabled={resetting} onClick={onNewConversation}>New conversation</button>}
+          <button type="button" className="text-xs text-text-secondary underline" onClick={onOpenNotes}>Open notes</button>
+        </span>
       </div>
       <ol className="min-h-0 flex-1 space-y-1 overflow-auto px-1" aria-label="Conversation with the agent" aria-live="polite">
         {messages.length === 0 && <li className="py-2 text-xs text-text-tertiary">{empty ?? "Write or talk to the agent. Say “save in notes” to keep something."}</li>}

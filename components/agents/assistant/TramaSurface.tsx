@@ -15,7 +15,7 @@ import { useLocation, useNavigate } from "react-router";
 import { AssistantThreadView } from "@/components/agents/assistant/AssistantThreadView";
 import { VoiceButton } from "@/components/agents/assistant/VoiceButton";
 import { getAgentClient } from "@/lib/agentClient";
-import { refreshAgentConversation, settleAgentProposal, type Draft, type PersonMessage, useAgentConversation } from "@/lib/agentConversation";
+import { currentThread, refreshAgentConversation, settleAgentProposal, type Draft, type PersonMessage, useAgentConversation } from "@/lib/agentConversation";
 import { agentInputFor } from "@/lib/agentDefaults";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { MAX_RECORDING_MS, type Recorder, startRecorder, uploadWav, voiceFailure, voiceReducer } from "@/lib/agentVoice";
@@ -31,6 +31,8 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const pageId = /^\/p\/([^/]+)/.exec(pathname)?.[1];
   const subscribe = useAgentConversation((s) => s.subscribe);
   const messages = useAgentConversation((s) => s.messages);
+  const thread = useMemo(() => currentThread(messages), [messages]);
+  const newConversation = useAgentConversation((s) => s.newConversation);
   const failed = useAgentConversation((s) => s.failed);
   const send = useAgentConversation((s) => s.send);
   const undo = useAgentConversation((s) => s.undo);
@@ -60,6 +62,9 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const suppressFocus = useRef(false);
   const [proposing, setProposing] = useState<string | null>(null);
   const [proposalError, setProposalError] = useState<string | null>(null);
+  const [resetting, setResetting] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const resetLock = useRef(false);
   const proposalLock = useRef(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const suggestions = tramaSuggestions({ kind: new URLSearchParams(search).has("task") ? "task" : currentPage?.database ? "database" : pageId ? "text" : "home", selection: selected, decisions: waiting });
@@ -140,6 +145,16 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
     return () => document.removeEventListener("keydown", escape);
   }, [open, revealed, close, hidePreview]);
   const fold = () => { setFolded(true); try { localStorage.setItem("trama-folded", "1"); } catch { /* optional preference */ } };
+  async function resetConversation() {
+    if (resetLock.current) return;
+    resetLock.current = true; setResetting(true);
+    try {
+      if (await newConversation()) {
+        setResetError(null); setProposalError(null);
+        ref.current?.querySelector("textarea")?.focus();
+      } else setResetError("Could not start a new conversation.");
+    } finally { resetLock.current = false; setResetting(false); }
+  }
   async function propose(message: PersonMessage) {
     const original = messages.find((m) => m.id === message.outcome?.message_id && m.direction === "in");
     if (!trama || !original || !message.outcome?.page_id || proposalLock.current) return;
@@ -326,8 +341,9 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
       className="fixed bottom-4 right-4 z-30 flex max-w-[calc(100vw-2rem)] flex-col items-end gap-2" data-trama-surface>
       {open && <section role="dialog" aria-label="Trama conversation" className="rounded-md border border-border bg-bg shadow-lg w-96 max-w-[calc(100vw-1.5rem)] max-h-[70vh] overflow-auto p-3">
         <div className="flex justify-end"><button type="button" aria-label="Close Trama" className="icon-button" onClick={close}><X size={16} /></button></div>
-        <AssistantThreadView messages={messages} draft={draft} busy={voiceBusy} reviewing={voice.phase === "review"}
-          error={proposalError ?? failed?.error ?? null} avatar={<TramaAvatar size={28} decorative />}
+        <AssistantThreadView messages={thread} draft={draft} busy={voiceBusy} reviewing={voice.phase === "review"}
+          onNewConversation={() => { void resetConversation(); }} resetting={resetting}
+          error={proposalError ?? resetError ?? failed?.error ?? null} avatar={<TramaAvatar size={28} decorative />}
           empty={<span className="flex flex-col items-center gap-3 py-5"><TramaAvatar size={96} decorative /><span>Connects, coordinates, stays with you.</span></span>}
           onRetrySend={failed ? () => void submit(failed) : null}
           onDraft={(text) => { setDraft(text); if (!text) { pasted.current = false; clip.current = null; if (voice.phase === "review") dispatch({ type: "reset" }); } }}

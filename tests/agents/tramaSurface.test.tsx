@@ -34,6 +34,33 @@ const mount = () => act(() => root.render(<MemoryRouter initialEntries={["/p/pag
 const button = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
 const originalCreateAgent = useAgentsStore.getState().createAgent;
 
+it("hides the old conversation and cut and shows the empty state", () => {
+  useAgentConversation.setState({ messages: [message({ body: "Old topic" }), message({ id: "cut", seq: 2, kind: "system", body: "New conversation", outcome: { kind: "conversation_reset" } })] });
+  mount(); act(() => button("Talk to Trama").click());
+  expect(document.body.textContent).not.toContain("Old topic");
+  expect(document.body.textContent).not.toContain("New conversation");
+  expect(document.body.textContent).toContain("Connects, coordinates, stays with you.");
+});
+
+it.each([true, false])("starts once, preserves the draft, and reports success=%s", async (success) => {
+  let finish!: (value: boolean) => void;
+  const reset = vi.fn(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+  useAgentConversation.setState({ messages: [message({})], newConversation: reset });
+  mount(); act(() => button("Talk to Trama").click());
+  const textarea = document.querySelector("textarea")!;
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "Unsent draft");
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const action = [...document.querySelectorAll("button")].find((b) => b.textContent === "New conversation")!;
+  act(() => { action.click(); action.click(); });
+  expect(reset).toHaveBeenCalledOnce();
+  await act(async () => finish(success));
+  expect(textarea.value).toBe("Unsent draft");
+  if (success) expect(document.activeElement).toBe(textarea);
+  else expect(document.querySelector('[role="alert"]')?.textContent).toContain("Could not start a new conversation.");
+});
+
 it("the store creates a chat agent without issuing a token", async () => {
   const api = await import("@/lib/agentClient");
   vi.spyOn(api, "getAgentClient").mockReturnValue({ functions: { invoke: vi.fn(async () => ({ data: { agent_id: "new" }, error: null })) } } as unknown as ReturnType<typeof api.getAgentClient>);
