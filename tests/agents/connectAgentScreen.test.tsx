@@ -49,7 +49,7 @@ it("chooses one setup action, copies exactly the visible message and changes bac
   expect(container.querySelectorAll('button[data-setup-action]')).toHaveLength(1);
   await act(async () => button("Copy setup message").click());
   expect(f.copy).toHaveBeenCalledExactlyOnceWith(message);
-  expect(container.querySelector('[role="status"]')?.textContent).toContain("Copied — paste into Claude Code");
+  expect([...container.querySelectorAll('[role="status"]')].some((status) => status.textContent?.includes("Copied — paste into Claude Code"))).toBe(true);
   await act(async () => button("Change agent").click());
   expect(container.querySelectorAll('button[aria-label^="Connect with "]')).toHaveLength(11);
 });

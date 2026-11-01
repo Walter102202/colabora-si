@@ -22,7 +22,8 @@ export function ConnectAgent() {
   const [ownName, setOwnName] = useState(""), [ownRole, setOwnRole] = useState<AgentRole>("worker");
   const [token, setToken] = useState<string | null>(null), [tokenVisible, setTokenVisible] = useState(true), [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null), [copiedFirst, setCopiedFirst] = useState(false), [now, setNow] = useState(Date.now);
-  const creatingRef = useRef(false), createdId = useRef<string | null>(null), progress = useRef({ step: "waiting", at: attempt?.startedAt ?? Date.now() });
+  const creatingRef = useRef(false), createdId = useRef<string | null>(null);
+  const [progress, setProgress] = useState(() => ({ step: "waiting", at: attempt?.startedAt ?? now }));
   const activeAttempt = attempt?.agent === agent ? attempt : null;
   const step = connectStep(activeAttempt ? { copied: true } : null, activeAttempt ? connection : null);
   const refresh = useCallback(async () => {
@@ -40,7 +41,8 @@ export function ConnectAgent() {
         const row = await refresh();
         if (cancelled) return;
         const next = connectStep({ copied: true }, row ?? null);
-        if (next !== progress.current.step) progress.current = { step: next, at: Date.now() };
+        const checkedAt = Date.now();
+        setProgress((previous) => previous.step === next ? previous : { step: next, at: checkedAt });
         setConnection(row ?? null); setError(null); setNow(Date.now());
       } catch { if (!cancelled) setError("We couldn’t check this connection. Try again."); }
       finally { pending = false; }
@@ -53,14 +55,14 @@ export function ConnectAgent() {
   const urls = mcpUrls(), catalog = createAgentConnectCatalog(urls.mcpUrl), entry = catalog.find((item) => item.id === agent);
   const name = entry?.route === "own" ? ownName.trim() || entry.name : entry?.name ?? "your agent";
   const settings = token ? `WORKSPACE_MCP_URL=${urls.mcpUrl}\nWORKSPACE_AGENT_TOKEN_URL=${urls.tokenUrl}\nWORKSPACE_AGENT_PAT=${token}` : "";
-  const begin = (agentId?: string) => {
+  const begin = (startedAt: number, agentId?: string) => {
     if (!entry) return;
-    const next = { agent: entry.id, startedAt: Date.now(), ...(agentId ? { agentId } : {}) };
-    saveConnectAttempt(next); setAttempt(next); setConnection(null); progress.current = { step: "waiting", at: next.startedAt }; setNow(next.startedAt);
+    const next = { agent: entry.id, startedAt, ...(agentId ? { agentId } : {}) };
+    saveConnectAttempt(next); setAttempt(next); setConnection(null); setProgress({ step: "waiting", at: next.startedAt }); setNow(next.startedAt);
   };
-  const copy = async () => {
+  const copy = async (startedAt: number) => {
     if (!entry) return;
-    try { await navigator.clipboard.writeText(setupMessage(entry)); setCopiedAgent(entry.id); setFailedAgent(null); if (!activeAttempt) begin(); }
+    try { await navigator.clipboard.writeText(setupMessage(entry)); setCopiedAgent(entry.id); setFailedAgent(null); if (!activeAttempt) begin(startedAt); }
     catch { setFailedAgent(entry.id); setCopiedAgent(null); }
   };
   const copyFirst = async () => {
@@ -72,7 +74,7 @@ export function ConnectAgent() {
     try { await navigator.clipboard.writeText(settings); setTokenVisible(false); setError(null); }
     catch { setError("We couldn’t copy the settings. Select them and copy them yourself."); }
   };
-  const createOwn = async () => {
+  const createOwn = async (startedAt: number) => {
     if (!client || !workspaceId || !userId || creatingRef.current) return;
     creatingRef.current = true; setCreating(true); setError(null);
     try {
@@ -84,20 +86,20 @@ export function ConnectAgent() {
       }
       const id = createdId.current!;
       const issued = await useAgentsStore.getState().issueToken(id, "default");
-      setToken(issued); setTokenVisible(true); begin(id);
+      setToken(issued); setTokenVisible(true); begin(startedAt, id);
     } catch { setError("We couldn’t finish saving this connection. Try again."); }
     finally { creatingRef.current = false; setCreating(false); }
   };
   const check = async () => { try { const row = await refresh(); setConnection(row ?? null); setError(null); } catch { setError("We couldn’t check this connection. Try again."); } };
   const content = entry && activeAttempt ? step === "connected" && connection ? <ConnectDone name={name} pageId={connection.page_id} copied={copiedFirst} onCopy={() => void copyFirst()} /> : <>
     {token && tokenVisible ? <section className="mt-7 rounded-xl border border-border bg-bg-secondary p-5 text-sm"><p className="font-semibold">This token appears only once.</p><p className="text-text-secondary">Keep it in your agent’s settings, not in a chat.</p><pre className="my-4 whitespace-pre-wrap break-all text-xs">{settings}</pre><button type="button" className="min-h-11 rounded bg-accent px-4 text-white" onClick={() => void copySettings()}>Copy settings</button></section>
-      : <ConnectStatus entry={entry} name={name} approved={step === "approved"} elapsed={now - progress.current.at} onCheck={() => void check()} onAgain={() => { void (entry.route === "own" ? copySettings() : copy()); }} onFirstTask={() => void copyFirst()} copiedFirst={copiedFirst} />}
+      : <ConnectStatus entry={entry} name={name} approved={step === "approved"} elapsed={now - progress.at} onCheck={() => void check()} onAgain={() => { void (entry.route === "own" ? copySettings() : copy(activeAttempt.startedAt)); }} onFirstTask={() => void copyFirst()} copiedFirst={copiedFirst} />}
   </> : undefined;
   return <div className="w-full">
     <div className="flex justify-end px-4 pt-2"><button type="button" className="min-h-11 rounded-md px-3 text-sm text-text-secondary hover:bg-bg-secondary" onClick={() => { if (workspaceId) setConnectSkipped(workspaceId); void navigate(HOME_URL); }}>Skip for now</button></div>
     <div className="mx-auto w-full max-w-[680px] px-6 pb-24 pt-8">
-      {entry ? <ConnectSetup entry={entry} serverUrl={workspaceMcpUrl(urls.mcpUrl)} copied={copiedAgent === entry.id} copyError={failedAgent === entry.id} onCopy={() => { void copy(); }} onOpen={() => begin()} content={content} onChange={() => { saveConnectAttempt(null); setAttempt(null); setConnection(null); setToken(null); createdId.current = null; setCopiedAgent(null); setFailedAgent(null); setCopiedFirst(false); setError(null); void navigate(connectUrl()); }}>
-        <ConnectOwnAgent name={ownName} role={ownRole} onName={setOwnName} onRole={setOwnRole} busy={creating} error={error} onCreate={userId && workspaceId ? () => void createOwn() : undefined} />
+      {entry ? <ConnectSetup entry={entry} serverUrl={workspaceMcpUrl(urls.mcpUrl)} copied={copiedAgent === entry.id} copyError={failedAgent === entry.id} onCopy={() => { void copy(Date.now()); }} onOpen={() => begin(Date.now())} content={content} onChange={() => { saveConnectAttempt(null); setAttempt(null); setConnection(null); setToken(null); createdId.current = null; setCopiedAgent(null); setFailedAgent(null); setCopiedFirst(false); setError(null); void navigate(connectUrl()); }}>
+        <ConnectOwnAgent name={ownName} role={ownRole} onName={setOwnName} onRole={setOwnRole} busy={creating} error={error} onCreate={userId && workspaceId ? () => void createOwn(Date.now()) : undefined} />
         {!userId ? <p className="p-4 text-sm text-text-secondary">Sign in to create an agent token.</p> : null}
       </ConnectSetup> : <ConnectChooser catalog={catalog} onChoose={(id) => { void navigate(connectUrl(id)); }} />}
       {error && (entry?.route !== "own" || activeAttempt) ? <p role="alert" className="mt-3 text-sm">{error}</p> : null}
