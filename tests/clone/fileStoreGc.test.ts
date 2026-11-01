@@ -58,12 +58,23 @@ it.each(["missing", "stale"])("refuses to delete any file when a body is %s", as
 });
 
 it.each(["permanentlyDelete", "emptyTrash"] as const)("%s captures unloaded attachments before deleting the page body", async (action) => {
-  const { files, store, storage } = await setup(attached({ isDeleted: true }));
-  if (action === "permanentlyDelete") store.getState().permanentlyDelete("p"); else store.getState().emptyTrash();
+  const { files, storage } = await setup(attached({ isDeleted: true }));
+  const bodies = await import("@/lib/pageBodies");
+  if (action === "permanentlyDelete") await bodies.permanentlyDeleteLoaded("p"); else await bodies.emptyTrashLoaded();
   await storage.flushLocalWrites(); await settle();
   expect(fake.dump("bodies")).toEqual([]);
   await vi.advanceTimersByTimeAsync(30_000); await settle();
   expect(fake.dump("files")).toEqual([]); expect(await files.listReferencedFileIds()).toEqual([]);
+});
+
+it.each(["permanentlyDelete", "emptyTrash"] as const)("undo after %s preserves the original body and prevents scheduled attachment deletion", async (action) => {
+  const original = attached({ isDeleted: true }), { files, store, storage } = await setup(original);
+  const history = await import("@/lib/history"), bodies = await import("@/lib/pageBodies"); history.initHistory(); history.clearHistory();
+  if (action === "permanentlyDelete") await bodies.permanentlyDeleteLoaded(original.id); else await bodies.emptyTrashLoaded();
+  await storage.flushLocalWrites(); history.undo(); await storage.flushLocalWrites();
+  await vi.advanceTimersByTimeAsync(30_000); await settle();
+  expect(store.getState().pages.p).toEqual(original); expect((await storage.readStoredPage("p"))?.page).toEqual(original);
+  expect(fake.dump("files")).toHaveLength(1); expect(await files.listReferencedFileIds()).toContain("kept");
 });
 
 it("finds pending uploads by file keys without reading page bodies", async () => {

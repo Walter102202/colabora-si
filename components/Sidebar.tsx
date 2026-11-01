@@ -13,7 +13,7 @@ import Tooltip from "@/components/Tooltip";
 import { useAuth } from "@/lib/auth";
 
 import { useDirectory } from "@/lib/directory";
-import { movePageLoaded } from "@/lib/pageBodies";
+import { movePageLoaded, resetWorkspaceLoaded } from "@/lib/pageBodies";
 import { clearSharedWithMe, refreshSharedWithMe, useShares } from "@/lib/shares";
 export default function Sidebar({ collapse }: { collapse: () => void }) {
   const pages = useStore((s) => s.pages), rootOrder = useStore((s) => s.rootOrder), navigate = useNavigate();
@@ -30,7 +30,7 @@ export default function Sidebar({ collapse }: { collapse: () => void }) {
       <Tooltip label="Collapse sidebar" shortcut="Ctrl+\"><button className="icon-button hover-actions" aria-label="Collapse sidebar" onClick={collapse}><ChevronsLeft size={17} /></button></Tooltip>
       {workspaceMenu && <><button className="menu-backdrop" aria-label="Close workspace menu" onClick={() => setWorkspaceMenu(false)} /><div className="menu-panel absolute left-3 top-12 w-56" role="menu">
         <button role="menuitem" onClick={toggle}>{theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}{theme === "dark" ? "Light mode" : "Dark mode"}</button>
-        <button role="menuitem" className="danger" onClick={() => { if (confirm("Reset the entire workspace? This deletes all pages on this device.")) { useStore.getState().resetWorkspace(); setWorkspaceMenu(false); navigate("/"); } }}>Reset workspace</button>
+        <button role="menuitem" className="danger" onClick={() => { if (confirm("Reset the entire workspace? This deletes all pages on this device.")) { void resetWorkspaceLoaded().then((reset) => { if (reset) { setWorkspaceMenu(false); navigate("/"); } }); } }}>Reset workspace</button>
       </div></>}
     </div>
     <div className="flex items-center gap-1 px-3 pb-2 pt-1.5">

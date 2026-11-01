@@ -19,6 +19,7 @@ import { finishBodyDownload, forceFullPull, forceFullPush, useSyncStatus } from 
 import MembersSettings from "@/components/MembersSettings";
 import PushSettings from "@/components/PushSettings";
 import { readFullWorkspace } from "@/lib/localPersistence";
+import { emptyTrashLoaded, importWorkspaceLoaded, resetWorkspaceLoaded } from "@/lib/pageBodies";
 async function workspaceExport() {
   await finishBodyDownload();
   const { pages, missing } = await readFullWorkspace();
@@ -60,9 +61,9 @@ export default function SettingsModal({ onClose, tab: selectedTab, onTabChange }
           for (const entry of entries) if (!entry.dir && entry.name.startsWith("files/") && entry.name.length > 6) await putFile(entry.name.slice(6), new Blob([entry.data.slice().buffer])).catch(() => {});
         } else data = JSON.parse(await file.text());
         if (!data || !data.pages || typeof data.pages !== "object" || Array.isArray(data.pages) || !Array.isArray(data.rootOrder) || !Object.values(data.pages).every((p) => p && typeof p === "object" && "id" in p && "title" in p && "blocks" in p && Array.isArray(p.blocks))) { setError("Not a valid workspace export file."); return; }
-        if (confirm("Import this workspace? This REPLACES all current pages and settings.")) { useStore.getState().importWorkspace(data as WorkspaceState); onClose(); navigate("/"); }
+        if (confirm("Import this workspace? This REPLACES all current pages and settings.")) { if (await importWorkspaceLoaded(data as WorkspaceState)) { onClose(); navigate("/"); } }
       } catch { setError("Could not parse that file as JSON."); }
-    }} /></div></div>{error && <p role="alert" className="danger">{error}</p>}</fieldset><fieldset><legend>Trash</legend><p>{trash ? `${trash} pages in trash.` : "Trash is empty."}</p><button className="action-button" disabled={!trash} onClick={() => { if (confirm("Permanently delete all pages in Trash?")) useStore.getState().emptyTrash(); }}>Empty trash</button></fieldset><fieldset><legend>Danger zone</legend><p>Deletes every page and starts over with the sample workspace.</p><button className="action-button danger" onClick={() => { if (confirm("Reset the entire workspace? This deletes all your pages.")) { useStore.getState().resetWorkspace(); onClose(); navigate("/"); } }}>Reset workspace</button></fieldset></>}
+    }} /></div></div>{error && <p role="alert" className="danger">{error}</p>}</fieldset><fieldset><legend>Trash</legend><p>{trash ? `${trash} pages in trash.` : "Trash is empty."}</p><button className="action-button" disabled={!trash} onClick={() => { if (confirm("Permanently delete all pages in Trash?")) void emptyTrashLoaded(); }}>Empty trash</button></fieldset><fieldset><legend>Danger zone</legend><p>Deletes every page and starts over with the sample workspace.</p><button className="action-button danger" onClick={() => { if (confirm("Reset the entire workspace? This deletes all your pages.")) { void resetWorkspaceLoaded().then((reset) => { if (reset) { onClose(); navigate("/"); } }); } }}>Reset workspace</button></fieldset></>}
     {tab === "About" && <div className="space-y-4 text-sm text-text-secondary"><p><strong>colabora.si</strong> · 0.1.0 — a local-first workspace for humans and AI agents. Everything you write is stored in your browser.</p><p>Built with Next.js, React, Tailwind and Zustand.</p><p>Tip: press Ctrl/⌘ / for keyboard shortcuts.</p></div>}
   </div></div></Modal>;
 }

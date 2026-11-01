@@ -273,6 +273,11 @@ function onStoreChange(state: Store): void {
     if (foreignPageIds.has(id) || prev === next) continue;
     lastEditAt.set(id, Date.now());
     if (!next) queue.markDeleted(id);
+    else if (!prev) {
+      // Undo can restore a page whose tombstone is queued or already acknowledged.
+      if (queue.isDeleted(id)) queue.clearPage(id);
+      if (known.has(id) && !isShell(next)) queue.enqueue(id, [{ op: "replace_page", page: next, revision: Math.max(queue.getRevision(id), next.revision ?? 0) }]);
+    }
     else if (prev && isShell(prev) && !isShell(next)) queue.enqueue(id, [{ op: "replace_page", page: next, revision: prev.revision ?? 0 }]);
     else if (prev && !isShell(prev) && isShell(next)) continue;
     else if (prev) queue.enqueue(id, isShell(next) ? shellOps(prev, next) : diffPageToOps(prev, next));
@@ -335,10 +340,15 @@ async function insertPage(sb: SupabaseClient, page: Page): Promise<void> {
   engine!.receive(data as PageRow, true);
 }
 async function tombstonePage(sb: SupabaseClient, id: string): Promise<void> {
+  const token = generation, currentQueue = queue!, baseRevision = currentQueue.getRevision(id);
   recentlyDeleted.set(id, Date.now());
   const { data, error } = await sb.from("pages").update({ data: null, parent_id: null, deleted_at: new Date().toISOString() }).eq("workspace_id", wsId).eq("id", id).select("revision,updated_at").maybeSingle();
+  if (token !== generation || queue !== currentQueue) return;
   if (error) { recentlyDeleted.delete(id); throw error; }
-  queue!.clearPage(id); if (data) { queue!.setRevision(id, data.revision); advance("pages", data.updated_at); }
+  // A restore during this request has queued a replacement which must survive its ack.
+  if (!useStore.getState().pages[id]) currentQueue.clearPage(id);
+  else if (data) currentQueue.advanceReplacements(id, baseRevision, data.revision);
+  if (data) { currentQueue.setRevision(id, data.revision); advance("pages", data.updated_at); }
 }
 async function pushReminders(sb: SupabaseClient, reminders: Reminder[]): Promise<void> {
   const { data: remote, error: readError } = await sb.from("reminders").select("id").eq("workspace_id", wsId).eq("user_id", currentUserId).is("deleted_at", null);

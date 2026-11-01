@@ -6,8 +6,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useStore } from "@/lib/store";
 import { applyingExternal } from "@/lib/externalApply";
 import { isShell, shellOf } from "@/lib/pageShell";
-import { duplicatePageLoaded, movePageLoaded, restorePageLoaded, ensurePageBody, ensurePageBodies, exportDeps, PAGE_UNAVAILABLE } from "@/lib/pageBodies";
-import { fullWrite, readFullWorkspace, startWriter, stopLocalPersistence } from "@/lib/localPersistence";
+import { duplicatePageLoaded, movePageLoaded, restorePageLoaded, ensurePageBody, ensurePageBodies, exportDeps, PAGE_UNAVAILABLE, importWorkspaceLoaded, resetWorkspaceLoaded, permanentlyDeleteLoaded, emptyTrashLoaded } from "@/lib/pageBodies";
+import { flushLocalWrites, fullWrite, readFullWorkspace, readStoredPage, startWriter, stopLocalPersistence } from "@/lib/localPersistence";
+import { clearHistory, initHistory, undo } from "@/lib/history";
+import { useIdleSnapshot } from "@/lib/versionSnapshots";
 import { claimWorkspace, openLocalDb, readWorkspace } from "@/lib/localDb";
 import { buildDbOps } from "@/lib/dbOps";
 import { runAgentAction } from "@/lib/agentActions";
@@ -28,7 +30,7 @@ vi.mock("@/lib/agentActions", () => ({ runAgentAction: vi.fn().mockResolvedValue
 vi.mock("@/lib/export", async (original) => ({ ...await original<typeof import("@/lib/export")>(), downloadBlob: vi.fn() }));
 let host: HTMLDivElement, root: Root;
 beforeEach(() => { Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); window.alert = vi.fn(); host = document.createElement("div"); document.body.append(host); root = createRoot(host); });
-afterEach(() => { act(() => root.unmount()); host.remove(); stopLocalPersistence(); vi.restoreAllMocks(); vi.clearAllMocks(); });
+afterEach(() => { act(() => root.unmount()); host.remove(); stopLocalPersistence(); clearHistory(); vi.restoreAllMocks(); vi.clearAllMocks(); });
 async function setup(pages: Page[], missing: string[] = [], loaded: string[] = []) {
   stopLocalPersistence(); const fake = installFakeIndexedDb();
   applyingExternal(() => useStore.setState({ pages: Object.fromEntries(pages.map((p) => [p.id, loaded.includes(p.id) ? p : shellOf(p)])), rootOrder: pages.filter((p) => !p.parentId).map((p) => p.id), syncUserId: null, syncWorkspaceId: null, syncedBlocks: {} }));
@@ -42,6 +44,61 @@ function family() {
   return [page({ id: "database", title: "Source", database: db(properties, [saved]) }), child, page({ id: "destination", title: "Destination", database: db(structuredClone(properties)) })];
 }
 const mount = (node: React.ReactNode) => act(() => root.render(createElement(MemoryRouter, null, node)));
+
+it.each(["import", "reset", "permanentlyDelete", "emptyTrash"] as const)("undo retains an unopened page's original body and attachment after %s", async (action) => {
+  const original = page({ id: "original", isDeleted: action === "permanentlyDelete" || action === "emptyTrash", blocks: [b("paragraph", { html: "Original body" }), b("file", { fileId: "original-file" })] });
+  await setup([original]); initHistory(); clearHistory();
+  if (action === "import") await importWorkspaceLoaded({ pages: { original: { ...original, blocks: [b("paragraph", { html: "Imported replacement" })] } }, rootOrder: ["original"], expanded: {} });
+  else if (action === "reset") await resetWorkspaceLoaded();
+  else if (action === "permanentlyDelete") await permanentlyDeleteLoaded(original.id);
+  else await emptyTrashLoaded();
+  await flushLocalWrites(); undo(); await flushLocalWrites();
+  expect(await ensurePageBody(original.id)).toBe("ready");
+  expect(useStore.getState().pages.original).toEqual(original);
+  expect((await readStoredPage(original.id))?.page).toEqual(original);
+  expect(referencedFileIds(useStore.getState().pages)).toContain("original-file");
+});
+
+it.each(["import", "reset", "permanentlyDelete", "emptyTrash"] as const)("%s refuses to replace unavailable bodies, both directly and through its loaded wrapper", async (action) => {
+  const original = page({ id: "original", isDeleted: true }); await setup([original], [original.id]);
+  const before = useStore.getState().pages, replacement = { pages: {}, rootOrder: [], expanded: {} };
+  const direct = () => action === "import" ? useStore.getState().importWorkspace(replacement) : action === "reset" ? useStore.getState().resetWorkspace() : action === "permanentlyDelete" ? useStore.getState().permanentlyDelete(original.id) : useStore.getState().emptyTrash();
+  expect(direct).toThrow("page_not_loaded"); expect(useStore.getState().pages).toBe(before);
+  const result = action === "import" ? await importWorkspaceLoaded(replacement) : action === "reset" ? await resetWorkspaceLoaded() : action === "permanentlyDelete" ? await permanentlyDeleteLoaded(original.id) : await emptyTrashLoaded();
+  expect(result).toBe(false); expect(useStore.getState().pages).toBe(before); expect(window.alert).toHaveBeenCalledWith(PAGE_UNAVAILABLE);
+});
+
+it("gives replacement its own undo snapshot even during an earlier edit burst", async () => {
+  const original = page({ id: "original", blocks: [b("paragraph", { html: "Original body" })] }), other = page({ id: "other" });
+  await setup([original, other], [], [other.id]); initHistory(); clearHistory();
+  useStore.getState().updatePage(other.id, { title: "Earlier edit" });
+  await importWorkspaceLoaded({ pages: { original: { ...original, blocks: [] } }, rootOrder: [original.id], expanded: {} });
+  await flushLocalWrites(); undo(); await flushLocalWrites();
+  expect(useStore.getState().pages.original).toEqual(original); expect(useStore.getState().pages.other.title).toBe("Earlier edit");
+});
+
+it("one undo restores an import when leaving the viewed page also saves an automatic version", async () => {
+  const original = page({ id: "original", blocks: [b("paragraph", { html: "Unopened original" })] });
+  const viewed = page({ id: "viewed", blocks: [b("paragraph", { html: "Viewed original" })] });
+  await setup([original, viewed], [], [viewed.id]); initHistory(); clearHistory();
+  function Snapshot() { useIdleSnapshot(viewed.id); return null; }
+  mount(createElement(Snapshot));
+  const replacement = (value: Page) => ({ ...value, blocks: [b("paragraph", { html: "Imported replacement" })] });
+  await act(async () => { await importWorkspaceLoaded({ pages: { original: replacement(original), viewed: replacement(viewed) }, rootOrder: [original.id, viewed.id], expanded: {} }); });
+  act(() => root.render(null)); await flushLocalWrites();
+  expect((await readStoredPage(viewed.id))?.page.versions).toHaveLength(1);
+  undo(); await flushLocalWrites();
+  expect(useStore.getState().pages.original).toEqual(original);
+  expect(useStore.getState().pages.viewed).toEqual(viewed);
+  expect((await readStoredPage(original.id))?.page).toEqual(original);
+});
+
+it("does not finish a delayed replacement in another account", async () => {
+  const original = page({ id: "original" }); await setup([original]);
+  const pending = resetWorkspaceLoaded();
+  const next = page({ id: "new-account" }); applyingExternal(() => useStore.setState({ pages: { [next.id]: next }, syncUserId: "other", syncWorkspaceId: "other" }));
+  expect(await pending).toBe(false); expect(useStore.getState().pages).toEqual({ [next.id]: next });
+});
 
 it("reads a full export without hydrating shells, retains current loaded edits, and includes attachments and Markdown", async () => {
   const pages = family(); await setup(pages, [], ["child"]);

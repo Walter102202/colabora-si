@@ -2,7 +2,7 @@ import { useStore } from "@/lib/store";
 import { isShell } from "@/lib/pageShell";
 import { applyingExternal } from "@/lib/externalApply";
 import { diskAvailable, flushLocalWrites, readStoredPage, storedReferrers } from "@/lib/localPersistence";
-import type { Block, Page } from "@/lib/types";
+import type { Block, Page, WorkspaceState } from "@/lib/types";
 import { treeIds } from "@/lib/pageMutations";
 import { findBacklinks } from "@/lib/pageStats";
 
@@ -90,6 +90,32 @@ export async function restorePageLoaded(id: string): Promise<boolean> {
   const current = useStore.getState();
   if (state.syncUserId !== current.syncUserId || state.syncWorkspaceId !== current.syncWorkspaceId || !current.pages[id]) return false;
   current.restorePage(id); return true;
+}
+
+async function preserveBodiesBeforeReplacing(ids: string[], run: () => void): Promise<boolean> {
+  const before = useStore.getState();
+  const ready = await ensurePageBodies(ids);
+  const current = useStore.getState();
+  if (before.syncUserId !== current.syncUserId || before.syncWorkspaceId !== current.syncWorkspaceId) return false;
+  if (ready !== "ready") { notifyPageUnavailable(); return false; }
+  try { run(); return true; }
+  catch (error) {
+    // A newly arrived shell may change the affected set while the original bodies load.
+    if (error instanceof Error && error.message === "page_not_loaded") { notifyPageUnavailable(); return false; }
+    throw error;
+  }
+}
+export function importWorkspaceLoaded(workspace: WorkspaceState): Promise<boolean> {
+  return preserveBodiesBeforeReplacing(Object.keys(useStore.getState().pages), () => useStore.getState().importWorkspace(workspace));
+}
+export function resetWorkspaceLoaded(): Promise<boolean> {
+  return preserveBodiesBeforeReplacing(Object.keys(useStore.getState().pages), () => useStore.getState().resetWorkspace());
+}
+export function permanentlyDeleteLoaded(id: string): Promise<boolean> {
+  return preserveBodiesBeforeReplacing([...treeIds(useStore.getState().pages, id)], () => useStore.getState().permanentlyDelete(id));
+}
+export function emptyTrashLoaded(): Promise<boolean> {
+  return preserveBodiesBeforeReplacing(Object.values(useStore.getState().pages).filter((page) => page.isDeleted).map((page) => page.id), () => useStore.getState().emptyTrash());
 }
 export function exportDeps(pageId: string, pages: Record<string, Page>): string[] {
   const ids = new Set(databaseDeps(pageId, pages));

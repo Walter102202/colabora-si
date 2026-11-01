@@ -9,6 +9,7 @@ import { useAuthStore } from "@/lib/auth";
 import { isShell, overlayMeta, shellOf } from "@/lib/pageShell";
 import { ensurePageBodies, notifyPageUnavailable, opening } from "@/lib/pageBodies";
 import { diskAvailable, persistFull } from "@/lib/localPersistence";
+import { historyAction } from "@/lib/history";
 
 import { collectSubtreeFileIds, collectTrashFileIds, scheduleBlobGc } from "@/lib/fileStore";
 export interface RemotePatch {
@@ -127,6 +128,10 @@ function cleanPage(page: Page): Page {
 }
 
 export const useStore = create<Store>()((set, get) => {
+  const requireLoaded = (ids: Iterable<string>) => {
+    const pages = get().pages;
+    for (const id of ids) if (isShell(pages[id])) throw new Error("page_not_loaded");
+  };
   const mutateMeta = (id: string, fn: (page: Page) => Page) => set((state) => {
     const page = state.pages[id];
     if (!page) return state;
@@ -235,8 +240,18 @@ export const useStore = create<Store>()((set, get) => {
       const pages = pm.restoreTree(state.pages, id, Date.now());
       return { pages, rootOrder: pages[id].parentId === null && !state.rootOrder.includes(id) ? [...state.rootOrder, id] : state.rootOrder };
     }),
-    permanentlyDelete: (id) => { const files = collectSubtreeFileIds(id); set((state) => !state.pages[id] ? state : ({ pages: pm.purgeTree(state.pages, id), rootOrder: state.rootOrder.filter((key) => key !== id) })); void files.then((ids) => scheduleBlobGc(ids)).catch(() => {}); },
-    emptyTrash: () => { const files = collectTrashFileIds(); set((state) => ({ pages: Object.fromEntries(Object.entries(state.pages).filter(([, page]) => !page.isDeleted)) })); void files.then((ids) => scheduleBlobGc(ids)).catch(() => {}); },
+    permanentlyDelete: (id) => {
+      requireLoaded(pm.treeIds(get().pages, id));
+      const files = collectSubtreeFileIds(id);
+      historyAction(() => set((state) => !state.pages[id] ? state : ({ pages: pm.purgeTree(state.pages, id), rootOrder: state.rootOrder.filter((key) => key !== id) })));
+      void files.then((ids) => scheduleBlobGc(ids)).catch(() => {});
+    },
+    emptyTrash: () => {
+      requireLoaded(Object.values(get().pages).filter((page) => page.isDeleted).map((page) => page.id));
+      const files = collectTrashFileIds();
+      historyAction(() => set((state) => ({ pages: Object.fromEntries(Object.entries(state.pages).filter(([, page]) => !page.isDeleted)) })));
+      void files.then((ids) => scheduleBlobGc(ids)).catch(() => {});
+    },
     toggleFavorite: (id) => mutateMeta(id, (page) => pm.touch({ ...page, isFavorite: !page.isFavorite })),
     movePage: (id, parentId, index) => set((state) => {
       const next = pm.moveInTree(state.pages, state.rootOrder, id, parentId, index);
@@ -270,8 +285,14 @@ export const useStore = create<Store>()((set, get) => {
     updateReminder: (id, patch) => set((state) => ({ reminders: (state.reminders ?? []).map((r) => r.id === id ? { ...r, ...patch } : r) })),
     deleteReminder: (id) => set((state) => ({ reminders: (state.reminders ?? []).filter((r) => r.id !== id) })),
     updateSettings: (patch) => set((state) => ({ settings: { ...DEFAULT_SETTINGS, ...state.settings, ...patch } })),
-    importWorkspace: (state) => set({ pages: Object.fromEntries(Object.entries(state.pages).map(([id, p]) => [id, cleanPage(p)])), rootOrder: state.rootOrder, expanded: state.expanded ?? {}, syncedBlocks: Object.fromEntries(Object.entries(state.syncedBlocks ?? {}).map(([id, blocks]) => [id, sanitizeBlocks(blocks)])), reminders: state.reminders ?? [], settings: state.settings ? { ...DEFAULT_SETTINGS, ...state.settings } : undefined }),
-    resetWorkspace: () => set({ ...seedWorkspace(), expanded: {}, syncedBlocks: {}, reminders: [] }),
+    importWorkspace: (state) => {
+      requireLoaded(Object.keys(get().pages));
+      historyAction(() => set({ pages: Object.fromEntries(Object.entries(state.pages).map(([id, p]) => [id, cleanPage(p)])), rootOrder: state.rootOrder, expanded: state.expanded ?? {}, syncedBlocks: Object.fromEntries(Object.entries(state.syncedBlocks ?? {}).map(([id, blocks]) => [id, sanitizeBlocks(blocks)])), reminders: state.reminders ?? [], settings: state.settings ? { ...DEFAULT_SETTINGS, ...state.settings } : undefined }));
+    },
+    resetWorkspace: () => {
+      requireLoaded(Object.keys(get().pages));
+      historyAction(() => set({ ...seedWorkspace(), expanded: {}, syncedBlocks: {}, reminders: [] }));
+    },
     clearLocalWorkspace: () => set({ ...seedWorkspace(), expanded: {}, syncedBlocks: {}, reminders: [], settings: undefined, syncWorkspaceId: null, syncUserId: null }),
     saveVersion: (pageId, auto = false) => mutate(pageId, (page) => {
       const last = page.versions?.[0];

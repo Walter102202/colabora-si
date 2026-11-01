@@ -42,8 +42,8 @@ it("creates, edits, moves, deletes and restores offline across reloads", async (
 
 it.each(["import", "reset"] as const)("persists %s replacement bodies instead of resurrecting old disk content", async (action) => {
   let { store, storage, bodies } = await boot([page({ id: "p", blocks: [b("paragraph", { html: "Old" })] })]);
-  if (action === "import") store.getState().importWorkspace({ pages: { p: page({ id: "p", blocks: [b("paragraph", { html: "Imported" })] }) }, rootOrder: ["p"], expanded: {} });
-  else store.getState().resetWorkspace();
+  if (action === "import") await bodies.importWorkspaceLoaded({ pages: { p: page({ id: "p", blocks: [b("paragraph", { html: "Imported" })] }) }, rootOrder: ["p"], expanded: {} });
+  else await bodies.resetWorkspaceLoaded();
   const expected = store.getState().pages; await storage.flushLocalWrites();
   ({ store, storage, bodies } = await reload()); await bodies.ensurePageBodies(Object.keys(expected));
   expect(store.getState().pages).toEqual(expected);

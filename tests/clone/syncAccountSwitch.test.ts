@@ -6,7 +6,7 @@ import { discardLocalCopy, flush, initSync, settleBeforeSignOut, stopSync, useSy
 import { applyOps, type PageOp } from "@/lib/pageOps";
 import type { Page } from "@/lib/types";
 import { foreignPageIds } from "@/lib/foreignPages";
-import { canUndo, initHistory, undo } from "@/lib/history";
+import { canUndo, clearHistory, initHistory, undo } from "@/lib/history";
 import { b, page } from "./fixtures";
 
 type Row = Record<string, unknown>;
@@ -82,6 +82,45 @@ beforeEach(() => {
   useStore.getState().clearLocalWorkspace();
 });
 afterEach(() => { stopSync(); });
+
+it.each(["queued", "sent", "inflight"] as const)("undo preserves the restored body when a cloud deletion is %s", async (phase) => {
+  await initSync(user("person")); await sleep(0);
+  const id = useStore.getState().createPage(null, { title: "Restore me", blocks: [b("paragraph", { html: "Original content" })] });
+  await flush();
+  const backend = h.client as ReturnType<typeof client>, originalFrom = backend.from, originalRpc = backend.rpc;
+  const server = h.fake.pages.find((row) => row.id === id)!;
+  let release!: () => void, started!: () => void;
+  const deletionStarted = new Promise<void>((resolve) => { started = resolve; });
+  const deletionRelease = new Promise<void>((resolve) => { release = resolve; });
+  backend.from = (table) => {
+    const query = originalFrom(table);
+    if (table !== "pages") return query;
+    return new Proxy(query as object, { get(target, key) {
+      if (key !== "update") return Reflect.get(target, key);
+      return () => {
+        const update = { eq: () => update, select: () => update, maybeSingle: async () => {
+          started(); if (phase === "inflight") await deletionRelease;
+          server.data = null; server.revision = Number(server.revision) + 1; server.deleted_at = new Date().toISOString();
+          return { data: { revision: server.revision, updated_at: new Date().toISOString() }, error: null };
+        } }; return update;
+      };
+    } });
+  };
+  backend.rpc = async (name, args) => {
+    if (name !== "apply_page_ops") return originalRpc(name, args);
+    const replacement = (args.p_ops as PageOp[]).find((op) => op.op === "replace_page");
+    if (!replacement || replacement.revision !== server.revision) return { data: null, error: { code: "PT409", message: "page_conflict" } as unknown as Error };
+    server.data = replacement.page; server.revision = Number(server.revision) + 1; server.deleted_at = null;
+    return { data: { revision: Number(server.revision), results: [] }, error: null };
+  };
+  initHistory(); clearHistory(); useStore.getState().permanentlyDelete(id);
+  let deleting: Promise<void> | undefined;
+  if (phase !== "queued") { deleting = flush(); await deletionStarted; if (phase === "sent") await deleting; }
+  undo(); if (phase === "inflight") { release(); await deleting; }
+  await flush();
+  expect((server.data as Page | null)?.blocks[0].html).toBe("Original content");
+  expect(useStore.getState().pages[id]?.blocks[0].html).toBe("Original content");
+});
 
 it("persists a trash backup before dropping the old database attachment reference", async () => {
   await initSync(user("user-b")); await sleep(0);
