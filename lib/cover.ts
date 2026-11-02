@@ -1,3 +1,16 @@
+export const TRAMA_COVERS = [
+  { slug: "same-page", name: "On the same page" },
+  { slug: "gardener", name: "Gardener" },
+  { slug: "chef", name: "Chef" },
+  { slug: "detective", name: "Detective" },
+  { slug: "conductor", name: "Conductor" },
+  { slug: "explorer", name: "Explorer" },
+].map(({ slug, name }) => ({
+  name,
+  src: `/brand/trama/covers/v1/${slug}.webp`,
+  thumbnail: `/brand/trama/covers/v1/${slug}-thumb.webp`,
+}));
+
 export const COVER_GRADIENTS = [
   "linear-gradient(135deg,#667eea,#764ba2)",
   "linear-gradient(135deg,#f093fb,#f5576c)",
