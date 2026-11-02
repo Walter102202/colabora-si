@@ -160,7 +160,6 @@ export function LandingDemo() {
         <span>Illustrative demo · Sample content{!reducedMotion && <button type="button" className="cs-replay" onClick={() => dispatch({ type: "goto", beat: 0 })}>Replay</button>}</span>
         <span>Every step stays in the same workspace.</span>
       </div>
-      <p className="cs-compat">Works with <b>Claude Code</b>, <b>Codex</b>, <b>Trama</b> and chat apps like <b>Claude</b> and <b>ChatGPT</b>. Other MCP clients connect through the bridge.</p>
     </section>
   );
 }

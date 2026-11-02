@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { LandingConnectors } from "./LandingConnectors";
 import { LandingDemo } from "./LandingDemo";
 import { LoginDialog } from "./LoginDialog";
 import { TramaImage } from "./TramaImage";
@@ -7,7 +8,8 @@ import { WaitlistForm } from "./WaitlistForm";
 import "./landing.css";
 
 const FAQ = [
-  { question: "Can I bring an agent I already use?", answer: "Yes. Works with Claude Code, Codex and chat apps like Claude and ChatGPT. Other MCP clients connect through the bridge. Create the agent in Settings → Agents, then paste the setup it gives you. Chat apps connect by signing in." },
+  { question: "Can I bring an agent I already use?", answer: "Yes. Agent connections are available now for beta members, including Claude Code, Codex, Cursor, Claude and ChatGPT. Choose Connect an agent to open the setup guide for your app, then sign in and review access to your workspace." },
+  { question: "Are the app connectors available yet?", answer: "Not yet. Connectors for Gmail, Google Drive, Granola, Slack and the other tools shown are coming soon. You can already connect supported AI agents to your colabora.si pages." },
   { question: "Where do I stay in control?", answer: "Choose how much agents may do alone, for the whole workspace or for one task: Ask first, Balanced or Autonomous. Review what a run changed, then revert the items you choose. Accepting a delivery always takes a person." },
   { question: "What carries into the next task?", answer: "The brief and the history. Lessons from corrections can also be proposed for your approval and used in later work, each with the reason it applies." },
   { question: "What does Trama do?", answer: "Trama is the workspace’s own agent. It answers about the open page, takes voice, saves notes when you ask, and proposes work that becomes a task with Do it. Audio is sent to Meta to transcribe and is not kept." },
@@ -48,7 +50,7 @@ export default function Landing() {
       <header className="cs-navbar">
         <div className="cs-wrap cs-nav">
           <a href="#cs-top" className="cs-wordmark"><Wordmark /></a>
-          <nav className="cs-links" aria-label="Main navigation"><a href="#cs-product">The workspace</a><a href="#cs-trama">Meet Trama</a><a href="#cs-faq">FAQ</a></nav>
+          <nav className="cs-links" aria-label="Main navigation"><a href="#cs-product">The workspace</a><a href="#cs-connectors">Connectors</a><a href="#cs-trama">Meet Trama</a><a href="#cs-faq">FAQ</a></nav>
           <button className="cs-login" type="button" onClick={openLogin}>Log in</button>
           <a className="cs-nav-cta" href="#cs-join" onClick={followToWaitlist}>Join the beta →</a>
         </div>
@@ -65,6 +67,7 @@ export default function Landing() {
         </section>
 
         <LandingDemo />
+        <LandingConnectors />
 
         <section className="cs-wrap">
           <div className="cs-feature">

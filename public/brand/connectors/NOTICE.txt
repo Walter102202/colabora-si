@@ -1,0 +1,40 @@
+Product names and logos belong to their respective owners. These marks identify
+planned connectors; their display does not imply affiliation or endorsement.
+
+Downloaded from official product websites and brand kits on 2026-11-02:
+
+gmail.svg
+https://www.gstatic.com/images/branding/productlogos/gmail_2026/v2/web/192px.svg
+Source page: https://workspace.google.com/products/gmail/
+
+google-drive.svg
+https://www.gstatic.com/images/branding/productlogos/drive_2026/v2/web/192px.svg
+Source page: https://workspace.google.com/products/drive/
+
+google-calendar.svg
+https://www.gstatic.com/images/branding/productlogos/calendar_2026/v2/web/192px.svg
+Source page: https://workspace.google.com/products/calendar/
+
+granola.svg
+https://www.granola.ai/favicon/favicon.svg
+Source page: https://www.granola.ai/
+
+slack.png
+https://a.slack-edge.com/80588/marketing/img/meta/slack_hash_256.png
+Source page and guidelines: https://slack.com/media-kit
+
+notion.png
+https://www.notion.com/front-static/logo-ios.png
+Source page: https://www.notion.com/
+
+github.svg
+GitHub Logos/SVG/GitHub_Invertocat_Black.svg from
+https://brand.github.com/GitHub_Logos.zip
+Source page and guidelines: https://brand.github.com/foundations/logo
+
+linear.svg
+logo-dark.svg from https://static.linear.app/design-assets/Linear-Brand-Assets.zip?v=3
+Source page and guidelines: https://linear.app/brand
+
+Artwork is unchanged. A matching 0 0 192 192 viewBox was added to the Google
+Drive and Google Calendar SVG roots to preserve scaling in responsive layouts.
