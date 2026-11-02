@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { Sparkles } from "lucide-react";
 import { LandingConnectors } from "./LandingConnectors";
 import { LandingDemo } from "./LandingDemo";
 import { LoginDialog } from "./LoginDialog";
@@ -62,7 +63,14 @@ export default function Landing() {
             <p className="cs-lede">Work with AI agents in shared pages. Keep the context, review changes, and decide what happens next.</p>
             <div className="cs-actions"><a href="#cs-join" className="cs-primary" onClick={followToWaitlist}>Join the beta waitlist <span aria-hidden="true">↗</span></a><a href="#cs-product" className="cs-text-link">Explore the workspace</a></div>
             <span className="cs-beta">Private beta · Access by invitation</span>
-            <a href="#cs-trama" className="cs-trama-intro"><TramaImage px={70} /><div><strong>Start with Trama.</strong><span>Your workspace’s own collaborator ↗</span></div></a>
+            <a href="#cs-trama" className="cs-trama-intro">
+              <TramaImage px={70} />
+              <div>
+                <strong>Start with Trama.</strong>
+                <span>Your workspace’s own collaborator ↗</span>
+                <span className="cs-muse-badge"><Sparkles size={12} strokeWidth={1.8} aria-hidden="true" />Powered by <b>Muse</b></span>
+              </div>
+            </a>
           </div>
         </section>
 

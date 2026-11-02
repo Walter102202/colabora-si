@@ -57,6 +57,9 @@ html:has(.landing){-webkit-text-size-adjust:100%;scroll-behavior:smooth}
 .landing .cs-trama-intro img{width:calc(var(--u)*50px);height:calc(var(--u)*50px);object-fit:contain}
 .landing .cs-trama-intro strong{display:block;font-weight:500}
 .landing .cs-trama-intro span{display:block;font-size:var(--fs-label);color:var(--cs-muted)}
+.landing .cs-trama-intro .cs-muse-badge{display:inline-flex;align-items:center;gap:5px;margin-top:6px;padding:4px 8px;border:1px solid color-mix(in srgb,var(--cs-blue) 20%,transparent);border-radius:999px;background:linear-gradient(110deg,var(--cs-blue-soft),var(--cs-white));color:var(--cs-blue);font-size:10.5px;line-height:1.4;white-space:nowrap;box-shadow:0 2px 5px var(--cs-shadow)}
+.landing .cs-muse-badge b{font-weight:600}
+.landing .cs-muse-badge svg{flex:none}
 .landing .cs-demo-label{display:flex;justify-content:space-between;align-items:center;gap:14px;font-size:var(--fs-label);color:var(--cs-muted);margin-bottom:calc(var(--u)*10px)}
 .landing .cs-stepper{display:flex;gap:4px;flex-wrap:wrap}
 .landing .cs-step{border:0;background:transparent;color:var(--cs-muted);padding:calc(var(--u)*6px) calc(var(--u)*11px);border-radius:5px;font-size:var(--fs-label);min-height:calc(var(--u)*32px);cursor:pointer}
@@ -321,7 +324,7 @@ html:has(.landing){-webkit-text-size-adjust:100%;scroll-behavior:smooth}
   .landing h1{font-size:clamp(39px,10.6vw,52px)}
   .landing .cs-hero-copy{padding-top:21px}
   .landing .cs-lede{max-width:100%}
-  .landing .cs-trama-intro{display:none}
+  .landing .cs-trama-intro{margin-top:18px}
   .landing .cs-demo-label{align-items:flex-start;flex-direction:column;gap:9px}
   .landing .cs-window-bar{flex-direction:column;align-items:flex-start;gap:6px}
   .landing .cs-breadcrumb{white-space:nowrap}
