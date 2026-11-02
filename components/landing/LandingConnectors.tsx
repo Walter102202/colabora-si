@@ -8,9 +8,8 @@ const UPCOMING = [
   { id: "google-drive", name: "Google Drive", file: "google-drive.svg", x: 34, y: 14, tilt: 7 },
   { id: "granola", name: "Granola", file: "granola.svg", x: 66, y: 14, tilt: -7, filled: true },
   { id: "slack", name: "Slack", file: "slack.png", x: 86, y: 43, tilt: 10, filled: true },
-  { id: "google-calendar", name: "Google Calendar", file: "google-calendar.svg", x: 81, y: 78, tilt: -8 },
-  { id: "notion", name: "Notion", file: "notion.png", x: 53, y: 86, tilt: 6 },
-  { id: "github", name: "GitHub", file: "github.svg", x: 24, y: 80, tilt: -7 },
+  { id: "google-calendar", name: "Google Calendar", file: "google-calendar.svg", x: 74, y: 81, tilt: -8 },
+  { id: "github", name: "GitHub", file: "github.svg", x: 29, y: 82, tilt: -7 },
   { id: "linear", name: "Linear", file: "linear.svg", x: 10, y: 14, tilt: 9 },
 ];
 

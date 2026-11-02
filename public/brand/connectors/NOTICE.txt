@@ -23,10 +23,6 @@ slack.png
 https://a.slack-edge.com/80588/marketing/img/meta/slack_hash_256.png
 Source page and guidelines: https://slack.com/media-kit
 
-notion.png
-https://www.notion.com/front-static/logo-ios.png
-Source page: https://www.notion.com/
-
 github.svg
 GitHub Logos/SVG/GitHub_Invertocat_Black.svg from
 https://brand.github.com/GitHub_Logos.zip
