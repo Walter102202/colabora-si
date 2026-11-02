@@ -32,5 +32,25 @@ linear.svg
 logo-dark.svg from https://static.linear.app/design-assets/Linear-Brand-Assets.zip?v=3
 Source page and guidelines: https://linear.app/brand
 
+figma.svg
+https://static.figma.com/app/icon/2/favicon.svg
+Source page and guidelines: https://www.figma.com/using-the-figma-brand/
+
+hubspot.svg
+https://www.hubspot.com/hubfs/Media%20Assets/Blog/Navigation/sprocket.svg
+Source page: https://www.hubspot.com/company-news/author/hubspot-communications/page/4
+
+dropbox.svg
+https://fjord.dropboxstatic.com/warp/conversion/dropbox/warp/icons/Dropbox-logo-nav.svg?id=d587e174-e284-42e8-a18c-85c0d8e57e9e
+Source page: https://www.dropbox.com/
+
+zoom.png
+https://st1.zoom.us/zoom-180x180.png
+Source page: https://www.zoom.us/download
+
+google-meet.svg
+https://www.gstatic.com/images/branding/productlogos/meet_2026/v2/web/192px.svg
+Source page: https://workspace.google.com/products/meet/
+
 Artwork is unchanged. A matching 0 0 192 192 viewBox was added to the Google
 Drive and Google Calendar SVG roots to preserve scaling in responsive layouts.

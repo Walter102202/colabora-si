@@ -4,13 +4,18 @@ import { CONNECT_URL, connectUrl } from "@/lib/routes";
 import { TramaImage } from "./TramaImage";
 
 const UPCOMING = [
-  { id: "gmail", name: "Gmail", file: "gmail.svg", x: 15, y: 45, tilt: -10 },
-  { id: "google-drive", name: "Google Drive", file: "google-drive.svg", x: 34, y: 14, tilt: 7 },
-  { id: "granola", name: "Granola", file: "granola.svg", x: 66, y: 14, tilt: -7, filled: true },
-  { id: "slack", name: "Slack", file: "slack.png", x: 86, y: 43, tilt: 10, filled: true },
-  { id: "google-calendar", name: "Google Calendar", file: "google-calendar.svg", x: 74, y: 81, tilt: -8 },
-  { id: "github", name: "GitHub", file: "github.svg", x: 29, y: 82, tilt: -7 },
-  { id: "linear", name: "Linear", file: "linear.svg", x: 10, y: 14, tilt: 9 },
+  { id: "gmail", name: "Gmail", file: "gmail.svg", x: 7, y: 48, tilt: -10, scale: 1.16 },
+  { id: "linear", name: "Linear", file: "linear.svg", x: 10, y: 26, tilt: 8, scale: .92 },
+  { id: "google-drive", name: "Google Drive", file: "google-drive.svg", x: 28, y: 13, tilt: 7, scale: .76 },
+  { id: "google-meet", name: "Google Meet", file: "google-meet.svg", x: 50, y: 9, tilt: -6, scale: .72 },
+  { id: "google-calendar", name: "Google Calendar", file: "google-calendar.svg", x: 72, y: 15, tilt: 8, scale: .74 },
+  { id: "granola", name: "Granola", file: "granola.svg", x: 88, y: 30, tilt: -7, scale: 1, filled: true },
+  { id: "slack", name: "Slack", file: "slack.png", x: 93, y: 52, tilt: 10, scale: 1.1, filled: true },
+  { id: "figma", name: "Figma", file: "figma.svg", x: 86, y: 73, tilt: -8, scale: .92 },
+  { id: "zoom", name: "Zoom", file: "zoom.png", x: 70, y: 88, tilt: 7, scale: .9 },
+  { id: "hubspot", name: "HubSpot", file: "hubspot.svg", x: 48, y: 92, tilt: -5, scale: .96 },
+  { id: "github", name: "GitHub", file: "github.svg", x: 25, y: 86, tilt: -9, scale: .98 },
+  { id: "dropbox", name: "Dropbox", file: "dropbox.svg", x: 12, y: 70, tilt: 8, scale: .9, filled: true },
 ];
 
 const AVAILABLE_AGENTS = ["claude-code", "codex", "chatgpt", "claude", "cursor", "muse-code", "gemini-cli", "antigravity", "hermes", "openclaw"];
@@ -58,7 +63,9 @@ export function LandingConnectors() {
                 key={connector.id}
                 className="cs-connector-item"
                 data-active={active === connector.id || undefined}
-                style={{ "--connector-x": `${connector.x}%`, "--connector-y": `${connector.y}%`, "--connector-tilt": `${connector.tilt}deg` } as CSSProperties}
+                data-tooltip-align={connector.x <= 15 ? "start" : connector.x >= 85 ? "end" : undefined}
+                data-tooltip-side={connector.y >= 80 ? "top" : undefined}
+                style={{ "--connector-x": `${connector.x}%`, "--connector-y": `${connector.y}%`, "--connector-tilt": `${connector.tilt}deg`, "--connector-scale": connector.scale } as CSSProperties}
                 onPointerEnter={(event) => {
                   if (event.pointerType !== "touch") { setHovered(connector.id); setActive(connector.id); }
                 }}
