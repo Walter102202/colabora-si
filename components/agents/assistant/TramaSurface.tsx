@@ -1,6 +1,6 @@
 "use client";
 
-import { X } from "lucide-react";
+import { Sparkles, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { TramaAvatar } from "@/components/agents/TramaAvatar";
 import { isTrama } from "@/lib/tramaIdentity";
@@ -361,7 +361,16 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
         <AssistantThreadView messages={thread} draft={draft} busy={voiceBusy} reviewing={voice.phase === "review"}
           onNewConversation={() => { void resetConversation(); }} resetting={resetting}
           error={proposalError ?? resetError ?? failed?.error ?? null} avatar={<TramaAvatar size={28} decorative />}
-          empty={<span className="flex flex-col items-center gap-3 py-5"><TramaAvatar size={96} decorative /><span>Connects, coordinates, stays with you.</span></span>}
+          empty={<span className="flex flex-col items-center gap-3 py-5">
+            <TramaAvatar size={96} decorative />
+            <span className="flex flex-col items-center gap-2">
+              <span>Connects, coordinates, stays with you.</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/15 bg-accent/5 px-2.5 py-1 text-[11px] leading-4 text-text-secondary">
+                <Sparkles size={12} strokeWidth={1.8} className="text-accent" aria-hidden="true" />
+                <span>Powered by <span className="font-semibold text-text">Muse</span></span>
+              </span>
+            </span>
+          </span>}
           onRetrySend={failed ? () => void submit(failed) : null}
           onDraft={(text) => { setDraft(text); if (!text) { pasted.current = false; clip.current = null; if (voice.phase === "review") dispatch({ type: "reset" }); } }}
           onPaste={onPaste} onSend={() => void submit()} onUndo={(id) => void undo(id)}
