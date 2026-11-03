@@ -14,6 +14,9 @@ import { b, column, page } from "./fixtures";
 import { flushLocalWrites } from "@/lib/localPersistence";
 import type { PageBody } from "@/lib/pageShell";
 import { startTestWriter } from "./localHelpers";
+import { seedWorkspace } from "@/lib/seed";
+import { CONNECT_AGENT_NAMES } from "@/lib/agentConnectCatalog";
+import { AGENTS_URL, CONNECT_URL, connectUrl } from "@/lib/routes";
 
 let host: HTMLDivElement, root: Root;
 beforeEach(() => { (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true; host = document.createElement("div"); document.body.append(host); root = createRoot(host); });
@@ -31,6 +34,75 @@ function drag(node: HTMLElement, type: string, clientY = 1) {
   Object.defineProperties(event, { dataTransfer: { value: { effectAllowed: "", setData() {}, setDragImage() {}, types: [] } }, clientY: { value: clientY } });
   act(() => node.dispatchEvent(event));
 }
+
+it("opens every connection-directory link from existing editable blocks without changing their content", () => {
+  window.getSelection()?.removeAllRanges();
+  const seed = seedWorkspace(), directory = Object.values(seed.pages).find((entry) => entry.title === "Connect your agents")!;
+  const change = mount(directory.blocks);
+  const expected = new Map<string, string>([["Connect an agent", CONNECT_URL], ["Connected agents", AGENTS_URL], ...Object.entries(CONNECT_AGENT_NAMES).map(([id, name]): [string, string] => [name, connectUrl(id)])]);
+  const links = [...host.querySelectorAll<HTMLAnchorElement>("a[href]")];
+  expect(links).toHaveLength(expected.size);
+  for (const link of links) {
+    const destination = expected.get(link.textContent!);
+    expect(destination).toBeDefined();
+    expect(link.getAttribute("href")).toBe(destination);
+    act(() => link.click());
+    expect(host.querySelector("output")!.textContent).toBe(destination);
+  }
+  expect(change).not.toHaveBeenCalled();
+});
+
+it.each([false, true])("opens modified connection clicks once in a new tab (nested=%s)", (nested) => {
+  window.getSelection()?.removeAllRanges();
+  const linkBlock = b("paragraph", { html: '<a href="/connect/claude-code"><b>Claude Code</b></a>' });
+  const change = mount(nested ? [b("columns", { columns: [column([linkBlock])] })] : [linkBlock]);
+  const open = vi.spyOn(window, "open").mockReturnValue(null);
+  try {
+    for (const options of [{ ctrlKey: true }, { metaKey: true }, { button: 1 }]) {
+      open.mockClear();
+      act(() => host.querySelector("a b")!.dispatchEvent(new MouseEvent("button" in options ? "auxclick" : "click", { bubbles: true, cancelable: true, ...options })));
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(open).toHaveBeenCalledWith("/connect/claude-code", "_blank", "noopener,noreferrer");
+    }
+    expect(host.querySelector("output")!.textContent).toBe("/");
+    expect(change).not.toHaveBeenCalled();
+  } finally { open.mockRestore(); }
+});
+
+it("opens a same-origin absolute connection URL", () => {
+  window.getSelection()?.removeAllRanges();
+  mount([b("paragraph", { html: `<a href="${window.location.origin}/connect/codex">Codex</a>` })]);
+  act(() => host.querySelector<HTMLAnchorElement>("a")!.click());
+  expect(host.querySelector("output")!.textContent).toBe("/connect/codex");
+});
+
+it.each(["/connect/claude-code.md", "/connect/unknown-agent", "/connect/toString", "https://external.test/connect/claude-code", "https://[", "javascript:alert(1)"])("does not route unrelated or unsafe links through the connection UI: %s", (href) => {
+  window.getSelection()?.removeAllRanges();
+  const change = mount([b("paragraph", { html: `<a href="${href}">Link</a>` })]);
+  const link = host.querySelector<HTMLAnchorElement>("a")!;
+  let intercepted = false;
+  link.addEventListener("click", (event) => { intercepted = event.defaultPrevented; event.preventDefault(); }, { once: true });
+  act(() => link.click());
+  expect(intercepted).toBe(false);
+  expect(host.querySelector("output")!.textContent).toBe("/");
+  expect(change).not.toHaveBeenCalled();
+});
+
+it.each(["ctrlKey", "metaKey", null] as const)("activates a connection at the caret with %s+Enter while plain Enter still edits", (modifier) => {
+  const change = mount([b("paragraph", { html: '<a href="/connect/claude-code">Claude Code</a>' })]);
+  const editable = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+  act(() => {
+    editable.focus();
+    const range = document.createRange(), selection = window.getSelection()!;
+    range.setStart(editable.querySelector("a")!.firstChild!, 3); range.collapse(true);
+    selection.removeAllRanges(); selection.addRange(range);
+    editable.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...(modifier ? { [modifier]: true } : {}) }));
+  });
+  expect(host.querySelector("output")!.textContent).toBe(modifier ? "/connect/claude-code" : "/");
+  if (modifier) expect(change).not.toHaveBeenCalled();
+  else expect(change.mock.calls[0][0]).toHaveLength(2);
+  window.getSelection()?.removeAllRanges();
+});
 
 it.each(["above", "below"] as const)("materializes an unlinked child %s an empty block only on drop, with page ops and undo", async (position) => {
   const fake = await startTestWriter();

@@ -1,9 +1,10 @@
-import { pageUrl } from "@/lib/routes";
+import { AGENTS_URL, CONNECT_URL, connectUrl, pageUrl } from "@/lib/routes";
+import { CONNECT_AGENT_NAMES } from "@/lib/agentConnectCatalog";
 import { Input } from "@/components/FormControls";
 import { GripVertical } from "lucide-react";
 import PageLinkBlock from "@/components/blocks/PageLinkBlock";
 import { unlinkedSubpages } from "@/lib/subpages";
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { useNavigate } from "react-router";
 import { useStore } from "@/lib/store";
 import { createBlock, newId } from "@/lib/factories";
@@ -13,7 +14,7 @@ import { filterSlashItems, MARKDOWN_SHORTCUTS, NON_TEXT, type SlashItem } from "
 import { runShortcut, shortcutFormat } from "@/lib/formatting";
 import { htmlToBlocks } from "@/lib/htmlPaste";
 import { cloneWithNewIds } from "@/lib/pageMutations";
-import { sanitizeHtml, stripHtml } from "@/lib/utils";
+import { safeHref, sanitizeHtml, stripHtml } from "@/lib/utils";
 import type { Block, BlockType, Page } from "@/lib/types";
 import type { EditableHandle } from "@/components/Editable";
 import { useBlockDrag } from "@/components/blocks/BlockDragContext";
@@ -36,6 +37,19 @@ const MathPreview = lazy(() => import("@/components/MathPreview"));
 import type { EmojiEntry } from "@/lib/emojiData";
 import { putFile } from "@/lib/fileStore";
 import { requestNotifyPermission } from "@/lib/push";
+
+const CONNECTION_PATHS = new Set([CONNECT_URL, AGENTS_URL, ...Object.keys(CONNECT_AGENT_NAMES).map(connectUrl)]);
+
+function connectionLinkHref(target: Element | null): string | undefined {
+  const link = target?.closest<HTMLAnchorElement>("a[href]");
+  if (!link || link.matches(".mention[data-page]")) return;
+  const href = safeHref(link.getAttribute("href"));
+  if (!href) return;
+  try {
+    const url = new URL(href, window.location.href);
+    if (url.origin === window.location.origin && CONNECTION_PATHS.has(url.pathname)) return url.pathname + url.search + url.hash;
+  } catch { /* Leave malformed links editable. */ }
+}
 
 export default function BlockEditor({ pageId, emptyHint }: { pageId: string; emptyHint?: string }) {
   const page = useStore((s) => s.pages[pageId]), spellCheck = useStore((s) => s.settings?.spellcheck ?? true), actorId = useStore((s) => s.syncUserId ?? "local");
@@ -285,6 +299,13 @@ function EditorSurfaceContent({ pageId, blocks, onChange, emptyHint, locked = fa
           else if (items[state.index]) chooseSlash(items[state.index]);
           return;
         }
+        if (mod && event.key === "Enter" && !event.shiftKey && !event.altKey) {
+          const selection = window.getSelection(), node = selection?.anchorNode;
+          if (selection?.isCollapsed && node && handle.el.contains(node)) {
+            const href = connectionLinkHref(node instanceof Element ? node : node.parentElement);
+            if (href) { event.preventDefault(); event.stopPropagation(); withViewTransition(() => navigate(href)); return; }
+          }
+        }
         if (event.key === " " && block.type === "paragraph") {
           const token = textBeforeCaret(handle.el), shortcut = MARKDOWN_SHORTCUTS.find((s) => s.match.test(token));
           if (shortcut && (!nested || !["+", "[ ]", "```"].includes(token))) { event.preventDefault(); handle.el.textContent = handle.getText().slice(token.length); convert(id, shortcut.type, sanitizeHtml(handle.getHtml())); return; }
@@ -353,7 +374,7 @@ function EditorSurfaceContent({ pageId, blocks, onChange, emptyHint, locked = fa
         commit(next, { id: placed.at(-1)?.id ?? id, end: true });
       },
     };
-  }, [pageId, locked, ordinals, nested, selectMention, selectEmoji, selectBlocks, selectRange, draggingId, dropTarget, drag, columnId]);
+  }, [pageId, locked, ordinals, nested, selectMention, selectEmoji, selectBlocks, selectRange, draggingId, dropTarget, drag, columnId, navigate]);
   const deleteSelected = useCallback(() => {
     if (latest.current.locked) return;
     const list = latest.current.blocks, first = list.findIndex((b) => selected.current.includes(b.id));
@@ -408,7 +429,19 @@ function EditorSurfaceContent({ pageId, blocks, onChange, emptyHint, locked = fa
   const changeType = (id: string, type: BlockType) => ops.convert(id, type);
   const selectSlash = (item: SlashItem) => ops.chooseSlash(item);
   const menuBlock = menu ? blocks.find((b) => b.id === menu.id) : undefined;
-  return <div role="presentation" aria-label="Page blocks" ref={container} className={`block-editor ${nested ? "nested-editor" : ""}`} onMouseDown={(event) => { if (!event.shiftKey && selected.current.length && !(event.target as HTMLElement).closest(".block-gutter")) selectBlocks([]); }} onClickCapture={(event) => {
+  const followConnectionLink = (event: MouseEvent<HTMLDivElement>): boolean => {
+    const target = event.target as HTMLElement;
+    if (event.defaultPrevented || ![0, 1].includes(event.button) || event.shiftKey || event.altKey || window.getSelection()?.isCollapsed === false) return false;
+    if (target.closest(".block-editor") !== event.currentTarget || !target.closest('[contenteditable="true"]')) return false;
+    const href = connectionLinkHref(target);
+    if (!href) return false;
+    event.preventDefault();
+    if (event.button === 1 || event.ctrlKey || event.metaKey) window.open(href, "_blank", "noopener,noreferrer");
+    else withViewTransition(() => navigate(href));
+    return true;
+  };
+  return <div role="presentation" aria-label="Page blocks" ref={container} className={`block-editor ${nested ? "nested-editor" : ""}`} onMouseDown={(event) => { if (!event.shiftKey && selected.current.length && !(event.target as HTMLElement).closest(".block-gutter")) selectBlocks([]); }} onAuxClickCapture={followConnectionLink} onClickCapture={(event) => {
+    if (followConnectionLink(event)) return;
     const target = event.target as HTMLElement, link = target.closest<HTMLAnchorElement>("a.mention[data-page]"), chip = target.closest<HTMLElement>("span.date-mention[data-date]");
     if (link?.dataset.page && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) { event.preventDefault(); withViewTransition(() => navigate(pageUrl(link.dataset.page!))); }
     const equation = target.closest<HTMLElement>(".inline-eq[data-eq]");
