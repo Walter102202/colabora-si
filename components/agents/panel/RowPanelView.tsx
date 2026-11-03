@@ -117,7 +117,8 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
     try {
       await onAssign(agentId || null, note);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message === "message_required" ? "Write what should change first." : message);
     } finally {
       setBusy(false);
     }
@@ -163,6 +164,7 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
   const [handoverAgent, setHandoverAgent] = useState("");
   const [handoverNote, setHandoverNote] = useState("");
   const [handoverError, setHandoverError] = useState<string | null>(null);
+  const feedback = useRef<HTMLDivElement>(null);
   const handOverToggle = useRef<HTMLButtonElement>(null);
   const refocusHandOver = useRef(false);
   const autonomyChoice = useQueuedChoice<AutonomyLevel | null>();
@@ -188,7 +190,8 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
     try {
       await fn();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message === "message_required" ? "Write what should change first." : message);
     } finally {
       setBusy(null);
     }
@@ -325,11 +328,11 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
         </section>
       )}
 
-      <FeedbackComposer
-        disabled={busy !== null || task.state === "failed"}
-        placeholder={terminal ? "Tell the agent what to do next; sending reopens the task…" : undefined}
+      <div ref={feedback}><FeedbackComposer
+        disabled={busy !== null}
+        placeholder={terminal ? "What should change? Sending reopens the task." : undefined}
         onSend={(text) => act("send", () => onMessage(text, terminal ? "continue" : "feedback"))}
-      />
+      /></div>
 
       <div className="flex flex-wrap gap-2">
         {!terminal && onHandOver && (
@@ -346,7 +349,7 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
             Hand over…
           </button>
         )}
-        {!terminal && (
+        {!terminal && task.state !== "ready_for_review" && (
           <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" title={nextText} disabled={busy !== null} onClick={() => act("continue", () => onMessage("", "continue"))}>
             Continue
           </button>
@@ -367,7 +370,7 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
           </>
         )}
         {terminal && (
-          <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" title={whatWillHappen(task, agentLike, "continue")} disabled={busy !== null} onClick={() => act("reopen", () => onMessage("", "continue"))}>
+          <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" title={whatWillHappen(task, agentLike, "continue")} disabled={busy !== null} onClick={() => feedback.current?.querySelector("textarea")?.focus()}>
             Reopen
           </button>
         )}

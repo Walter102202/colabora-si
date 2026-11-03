@@ -129,7 +129,8 @@ export interface ActionDetail {
 export function whatWillHappen(task: TaskLike, agent: AgentLike | null, action: UiAction, detail: ActionDetail = {}): string {
   switch (action) {
     case "continue": {
-      if (isTerminal(task.state)) return "Reopens the task with a new run. History and deliverables are kept.";
+      if (isTerminal(task.state)) return "Write what should change. Sending your message reopens the task; history and deliverables are kept.";
+      if (task.state === "ready_for_review") return "Accept the delivery, close without accepting, or send feedback about what should change.";
       const caps = agent?.capabilities ?? null;
       const name = agent?.name ?? "the agent";
       if (!caps || Object.keys(caps).length === 0) {
