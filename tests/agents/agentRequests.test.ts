@@ -212,7 +212,7 @@ it.each(["valid", "missing", "blank", "long", "wrong id"])("work proposals valid
     heartbeat: () => ({}), reply_person_message: () => ({}),
   } });
   const model = createStubModel([{ tool_calls: [toolCall("propose_work", { message_id: variant === "wrong id" ? "00000000-0000-4000-8000-000000000002" : id, summary })] }, { content: "Review the card." }]);
-  await runRequest({ call: mcp.callTool, model, task: { task_id: "t" }, runId: "r", log: () => {} });
+  await runRequest({ call: mcp.callTool, model, task: { task_id: "t", request_kind: "assist" }, runId: "r", log: () => {} });
   const sent = mcp.calls.find((c) => c.name === "reply_person_message")!.args;
   expect(sent.propose_message_id).toBe(variant === "valid" ? id : undefined);
   expect(sent.work_summary).toBe(variant === "valid" ? summary!.trim() : undefined);
