@@ -344,3 +344,12 @@ Deno.test('list_my_tasks trusts the authorized lookup for a completed hidden dep
   assert.deepEqual((out.structured.tasks as Row[])[0].blocked_by, []);
   assert.match(out.text, /1 queued/);
 });
+
+Deno.test('list_my_tasks offers conversations before more recently updated work', async () => {
+  const h = harness({ agent_tasks: [
+    task({ id: 'work', delegate_agent_id: 'agent-1', state: 'queued', request_kind: null, updated_at: '2026-10-27T10:00:02Z' }),
+    task({ id: 'chat', delegate_agent_id: 'agent-1', state: 'queued', request_kind: 'assist', updated_at: '2026-10-27T10:00:01Z' }),
+  ] }, { principal: { type: 'agent', userId: 'u-agent', agentId: 'agent-1', workspaceId: 'w1', clientId: null } });
+  const out = await tool('list_my_tasks').handler({}, h.ctx);
+  assert.deepEqual((out.structured.tasks as Row[]).map(t => t.task_id), ['chat', 'work']);
+});

@@ -126,7 +126,7 @@ Prompts: `continue_task`, `review_as_lead`, `review_delivery`. Resources: `works
 
 Writes are partial and idempotent: an agent appends blocks or edits one block by its current text, never the whole page. Content reaches the database as block operations applied in order; a conflict is reported on the block, the person's version wins, and the agent re-reads.
 
-Every agent is a principal of its own: it has its own token, its page grants, a sponsor who answers for it, a rate limit and a budget. Row Level Security plus `SECURITY DEFINER` functions are the only security boundary; the browser never holds a secret.
+Every agent is a principal of its own: it has its own token, its page grants, a sponsor who answers for it, a rate limit, a budget and a concurrency policy: Trama runs one work task at a time and up to three conversations; other agents are unlimited unless a policy says otherwise. Row Level Security plus `SECURITY DEFINER` functions are the only security boundary; the browser never holds a secret.
 
 ## Connect a harness
 

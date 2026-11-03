@@ -4,7 +4,7 @@ import type { ToolContext, ToolDef } from '../mcp.ts';
 import { CARD_OUTPUT, CARD_TOOL_META, loadTaskCard } from './card.ts';
 import { bool, num, object, output, plural, READ, str, WRITE, WRITE_IDEMPOTENT } from './common.ts';
 import { loadEnvironment, type Row } from './taskData.ts';
-import { openDependencies } from './wait.ts';
+import { openDependencies, requestsFirst } from './wait.ts';
 import { contextLine, contextPackage } from './context.ts';
 
 const TASK_STATES = ['queued', 'working', 'input_required', 'ready_for_review', 'done', 'failed', 'cancelled'];
@@ -92,7 +92,7 @@ const joinJob: ToolDef = {
 const listMyTasks: ToolDef = {
   name: 'list_my_tasks',
   title: 'List my assigned tasks',
-  description: 'Tasks assigned to you, newest activity first, with brief version and the number of messages waiting for you. A task with blocked_by is waiting for those tasks to finish: do not claim it.',
+  description: 'Tasks assigned to you, conversation requests first and newest activity first within each group, with brief version and the number of messages waiting for you. A task with blocked_by is waiting for those tasks to finish: do not claim it.',
   inputSchema: object({
     state: { type: 'array', items: { type: 'string', enum: TASK_STATES } },
     limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
@@ -129,7 +129,7 @@ const listMyTasks: ToolDef = {
     if (tasks.length) await markDelivered(ctx);
     const queued = tasks.filter((t) => t.state === 'queued' && !t.blocked_by.length).length;
     const blockedCount = tasks.filter((t) => t.state === 'queued' && t.blocked_by.length).length;
-    return { text: `${plural(tasks.length, 'task')} (${queued} queued${blockedCount ? `, ${blockedCount} blocked` : ''}).`, structured: { tasks } };
+    return { text: `${plural(tasks.length, 'task')} (${queued} queued${blockedCount ? `, ${blockedCount} blocked` : ''}).`, structured: { tasks: requestsFirst(tasks) } };
   },
 };
 
