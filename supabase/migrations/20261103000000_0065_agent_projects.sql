@@ -66,7 +66,8 @@ begin
   end if;
   -- Recheck the page after taking the task lock: a grant may have been removed while the name was resolved.
   if not private.agent_can(v_t.row_page_id,'read') then return jsonb_build_object('status','not_found'); end if;
-  if v_match->>'kind'='project' and lower(p_as)='worker'
+  -- The Lead asked to continue its own project is never refused; everyone else needs a subtask or a named seat.
+  if v_match->>'kind'='project' and lower(p_as)='worker' and v_agent<>v_t.delegate_agent_id
      and not v_agent=any(v_t.named_worker_ids)
      and not exists(select 1 from public.agent_tasks where parent_task_id=v_t.id and request_kind is null and delegate_agent_id=v_agent) then
     return v_match||jsonb_build_object('status','not_assigned');

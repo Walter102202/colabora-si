@@ -32,6 +32,7 @@ select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent'
 select public.claim_task((:'task'::jsonb->>'task_id')::uuid,'custom');
 select public.create_subtask((:'task'::jsonb->>'task_id')::uuid,'proj-piece','{"objective":"Write the launch post"}',(:'f'::jsonb->>'agent')::uuid);
 select is(public.join_job('Beta launch','lead')->>'status','joined','platform Lead can join own project');
+select is(public.join_job('Beta launch','worker')->>'status','joined','the Lead asked to continue its own project joins as worker too');
 select tests.reset_role();
 select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid,(:'f'::jsonb->>'agent')::uuid);
 select public.join_job(' beta LAUNCH ','worker') as joined \gset
