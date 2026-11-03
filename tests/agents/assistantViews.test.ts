@@ -46,6 +46,17 @@ const view = (over: Partial<AssistantThreadViewProps>) => renderToStaticMarkup(c
 }));
 
 describe("AssistantThreadView", () => {
+  it("identifies each speaker and announces new messages as a conversation log", () => {
+    const host = document.createElement("div");
+    host.innerHTML = view({ messages: [message({ body: "My question" }), message({ id: "reply", direction: "out", body: "Trama's answer" })] });
+    const log = host.querySelector('[role="log"]')!;
+    expect(log.getAttribute("aria-label")).toBe("Conversation with Trama");
+    expect(log.getAttribute("aria-relevant")).toBe("additions text");
+    const entries = log.querySelectorAll("li");
+    expect(entries[0].textContent).toBe("YouMy question");
+    expect(entries[1].textContent).toBe("TramaTrama's answer");
+    expect(entries[1].querySelector("img")?.getAttribute("alt")).toBe("");
+  });
   it.each(["in", "out"] as const)("links only app URLs in outgoing replies (direction=%s)", (direction) => {
     const url = `${window.location.origin}/p/budget?task=t`;
     const body = `Review ${url}.\nhttps://other.test/p/private javascript:alert(1)`;

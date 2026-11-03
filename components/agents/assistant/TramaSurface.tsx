@@ -90,6 +90,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const status = pending ? now - Date.parse(pending.created_at) >= 60_000 ? "Trama is not answering right now. Your message stays here." : "Trama is thinking…" : null;
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
+  const [scrollRequest, setScrollRequest] = useState(0);
   const expanded = revealed && !open;
   const countText = waiting === 1 ? "1 decision waits for you" : `${waiting} decisions wait for you`;
   const reviewText = [lessonCount ? `${lessonCount} lesson${lessonCount === 1 ? "" : "s"}` : "", differenceCount ? `${differenceCount} difference${differenceCount === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
@@ -320,6 +321,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
     if (captureBusy.current) return;
     const body = (from?.body ?? draft).trim();
     if (!body) return;
+    setScrollRequest((value) => value + 1);
     const out: Draft = from ?? {
       clientId: crypto.randomUUID(), body,
       context: {
@@ -355,10 +357,10 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
         if (hideTimer.current) clearTimeout(hideTimer.current);
         hideTimer.current = setTimeout(hidePreview, 500);
       }}
-      className="fixed bottom-4 right-4 z-30 flex max-w-[calc(100vw-2rem)] flex-col items-end gap-2" data-trama-surface>
-      {open && <section role="dialog" aria-label="Trama conversation" className="rounded-md border border-border bg-bg shadow-lg w-96 max-w-[calc(100vw-1.5rem)] max-h-[70vh] overflow-auto p-3">
-        <div className="flex justify-end"><button type="button" aria-label="Close Trama" className="icon-button" onClick={close}><X size={16} /></button></div>
-        <AssistantThreadView messages={thread} draft={draft} busy={voiceBusy} reviewing={voice.phase === "review"}
+      className="fixed bottom-4 right-4 z-30 flex max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] flex-col items-end gap-2" data-trama-surface>
+      {open && <section role="dialog" aria-label="Trama conversation" className="flex h-[34rem] min-h-0 max-h-[calc(100dvh-5.5rem)] w-96 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-bg p-3 shadow-lg">
+        <div className="flex shrink-0 justify-end"><button type="button" aria-label="Close Trama" className="icon-button" onClick={close}><X size={16} /></button></div>
+        <AssistantThreadView key={workspaceId} messages={thread} draft={draft} scrollRequest={scrollRequest} status={status} busy={voiceBusy} reviewing={voice.phase === "review"}
           onNewConversation={() => { void resetConversation(); }} resetting={resetting}
           error={proposalError ?? resetError ?? failed?.error ?? null} avatar={<TramaAvatar size={28} decorative />}
           empty={<span className="flex flex-col items-center gap-3 py-5">
@@ -379,17 +381,17 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
           onOpenNotes={() => { void openNotes().then((id) => { if (id) { close(); void navigate(pageUrl(id)); } }); }}
           voice={<VoiceButton state={voice} elapsedMs={elapsed} onPress={() => void press()} onStop={() => void finish()} onCancel={cancel} onRetry={retry} />}
         />
-        <div className="mt-2 flex flex-wrap gap-1">{suggestions.map((text) => <button type="button" key={text} disabled={voiceBusy} onClick={() => suggest(text)} className="rounded border border-border px-2 py-1 text-left text-xs hover:bg-bg-secondary">{text}</button>)}</div>
+        <div className="mt-2 flex shrink-0 flex-wrap gap-1 [@media(max-height:500px)]:hidden">{suggestions.map((text) => <button type="button" key={text} disabled={voiceBusy} onClick={() => suggest(text)} className="rounded border border-border px-2 py-1 text-left text-xs hover:bg-bg-secondary">{text}</button>)}</div>
       </section>}
-      {status && <p role="status" className="max-w-72 rounded border border-border bg-bg px-3 py-2 text-xs text-text-secondary">{status}</p>}
-      {(waiting > 0 || reviewNotice || (expanded && preview)) && <div className="relative max-w-72 rounded-xl border border-border bg-bg px-2.5 py-1.5 text-xs">
+      {status && !open && <p role="status" className="max-w-72 shrink-0 rounded border border-border bg-bg px-3 py-2 text-xs text-text-secondary">{status}</p>}
+      {(waiting > 0 || reviewNotice || (expanded && preview)) && <div className="relative max-w-72 shrink-0 rounded-xl border border-border bg-bg px-2.5 py-1.5 text-xs">
         {waiting > 0 && <a href={HOME_URL} onBlur={leaveFocus} className="block text-accent">{countText}</a>}
         {reviewNotice && <a href={HOME_URL} onBlur={leaveFocus} className="block text-accent">{reviewNotice}</a>}
         {expanded && preview && <a href={preview.href} onBlur={leaveFocus} className="block truncate text-text-secondary">{previewText}</a>}
         <span aria-hidden="true" className="absolute -bottom-1 right-3 h-2 w-2 rotate-45 border-b border-r border-border bg-bg" />
       </div>}
       <span id={descriptionId} className="sr-only">{[waiting > 0 ? countText : "", reviewNotice, expanded ? previewText : ""].filter(Boolean).join(". ")}</span>
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         {!folded && <div className="flex max-w-64 items-center gap-1 rounded-full border border-border bg-bg px-3 py-2 text-sm shadow-sm">
           {missing && managed ? <span>Trama is getting ready…</span> : missing ? <a href={settingsUrl("agents", pathname)} className="text-accent">Enable Trama</a> : <button type="button" className="text-left" onClick={openConversation}>{TRAMA_GREETING}</button>}
           <button type="button" aria-label="Hide suggestion" className="icon-button shrink-0" onClick={fold}><X size={14} /></button>

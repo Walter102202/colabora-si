@@ -135,6 +135,9 @@ it("does not infer absence from loading and shows a real unanswered message", ()
   expect(document.body.textContent).toContain("Trama is not answering right now. Your message stays here.");
   act(() => useAgentsStore.setState({ status: "ready" }));
   expect(document.body.textContent).toContain("Enable Trama");
+  act(() => button("Talk to Trama").click());
+  expect(document.querySelector('[role="log"]')?.textContent).toContain("Trama is not answering right now. Your message stays here.");
+  expect(document.querySelector('[data-trama-surface] > [role="status"]')).toBeNull();
 });
 
 it("creates work only on the click using the original words and a stable retry key", async () => {
