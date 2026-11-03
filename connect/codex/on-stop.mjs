@@ -28,10 +28,14 @@ const text = (value) => (typeof value === "string" ? value : "");
  * Pulls a short excerpt of the latest feedback out of a `get_task` result.
  * @param {any} detail
  */
-export function feedbackExcerpt(detail) {
+export function feedbackPrompt(detail) {
   const activities = Array.isArray(detail?.activities) ? [...detail.activities] : [];
   activities.sort((a, b) => (Number(b?.seq) || 0) - (Number(a?.seq) || 0));
-  const prompt = activities.find((a) => a?.type === "prompt" && (a?.body?.signal ?? a?.signal) !== "stop");
+  return activities.find((a) => a?.type === "prompt" && (a?.body?.signal ?? a?.signal) !== "stop");
+}
+
+export function feedbackExcerpt(detail) {
+  const prompt = feedbackPrompt(detail);
   if (!prompt) return "";
   const body = prompt.body ?? {};
   const findings = Array.isArray(body.findings)
@@ -147,11 +151,16 @@ export async function runStopHook({ input, env, fetchImpl, state, now = Date.now
     };
     if (next || notices.length) {
       let excerpt = "";
+      let prompt;
       if (next?.reason === "feedback") {
-        try { excerpt = feedbackExcerpt(await remote.callTool("get_task", { task_id: next.task_id, activities_limit: 10 })); }
+        try {
+          const detail = await remote.callTool("get_task", { task_id: next.task_id, activities_limit: 10 });
+          excerpt = feedbackExcerpt(detail);
+          prompt = feedbackPrompt(detail);
+        }
         catch (error) { log(`get_task failed: ${error instanceof Error ? error.message : String(error)}`); }
       }
-      return { exitCode: 0, output: JSON.stringify({ decision: "block", reason: [...(next ? [buildReason(next, excerpt)] : []), ...notices.map(task => buildReason(task, ""))].join("\n\n") }) };
+      return { exitCode: 0, output: JSON.stringify({ decision: "block", reason: [...(next ? [buildReason(next, excerpt, prompt)] : []), ...notices.map(task => buildReason(task, ""))].join("\n\n") }) };
     }
     if (delivered.size) {
       const current = now();

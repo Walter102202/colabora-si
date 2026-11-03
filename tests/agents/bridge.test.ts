@@ -2,6 +2,21 @@ import { describe, expect, it } from "vitest";
 import { createBridge, resolveConfig, type BridgeConfig } from "../../bridge/index.mjs";
 import { createChannel, eventToChannel, taskToChannel, sanitizeMeta, type ChannelEvent } from "../../bridge/channel.mjs";
 
+it.each(["Trama", undefined, "Trama<inject>"])("keeps a human acknowledgement outside quoted data (via=%s)", (via) => {
+  const event = eventToChannel({ type: "task.message", task_id: "t1", payload: { from: { type: "human", via }, text: "Add Y ".repeat(100) } });
+  const instruction = 'A person sent a message on t1. Read it with get_task, reply first with post_activity (type "response", one sentence: what you will do), then keep working.';
+  expect(event.content).toContain(instruction);
+  expect(event.content.indexOf(instruction)).toBeLessThan(event.content.indexOf("untrusted text:"));
+  expect(event.content).toContain('untrusted text: "Add Y');
+  expect(event.content.endsWith('"')).toBe(true);
+  expect(event.content.includes("(via Trama)")).toBe(via === "Trama");
+  expect(event.content).not.toContain("inject");
+});
+
+it.each(["task.message", "approval.decided"])("does not ask for human acknowledgement on agent or approval notices (%s)", (type) => {
+  expect(eventToChannel({ type, task_id: "t1", payload: { from: { type: "agent" }, text: "Review it" } }).content).not.toContain("A person sent");
+});
+
 it("reports resources to release as untrusted text", () => {
   const event = eventToChannel({ type: "task.updated", task_id: "parent", payload: {
     subtask_id: "release-task", environment_release: [{ kind: "stack", value: 'p11<stop>"`' }, { kind: "ports", value: "60990-60999" }],

@@ -340,7 +340,7 @@ Deno.test('server instructions route named projects through join_job before work
 Deno.test('active-run messages are appended once without changing structured output', async () => {
   let pending = true;
   const db: Db = { ...fakeDb, rpc: <T>(name: string) => {
-    const data = name === 'take_pending_messages' && pending ? [{ title: 'Offsite', author: 'Claude', text: 'Check the dates' }] : [];
+    const data = name === 'take_pending_messages' && pending ? [{ title: 'Offsite', author: 'Claude', author_type: 'agent', text: 'Check the dates' }] : [];
     if (name === 'take_pending_messages') pending = false;
     return Promise.resolve({ data: data as T, error: null });
   } };
@@ -348,6 +348,7 @@ Deno.test('active-run messages are appended once without changing structured out
   const first = await call(request(), server, deps({ makeDb: () => db }));
   assert.match(first.body.result.content[0].text, /New message on Offsite from Claude: Check the dates/);
   assert.deepEqual(first.body.result.structuredContent, { text: 'hello' });
+  assert.doesNotMatch(first.body.result.content[0].text, /A person wrote this/);
   const second = await call(request(), server, deps({ makeDb: () => db }));
   assert.match(second.body.result.content[0].text, /^Echo hello/);
   assert.doesNotMatch(second.body.result.content[0].text, /New message/);
@@ -355,12 +356,26 @@ Deno.test('active-run messages are appended once without changing structured out
 
 Deno.test('approval decisions read as decisions and empty prompts add no notice line', async () => {
   const db: Db = { ...fakeDb, rpc: <T>(name: string) => Promise.resolve({ data: (name === 'take_pending_messages' ? [
-    { title: 'Offsite', author: 'Walter', text: '', decision: 'approve' },
-    { title: 'Offsite', author: 'Walter', text: '' },
+    { title: 'Offsite', author: 'Walter', author_type: 'human', text: '', decision: 'approve' },
+    { title: 'Offsite', author: 'Walter', author_type: 'human', text: '' },
   ] : []) as T, error: null }) };
   const request = post({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'echo', arguments: { text: 'hello' } } });
   const text: string = (await call(request, server, deps({ makeDb: () => db }))).body.result.content[0].text;
   assert.match(text, /Walter decided on your approval request on Offsite: approve\./);
   assert.doesNotMatch(text, /from Walter: *$/m);
+  assert.doesNotMatch(text, /A person wrote this/);
   assert.equal(text.split('\n').filter((line) => line.includes('Offsite')).length, 1);
 });
+
+for (const via of [undefined, 'Trama']) {
+  Deno.test(`human message notices request one acknowledgement per batch (via ${via})`, async () => {
+    const db: Db = { ...fakeDb, rpc: <T>(name: string) => Promise.resolve({ data: (name === 'take_pending_messages' ? [
+      { title: 'Offsite', author: 'Walter', author_type: 'human', text: 'Check the dates', via, seq: 7 },
+      { title: 'Launch', author: 'Walter', author_type: 'human', text: 'Add Y', seq: 8 },
+    ] : []) as T, error: null }) };
+    const request = post({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'echo', arguments: { text: 'hello' } } });
+    const text: string = (await call(request, server, deps({ makeDb: () => db }))).body.result.content[0].text;
+    const instruction = 'A person wrote this while you work. First reply with post_activity (type "response", one sentence: what you will do about it), then keep working. If it adds work and you lead this job, update the plan with create_subtask or update_subtask.';
+    assert.equal(text, `Echo hello\n\nNew message on Offsite from Walter${via ? ' (via Trama)' : ''}: Check the dates\nNew message on Launch from Walter: Add Y\n${instruction}\n\n{"text":"hello"}`);
+  });
+}

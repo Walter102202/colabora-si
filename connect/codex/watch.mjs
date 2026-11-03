@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRemote } from "../../bridge/remote.mjs";
-import { CONTINUE_REASONS, FINISHED_STATES, isLeadNotice, buildReason, feedbackExcerpt } from "./on-stop.mjs";
+import { CONTINUE_REASONS, FINISHED_STATES, isLeadNotice, buildReason, feedbackExcerpt, feedbackPrompt } from "./on-stop.mjs";
 import { fileState } from "./state.mjs";
 export { fileState } from "./state.mjs";
 
@@ -133,7 +133,7 @@ export async function runWatcher({ env, queue, state, fetchImpl, sleep, signal, 
         const key = isLeadNotice(task) ? `${thread}|notice|${task.notice.event_id}` : [thread, task.reason, task.brief_version, promptSeq].join("|");
         if (!sent.get(id)?.has(key)) {
           const excerpt = task.reason === "feedback" ? feedbackExcerpt(detail) : "";
-          await queue(thread, `${buildReason(task, excerpt)}${SESSION_HINT}`);
+          await queue(thread, `${buildReason(task, excerpt, feedbackPrompt(detail))}${SESSION_HINT}`);
           const keys = sent.get(id) ?? new Set();
           keys.add(key);
           sent.set(id, keys);

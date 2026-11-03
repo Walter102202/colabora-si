@@ -71,5 +71,43 @@ values (:'ws',:'owner',:'pa','out','surface','system','New conversation','{"kind
 select tests.set_agent(:'pu',:'pa');
 select is(public.assist_request_context(:'req')->'last_answer_at','null'::jsonb,'answers before the current thread do not become the cursor');
 select tests.reset_role();
+-- A confirmed proposal has human provenance, one durable receipt and a shared prompt cursor.
+select tests.set_agent((:'worker'::jsonb->>'user')::uuid,(:'worker'::jsonb->>'agent')::uuid);
+select public.claim_task(:'child1','intervene-worker')->>'run_id' as child_run \gset
+select tests.reset_role();
+insert into public.agent_messages(workspace_id,user_id,agent_id,direction,channel,kind,body,outcome)
+values (:'ws',:'owner',:'pa','out','surface','text','Review the message',jsonb_build_object('kind','message_proposed','task_id',:'child1','task_title','Research','agent_name','Codex','text','Add source links.')) returning id as proposal \gset
+select tests.set_agent(:'pu',:'pa');
+select is(tests.error_of(format('select public.send_proposed_message(%L)',:'proposal')),'humans_only','agent cannot confirm a proposal');
+select tests.set_human(:'owner','oauth-client');
+select is(tests.error_of(format('select public.send_proposed_message(%L)',:'proposal')),'direct_session_required','OAuth cannot confirm a proposal');
+select tests.set_human(:'owner');
+select public.send_proposed_message(:'proposal') as sent \gset
+select is(public.send_proposed_message(:'proposal'),:'sent'::jsonb||'{"already_sent":true}','double click returns the same receipt');
+select tests.reset_role();
+select seq as prompt_seq from public.agent_activities where task_id=:'child1' and type='prompt' and body->>'text'='Add source links.' \gset
+select is((select author_type from public.agent_activities where task_id=:'child1' and seq=:'prompt_seq'),'human','confirmed message belongs to the person');
+select is((select body->>'source' from public.agent_activities where task_id=:'child1' and seq=:'prompt_seq'),'trama','confirmed message records Trama provenance');
+select is((select payload#>>'{from,via}' from public.agent_events where task_id=:'child1' and type='task.message'),'Trama','event carries Trama provenance');
+select is((select payload->>'prompt_seq' from public.agent_events where task_id=:'child1' and type='task.message'),:'prompt_seq','event identifies its prompt');
+select is((select count(*) from public.agent_activities where task_id=:'child1' and body->>'text'='Add source links.'),1::bigint,'double click creates one prompt');
+select is((select count(*) from public.agent_events where task_id=:'child1' and type='task.message'),1::bigint,'double click creates one event');
+select ok((select outcome ? 'sent_at' and outcome->>'delivery'='queued_for_run' and outcome->>'prompt_seq'=:'prompt_seq' from public.agent_messages where id=:'proposal'),'sent outcome includes delivery, timestamp and prompt sequence');
+update public.agents set capabilities=capabilities||'{"continue":true}' where id=(:'lead'::jsonb->>'agent')::uuid;
+insert into public.agent_messages(workspace_id,user_id,agent_id,direction,channel,kind,body,outcome)
+values (:'ws',:'owner',:'pa','out','surface','text','Review',jsonb_build_object('kind','message_proposed','task_id',:'second','text','Add a checklist.')) returning id as dispatched_proposal \gset
+select tests.set_human(:'owner');
+select public.send_proposed_message(:'dispatched_proposal');
+select tests.reset_role();
+select is((select payload#>>'{from,type}' from public.agent_events where task_id=:'second' and type='task.feedback'),'human','dispatched feedback identifies its human author');
+select is((select payload#>>'{from,via}' from public.agent_events where task_id=:'second' and type='task.feedback'),'Trama','dispatched feedback preserves Trama provenance');
+select is((select count(*) from private.sent_person_messages where message_id=:'proposal' and task_id=:'child1' and prompt_seq=:'prompt_seq'),1::bigint,'double click creates one private receipt');
+select tests.set_agent((:'worker'::jsonb->>'user')::uuid,(:'worker'::jsonb->>'agent')::uuid);
+select is(public.take_pending_messages()#>>'{0,via}','Trama','taking prompts preserves Trama provenance');
+select tests.set_human(:'owner');
+select public.send_agent_message(:'child1','Direct panel message');
+select tests.reset_role();
+select is((select body->>'source' from public.agent_activities where task_id=:'child1' and body->>'text'='Direct panel message'),'row_panel','direct callers cannot impersonate Trama provenance');
+select ok(not has_function_privilege('authenticated','private.send_agent_message_core(uuid,text,text,text[],text,text)','EXECUTE'),'private send core is inaccessible to clients');
 select * from finish();
 rollback;

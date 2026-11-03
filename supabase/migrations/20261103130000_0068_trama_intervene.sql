@@ -117,3 +117,176 @@ begin
 end $$;
 revoke all on function public.assist_request_context(uuid) from public, anon;
 grant execute on function public.assist_request_context(uuid) to authenticated;
+
+-- Private receipts connect a confirmed human message to the prompt actually delivered.
+create table private.sent_person_messages (
+  message_id uuid primary key references public.agent_messages(id) on delete cascade,
+  task_id uuid not null,
+  prompt_seq bigint not null,
+  sent_at timestamptz not null default now(),
+  received_at timestamptz,
+  reply_activity_id uuid
+);
+alter table private.sent_person_messages enable row level security;
+revoke all on private.sent_person_messages from public, anon, authenticated;
+create index sent_person_messages_pending_idx on private.sent_person_messages(task_id) where reply_activity_id is null;
+
+create or replace function private.send_agent_message_core(p_task_id uuid, p_body text, p_signal text,
+  p_block_ids text[], p_comment_id text, p_via text)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_t public.agent_tasks%rowtype; v_agent uuid; v_author uuid; v_author_type text; v_source text; v_delivery text;
+        v_run public.agent_runs%rowtype; v_activity uuid; v_seq bigint; v_from jsonb;
+begin
+  if p_signal is null or p_signal not in ('continue','feedback','stop') then
+    raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'signal';
+  end if;
+  select * into v_t from public.agent_tasks where id = p_task_id for update;
+  if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+
+  if private.is_agent() then
+    v_agent := private.current_agent_id();
+    if v_agent is null then raise exception using errcode = 'PT403', message = 'agent_disabled'; end if;
+    perform private.check_rate(v_agent);
+    if not exists (select 1 from public.agent_tasks p join public.agents a on a.id = p.delegate_agent_id
+                    where p.id = v_t.parent_task_id and p.delegate_agent_id = v_agent and a.role = 'lead') then
+      raise exception using errcode = 'PT403', message = 'forbidden';
+    end if;
+    v_author := v_agent; v_author_type := 'agent'; v_source := 'lead';
+  else
+    if not private.can_write_page(v_t.row_page_id, v_t.workspace_id) then
+      raise exception using errcode = 'PT403', message = 'forbidden';
+    end if;
+    v_author := (select auth.uid()); v_author_type := 'human';
+    v_source := case when p_via = 'Trama' then 'trama' when p_comment_id is not null then 'comment' else 'row_panel' end;
+  end if;
+
+  if private.principal_type()='human' and p_signal in ('continue','feedback')
+    and v_t.state in ('ready_for_review','done') and btrim(coalesce(p_body,''))='' then
+    raise exception using errcode='PT400',message='message_required';
+  end if;
+
+  if v_t.request_kind is not null and v_t.state in ('done','failed','cancelled') then
+    raise exception using errcode = 'PT409', message = 'task_closed';
+  end if;
+
+  -- Reopening a closed task is a decision of a person; a Lead writing to its closed subtask gets task_closed.
+  if private.is_agent() and v_t.state in ('done','failed','cancelled') then
+    raise exception using errcode = 'PT409', message = 'task_closed';
+  end if;
+
+  if v_t.state in ('cancelled','failed') and p_signal <> 'continue' then
+    raise exception using errcode = 'PT409', message = 'task_closed';
+  end if;
+  if v_t.state = 'done' and p_signal = 'stop' then
+    raise exception using errcode = 'PT409', message = 'task_closed';
+  end if;
+
+  v_seq := private.next_seq(v_t.id);
+  v_from := jsonb_strip_nulls(jsonb_build_object('type', v_author_type,
+    'name', case when v_author_type = 'agent' then (select name from public.agents where id = v_author)
+      else coalesce((select nullif(raw_user_meta_data->>'full_name','') from auth.users where id = v_author), 'Person') end,
+    'via', case when v_source = 'trama' then 'Trama' end));
+  if p_signal = 'stop' then
+    if v_t.active_run_id is null then
+      update public.agent_tasks set state='cancelled', active_run_id=null, waiting_on=null, updated_at=now() where id=v_t.id;
+      update public.agent_approvals set status='cancelled' where task_id=v_t.id and status='pending';
+      v_delivery := 'cancelled';
+    else
+      update public.agent_runs set stop_requested_at=coalesce(stop_requested_at, now()) where id=v_t.active_run_id
+        returning * into v_run;
+      insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
+      values (v_t.workspace_id, v_t.id, v_run.id, v_run.agent_id, 'task.stop',
+              jsonb_build_object('reason', 'stop', 'text', p_body), private.next_event_seq(v_t.id));
+      v_delivery := 'stop_requested';
+    end if;
+  else
+    if v_t.state in ('done','failed','cancelled') then
+      update public.agent_tasks set state='queued', acceptance='pending', review_state='none', waiting_on=null,
+             closed_at=null, closed_by=null, updated_at=now() where id=v_t.id;
+    elsif v_t.state = 'input_required' and v_t.active_run_id is null and not private.is_agent() then
+      update public.agent_tasks set state='queued', waiting_on=null, updated_at=now() where id=v_t.id;
+    end if;
+    if v_t.active_run_id is not null then
+      v_delivery := 'queued_for_run';
+      if exists(select 1 from public.agents where id=v_t.delegate_agent_id and not is_platform) then
+        insert into public.agent_events(workspace_id,task_id,run_id,agent_id,type,payload,seq)
+        values(v_t.workspace_id,v_t.id,v_t.active_run_id,v_t.delegate_agent_id,'task.message',
+          jsonb_build_object('text',p_body,'signal',p_signal,'source',v_source,'from',v_from,'prompt_seq',v_seq),private.next_event_seq(v_t.id));
+      end if;
+    elsif v_t.state = 'input_required' and private.is_agent() then
+      v_delivery := 'waiting_on_human';
+    elsif exists (select 1 from public.agents a where a.id=v_t.delegate_agent_id and coalesce((a.capabilities->>'continue')::boolean, false)) then
+      insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
+      values (v_t.workspace_id, v_t.id, null, v_t.delegate_agent_id,
+              case p_signal when 'continue' then 'task.continue' else 'task.feedback' end,
+              jsonb_build_object('text', p_body, 'signal', p_signal, 'source', v_source, 'from', v_from, 'prompt_seq', v_seq), private.next_event_seq(v_t.id));
+      v_delivery := 'dispatched';
+    else
+      v_delivery := 'queued_for_next_session';
+    end if;
+  end if;
+
+  insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, author_type, author_id)
+  values (v_t.workspace_id, v_t.id, v_t.active_run_id, v_seq, 'prompt',
+          jsonb_build_object('text', coalesce(p_body, ''), 'signal', p_signal, 'source', v_source, 'comment_id', p_comment_id,
+                             'block_ids', to_jsonb(coalesce(p_block_ids, '{}'))), v_author_type, v_author)
+  returning id into v_activity;
+  return jsonb_build_object('activity_id', v_activity, 'delivery', v_delivery, 'prompt_seq', v_seq);
+end $$;
+revoke all on function private.send_agent_message_core(uuid, text, text, text[], text, text) from public, anon, authenticated;
+
+create or replace function public.send_agent_message(p_task_id uuid, p_body text, p_signal text default 'feedback',
+  p_block_ids text[] default '{}', p_comment_id text default null)
+returns jsonb language sql security definer set search_path = '' as $$
+  select private.send_agent_message_core(p_task_id, p_body, p_signal, p_block_ids, p_comment_id, null) - 'prompt_seq';
+$$;
+revoke all on function public.send_agent_message(uuid, text, text, text[], text) from public, anon;
+grant execute on function public.send_agent_message(uuid, text, text, text[], text) to authenticated;
+
+create or replace function public.send_proposed_message(p_message_id uuid)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare m public.agent_messages%rowtype; t public.agent_tasks%rowtype; v_result jsonb;
+begin
+  if private.principal_type() is distinct from 'human' then raise exception using errcode='PT403',message='humans_only'; end if;
+  if private.jwt_client_id() is not null then raise exception using errcode='PT403',message='direct_session_required'; end if;
+  select * into m from public.agent_messages proposal where id=p_message_id and user_id=auth.uid() and direction='out'
+    and private.is_human_member(proposal.workspace_id) and outcome->>'kind' in ('message_proposed','message_sent','work_declined') for update;
+  if not found then raise exception using errcode='PT404',message='not_found'; end if;
+  if m.outcome->>'kind'='work_declined' then raise exception using errcode='PT409',message='already_settled'; end if;
+  if m.outcome->>'kind'='message_sent' then return jsonb_build_object('task_id',m.outcome->>'task_id','page_id',m.outcome->>'page_id','delivery',m.outcome->>'delivery','already_sent',true); end if;
+  select * into t from public.agent_tasks where id=(m.outcome->>'task_id')::uuid and workspace_id=m.workspace_id
+    and request_kind is null and private.person_reads_page(row_page_id,m.workspace_id,m.user_id) for update;
+  if not found then raise exception using errcode='PT404',message='not_found'; end if;
+  if t.state in ('done','failed','cancelled') then raise exception using errcode='PT409',message='task_closed'; end if;
+  v_result := private.send_agent_message_core(t.id, m.outcome->>'text', 'feedback', '{}', null, 'Trama');
+  insert into private.sent_person_messages(message_id, task_id, prompt_seq) values (m.id, t.id, (v_result->>'prompt_seq')::bigint);
+  update public.agent_messages set outcome=outcome||jsonb_build_object('kind','message_sent','page_id',t.row_page_id,
+    'sent_at',now(),'delivery',v_result->>'delivery','prompt_seq',(v_result->>'prompt_seq')::bigint) where id=m.id;
+  return jsonb_build_object('task_id',t.id,'page_id',t.row_page_id,'delivery',v_result->>'delivery');
+end $$;
+revoke all on function public.send_proposed_message(uuid) from public, anon;
+grant execute on function public.send_proposed_message(uuid) to authenticated;
+
+create or replace function private.take_run_prompts(p_run_id uuid,p_after_seq bigint default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare r public.agent_runs%rowtype; v_from bigint; v_to bigint; result jsonb;
+begin
+  select * into r from public.agent_runs where id=p_run_id and agent_id=private.current_agent_id() for update;
+  if not found then raise exception using errcode='PT404',message='not_found'; end if;
+  -- A caller's explicit after_seq is honoured (a loop that never shows tool text to its model must not lose prompts);
+  -- without one, the shared delivery cursor makes tool notices and heartbeats deliver each prompt once.
+  v_from:=case when p_after_seq is not null then p_after_seq
+    else greatest(r.prompt_delivered_seq,coalesce((select min(seq) from public.agent_activities where run_id=r.id),0)) end;
+  select coalesce(jsonb_agg(jsonb_build_object('seq',a.seq,'text',a.body->>'text','signal',a.body->>'signal',
+    'via',case when a.body->>'source' = 'trama' then 'Trama' end,
+    'source',a.body->>'source','author_type',a.author_type,'created_at',a.created_at,'approval_id',a.body->>'approval_id','decision',a.body->>'decision',
+    'author',case when a.author_type='agent' then coalesce((select name from public.agents where id=a.author_id),'Agent')
+      else coalesce((select nullif(u.raw_user_meta_data->>'full_name','') from auth.users u where u.id=a.author_id),'Person') end) order by a.seq),'[]'),max(a.seq)
+    into result,v_to from public.agent_activities a where a.task_id=r.task_id and a.type='prompt' and a.seq>v_from;
+  -- Write only when the cursor moves forward: agent_runs is in the Realtime publication.
+  if v_to is not null and v_to>coalesce(r.prompt_delivered_seq,0) then
+    update public.agent_runs set prompt_delivered_seq=v_to where id=r.id;
+  end if;
+  return result;
+end $$;
+revoke all on function private.take_run_prompts(uuid,bigint) from public,anon,authenticated;
