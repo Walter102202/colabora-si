@@ -151,9 +151,10 @@ Deno.test('a Lead without a bridge receives policy review, verdict, minor findin
     { review_of:'delivery',review_task_id:'review' },
     { review_of:'delivery',verdict:'approved',minor_findings:[{note:'Later'}] },
     { subtask_id:'delivery',environment_release:[{kind:'stack',value:'local'}] },
+    { subtask_id:'delivery',subtask_title:'Research',worker_name:'Codex',text:'Progress' },
   ];
   const tables = { agent_tasks:[task({id:'parent',updated_at:'2026-10-27T10:00:00Z'})], agent_activities:[] as Row[],
-    agent_events: payloads.map((payload,i)=>event(`notice-${i}`,`2026-10-27T10:00:0${i+2}Z`,{task_id:'parent',type:i===0?'task.continue':'task.updated',payload})) };
+    agent_events: payloads.map((payload,i)=>event(`notice-${i}`,`2026-10-27T10:00:0${i+2}Z`,{task_id:'parent',type:i===0?'task.continue':i===3?'subtask.progress':'task.updated',payload})) };
   const h=harness(tables);
   const result=await tool('wait_for_my_tasks').handler({after,timeout_s:0},h.ctx);
   assert.equal(result.structured.changed,true);

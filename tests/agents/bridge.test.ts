@@ -344,3 +344,15 @@ it("acknowledges Realtime Lead notices only after emission and recovers a failed
   await done;
   expect(attempts).toBe(2);expect(emitted).toHaveLength(1);
 });
+
+it.each(["task.message", "subtask.progress"])("emits %s as an existing-run notification", (type) => {
+  const emitted: ChannelEvent[] = [];
+  const channel = createChannel({ agentId: AGENT, emit: (e) => emitted.push(e), remote: { callTool: async () => ({ tasks: [] }) } });
+  channel.handleEvent({ type, event_id: "notice", agent_id: AGENT, task_id: "parent", run_id: "run", payload: { text: "Check dates", worker_name: "Codex", subtask_title: "Research" } });
+  channel.handleEvent({ type, event_id: "notice", agent_id: AGENT, task_id: "parent", run_id: "run", payload: {} });
+  expect(emitted).toHaveLength(1);
+  expect(emitted[0].meta.reason).toBe(type === "task.message" ? "feedback" : "updated");
+  expect(emitted[0].meta.run_id).toBe("run");
+  expect(emitted[0].content).toContain("Check dates");
+  channel.stop();
+});

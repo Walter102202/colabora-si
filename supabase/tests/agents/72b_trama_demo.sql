@@ -74,5 +74,56 @@ select workspace_id,user_id,agent_id,direction,channel,kind,body,outcome||'{"kin
 select tests.set_human(:'owner');
 select is(public.decline_proposed_work(:'declined'),'{"declined":true}'::jsonb,'Not now settles a job');
 select tests.reset_role();
+-- Active-run feedback and bounded worker progress are notifications, not new runs.
+select tests.make_page(:'ws','demo-child',:'job_page');
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select public.claim_task(:'job_task','demo-lead')->>'run_id' as lead_run \gset
+select public.create_subtask(:'job_task','demo-child','{"objective":"Research"}',(:'worker'::jsonb->>'agent')::uuid)->>'task_id' as child \gset
+select tests.reset_role();
+select tests.set_agent((:'worker'::jsonb->>'user')::uuid,(:'worker'::jsonb->>'agent')::uuid);
+select public.claim_task(:'child','demo-worker')->>'run_id' as child_run \gset
+select public.post_activity(:'child_run','response','{"text":"Research started"}');
+select public.post_activity(:'child_run','response','{"text":"Research continuing"}');
+select tests.reset_role();
+select is((select count(*) from public.agent_events where task_id=:'job_task' and type='subtask.progress'),1::bigint,'worker progress throttled per subtask');
+select is((select payload->>'worker_name' from public.agent_events where task_id=:'job_task' and type='subtask.progress'),'Codex','progress names the worker');
+update public.agent_events set created_at=now()-interval '3 minutes' where task_id=:'job_task' and type='subtask.progress';
+select tests.set_agent((:'worker'::jsonb->>'user')::uuid,(:'worker'::jsonb->>'agent')::uuid);
+select public.post_activity(:'child_run','action','{"op":"research","summary":"More research"}');
+select tests.reset_role();
+select is((select count(*) from public.agent_events where task_id=:'job_task' and type='subtask.progress'),2::bigint,'progress resumes after two minutes');
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select public.send_agent_message(:'child','Check the dates','feedback');
+select tests.reset_role();
+select is((select count(*) from public.agent_events where task_id=:'child' and type='task.message'),1::bigint,'active external delegate receives message event');
+select is((select payload#>>'{from,name}' from public.agent_events where task_id=:'child' and type='task.message'),'Claude Code','event names the sender');
+select tests.set_agent((:'worker'::jsonb->>'user')::uuid,(:'worker'::jsonb->>'agent')::uuid);
+select is(public.take_pending_messages()#>>'{0,text}','Check the dates','tool notice takes pending feedback');
+select is(public.take_pending_messages(),'[]'::jsonb,'tool notice is delivered once');
+select is(public.heartbeat(:'child_run')->'pending_prompts','[]'::jsonb,'heartbeat shares the delivery cursor');
+select tests.reset_role();
+select tests.set_human(:'owner');
+select public.send_agent_message(:'child','Use local dates','feedback');
+select tests.reset_role();
+select tests.set_agent((:'worker'::jsonb->>'user')::uuid,(:'worker'::jsonb->>'agent')::uuid);
+select is(public.heartbeat(:'child_run')#>>'{pending_prompts,0,text}','Use local dates','heartbeat takes new feedback');
+select is(public.take_pending_messages(),'[]'::jsonb,'already-heartbeated feedback is not repeated');
+select tests.reset_role();
+update public.agents set is_platform=false where id=:'pa';
+update public.agents set is_platform=true where id=(:'worker'::jsonb->>'agent')::uuid;
+select tests.set_human(:'owner');
+select public.send_agent_message(:'child','Platform message','feedback');
+select tests.reset_role();
+select is((select count(*) from public.agent_events where task_id=:'child' and type='task.message'),2::bigint,'platform delegate receives no message event');
+select is((select count(*) from public.agent_runs where task_id=:'child'),1::bigint,'notifications do not create another run');
+update public.agents set is_platform=false where id=(:'worker'::jsonb->>'agent')::uuid;
+update public.agents set is_platform=true where id=(:'lead'::jsonb->>'agent')::uuid;
+update public.agent_events set created_at=now()-interval '3 minutes' where task_id=:'job_task' and type='subtask.progress';
+select tests.set_agent((:'worker'::jsonb->>'user')::uuid,(:'worker'::jsonb->>'agent')::uuid);
+select public.post_activity(:'child_run','response','{"text":"No platform progress event"}');
+select tests.reset_role();
+select is((select count(*) from public.agent_events where task_id=:'job_task' and type='subtask.progress'),2::bigint,'platform Lead is not notified');
+update public.agents set is_platform=false where id=(:'lead'::jsonb->>'agent')::uuid;
+update public.agents set is_platform=true where id=:'pa';
 select * from finish();
 rollback;

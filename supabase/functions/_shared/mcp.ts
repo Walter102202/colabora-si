@@ -297,10 +297,18 @@ async function callTool(state: RequestState, params: Record<string, unknown>) {
       const id = out.structured.id ?? args.database_id ?? args.page_id ?? out.structured.page_id;
       if (typeof id === 'string') out.structured = { ...out.structured, id, url: `${state.appUrl}/p/${encodeURIComponent(id)}` };
     }
+    let notified = false;
+    if (state.bearer.principal.type === 'agent') {
+      // A notification failure must not turn a successful write into a failed/retried write.
+      try {
+        const { data } = await state.deps.makeDb(state.bearer.token, budget.signal).rpc<{ title: string; author: string; text: string }[]>('take_pending_messages', {});
+        if (Array.isArray(data) && data.length) { notified = true; out.text += '\n\n' + data.map((m) => `New message on ${m.title} from ${m.author}: ${m.text}`).join('\n'); }
+      } catch { /* The next tool or heartbeat can deliver pending messages. */ }
+    }
     state.code = 'ok';
     const result: Record<string, unknown> = toolResult(out);
     if (state.era === '2026') {
-      result.ttlMs = tool.cacheTtlMs ?? 0;
+      result.ttlMs = notified ? 0 : tool.cacheTtlMs ?? 0;
       result.cacheScope = 'private';
     }
     return result;

@@ -252,6 +252,13 @@ begin
     end if;
     if v_t.active_run_id is not null then
       v_delivery := 'queued_for_run';
+      if exists(select 1 from public.agents where id=v_t.delegate_agent_id and not is_platform) then
+        insert into public.agent_events(workspace_id,task_id,run_id,agent_id,type,payload,seq)
+        values(v_t.workspace_id,v_t.id,v_t.active_run_id,v_t.delegate_agent_id,'task.message',
+          jsonb_build_object('text',p_body,'signal',p_signal,'source',v_source,'from',jsonb_build_object('type',v_author_type,
+            'name',case when v_author_type='agent' then (select name from public.agents where id=v_author)
+              else coalesce((select nullif(raw_user_meta_data->>'full_name','') from auth.users where id=v_author),'Person') end)),private.next_event_seq(v_t.id));
+      end if;
     elsif v_t.state = 'input_required' and private.is_agent() then
       v_delivery := 'waiting_on_human';
     elsif exists (select 1 from public.agents a where a.id=v_t.delegate_agent_id and coalesce((a.capabilities->>'continue')::boolean, false)) then
@@ -328,4 +335,144 @@ begin
     'agent_proposal_message_id', case when v_last.channel='surface' and not v_last.pasted and not v_last.forwarded then v_last.id end,
     'proposal_message_id', case when v_last.channel='surface' and (v_page is not null or jsonb_array_length(v_boards)>0) and not v_last.pasted and not v_last.forwarded then v_last.id end,
     'kind', 'assist', 'task_id', v_t.id, 'messages', v_items, 'through_seq', v_through);
+end $$;
+
+-- These events notify existing sessions; never send them to a webhook that could start another run.
+alter table public.agent_events drop constraint agent_events_type_check;
+alter table public.agent_events add constraint agent_events_type_check check(type in
+ ('task.start','task.continue','task.feedback','task.stop','approval.decided','brief.updated','task.updated','task.message','subtask.progress'));
+
+create or replace function private.agent_events_enqueue()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  if new.type in ('task.message','subtask.progress') then return new; end if;
+  if private.has_pgmq() then
+    execute 'select pgmq.send($1, $2)' using 'agent_dispatch', jsonb_build_object('event_id', new.event_id);
+  end if;
+  return new;
+end $$;
+
+create or replace function public.mark_events_delivered(p_event_ids uuid[] default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_agent uuid; v_out jsonb;
+begin
+  v_agent := private.task_actor_agent_id();
+  if v_agent is null then raise exception using errcode = 'PT403', message = 'agent_disabled'; end if;
+  perform private.check_rate(v_agent);
+  with done as (
+    update public.agent_events set status = 'delivered', delivered_at = now(), lease_until = null
+     where agent_id = v_agent and status in ('queued','leased') and (p_event_ids is null or event_id = any (p_event_ids))
+       and (p_event_ids is not null or not (
+         type='subtask.progress' or (type='task.continue' and payload ? 'review_of')
+         or (type='task.updated' and payload ?| array['environment_release','verdict','minor_findings','review_timeout'])))
+    returning event_id, task_id, run_id, type, payload, seq, created_at
+  )
+  select coalesce(jsonb_agg(to_jsonb(done) order by created_at), '[]'::jsonb) into v_out from done;
+  if private.has_pgmq() and jsonb_array_length(v_out) > 0 then
+    execute 'select count(pgmq.delete($1, q.msg_id)) from pgmq.q_agent_dispatch q
+              where (q.message->>''event_id'') in (select e->>''event_id'' from jsonb_array_elements($2) e)'
+      using 'agent_dispatch', v_out;
+  end if;
+  return v_out;
+end $$;
+
+create or replace function public.post_activity(p_run_id uuid, p_type text, p_body jsonb, p_ephemeral boolean default false,
+  p_idempotency_key text default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_r public.agent_runs%rowtype; v_id uuid; v_seq bigint; v_state text; v_child public.agent_tasks%rowtype; v_parent public.agent_tasks%rowtype; v_text text;
+begin
+  v_r := private.own_run(p_run_id);
+  if p_idempotency_key is not null then
+    select a.id, a.seq into v_id, v_seq from public.agent_activities a where a.task_id = v_r.task_id and a.idempotency_key = p_idempotency_key;
+    if found then
+      select state into v_state from public.agent_tasks where id = v_r.task_id;
+      return jsonb_build_object('activity_id', v_id, 'seq', v_seq, 'task_state', v_state);
+    end if;
+  end if;
+  if v_r.status not in ('running','waiting') then raise exception using errcode = 'PT422', message = 'run_not_active'; end if;
+  if p_type is null or p_type not in ('thought','action','response','error') then
+    raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'type';
+  end if;
+  if jsonb_typeof(p_body) is distinct from 'object' then raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'body'; end if;
+  if (p_type = 'response' and p_body ? 'submit') or (p_type = 'action' and p_body->>'op' = 'revert_run') then
+    raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'body';
+  end if;
+  if p_type = 'action' and p_body->>'op' = 'external' and not exists (
+       select 1 from public.external_ops o where o.op_id = (p_body->>'external_op_id')::uuid and o.task_id = v_r.task_id) then
+    raise exception using errcode = 'PT422', message = 'unknown_external_op';
+  end if;
+
+  perform set_config('app.run_id', v_r.id::text, true);
+  insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, ephemeral, author_type, author_id, idempotency_key)
+  values (v_r.workspace_id, v_r.task_id, v_r.id, private.next_seq(v_r.task_id), p_type, p_body, coalesce(p_ephemeral, false),
+          'agent', v_r.agent_id, p_idempotency_key)
+  returning id, seq into v_id, v_seq;
+  v_text:=left(coalesce(p_body->>'text',p_body->>'summary',''),300);
+  if not coalesce(p_ephemeral,false) and p_type in ('thought','action','response') and btrim(v_text)<>'' then
+    select * into v_child from public.agent_tasks where id=v_r.task_id;
+    select * into v_parent from public.agent_tasks where id=v_child.parent_task_id;
+    if v_parent.id is not null and exists(select 1 from public.agents where id=v_parent.delegate_agent_id and not is_platform) then
+      perform pg_advisory_xact_lock(hashtextextended('progress:'||v_child.id::text,0));
+      if not exists(select 1 from public.agent_events where task_id=v_parent.id and type='subtask.progress'
+        and payload->>'subtask_id'=v_child.id::text and created_at>now()-interval '2 minutes') then
+        insert into public.agent_events(workspace_id,task_id,run_id,agent_id,type,payload,seq)
+        values(v_parent.workspace_id,v_parent.id,v_parent.active_run_id,v_parent.delegate_agent_id,'subtask.progress',
+          jsonb_build_object('subtask_id',v_child.id,'subtask_title',v_child.title,'worker_name',(select name from public.agents where id=v_r.agent_id),'text',v_text),private.next_event_seq(v_parent.id));
+      end if;
+    end if;
+  end if;
+  select state into v_state from public.agent_tasks where id = v_r.task_id;
+  return jsonb_build_object('activity_id', v_id, 'seq', v_seq, 'task_state', v_state);
+end $$;
+
+-- A per-run cursor shares one delivery mark between heartbeat and passive tool notices.
+alter table public.agent_runs add column if not exists prompt_delivered_seq bigint not null default 0;
+create or replace function private.take_run_prompts(p_run_id uuid,p_after_seq bigint default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare r public.agent_runs%rowtype; v_from bigint; v_to bigint; result jsonb;
+begin
+  select * into r from public.agent_runs where id=p_run_id and agent_id=private.current_agent_id() for update;
+  if not found then raise exception using errcode='PT404',message='not_found'; end if;
+  v_from:=greatest(r.prompt_delivered_seq,coalesce(p_after_seq,(select min(seq) from public.agent_activities where run_id=r.id),0));
+  select coalesce(jsonb_agg(jsonb_build_object('seq',a.seq,'text',a.body->>'text','signal',a.body->>'signal',
+    'source',a.body->>'source','author_type',a.author_type,'created_at',a.created_at,'approval_id',a.body->>'approval_id','decision',a.body->>'decision',
+    'author',case when a.author_type='agent' then coalesce((select name from public.agents where id=a.author_id),'Agent') else 'Person' end) order by a.seq),'[]'),max(a.seq)
+    into result,v_to from public.agent_activities a where a.task_id=r.task_id and a.type='prompt' and a.seq>v_from;
+  update public.agent_runs set prompt_delivered_seq=greatest(v_from,coalesce(v_to,0)) where id=r.id;
+  return result;
+end $$;
+revoke all on function private.take_run_prompts(uuid,bigint) from public,anon,authenticated;
+
+create or replace function public.take_pending_messages()
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_agent uuid:=private.current_agent_id(); r record; result jsonb:='[]'; prompts jsonb;
+begin
+  if v_agent is null then raise exception using errcode='PT403',message='agents_only'; end if;
+  if exists(select 1 from public.agents where id=v_agent and is_platform) then return result; end if;
+  for r in select run.id,t.title from public.agent_runs run join public.agent_tasks t on t.active_run_id=run.id
+    where run.agent_id=v_agent and run.status in ('running','waiting') and private.agent_can(t.row_page_id,'read') order by run.id loop
+    prompts:=private.take_run_prompts(r.id);
+    select result||coalesce(jsonb_agg(p||jsonb_build_object('title',r.title)),'[]') into result from jsonb_array_elements(prompts) p;
+  end loop;
+  return result;
+end $$;
+revoke all on function public.take_pending_messages() from public,anon;
+grant execute on function public.take_pending_messages() to authenticated;
+
+create or replace function public.heartbeat(p_run_id uuid, p_usage jsonb default null, p_after_seq bigint default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_r public.agent_runs%rowtype; v_from bigint;
+begin
+  v_r := private.own_run(p_run_id);
+  update public.agent_runs set last_signal_at = now(), stale_at = null where id = v_r.id;
+  if p_usage is not null and (p_usage ? 'input_tokens' or p_usage ? 'output_tokens' or p_usage ? 'cost_usd') then
+    perform private.record_cost_core(v_r.id, (p_usage->>'input_tokens')::bigint, (p_usage->>'output_tokens')::bigint,
+                                     p_usage->>'model', (p_usage->>'cost_usd')::numeric);
+    select * into v_r from public.agent_runs where id = v_r.id;
+  end if;
+  v_from := coalesce(p_after_seq, (select min(seq) from public.agent_activities where run_id = v_r.id), 0);
+  return jsonb_build_object(
+    'stop_requested', v_r.stop_requested_at is not null and v_r.stop_acked_at is null,
+    'status', v_r.status,
+    'pending_prompts',private.take_run_prompts(v_r.id,p_after_seq));
 end $$;
