@@ -18,3 +18,7 @@ it("tells the agent to build under its task page, in one create_database call, a
   expect(prompt).toContain("Create a database complete in one create_database call");
   expect(prompt).toContain("read it back with query_database");
 });
+
+it("guides Trama to delegate each plan piece using the claimed agent roster", () => {
+  expect(buildSystemPrompt({ harness: "trama" })).toContain("one subtask per piece with create_subtask");
+});

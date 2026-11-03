@@ -675,10 +675,11 @@ describe("reference agent loop", () => {
 it("delivers a terminal Lead environment notice to the model without trying to claim the closed task", async () => {
   const abort=new AbortController();let polls=0;
   const notice={task_id:"parent",state:"done",reason:"updated",notice:{event_id:"release",type:"task.updated",payload:{subtask_id:"delivery",environment_release:[{kind:"stack",value:"synthetic"}]}}};
-  const mcp=createStubMcp({handlers:{wait_for_my_tasks:()=>{if(++polls>1)abort.abort();return {tasks:polls===1?[notice]:[],next_cursor:"after"};}}});
+  const mcp=createStubMcp({tools:[{name:"import_plan",description:"Import delegated work",inputSchema:{type:"object"}}],handlers:{wait_for_my_tasks:()=>{if(++polls>1)abort.abort();return {tasks:polls===1?[notice]:[],next_cursor:"after"};}}});
   const model=createStubModel([{content:"Check the current reservation before stopping anything."}]);
   await runAgent({mcp,model,clock:fakeClock(),maxTasks:1,signal:abort.signal});
   expect(model.requests).toHaveLength(1);
+  expect(model.requests[0].tools.map((t: { function: { name: string } }) => t.function.name)).toContain("import_plan");
   expect(JSON.stringify(model.requests[0].messages)).toContain("environment_release");
   expect(mcp.calls.some(c=>c.name==="claim_task")).toBe(false);
 });
@@ -803,4 +804,28 @@ describe("a stable catalog for the prompt cache", () => {
     expect(second.tools).toEqual(first.tools);
     expect(second.messages[0]).toEqual(first.messages[0]);
   });
+});
+
+it("waits for every subtask created by import_plan before ending the run", async () => {
+  const mcp = createStubMcp({
+    tasks: queued,
+    tools: [{ name: "import_plan", description: "Import delegated work", inputSchema: { type: "object" } }],
+    handlers: { import_plan: () => ({ created: { a: "task-a", b: "task-b" } }) },
+    waits: [seed(),
+      { changed: true, stop_requested: false, activities: [], next_seq: 2, task: { task_id: "task-1", state: "working", subtasks: [
+        { task_id: "task-a", state: "done" }, { task_id: "task-b", state: "working" },
+      ] } },
+      { changed: true, stop_requested: false, activities: [], next_seq: 3, task: { task_id: "task-1", state: "working", subtasks: [
+        { task_id: "task-a", state: "done" }, { task_id: "task-b", state: "done" },
+      ] } },
+    ],
+  });
+  const model = createStubModel([
+    { tool_calls: [toolCall("import_plan", { parent_task_id: "task-1", plan: [] })] },
+    { content: "Waiting for both workers." }, { content: "Waiting for the second worker." }, { content: "All done." },
+  ]);
+  await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1 });
+  expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "import_plan", "wait_for_task", "wait_for_task", "end_run"]);
+  expect(model.requests[2].messages.at(-1).content).toMatch(/task-a.*done.*"all_subtasks_closed":false/);
+  expect(model.requests[3].messages.at(-1).content).toMatch(/task-b.*done.*"all_subtasks_closed":true/);
 });
