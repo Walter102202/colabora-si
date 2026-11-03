@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-import { createElement } from "react";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { AssistantThreadView, type AssistantThreadViewProps } from "@/components/agents/assistant/AssistantThreadView";
@@ -46,6 +47,44 @@ const view = (over: Partial<AssistantThreadViewProps>) => renderToStaticMarkup(c
 }));
 
 describe("AssistantThreadView", () => {
+  it.each(["sent", "received", "replied", "queued"])("shows the message delivery state: %s", (state) => {
+    const outcome: NonNullable<PersonMessage["outcome"]> = { kind: "message_sent", agent_name: "Claude Code", task_title: "Launch", task_id: "task", page_id: "row", text: "Add Y",
+      sent_at: new Date().toISOString(), delivery: state === "queued" ? "queued_for_next_session" : "queued_for_run",
+      ...(state === "received" || state === "replied" ? { received_at: new Date(2026, 10, 3, 10, 42).toISOString() } : {}),
+      ...(state === "replied" ? { reply: { text: "Adding Y as a subtask", at: "2026-11-03T10:43:00Z", agent_name: "Claude Code" } } : {}) };
+    const host = document.createElement("div");
+    host.innerHTML = view({ messages: [message({ direction: "out", outcome })] });
+    expect(host.textContent).toContain(state === "received" || state === "replied" ? "Claude Code got it at 10:42." : "Sent to Claude Code.");
+    expect(host.textContent).toContain("On Launch");
+    expect(host.querySelector('a[href="/p/row?task=task"]')?.textContent).toBe("Open task");
+    if (state === "replied") expect(host.textContent).toContain('Claude Code: "Adding Y as a subtask"');
+    expect(host.textContent?.includes("Claude Code hasn't picked it up yet. It will see it when its session resumes.")).toBe(state === "queued");
+  });
+  it("updates an unreceived card after five minutes and clears its timer on unmount", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-03T10:00:00Z"));
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const outcome: NonNullable<PersonMessage["outcome"]> = { kind: "message_sent", agent_name: "Claude Code", sent_at: new Date().toISOString(), delivery: "queued_for_run" };
+    const props = { messages: [message({ direction: "out", outcome })], draft: "", reviewing: false, error: null, voice: null,
+      onDraft: noop, onPaste: noop, onSend: noop, onRetrySend: null, onUndo: noop, onOpenNotes: noop };
+    try {
+      act(() => root.render(createElement(AssistantThreadView, props)));
+      act(() => vi.advanceTimersByTime(299_999));
+      expect(host.textContent).not.toContain("hasn't picked it up");
+      act(() => vi.advanceTimersByTime(1));
+      expect(host.textContent).toContain("Claude Code hasn't picked it up yet. It will see it when its session resumes.");
+      act(() => root.render(createElement(AssistantThreadView, { ...props, messages: [message({ direction: "out", outcome: { ...outcome, received_at: new Date().toISOString() } })] })));
+      expect(host.textContent).not.toContain("hasn't picked it up");
+      act(() => root.render(createElement(AssistantThreadView, { ...props, messages: [message({ direction: "out", outcome: { ...outcome, sent_at: new Date().toISOString() } })] })));
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      act(() => root.unmount());
+      expect(vi.getTimerCount()).toBe(0);
+      vi.useRealTimers();
+    }
+  });
   it("identifies each speaker and announces new messages as a conversation log", () => {
     const host = document.createElement("div");
     host.innerHTML = view({ messages: [message({ body: "My question" }), message({ id: "reply", direction: "out", body: "Trama's answer" })] });

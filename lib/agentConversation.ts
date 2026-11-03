@@ -16,7 +16,7 @@ export interface PersonMessage {
   body: string;
   forwarded: boolean;
   needs_reply?: boolean;
-  outcome: { task_title?: string; agent_name?: string; text?: string; job?: ProposedJob; summary?: string; page_title?: string; task_id?: string; agent_id?: string; kind?: string; from_seq?: number; note_id?: string; page_id?: string; message_id?: string; name?: string; harness?: string; role?: "worker" | "lead" } | null;
+  outcome: { sent_at?: string; delivery?: "queued_for_run" | "dispatched" | "queued_for_next_session" | "waiting_on_human"; prompt_seq?: number; received_at?: string; reply?: { text: string; at: string; agent_name: string }; task_title?: string; agent_name?: string; text?: string; job?: ProposedJob; summary?: string; page_title?: string; task_id?: string; agent_id?: string; kind?: string; from_seq?: number; note_id?: string; page_id?: string; message_id?: string; name?: string; harness?: string; role?: "worker" | "lead" } | null;
   created_at: string;
 }
 

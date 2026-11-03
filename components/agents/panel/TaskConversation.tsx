@@ -20,7 +20,7 @@ export function TaskConversation({ task, subtasks, activities, reviews, agentNam
     const text = typeof activity.body.text === "string" ? activity.body.text : activityLabel(activity);
     if (!text.trim()) return [];
     return [{ id: activity.id, at: activity.created_at, seq: activity.seq,
-      text: `${activityAuthor(activity.author_type, activity.author_id, agentNames)} → ${recipient(row, activity.author_id)}: ${text}` }];
+      text: `${activityAuthor(activity.author_type, activity.author_id, agentNames)}${activity.type === "prompt" && activity.author_type === "human" && activity.body.source === "trama" ? " (via Trama)" : ""} → ${recipient(row, activity.author_id)}: ${text}` }];
   });
   for (const review of reviews) {
     const row = tasks.get(review.task_id);

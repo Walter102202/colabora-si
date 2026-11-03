@@ -135,4 +135,7 @@ it("shows the live job conversation in time order with agent names and review fi
   act(() => useAgentTasks.setState({ activities: { [parent.id]: [parentMessage], [child.id]: [progress, leadMessage, next] } }));
   expect(conversation.querySelectorAll("li")).toHaveLength(5);
   expect(conversation.lastElementChild?.textContent).toContain("Dates corrected");
+  const personMessage = { ...activity("person", parent.id, "person", "Add Y", 6), author_type: "human" as const, body: { text: "Add Y", source: "trama" } };
+  act(() => useAgentTasks.setState({ activities: { [parent.id]: [parentMessage, personMessage], [child.id]: [progress, leadMessage, next] } }));
+  expect(conversation.lastElementChild?.textContent).toContain("You (via Trama) → Claude Code: Add Y");
 });
