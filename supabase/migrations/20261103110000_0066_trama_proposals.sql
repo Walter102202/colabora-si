@@ -147,7 +147,7 @@ begin
     v_source := case when p_comment_id is not null then 'comment' else 'row_panel' end;
   end if;
 
-  if private.principal_type()='human' and p_signal='continue'
+  if private.principal_type()='human' and p_signal in ('continue','feedback')
     and v_t.state in ('ready_for_review','done') and btrim(coalesce(p_body,''))='' then
     raise exception using errcode='PT400',message='message_required';
   end if;

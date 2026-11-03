@@ -1,6 +1,6 @@
 -- Visible summaries are the only authority approved by a direct person session.
 begin;
-select plan(28);
+select plan(30);
 select tests.fixture() as f \gset
 select (:'f'::jsonb->>'ws') as ws, (:'f'::jsonb->>'owner') as owner, (:'f'::jsonb->>'viewer') as viewer \gset
 select tests.make_agent(:'ws', 'proposals@test.invalid', 'lead', 'page_B') as pl \gset
@@ -45,10 +45,12 @@ select tests.set_human(:'viewer');
 select is(tests.error_of(format('select public.send_agent_message(%L,%L,%L)',:'started'::jsonb->>'task_id','','continue')),'forbidden','authorize before disclosing the task continuation rule');
 select tests.set_human(:'owner');
 select is(tests.error_of(format('select public.send_agent_message(%L,%L,%L)',:'started'::jsonb->>'task_id','  ','continue')),'message_required','done needs text');
+select is(tests.error_of(format('select public.send_agent_message(%L,%L,%L)',:'started'::jsonb->>'task_id','  ','feedback')),'message_required','done needs text for feedback');
 select tests.reset_role();
 update public.agent_tasks set state='ready_for_review' where id=(:'started'::jsonb->>'task_id')::uuid;
 select tests.set_human(:'owner');
 select is(tests.error_of(format('select public.send_agent_message(%L,%L,%L)',:'started'::jsonb->>'task_id','','continue')),'message_required','review needs text');
+select is(tests.error_of(format('select public.send_agent_message(%L,%L,%L)',:'started'::jsonb->>'task_id','','feedback')),'message_required','review needs text for feedback');
 select tests.reset_role();
 update public.agent_tasks set state='done' where id=(:'started'::jsonb->>'task_id')::uuid;
 select tests.set_human(:'owner');
