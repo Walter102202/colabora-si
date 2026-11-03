@@ -204,11 +204,11 @@ it.each(["stop", "shutdown"] as const)("does not write a fill when %s arrives du
   if (kind === "stop") expect(h.mcp.calls.at(-1)?.name).toBe("ack_stop");
 });
 
-it.each(["valid", "missing", "blank", "long", "wrong id"])("work proposals validate the visible summary: %s", async (variant) => {
+it.each(["valid", "missing", "blank", "long", "wrong id", "no page", "no authorization"])("work proposals validate the visible summary: %s", async (variant) => {
   const id = "00000000-0000-4000-8000-000000000001";
   const summary = variant === "missing" ? undefined : variant === "blank" ? "  " : variant === "long" ? "x".repeat(601) : "  Create an offsite board on Home.  ";
   const mcp = createStubMcp({ handlers: {
-    get_ai_request: () => ({ kind: "assist", messages: [{ id, text: "Do it" }], through_seq: 7, page: { id: "home", title: "Home" }, proposal_message_id: id }),
+    get_ai_request: () => ({ kind: "assist", messages: [{ id, text: "Do it" }], through_seq: 7, page: variant === "no page" ? null : { id: "home", title: "Home" }, proposal_message_id: variant === "no authorization" ? null : id }),
     heartbeat: () => ({}), reply_person_message: () => ({}),
   } });
   const model = createStubModel([{ tool_calls: [toolCall("propose_work", { message_id: variant === "wrong id" ? "00000000-0000-4000-8000-000000000002" : id, summary })] }, { content: "Review the card." }]);
@@ -217,6 +217,6 @@ it.each(["valid", "missing", "blank", "long", "wrong id"])("work proposals valid
   expect(sent.propose_message_id).toBe(variant === "valid" ? id : undefined);
   expect(sent.work_summary).toBe(variant === "valid" ? summary!.trim() : undefined);
   const result = JSON.parse(model.requests[1].messages.find((m) => m.role === "tool").content);
-  expect(result).toEqual(variant === "valid" ? { proposed: true, requires_person: true } : { proposed: false, reason: "summary_required", requires_person: true });
+  expect(result).toEqual(variant === "valid" ? { proposed: true, requires_person: true } : { proposed: false, reason: ["wrong id", "no page", "no authorization"].includes(variant) ? "not_allowed" : "summary_required", requires_person: true });
   expect(model.requests[0].messages[0].content).toContain("the person approves the summary they see");
 });

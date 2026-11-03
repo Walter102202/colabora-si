@@ -117,10 +117,10 @@ export async function runRequest({ call, model, task, runId, log, signal, reply,
           let args = null;
           try { args = JSON.parse(fn.arguments); } catch { /* answered below */ }
           if (fn.name === "propose_work") {
-            const valid = request.page && request.proposal_message_id && args?.message_id === request.proposal_message_id && UUID.test(String(args.message_id))
-              && typeof args.summary === "string" && args.summary.trim().length > 0 && args.summary.trim().length <= 600;
+            const allowed = request.page && request.proposal_message_id && args?.message_id === request.proposal_message_id && UUID.test(String(args.message_id));
+            const valid = allowed && typeof args.summary === "string" && args.summary.trim().length > 0 && args.summary.trim().length <= 600;
             if (valid) proposal = { id: args.message_id, summary: args.summary.trim() };
-            messages.push({ role: "tool", tool_call_id: id, content: JSON.stringify({ proposed: Boolean(valid), ...(!valid ? { reason: "summary_required" } : {}), requires_person: true }) });
+            messages.push({ role: "tool", tool_call_id: id, content: JSON.stringify({ proposed: Boolean(valid), ...(!valid ? { reason: allowed ? "summary_required" : "not_allowed" } : {}), requires_person: true }) });
             continue;
           }
           if (fn.name === "propose_agent") {
