@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { argsHash, buildCheckpoint, guardFor, guardsFromResume, handoverText, parseCheckpoint, WRITE_TOOLS } from "../../agent/checkpoint.mjs";
+import { argsHash, buildCheckpoint, guardFor, guardsFromResume, handoverText, isWriteTool, parseCheckpoint, WRITE_TOOLS } from "../../agent/checkpoint.mjs";
 
 const op = (key: string, tool = "append_blocks", args: Record<string, unknown> = { page_id: "p1", markdown: key }) =>
   ({ key, tool, summary: `wrote ${key}`, page_id: "p1", args_hash: argsHash(tool, args) });
@@ -79,5 +79,22 @@ describe("runtime checkpoints", () => {
     for (const s of ["claude_code", "Email the team", "Closing the laptop", "wrote k1", "wrote k2", "blk-1", "send_email"]) expect(text).toContain(s);
     expect(handoverText({ from: null, checkpoint: null })).toBe("");
     expect(handoverText({ from: { harness: "x" }, checkpoint: { readable: false, version: 2 } })).toMatch(/newer format \(v2\)/);
+  });
+});
+
+describe("writes by contract", () => {
+  it("recognizes a write by its idempotency_key contract, not only by name", () => {
+    expect(isWriteTool("create_database", { properties: { idempotency_key: { type: "string" } } })).toBe(true);
+    expect(isWriteTool("query_database", { properties: { database_id: { type: "string" } } })).toBe(false);
+    expect(isWriteTool("append_blocks")).toBe(true);
+    expect(isWriteTool("read_page")).toBe(false);
+  });
+  it("guardFor guards a keyed workspace write only when its schema says it is a write", () => {
+    const schema = { properties: { idempotency_key: { type: "string" } } };
+    const args = { parent_id: "row-1", title: "Launch" };
+    const guards = () => new Map([[argsHash("create_database", args), { status: "unknown", key: "k1", summary: "create_database on row-1" }]]);
+    expect(guardFor("create_database", args, guards())).toBeNull();
+    expect(guardFor("create_database", args, guards(), schema)).toMatchObject({ error: "verify_first", key: "k1" });
+    expect(guardFor("create_database", args, new Map(), schema)).toBeNull();
   });
 });

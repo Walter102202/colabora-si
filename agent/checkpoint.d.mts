@@ -13,5 +13,6 @@ export function argsHash(name: string, args: Record<string, unknown>): string;
 export function buildCheckpoint(state: CheckpointState): Record<string, unknown>;
 export function parseCheckpoint(body: unknown): { status: "ok"; checkpoint: Record<string, unknown> } | { status: "newer_schema"; version: number } | { status: "invalid" };
 export function guardsFromResume(resume: Record<string, unknown> | null | undefined): Map<string, Guard>;
-export function guardFor(name: string, args: Record<string, unknown>, guards: Map<string, Guard>): null | { error: "already_done" | "verify_first"; message: string; key: string };
+export function isWriteTool(name: string, schema?: Record<string, any>): boolean;
+export function guardFor(name: string, args: Record<string, unknown>, guards: Map<string, Guard>, schema?: Record<string, any>): null | { error: "already_done" | "verify_first"; message: string; key: string };
 export function handoverText(resume: Record<string, unknown> | null | undefined): string;

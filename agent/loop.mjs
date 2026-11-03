@@ -1,7 +1,7 @@
 // The agent loop: wait for work, claim, let the model work through MCP tools,
 // report liveness and cost, pause on human decisions, and hand the result to a person.
 
-import { argsHash, buildCheckpoint, guardFor, guardsFromResume, parseCheckpoint, WRITE_TOOLS } from "./checkpoint.mjs";
+import { argsHash, buildCheckpoint, guardFor, guardsFromResume, isWriteTool, parseCheckpoint } from "./checkpoint.mjs";
 import { McpError, toOpenAiTools } from "./mcpClient.mjs";
 import { buildSystemPrompt, buildTaskMessage } from "./prompt.mjs";
 import { extractFile, runRequest } from "./requests.mjs";
@@ -567,14 +567,18 @@ export async function runAgent(opts) {
         try {
           const args = toolCall.function.arguments ? JSON.parse(toolCall.function.arguments) : {};
           if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("invalid arguments");
-          if (toolSchemas.get(name)?.properties?.run_id && !args.run_id) args.run_id = runId;
-          if (WRITE_TOOLS.has(name) && toolSchemas.get(name)?.properties?.idempotency_key && !args.idempotency_key) args.idempotency_key = runId + ":" + turn + ":" + i;
-          const guard = guardFor(name, args, guards);
-          const op = WRITE_TOOLS.has(name) && args.idempotency_key && !guard ? {
-            key: args.idempotency_key, tool: name, page_id: args.page_id, block_ids: args.block_id ? [args.block_id] : [],
-            args_hash: argsHash(name, args), summary: name + " on " + (args.page_id ?? "the task"),
+          const schema = toolSchemas.get(name);
+          if (schema?.properties?.run_id && !args.run_id) args.run_id = runId;
+          const write = isWriteTool(name, schema);
+          if (write && schema?.properties?.idempotency_key && !args.idempotency_key) args.idempotency_key = runId + ":" + turn + ":" + i;
+          const guard = guardFor(name, args, guards, schema);
+          // A workspace create names its parent, a partial write its page: the ledger keeps whichever page the write touches.
+          const pageId = args.page_id ?? args.parent_id;
+          const op = write && args.idempotency_key && !guard ? {
+            key: args.idempotency_key, tool: name, page_id: pageId, block_ids: args.block_id ? [args.block_id] : [],
+            args_hash: argsHash(name, args), summary: name + " on " + (pageId ?? "the task"),
           } : null;
-          return { toolCall, name, args, guard, op };
+          return { toolCall, name, args, guard, op, write };
         } catch { return { toolCall, name, invalid: true }; }
       });
       if (message.content) checkpoint.nextStep = message.content;
@@ -588,7 +592,7 @@ export async function runAgent(opts) {
           } catch (e) { log("save_checkpoint failed: " + String(e)); }
         }
       }
-      for (const { toolCall, name, args, guard, op, invalid } of prepared) {
+      for (const { toolCall, name, args, guard, op, write, invalid } of prepared) {
         if (invalid) {
           messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "invalid_input", message: "arguments are not valid JSON" }) });
           continue;
@@ -628,7 +632,7 @@ export async function runAgent(opts) {
         }
         let maybe = unsure(res);
         // A repeat with the same key is answered by the receipt of the first call when it did happen.
-        if (WRITE_TOOLS.has(name) && args.idempotency_key && maybe) {
+        if (write && args.idempotency_key && maybe) {
           res = await call(name, args);
           // Only a repeat that succeeds settles it: any other error leaves the first call possibly done.
           maybe = !!res.isError;

@@ -8,4 +8,5 @@ export function createStubMcp(opts?: {
   waits?: Record<string, any>[];
   handlers?: Record<string, Handler>;
   instructions?: string;
+  tools?: McpTool[];
 }): McpClient & { calls: { name: string; args: Record<string, any> }[] };
