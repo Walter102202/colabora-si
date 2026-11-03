@@ -130,7 +130,7 @@ function activityView(a: Row) {
 
 function isLeadEvent(event: Row): boolean {
     const payload = event.payload as Row | null;
-    return Boolean(payload && ((event.type === 'task.continue' && typeof payload.review_of === 'string')
+    return Boolean(payload && (event.type === 'subtask.progress' || (event.type === 'task.continue' && typeof payload.review_of === 'string')
       || (event.type === 'task.updated' && (payload.environment_release || payload.verdict || payload.minor_findings || payload.review_timeout))));
 }
 

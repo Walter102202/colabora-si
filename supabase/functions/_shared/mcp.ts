@@ -274,6 +274,15 @@ function makeContext(state: RequestState, signal: AbortSignal): ToolContext {
   };
 }
 
+type PendingMessage = { title: string; author: string; text?: string | null; decision?: string | null };
+
+/** One line per pending prompt: an approval decision reads as a decision, and an empty prompt adds nothing. */
+function noticeLine(m: PendingMessage): string | null {
+  const text = (m.text ?? '').trim();
+  if (m.decision) return `${m.author} decided on your approval request on ${m.title}: ${m.decision}${text ? ` (${text})` : ''}.`;
+  return text ? `New message on ${m.title} from ${m.author}: ${text}` : null;
+}
+
 async function callTool(state: RequestState, params: Record<string, unknown>) {
   const name = params.name;
   const tool = state.server.tools.find((t) => t.name === name);
@@ -297,10 +306,19 @@ async function callTool(state: RequestState, params: Record<string, unknown>) {
       const id = out.structured.id ?? args.database_id ?? args.page_id ?? out.structured.page_id;
       if (typeof id === 'string') out.structured = { ...out.structured, id, url: `${state.appUrl}/p/${encodeURIComponent(id)}` };
     }
+    let notified = false;
+    if (state.bearer.principal.type === 'agent') {
+      // A notification failure must not turn a successful write into a failed/retried write.
+      try {
+        const { data } = await state.deps.makeDb(state.bearer.token, budget.signal).rpc<PendingMessage[]>('take_pending_messages', {});
+        const lines = (Array.isArray(data) ? data : []).map(noticeLine).filter((line): line is string => line !== null);
+        if (lines.length) { notified = true; out.text += '\n\n' + lines.join('\n'); }
+      } catch { /* The next tool or heartbeat can deliver pending messages. */ }
+    }
     state.code = 'ok';
     const result: Record<string, unknown> = toolResult(out);
     if (state.era === '2026') {
-      result.ttlMs = tool.cacheTtlMs ?? 0;
+      result.ttlMs = notified ? 0 : tool.cacheTtlMs ?? 0;
       result.cacheScope = 'private';
     }
     return result;

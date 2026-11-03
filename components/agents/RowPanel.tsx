@@ -169,11 +169,14 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
   const brief = useAgentTasks((s) => currentBriefFor(s, task));
   const ciChecks = useAgentTasks((s) => s.ciChecks[task.id]);
   const environment = useAgentTasks((s) => s.environments[task.id]);
-  const activities = useAgentTasks((s) => s.activities[task.id]);
+  const allActivities = useAgentTasks((s) => s.activities);
+  const activities = allActivities[task.id];
+  const allReviews = useAgentTasks((s) => s.reviews);
   const tasks = useAgentTasks((s) => s.tasks);
   const runs = useAgentTasks((s) => s.runs);
   const loadTaskDetail = useAgentTasks((s) => s.loadTaskDetail);
   const loadActivities = useAgentTasks((s) => s.loadActivities);
+  const loadTaskConversation = useAgentTasks((s) => s.loadTaskConversation);
 
   useEffect(() => {
     let alive = true;
@@ -228,6 +231,16 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
     [tasks, runs, agents, task.id],
   );
 
+  const conversationVersion = subtasks.map(({ task: child }) => `${child.id}:${child.last_activity_at}:${child.brief_version}`).join("|");
+  useEffect(() => {
+    void loadTaskConversation(task.id);
+  }, [task.id, task.last_activity_at, conversationVersion, loadTaskConversation]);
+  const conversationIds = new Set([task.id, ...subtasks.map((s) => s.task.id)]);
+  const conversation = {
+    activities: [...conversationIds].flatMap((id) => allActivities[id] ?? []),
+    reviews: Object.values(allReviews).filter((item) => conversationIds.has(item.task_id)),
+  };
+
   return (
     <TaskView
       lessons={<TaskLessons workspaceId={task.workspace_id} taskId={task.id} />}
@@ -256,6 +269,8 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
       ciChecks={ciChecks}
       environment={environment}
       activities={activities ?? []}
+      conversation={conversation}
+      agentNames={Object.fromEntries(agents.map((a) => [a.id, a.name]))}
       subtasks={subtasks}
       reviewerName={review ? (agents.find((a) => a.id === review.reviewer_id)?.name ?? null) : null}
       focusApprovalId={focusApprovalId}

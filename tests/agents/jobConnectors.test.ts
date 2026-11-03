@@ -37,7 +37,7 @@ beforeEach(() => {
   f.rpc.mockReset().mockResolvedValue({ data: { task_id: task.id, granted_agents: [] }, error: null });
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: f.copy } });
   useAgentsStore.setState({ agents, grants: [], workspaceId: "w", load: async () => {} });
-  useAgentTasks.setState({ workspaceId: "w", tasks: {}, runs: {}, subscribe: () => () => {}, loadTask: async () => {}, loadTaskDetail: async () => {}, loadActivities: async () => {} });
+  useAgentTasks.setState({ workspaceId: "w", tasks: {}, runs: {}, subscribe: () => () => {}, loadTask: async () => {}, loadTaskDetail: async () => {}, loadActivities: async () => {}, loadTaskConversation: async () => {} });
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); });

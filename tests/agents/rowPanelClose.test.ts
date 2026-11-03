@@ -1,8 +1,9 @@
 // @vitest-environment happy-dom
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TaskView, type TaskViewProps } from "@/components/agents/panel/RowPanelView";
+import { sendMessage } from "@/lib/agentActions";
 import { mockCard } from "@/components/agents/card/mock";
 import type { TaskCardData } from "@/lib/agentCard";
 import type { TaskState } from "@/lib/agentState";
@@ -84,4 +85,53 @@ describe("the Accept card", () => {
     act(() => root.render(createElement(TaskView, props("done"))));
     expect(container.textContent).not.toContain("Ready for you");
   });
+});
+
+it("delivered tasks offer review and feedback without an empty Continue", () => {
+  act(() => root.render(createElement(TaskView, props("ready_for_review"))));
+  expect(button("Continue")).toBeUndefined();
+  expect(button("Close without accepting")).toBeDefined();
+});
+
+it.each(["done", "failed", "cancelled"] as const)("Reopen focuses feedback and only sending text restarts %s", async (state) => {
+  const api = await import("@/lib/agentClient");
+  const rpc = vi.fn(async () => ({ data: {}, error: null }));
+  const spy = vi.spyOn(api, "getAgentClient").mockReturnValue({ rpc } as unknown as ReturnType<typeof api.getAgentClient>);
+  const base = props(state);
+  try {
+    act(() => root.render(createElement(TaskView, { ...base, onMessage: async (text, signal) => { await sendMessage(base.task.id, text, signal); } })));
+    act(() => button("Reopen")!.click());
+    expect(rpc).not.toHaveBeenCalled();
+    const input = container.querySelector<HTMLTextAreaElement>('textarea[placeholder="What should change? Sending reopens the task."]')!;
+    expect(document.activeElement).toBe(input);
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "Change the dates");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => button("Send")!.click());
+    expect(rpc).toHaveBeenCalledWith("send_agent_message", expect.objectContaining({ p_task_id: base.task.id, p_body: "Change the dates", p_signal: "continue" }));
+  } finally { spy.mockRestore(); }
+});
+
+it("explains message_required without restarting the task", async () => {
+  const onMessage = vi.fn(async () => { throw new Error("message_required"); });
+  act(() => root.render(createElement(TaskView, { ...props("working"), onMessage })));
+  await act(async () => button("Continue")!.click());
+  expect(container.textContent).toContain("Write what should change first.");
+  expect(onMessage).toHaveBeenCalledExactlyOnceWith("", "continue");
+  expect(button("Reopen")).toBeUndefined();
+});
+
+it("keeps written feedback when the server refuses it", async () => {
+  const onMessage = vi.fn(async () => { throw new Error("message_required"); });
+  act(() => root.render(createElement(TaskView, { ...props("done"), onMessage })));
+  const input = container.querySelector<HTMLTextAreaElement>('textarea')!;
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "Change the dates");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => button("Send")!.click());
+  expect(container.textContent).toContain("Write what should change first.");
+  expect(input.value).toBe("Change the dates");
+  expect(button("Reopen")).toBeDefined();
 });

@@ -107,3 +107,37 @@ describe("AssistantThreadView", () => {
     expect(view({ messages: [message({ body: "<img src=x onerror=alert(1)>" })] })).not.toContain("<img");
   });
 });
+
+it.each(["work_proposed", "work_started", "work_declined", "legacy"])("renders durable work card: %s", (state) => {
+  const host = document.createElement("div");
+  host.innerHTML = view({ messages: [message({ direction: "out", outcome: { kind: state === "legacy" ? "work_proposed" : state, page_id: "home", task_id: "task", page_title: "Home", ...(state === "legacy" ? {} : { summary: "Create five tasks on Home." }) } })], onPropose: noop, onDeclineWork: noop });
+  if (state === "work_proposed") {
+    expect(host.textContent).toContain("Start this work?On HomeCreate five tasks on Home.");
+    expect(host.querySelector('[aria-label="Do it on Home"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Not now on Home"]')).not.toBeNull();
+  } else if (state === "legacy") expect(host.textContent).toContain("Do it");
+  else {
+    expect(host.textContent).not.toContain("Do it");
+    expect(host.textContent).toContain("On Home");
+    const summary = [...host.querySelectorAll("p")].find((p) => p.textContent === "Create five tasks on Home.")!;
+    expect(summary).toBeDefined();
+    expect(summary.classList.contains("whitespace-pre-wrap")).toBe(true);
+    if (state === "work_declined") expect(summary.closest(".text-text-secondary")).not.toBeNull();
+    expect(host.textContent).toContain(state === "work_started" ? "Started." : "Not started.");
+    if (state === "work_started") expect(host.querySelector('a')?.getAttribute("href")).toBe("/p/home?task=task");
+  }
+});
+
+it.each(["work_proposed", "work_started", "work_declined"])("shows the proposed job team in %s", (kind) => {
+  const html = view({ messages: [message({ direction: "out", outcome: { kind, page_id: "row", task_id: "task", summary: "Codex researches; Claude reviews.", job: { board_id: "b", board_title: "Jobs", title: "Offsite", lead: { id: "l", name: "Claude" }, workers: [{ id: "w", name: "Codex" }] } } })], onPropose: noop, onDeclineWork: noop });
+  expect(html).toContain("Lead: Claude"); expect(html).toContain("Workers: Codex"); expect(html).toContain("Codex researches; Claude reviews.");
+  if (kind === "work_proposed") { expect(html).toContain("Start this job?"); expect(html).toContain("New job on Jobs: Offsite"); }
+  if (kind === "work_started") { expect(html).toContain("Open job"); expect(html).toContain('href="/p/row?task=task"'); }
+});
+
+it.each(["message_proposed", "message_sent", "work_declined"])("renders a confirmed message as %s", (kind) => {
+  const html = view({ messages: [message({ direction: "out", outcome: { kind, task_id: "task", task_title: "Research", page_id: "row", agent_name: "Codex", text: "Use local dates." } })], onSendMessage: noop, onDeclineWork: noop });
+  if (kind === "message_proposed") { expect(html).toContain("Send to Codex?"); expect(html).toContain("On Research"); expect(html).toContain("Use local dates."); expect(html).toContain('aria-label="Send to Codex"'); }
+  if (kind === "message_sent") { expect(html).toContain("Sent to Codex."); expect(html).toContain("On Research"); expect(html).toContain("Use local dates."); expect(html).toContain('href="/p/row?task=task"'); }
+  if (kind === "work_declined") { expect(html).toContain("Not sent."); expect(html).toContain("Use local dates."); }
+});

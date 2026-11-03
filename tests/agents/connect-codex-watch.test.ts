@@ -223,3 +223,20 @@ it("persists successful delivery before a failed acknowledgement and retries onl
   expect(restarted.calls.filter(c=>c.args.after==="ack:notice")).toHaveLength(1);
   expect(restarted.saves.at(-1)?.pending).toEqual({});
 });
+
+it("delivers worker progress once to the existing Lead session without claiming", async () => {
+  const notice = task({ state: "working", active_run_id: "run", reason: "updated", notice: { event_id: "progress", type: "subtask.progress", ack_cursor: "ack:progress", payload: { subtask_id: "child", text: "Research ready" } } });
+  const result = await exercise([answer([notice]), answer([notice])]);
+  expect(result.queue).toHaveBeenCalledTimes(1);
+  expect(result.queue.mock.calls[0][0]).toBe(THREAD);
+  expect(result.queue.mock.calls[0][1]).not.toContain("claim_task(");
+  expect(result.calls.some((c) => c.name === "claim_task")).toBe(false);
+});
+
+it("routes active-run feedback to the current session without asking for another claim", async () => {
+  const active = task({ state: "working", active_run_id: "current-run" });
+  const result = await exercise([answer([active]), answer([active])], { detail: { activities: [{ seq: 7, type: "prompt", body: { signal: "feedback", text: "Use local dates" } }] } });
+  expect(result.queue).toHaveBeenCalledTimes(1);
+  expect(result.queue.mock.calls[0][1]).not.toContain("claim_task(");
+  expect(result.queue.mock.calls[0][1]).toContain("current-run");
+});

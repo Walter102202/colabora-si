@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation } from "react-router";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { TramaSurface } from "@/components/agents/assistant/TramaSurface";
 import { refreshAgentConversation, settleAgentProposal, useAgentConversation, type PersonMessage } from "@/lib/agentConversation";
@@ -11,14 +11,14 @@ import { useAgentsStore, type AgentRow } from "@/lib/agentsStore";
 import { buildDecisionsHome } from "@/lib/agentHome";
 import { useAgentTasks, type TaskRow, type ApprovalRow } from "@/lib/agentTasks";
 import { startRecorder, uploadWav } from "@/lib/agentVoice";
-import { createTask } from "@/lib/agentActions";
+import { createTask, decideApproval } from "@/lib/agentActions";
 import { useAgentLessons, type LessonRow } from "@/lib/agentLessons";
 import { useAgentSources, type DiscrepancyRow } from "@/lib/agentSources";
 import { HOME_URL } from "@/lib/routes";
 
-vi.mock("@/lib/agentActions", () => ({ createTask: vi.fn() }));
+vi.mock("@/lib/agentActions", () => ({ createTask: vi.fn(), decideApproval: vi.fn() }));
 vi.mock("@/lib/agentConversation", async (original) => ({ ...await original<object>(), settleAgentProposal: vi.fn(), refreshAgentConversation: vi.fn(async () => {}) }));
-vi.mock("@/lib/agentClient", () => ({ getAgentClient: () => ({}), agentErrorMessage: String }));
+vi.mock("@/lib/agentClient", async (original) => ({ ...await original<object>(), getAgentClient: () => ({}) }));
 vi.mock("@/lib/agentVoice", async (original) => ({ ...(await original<typeof import("@/lib/agentVoice")>()), startRecorder: vi.fn(), uploadWav: vi.fn() }));
 let root: Root;
 let host: HTMLDivElement;
@@ -35,7 +35,8 @@ beforeEach(() => {
   useAgentSources.setState({ discrepancies: {}, subscribe: vi.fn(() => () => {}) });
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllEnvs(); });
-const mount = () => act(() => root.render(<MemoryRouter initialEntries={["/p/page"]}><TramaSurface workspaceId="w" userId="person" /></MemoryRouter>));
+function Location() { const location = useLocation(); return <output>{location.pathname}{location.search}</output>; }
+const mount = () => act(() => root.render(<MemoryRouter initialEntries={["/p/page"]}><TramaSurface workspaceId="w" userId="person" /><Location /></MemoryRouter>));
 const button = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
 const originalCreateAgent = useAgentsStore.getState().createAgent;
 
@@ -142,16 +143,19 @@ it("does not infer absence from loading and shows a real unanswered message", ()
   expect(document.querySelector('[data-trama-surface] > [role="status"]')).toBeNull();
 });
 
-it("creates work only on the click using the original words and a stable retry key", async () => {
-  const original = message({ id: "original" });
-  useAgentConversation.setState({ messages: [original, message({ id: "reply", seq: 2, direction: "out", body: "The model's wording", outcome: { kind: "work_proposed", page_id: "page", message_id: "original" } })] });
-  vi.mocked(createTask).mockResolvedValue({ task_id: "task", context_id: "context", brief_version: 1 });
-  mount();
-  act(() => button("Talk to Trama").click());
+it.each(["start", "decline"])("settles work through the server once: %s", async (action) => {
+  vi.stubEnv("VITE_TRAMA_MANAGED", "1");
+  const api = await import("@/lib/agentClient");
+  const rpc = vi.fn(async () => ({ data: { task_id: "task", page_id: "page" }, error: null }));
+  vi.spyOn(api, "getAgentClient").mockReturnValue({ rpc } as unknown as ReturnType<typeof api.getAgentClient>);
+  // The original can be outside the 50-message window: only the server resolves it.
+  useAgentConversation.setState({ messages: [message({ id: "reply", direction: "out", outcome: { kind: "work_proposed", page_id: "page", page_title: "Home", summary: "Create five tasks on Home.", message_id: "original" } })] });
+  mount(); act(() => button("Talk to Trama").click());
+  expect(rpc).not.toHaveBeenCalled();
+  await act(async () => { button(action === "start" ? "Do it on Home" : "Not now on Home").click(); button(action === "start" ? "Do it on Home" : "Not now on Home").click(); });
+  expect(rpc).toHaveBeenCalledExactlyOnceWith(action === "start" ? "start_proposed_work" : "decline_proposed_work", { p_message_id: "reply" });
   expect(createTask).not.toHaveBeenCalled();
-  const start = [...document.querySelectorAll("button")].find((b) => b.textContent === "Do it")!;
-  await act(async () => { start.click(); start.click(); });
-  expect(createTask).toHaveBeenCalledExactlyOnceWith("page", { objective: original.body }, "trama", { idempotencyKey: "proposal:original" });
+  if (action === "start") expect(host.querySelector("output")?.textContent).toBe("/p/page?task=task");
 });
 
 it("can record again after review, blocks sending during capture, and cancels on close", async () => {
@@ -250,4 +254,105 @@ it.each([false, true])("only the wrapper jumps; reduced motion=%s still allows w
   act(() => trigger.click()); pointer(trigger, "over"); advance(350);
   expect(document.body.textContent).not.toContain("In progress:");
   expect(animate).toHaveBeenCalledTimes(reduced ? 0 : 1);
+});
+
+it.each([
+  ["task_exists", "This page already has an active task. Finish or close it first, or ask me from another page."],
+  ["not_found", "This proposal is no longer available."],
+  ["already_settled", "This proposal was already answered."],
+  ["no_objective", "This proposal has nothing to start. Ask Trama again."],
+  ["forbidden", "You are not allowed to do that."],
+  ["budget_exceeded", "This workspace reached its monthly agent budget."],
+])("shows a readable proposal error for %s", async (code, text) => {
+  vi.stubEnv("VITE_TRAMA_MANAGED", "1");
+  const api = await import("@/lib/agentClient");
+  const rpc = vi.fn(async () => ({ data: null, error: { message: code } }));
+  vi.spyOn(api, "getAgentClient").mockReturnValue({ rpc } as unknown as ReturnType<typeof api.getAgentClient>);
+  useAgentConversation.setState({ messages: [message({ id: "reply", direction: "out", outcome: { kind: "work_proposed", page_title: "Home", summary: "Create tasks on Home." } })] });
+  mount(); act(() => button("Talk to Trama").click());
+  for (const label of ["Do it on Home", "Not now on Home"]) {
+    await act(async () => button(label).click());
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(text);
+    expect(button("Do it on Home")).not.toBeNull();
+    expect(document.body.textContent).not.toContain("Started.");
+  }
+});
+
+it.each(["start", "decline"])("labels pending work settlement accurately: %s", async (action) => {
+  vi.stubEnv("VITE_TRAMA_MANAGED", "1");
+  const api = await import("@/lib/agentClient");
+  let finish!: (value: object) => void;
+  const rpc = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+  vi.spyOn(api, "getAgentClient").mockReturnValue({ rpc } as unknown as ReturnType<typeof api.getAgentClient>);
+  useAgentConversation.setState({ messages: [message({ id: "reply", direction: "out", outcome: { kind: "work_proposed", page_title: "Home", summary: "Create tasks on Home." } })] });
+  mount(); act(() => button("Talk to Trama").click());
+  act(() => button(action === "start" ? "Do it on Home" : "Not now on Home").click());
+  expect(button("Do it on Home").textContent).toBe(action === "start" ? "Starting…" : "Do it");
+  expect(button("Not now on Home").textContent).toBe(action === "decline" ? "Closing…" : "Not now");
+  expect(button("Do it on Home").disabled && button("Not now on Home").disabled).toBe(true);
+  await act(async () => finish({ data: { task_id: "task", page_id: "page" }, error: null }));
+});
+
+const actionApproval = (id: string, taskId: string, over: Partial<ApprovalRow> = {}): ApprovalRow => ({
+  id, task_id: taskId, run_id: null, kind: "action", action: "publish_page", params: {}, artifact_version: 1,
+  question: "Publish the plan", options: ["approve", "reject"], status: "pending", decision: null,
+  response: null, decided_by: null, decided_at: null, expires_at: "2099-01-01T00:00:00Z", created_at: "2026-11-03T00:00:00Z", ...over,
+});
+it.each(["approve", "reject"] as const)("decides a pending action from the chat using the person's %s click", async (decision) => {
+  vi.stubEnv("VITE_TRAMA_MANAGED", "1");
+  const own = task("own"), foreign = task("foreign", { workspace_id: "other" }), someone = task("someone", { owner_user_id: "someone" });
+  const pending = actionApproval("pending", own.id);
+  useAgentTasks.setState({ tasks: { own, foreign, someone }, approvals: { pending, foreign: actionApproval("foreign", foreign.id), someone: actionApproval("someone", someone.id) } });
+  let finish!: (value: { status: string }) => void;
+  vi.mocked(decideApproval).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+  mount(); act(() => button("Talk to Trama").click());
+  const section = document.querySelector('[aria-label="Needs your decision"]')!;
+  expect(section).not.toBeNull();
+  expect(section.querySelectorAll("button")).toHaveLength(2);
+  expect(section.compareDocumentPosition(document.querySelector('[aria-label="Message to the agent"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const action = [...section.querySelectorAll("button")].find((b) => b.textContent === (decision === "approve" ? "Approve" : "Reject"))!;
+  act(() => { action.click(); action.click(); });
+  expect(decideApproval).toHaveBeenCalledExactlyOnceWith("pending", decision, null);
+  await act(async () => {});
+  expect(action.disabled).toBe(true);
+  await act(async () => {
+    if (decision === "approve") useAgentTasks.setState({ approvals: { ...useAgentTasks.getState().approvals, pending: { ...pending, status: "decided", decision } } });
+    finish({ status: "decided" });
+  });
+  expect(document.querySelector('[aria-label="Needs your decision"]')?.textContent).toContain(decision === "approve" ? "Approved." : "Denied.");
+  act(() => useAgentTasks.setState({ approvals: { ...useAgentTasks.getState().approvals, pending: { ...pending, status: "decided", decision } } }));
+  expect(document.querySelector('[aria-label="Needs your decision"]')).toBeNull();
+});
+it.each(["none", "decided", "terminal"])("does not show chat decisions for %s approvals", (state) => {
+  vi.stubEnv("VITE_TRAMA_MANAGED", "1");
+  const own = task("own", state === "terminal" ? { state: "done" } : {});
+  useAgentTasks.setState({ tasks: { own }, approvals: state === "none" ? {} : { a: actionApproval("a", own.id, state === "decided" ? { status: "decided" } : {}) } });
+  mount(); act(() => button("Talk to Trama").click());
+  expect(document.querySelector('[aria-label="Needs your decision"]')).toBeNull();
+  expect(decideApproval).not.toHaveBeenCalled();
+});
+
+it("keeps a rejected approval request actionable and shows its error", async () => {
+  vi.stubEnv("VITE_TRAMA_MANAGED", "1");
+  const own = task("own");
+  useAgentTasks.setState({ tasks: { own }, approvals: { a: actionApproval("a", own.id) } });
+  vi.mocked(decideApproval).mockRejectedValueOnce(new Error("The task changed state. Refresh and try again."));
+  mount(); act(() => button("Talk to Trama").click());
+  const section = document.querySelector('[aria-label="Needs your decision"]')!;
+  await act(async () => [...section.querySelectorAll("button")].find((b) => b.textContent === "Approve")!.click());
+  expect(section.textContent).toContain("The task changed state. Refresh and try again.");
+  expect(section.textContent).not.toContain("Approved.");
+  expect(section.querySelector<HTMLButtonElement>("button")!.disabled).toBe(false);
+});
+
+it.each(["send", "decline"])("confirms a proposed agent message once: %s", async (action) => {
+  vi.stubEnv("VITE_TRAMA_MANAGED", "1");
+  const api = await import("@/lib/agentClient");
+  const rpc = vi.fn(async () => ({ data: { task_id: "task", page_id: "page" }, error: null }));
+  vi.spyOn(api, "getAgentClient").mockReturnValue({ rpc } as unknown as ReturnType<typeof api.getAgentClient>);
+  useAgentConversation.setState({ messages: [message({ id: "reply", direction: "out", outcome: { kind: "message_proposed", task_id: "task", task_title: "Research", agent_name: "Codex", text: "Use local dates." } })] });
+  mount(); act(() => button("Talk to Trama").click());
+  expect(rpc).not.toHaveBeenCalled();
+  await act(async () => { const target = button(action === "send" ? "Send to Codex" : "Not now for Codex"); target.click(); target.click(); });
+  expect(rpc).toHaveBeenCalledExactlyOnceWith(action === "send" ? "send_proposed_message" : "decline_proposed_work", { p_message_id: "reply" });
 });

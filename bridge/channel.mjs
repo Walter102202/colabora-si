@@ -68,7 +68,7 @@ export function createChannel(options) {
     }
     if (seenEvents.size > 1000) seenEvents.delete(seenEvents.values().next().value);
     const payload = event.payload ?? {};
-    if (event.event_id && ((event.type === "task.continue" && payload.review_of) ||
+    if (event.event_id && (event.type === "subtask.progress" || (event.type === "task.continue" && payload.review_of) ||
         (event.type === "task.updated" && ["verdict", "minor_findings", "environment_release", "review_timeout"].some(key => key in payload)))) {
       void acknowledge(event.event_id).catch(error => {
         log(`channel: notice acknowledgement failed (${error.message})`);

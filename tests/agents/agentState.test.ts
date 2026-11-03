@@ -62,7 +62,7 @@ describe("whatWillHappen", () => {
     );
     expect(whatWillHappen(task("queued"), { name: "ChatGPT", capabilities: { events: true } }, "continue")).toMatch(/^Sends it to the subscribed chat/);
     expect(whatWillHappen(task("queued"), { name: "X", capabilities: {} }, "continue")).toMatch(/did not declare capabilities/);
-    expect(whatWillHappen(task("done"), { name: "Codex", capabilities: { continue: true } }, "continue")).toMatch(/^Reopens the task with a new run/);
+    expect(whatWillHappen(task("done"), { name: "Codex", capabilities: { continue: true } }, "continue")).toMatch(/^Write what should change\. Sending your message reopens the task/);
   });
   it("explains Stop and Approve", () => {
     expect(whatWillHappen(task("working", "r"), null, "stop")).toBe("Sends stop and waits for the run to acknowledge. Nothing is reverted.");

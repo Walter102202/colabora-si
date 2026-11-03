@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { extractFile, runRequest } from "../../agent/requests.mjs";
 import { runAgent } from "../../agent/loop.mjs";
 import { createStubMcp } from "../../agent/test/stub-mcp.mjs";
-import { createStubModel } from "../../agent/test/stub-model.mjs";
+import { createStubModel, toolCall } from "../../agent/test/stub-model.mjs";
 afterEach(() => vi.unstubAllGlobals());
 
 it.each([400, 503])("does not persist a model HTTP %s as a permanent file failure", async (status) => {
@@ -202,4 +202,63 @@ it.each(["stop", "shutdown"] as const)("does not write a fill when %s arrives du
   expect(h.values()).toEqual([]);
   expect(h.mcp.calls.some((c) => c.name === "complete_ai_request")).toBe(false);
   if (kind === "stop") expect(h.mcp.calls.at(-1)?.name).toBe("ack_stop");
+});
+
+it.each(["valid", "missing", "blank", "long", "wrong id", "no page", "no authorization"])("work proposals validate the visible summary: %s", async (variant) => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const summary = variant === "missing" ? undefined : variant === "blank" ? "  " : variant === "long" ? "x".repeat(601) : "  Create an offsite board on Home.  ";
+  const mcp = createStubMcp({ handlers: {
+    get_ai_request: () => ({ kind: "assist", messages: [{ id, text: "Do it" }], through_seq: 7, page: variant === "no page" ? null : { id: "home", title: "Home" }, proposal_message_id: variant === "no authorization" ? null : id }),
+    heartbeat: () => ({}), reply_person_message: () => ({}),
+  } });
+  const model = createStubModel([{ tool_calls: [toolCall("propose_work", { message_id: variant === "wrong id" ? "00000000-0000-4000-8000-000000000002" : id, summary })] }, { content: "Review the card." }]);
+  await runRequest({ call: mcp.callTool, model, task: { task_id: "t", request_kind: "assist" }, runId: "r", log: () => {} });
+  const sent = mcp.calls.find((c) => c.name === "reply_person_message")!.args;
+  expect(sent.propose_message_id).toBe(variant === "valid" ? id : undefined);
+  expect(sent.work_summary).toBe(variant === "valid" ? summary!.trim() : undefined);
+  const result = JSON.parse(model.requests[1].messages.find((m) => m.role === "tool").content);
+  expect(result).toEqual(variant === "valid" ? { proposed: true, requires_person: true } : { proposed: false, reason: ["wrong id", "no page", "no authorization"].includes(variant) ? "not_allowed" : "summary_required", requires_person: true });
+  expect(model.requests[0].messages[0].content).toContain("the person approves the summary they see");
+});
+
+it("guides work requests without an open page instead of offering a proposal", async () => {
+  const mcp = createStubMcp({ handlers: {
+    get_ai_request: () => ({ kind: "assist", messages: [{ text: "Do it" }], through_seq: 7, page: null, proposal_message_id: null }),
+    heartbeat: () => ({}), reply_person_message: () => ({}),
+  } });
+  const model = createStubModel([{ content: "Open the page where the work belongs and ask me there." }]);
+  await runRequest({ call: mcp.callTool, model, task: { task_id: "t", request_kind: "assist" }, runId: "r", log: () => {} });
+  expect(model.requests[0].messages[0].content).toContain("Pending decisions appear as cards in this chat. The person decides with their buttons. You never decide for them or say that anything was approved.");
+  expect(model.requests[0].tools ?? []).toEqual([]);
+  expect(model.requests[0].messages[0].content).toContain("If the person asks for work and page is null, explain that work starts from a page: ask them to open the page where the work belongs and ask you there.");
+  expect(mcp.calls.find((c) => c.name === "reply_person_message")!.args.propose_message_id).toBeUndefined();
+});
+
+it.each(["valid", "unknown board", "unknown lead", "wrong role", "duplicate workers", "long title"])("validates job proposals against supplied context: %s", async (variant) => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const job = { board_id: variant === "unknown board" ? "invented" : "board", title: variant === "long title" ? "x".repeat(121) : "Offsite", lead_agent_id: variant === "unknown lead" ? "invented" : "lead", worker_agent_ids: variant === "duplicate workers" ? ["worker", "worker"] : ["worker"] };
+  const mcp = createStubMcp({ handlers: { get_ai_request: () => ({ kind: "assist", page: null, messages: [{ text: "Build a job" }], through_seq: 1, proposal_message_id: id, boards: [{ id: "board", title: "Jobs" }], agents: [{ id: "lead", name: "Claude", role: variant === "wrong role" ? "worker" : "lead" }, { id: "worker", name: "Codex", role: "worker" }] }), heartbeat: () => ({}), reply_person_message: () => ({}) } });
+  const model = createStubModel([{ tool_calls: [toolCall("propose_work", { message_id: id, summary: "Codex writes; Claude reviews progress.", job })] }, { content: "Review it." }]);
+  await runRequest({ call: mcp.callTool, model, task: { task_id: "t", request_kind: "assist" }, runId: "r", log: () => {} });
+  expect(model.requests[0].tools!.some((t) => t.function.name === "propose_work")).toBe(true);
+  expect(mcp.calls.find((c) => c.name === "reply_person_message")!.args.job).toEqual(variant === "valid" ? job : undefined);
+});
+
+it("sends only the four job fields, so an extra model key cannot fail the reply", async () => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const job = { board_id: "board", title: " Offsite ", lead_agent_id: "lead", worker_agent_ids: ["worker"], note: "extra" };
+  const mcp = createStubMcp({ handlers: { get_ai_request: () => ({ kind: "assist", page: null, messages: [{ text: "Build a job" }], through_seq: 1, proposal_message_id: id, boards: [{ id: "board", title: "Jobs" }], agents: [{ id: "lead", name: "Claude", role: "lead" }, { id: "worker", name: "Codex", role: "worker" }] }), heartbeat: () => ({}), reply_person_message: () => ({}) } });
+  const model = createStubModel([{ tool_calls: [toolCall("propose_work", { message_id: id, summary: "Codex writes; Claude reviews progress.", job })] }, { content: "Review it." }]);
+  await runRequest({ call: mcp.callTool, model, task: { task_id: "t", request_kind: "assist" }, runId: "r", log: () => {} });
+  expect(mcp.calls.find((c) => c.name === "reply_person_message")!.args.job).toEqual({ board_id: "board", title: "Offsite", lead_agent_id: "lead", worker_agent_ids: ["worker"] });
+});
+
+it.each(["valid", "unknown task", "empty", "long", "wrong message"])("proposes only authorized exact messages: %s", async (variant) => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const text = variant === "empty" ? "" : variant === "long" ? "x".repeat(1001) : "Use local dates.";
+  const mcp = createStubMcp({ handlers: { get_ai_request: () => ({ kind: "assist", page: null, messages: [{ text: "Tell Codex" }], through_seq: 1, proposal_message_id: id, active_tasks: [{ task_id: "task", title: "Research", agent: { name: "Codex" }, state: "working" }] }), heartbeat: () => ({}), reply_person_message: () => ({}) } });
+  const model = createStubModel([{ tool_calls: [toolCall("propose_message", { message_id: variant === "wrong message" ? "bad" : id, task_id: variant === "unknown task" ? "invented" : "task", text })] }, { content: "Review the message." }]);
+  await runRequest({ call: mcp.callTool, model, task: { task_id: "t", request_kind: "assist" }, runId: "r", log: () => {} });
+  expect(model.requests[0].tools!.some((t) => t.function.name === "propose_message")).toBe(true);
+  expect(mcp.calls.find((c) => c.name === "reply_person_message")!.args.message).toEqual(variant === "valid" ? { task_id: "task", text } : undefined);
 });

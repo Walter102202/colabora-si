@@ -7,8 +7,8 @@ import { RowPanel } from "@/components/agents/RowPanel";
 import { mockCard } from "@/components/agents/card/mock";
 import type { TaskCardData } from "@/lib/agentCard";
 import type { DiffItem, TaskDiff } from "@/lib/agentRunDiff";
-import { useAgentTasks } from "@/lib/agentTasks";
-import { useAgentsStore } from "@/lib/agentsStore";
+import { type ActivityRow, type ReviewRow, useAgentTasks } from "@/lib/agentTasks";
+import { type AgentRow, useAgentsStore } from "@/lib/agentsStore";
 
 const actions = vi.hoisted(() => ({ loadTaskDiff: vi.fn(), revertRun: vi.fn(), fetchTaskMetrics: vi.fn() })); // vi.mock is hoisted above the imports
 vi.mock("@/lib/agentActions", () => ({
@@ -32,7 +32,7 @@ beforeEach(() => {
   actions.loadTaskDiff.mockReset(); actions.revertRun.mockReset();
   actions.fetchTaskMetrics.mockReset().mockResolvedValue({ tasks: 0, metrics: [] });
   useAgentTasks.setState({ status: "ready", tasks: { [task.id]: task }, activities: { [task.id]: [] },
-    subscribe: () => () => {}, loadTaskDetail: async () => {}, loadActivities: async () => {} });
+    subscribe: () => () => {}, loadTaskDetail: async () => {}, loadActivities: async () => {}, loadTaskConversation: async () => {} });
   useAgentsStore.setState({ agents: [], load: async () => {} });
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); });
@@ -100,4 +100,39 @@ it("a task deep link still opens an AI request instead of the page's work task",
   actions.loadTaskDiff.mockResolvedValue(diffOf([]));
   await act(async () => root.render(createElement(MemoryRouter, { initialEntries: [`/p/${task.row_page_id}?task=${request.id}`] }, createElement(RowPanel, { pageId: task.row_page_id }))));
   expect(actions.loadTaskDiff).toHaveBeenCalledWith(request.id);
+});
+
+it("shows the live job conversation in time order with agent names and review findings", async () => {
+  const child = { ...task, id: "worker-task", title: "Research", parent_task_id: task.id, delegate_agent_id: "worker" };
+  const parent = { ...task, delegate_agent_id: "lead" };
+  const activity = (id: string, taskId: string, authorId: string, text: string, minute: number, type: ActivityRow["type"] = "prompt"): ActivityRow => ({
+    id, task_id: taskId, run_id: null, seq: minute, type, body: { text, signal: "feedback" }, ephemeral: false,
+    author_type: "agent", author_id: authorId, created_at: `2026-11-03T10:0${minute}:00Z`,
+  });
+  const progress = activity("progress", child.id, "worker", "Sources checked", 2, "thought");
+  const leadMessage = activity("feedback", child.id, "lead", "Check the dates", 1);
+  const parentMessage = activity("parent", parent.id, "worker", "Research is ready", 3, "response");
+  const review = { id: "review", task_id: child.id, reviewer_type: "agent", reviewer_id: "lead", verdict: "changes_requested", findings: [{ status: "not_found", note: "Add sources" }], created_at: "2026-11-03T10:04:00Z" } as ReviewRow;
+  const loadConversation = vi.fn(async () => {});
+  useAgentTasks.setState({ tasks: { [parent.id]: parent, [child.id]: child }, activities: { [parent.id]: [parentMessage], [child.id]: [progress, leadMessage] }, reviews: { review }, loadTaskConversation: loadConversation });
+  useAgentsStore.setState({ agents: [{ id: "lead", name: "Claude Code", capabilities: {} }, { id: "worker", name: "Codex", capabilities: {} }] as AgentRow[] });
+  actions.loadTaskDiff.mockResolvedValue(diffOf([]));
+  await mount();
+  expect(loadConversation).toHaveBeenCalledWith(parent.id);
+  const conversation = container.querySelector('section[aria-label="Conversation"]')!;
+  expect([...conversation.querySelectorAll("li")].map((line) => line.textContent)).toEqual([
+    expect.stringContaining("Claude Code → Codex (Research): Check the dates"),
+    expect.stringContaining("Codex → Claude Code (Research): Sources checked"),
+    expect.stringContaining("Codex → Claude Code: Research is ready"),
+    expect.stringContaining("Claude Code → Codex (Research): Changes requested: not found — Add sources"),
+  ]);
+  expect(conversation.querySelectorAll("time")).toHaveLength(4);
+  act(() => button("Show timeline").click());
+  const timeline = [...container.querySelectorAll("section")].find((section) => section.querySelector("h4")?.textContent === "Timeline")!;
+  expect(timeline.textContent).toContain("Codex");
+  expect(timeline.textContent).not.toContain("Agent");
+  const next = activity("new", child.id, "worker", "Dates corrected", 5, "response");
+  act(() => useAgentTasks.setState({ activities: { [parent.id]: [parentMessage], [child.id]: [progress, leadMessage, next] } }));
+  expect(conversation.querySelectorAll("li")).toHaveLength(5);
+  expect(conversation.lastElementChild?.textContent).toContain("Dates corrected");
 });

@@ -15,6 +15,7 @@ import { ApprovalCard } from "@/components/agents/panel/ApprovalCard";
 import { DecisionCard } from "@/components/agents/panel/DecisionCard";
 import { LeadReviewCard, type ReviewFinding, type ReviewVerdict } from "@/components/agents/panel/LeadReviewCard";
 import { SubtaskList, type SubtaskItem } from "@/components/agents/panel/SubtaskList";
+import { TaskConversation, type ConversationData } from "@/components/agents/panel/TaskConversation";
 import { ActivityTimeline } from "@/components/agents/panel/ActivityTimeline";
 import { AcceptCard } from "@/components/agents/panel/AcceptCard";
 import { activityLabel, deliverySummary } from "@/lib/agentTaskText";
@@ -63,6 +64,8 @@ export interface TaskViewProps {
   ciChecks?: CiCheckRow[];
   environment?: EnvironmentResource[];
   activities: ActivityRow[];
+  conversation?: ConversationData;
+  agentNames?: Record<string, string>;
   subtasks: SubtaskItem[];
   reviewerName: string | null;
   // Results of the task and its subtasks (task_metrics); the chat card leaves them out.
@@ -117,7 +120,8 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
     try {
       await onAssign(agentId || null, note);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message === "message_required" ? "Write what should change first." : message);
     } finally {
       setBusy(false);
     }
@@ -148,7 +152,7 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ agentAvatar = null, lessons = null, task, agent, run, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, environment = [], activities, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ agentAvatar = null, lessons = null, task, agent, run, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, environment = [], activities, conversation, agentNames = {}, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -163,6 +167,7 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
   const [handoverAgent, setHandoverAgent] = useState("");
   const [handoverNote, setHandoverNote] = useState("");
   const [handoverError, setHandoverError] = useState<string | null>(null);
+  const feedback = useRef<HTMLDivElement>(null);
   const handOverToggle = useRef<HTMLButtonElement>(null);
   const refocusHandOver = useRef(false);
   const autonomyChoice = useQueuedChoice<AutonomyLevel | null>();
@@ -187,8 +192,11 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
     setError(null);
     try {
       await fn();
+      return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message === "message_required" ? "Write what should change first." : message);
+      return false;
     } finally {
       setBusy(null);
     }
@@ -211,6 +219,7 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
     }
   };
 
+  const names = { ...Object.fromEntries(subtasks.filter((s) => s.task.delegate_agent_id && s.agentName).map((s) => [s.task.delegate_agent_id!, s.agentName!])), ...(agent ? { [agent.id]: agent.name } : {}), ...agentNames };
   const recentActions = activities.filter((a) => a.type === "action").slice(-3);
   const nextText = whatWillHappen(task, agentLike, "continue", { artifactVersion: artifact?.version ?? null });
 
@@ -307,6 +316,8 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
       {lessons}
 
       <SubtaskList subtasks={subtasks} onOpenTask={onOpenTask} />
+      {subtasks.length > 0 && <TaskConversation task={task} subtasks={subtasks.map((s) => s.task)} agentNames={names}
+        activities={conversation?.activities ?? activities} reviews={conversation?.reviews ?? (review ? [review] : [])} />}
 
       {actionApprovals && onDecideApproval
         ? <ApprovalGroupCard approvals={actionApprovals} onDecide={onDecideApproval} focusApprovalId={focusApprovalId} />
@@ -325,11 +336,11 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
         </section>
       )}
 
-      <FeedbackComposer
-        disabled={busy !== null || task.state === "failed"}
-        placeholder={terminal ? "Tell the agent what to do next; sending reopens the task…" : undefined}
+      <div ref={feedback}><FeedbackComposer
+        disabled={busy !== null}
+        placeholder={terminal ? "What should change? Sending reopens the task." : undefined}
         onSend={(text) => act("send", () => onMessage(text, terminal ? "continue" : "feedback"))}
-      />
+      /></div>
 
       <div className="flex flex-wrap gap-2">
         {!terminal && onHandOver && (
@@ -346,7 +357,7 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
             Hand over…
           </button>
         )}
-        {!terminal && (
+        {!terminal && task.state !== "ready_for_review" && (
           <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" title={nextText} disabled={busy !== null} onClick={() => act("continue", () => onMessage("", "continue"))}>
             Continue
           </button>
@@ -367,7 +378,7 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
           </>
         )}
         {terminal && (
-          <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" title={whatWillHappen(task, agentLike, "continue")} disabled={busy !== null} onClick={() => act("reopen", () => onMessage("", "continue"))}>
+          <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" title={whatWillHappen(task, agentLike, "continue")} disabled={busy !== null} onClick={() => feedback.current?.querySelector("textarea")?.focus()}>
             Reopen
           </button>
         )}
@@ -410,7 +421,7 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
       {showTimeline && (
         <section className="space-y-1">
           <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Timeline</h4>
-          <ActivityTimeline activities={activities} />
+          <ActivityTimeline activities={activities} agentNames={names} />
         </section>
       )}
     </div>

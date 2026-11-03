@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { validate } from '../jsonSchema.ts';
 import type { Db, DbResult } from '../db.ts';
 import type { ToolContext, ToolDef } from '../mcp.ts';
 import { assistRequest, personTools } from './person.ts';
@@ -70,4 +71,37 @@ Deno.test('reply passes an agent proposal to the six-argument SQL contract', asy
   assert.deepEqual(h.calls[0].args.p_propose_agent, proposal);
   assert.equal(h.calls[0].args.p_propose_message_id, null);
   assert.equal(h.calls[0].args.p_usage, null);
+});
+
+Deno.test('work summaries select the seven-argument RPC while legacy proposals keep five', async () => {
+  for (const summary of [undefined, 'Create an offsite board on Home.']) {
+    const h = harness();
+    await tool('reply_person_message').handler({ run_id: 'r', text: 'Review', through_seq: 7, propose_message_id: 'm', ...(summary ? { work_summary: summary } : {}) }, h.ctx);
+    assert.deepEqual(h.calls[0].args, {
+      p_run_id: 'r', p_text: 'Review', p_through_seq: 7, p_usage: null, p_propose_message_id: 'm',
+      ...(summary ? { p_propose_agent: null, p_proposal: { summary } } : {}),
+    });
+  }
+});
+
+Deno.test('work summary schema accepts the boundary and rejects oversized summaries', () => {
+  const schema = tool('reply_person_message').inputSchema;
+  const args = { run_id: 'r', text: 'Review', through_seq: 7, propose_message_id: 'm' };
+  assert.deepEqual(validate(schema, { ...args, work_summary: 'x'.repeat(600) }), []);
+  assert.ok(validate(schema, { ...args, work_summary: 'x'.repeat(601) }).length > 0);
+});
+
+Deno.test('job proposal is carried in the single proposal payload', async () => {
+  const h = harness();
+  const job = { board_id: 'b', title: 'Offsite', lead_agent_id: 'l', worker_agent_ids: ['w'] };
+  await tool('reply_person_message').handler({ run_id: 'r', text: 'Review', through_seq: 7, propose_message_id: 'm', work_summary: 'Organize offsite', job }, h.ctx);
+  assert.deepEqual(h.calls[0].args.p_proposal, { summary: 'Organize offsite', job });
+  assert.equal(Object.keys(h.calls[0].args).length, 7);
+});
+
+Deno.test('confirmed message proposal shares the single JSON proposal contract', async () => {
+  const h = harness();
+  const message = { task_id: 't', text: 'Use local dates.' };
+  await tool('reply_person_message').handler({ run_id: 'r', text: 'Review', through_seq: 7, propose_message_id: 'm', message }, h.ctx);
+  assert.deepEqual(h.calls[0].args, { p_run_id: 'r', p_text: 'Review', p_through_seq: 7, p_usage: null, p_propose_message_id: 'm', p_propose_agent: null, p_proposal: { message } });
 });

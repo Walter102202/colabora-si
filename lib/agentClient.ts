@@ -15,6 +15,7 @@ export function agentErrorMessage(error: unknown, agentName = "This agent"): str
   if (!error) return "Unknown error";
   if (typeof error === "string") return error;
   const e = error as { message?: string; details?: string; code?: string };
+  if (e.message === "budget_exceeded") return "This workspace reached its monthly agent budget.";
   if (e.message === "forbidden") return "You are not allowed to do that.";
   if (e.message === "delegate_not_found") return "That agent is not available in this workspace.";
   if (e.message === "invalid_state") return "The task changed state. Refresh and try again.";

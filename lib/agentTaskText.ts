@@ -97,3 +97,7 @@ export function activityLabel(a: ActivityRow): string {
       return `error ${pick("code") ?? ""}: ${pick("message") ?? ""}`;
   }
 }
+
+export function activityAuthor(type: ActivityRow["author_type"], id: string, names: Record<string, string>): string {
+  return type === "human" ? "You" : type === "system" ? "System" : names[id] ?? "Unknown agent";
+}

@@ -336,3 +336,31 @@ Deno.test('a stalled denial log times out without changing the original denial',
 Deno.test('server instructions route named projects through join_job before work', () => {
   assert.match(buildServer().instructions ?? '', /take, continue or help/);
 });
+
+Deno.test('active-run messages are appended once without changing structured output', async () => {
+  let pending = true;
+  const db: Db = { ...fakeDb, rpc: <T>(name: string) => {
+    const data = name === 'take_pending_messages' && pending ? [{ title: 'Offsite', author: 'Claude', text: 'Check the dates' }] : [];
+    if (name === 'take_pending_messages') pending = false;
+    return Promise.resolve({ data: data as T, error: null });
+  } };
+  const request = () => post({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'echo', arguments: { text: 'hello' } } });
+  const first = await call(request(), server, deps({ makeDb: () => db }));
+  assert.match(first.body.result.content[0].text, /New message on Offsite from Claude: Check the dates/);
+  assert.deepEqual(first.body.result.structuredContent, { text: 'hello' });
+  const second = await call(request(), server, deps({ makeDb: () => db }));
+  assert.match(second.body.result.content[0].text, /^Echo hello/);
+  assert.doesNotMatch(second.body.result.content[0].text, /New message/);
+});
+
+Deno.test('approval decisions read as decisions and empty prompts add no notice line', async () => {
+  const db: Db = { ...fakeDb, rpc: <T>(name: string) => Promise.resolve({ data: (name === 'take_pending_messages' ? [
+    { title: 'Offsite', author: 'Walter', text: '', decision: 'approve' },
+    { title: 'Offsite', author: 'Walter', text: '' },
+  ] : []) as T, error: null }) };
+  const request = post({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'echo', arguments: { text: 'hello' } } });
+  const text: string = (await call(request, server, deps({ makeDb: () => db }))).body.result.content[0].text;
+  assert.match(text, /Walter decided on your approval request on Offsite: approve\./);
+  assert.doesNotMatch(text, /from Walter: *$/m);
+  assert.equal(text.split('\n').filter((line) => line.includes('Offsite')).length, 1);
+});

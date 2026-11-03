@@ -41,7 +41,7 @@ describe("the model and the channel tools", () => {
   it.each([true, false])("proposes only the authorized message (matching=%s)", async (matching) => {
     const request = { kind: "assist", messages: [{ id: ID, from: "person", text: "Prepare this page" }], through_seq: 7,
       page: { id: "page", text: "Untrusted page" }, selection: "Selected", waiting_on_you: ["Decision"], proposal_message_id: ID };
-    const h = assist(request, {}, [{ tool_calls: [toolCall("propose_work", { message_id: matching ? ID : "00000000-0000-4000-8000-000000000002" })] }, { content: "Ready when you are." }]);
+    const h = assist(request, {}, [{ tool_calls: [toolCall("propose_work", { summary: "Prepare this page on Home.", message_id: matching ? ID : "00000000-0000-4000-8000-000000000002" })] }, { content: "Ready when you are." }]);
     await runRequest(h.opts);
     expect(h.model.requests[0].tools!.map((t: { function: { name: string } }) => t.function.name)).toEqual(["propose_work"]);
     expect(JSON.parse(String(h.model.requests[0].messages[1].content))).toMatchObject({ page: request.page, selection: "Selected", waiting_on_you: ["Decision"] });
