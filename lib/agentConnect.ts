@@ -7,7 +7,7 @@ import { useStore } from "@/lib/store";
 import { useAgentsStore, type AgentRow, type AgentRole } from "@/lib/agentsStore";
 import type { AutonomyLevel } from "@/lib/agentAutonomy";
 import { connectWorkspaces } from "@/lib/agentConsent";
-import { CONNECT_AGENT_NAMES, connectAgentLogo } from "@/lib/agentConnectCatalog";
+import { connectAgentLogoForName } from "@/lib/agentConnectCatalog";
 
 export interface ConnectionRow {
   agent_id: string;
@@ -23,8 +23,7 @@ export interface ConnectedRow { agentId: string; name: string; logo: string | nu
 export function connectedRows(agents: Pick<AgentRow, "id" | "name" | "is_platform" | "revoked_at" | "role" | "autonomy">[], connections: ConnectionRow[]): ConnectedRow[] {
   return agents.filter((agent) => !agent.is_platform && !agent.revoked_at).map((agent): ConnectedRow => {
     const connection = connections.find((row) => row.agent_id === agent.id);
-    const catalogId = Object.entries(CONNECT_AGENT_NAMES).find(([, name]) => name.toLowerCase() === agent.name.toLowerCase())?.[0];
-    return { agentId: agent.id, name: agent.name, role: agent.role, autonomy: agent.autonomy ?? null, logo: catalogId ? connectAgentLogo(catalogId) : null,
+    return { agentId: agent.id, name: agent.name, role: agent.role, autonomy: agent.autonomy ?? null, logo: connectAgentLogoForName(agent.name),
       status: connection ? connection.verified_at ? "connected" : "waiting" : "manual",
       since: connection?.verified_at ?? connection?.created_at ?? null, pageId: connection?.page_id ?? null };
   }).sort((a, b) => Number(a.status === "manual") - Number(b.status === "manual")

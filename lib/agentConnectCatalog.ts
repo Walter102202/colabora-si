@@ -1,11 +1,18 @@
 import { workspaceMcpUrl } from "@/lib/agentSnippets";
 
-export const CONNECT_AGENT_NAMES: Record<string, string> = {"claude-code": "Claude Code", "codex": "Codex", "muse-code": "Muse Code", "cursor": "Cursor", "gemini-cli": "Gemini CLI", "antigravity": "Google Antigravity", "chatgpt": "ChatGPT", "claude": "Claude", "hermes": "Hermes Agent", "openclaw": "OpenClaw", "grokbot": "Grok Bot", "instinct": "Instinct", "your-agent": "Your own agent"};
+export const CONNECT_AGENT_NAMES: Record<string, string> = {"claude-code": "Claude Code", "codex": "Codex", "muse-code": "Muse Code", "muse": "Muse (Meta)", "cursor": "Cursor", "gemini-cli": "Gemini CLI", "antigravity": "Google Antigravity", "chatgpt": "ChatGPT", "claude": "Claude", "hermes": "Hermes Agent", "openclaw": "OpenClaw", "grokbot": "Grok Bot", "instinct": "Instinct", "your-agent": "Your own agent"};
 
-const logoFormats: Record<string, string> = { grokbot: "jpg", instinct: "png" };
+const logoFormats: Record<string, string> = { muse: "jpg", grokbot: "jpg", instinct: "png" };
 
 export function connectAgentLogo(id: string): string {
   return `/brand/agents/${id}.${logoFormats[id] ?? "svg"}`;
+}
+
+export function connectAgentLogoForName(name: string): string | null {
+  const key = name.trim().toLowerCase();
+  const match = Object.entries(CONNECT_AGENT_NAMES).find(([id, label]) =>
+    id !== "your-agent" && (id === key || label.toLowerCase() === key));
+  return match ? connectAgentLogo(match[0]) : null;
 }
 
 export interface ConnectCatalogEntry {
@@ -42,6 +49,7 @@ export function createAgentConnectCatalog(mcpUrl: string): ConnectCatalogEntry[]
     { id: "claude-code", name: CONNECT_AGENT_NAMES["claude-code"], route: "message", action: "Copy setup message", helper: "Paste this into Claude Code. Then approve access in your browser.", intro: intro("Claude Code"), cmd: `claude mcp add --transport http --scope user colabora-tasks ${mcpUrl}\nclaude mcp add --transport http --scope user colabora-workspace ${workspace}`, outro },
     { id: "codex", name: CONNECT_AGENT_NAMES["codex"], route: "message", action: "Copy setup message", helper: "Paste this into Codex on your computer. Then approve access in your browser.", intro: intro("Codex"), cmd: `codex mcp add colabora-tasks --url ${mcpUrl}\ncodex mcp add colabora-workspace --url ${workspace}`, outro },
     { id: "muse-code", name: CONNECT_AGENT_NAMES["muse-code"], route: "message", action: "Copy setup message", helper: "Paste this into Muse Code. It may ask to update its settings or reopen the session.", intro: guide("Muse Code", "muse-code"), cmd: urls, outro: "" },
+    { id: "muse", name: CONNECT_AGENT_NAMES.muse, route: "message", action: "Copy setup message", helper: "Paste this into your chat with Meta’s personal assistant, then approve page access in your browser.", intro: "Add a custom connector named colabora-workspace for my colabora.si pages. Use this remote MCP server with Streamable HTTP:", cmd: workspace, outro: "Use OAuth and show me the browser sign-in so I can review and approve access. After I approve, use the connector to read the Getting started page and tell me its title. Do not ask me to paste an API key or token into chat." },
     { id: "cursor", name: CONNECT_AGENT_NAMES["cursor"], route: "open", action: "Open Cursor", helper: "Review the connection in Cursor. Then approve page access in your browser.", intro: guide("Cursor", "cursor"), cmd: urls, outro: "", url: `cursor://anysphere.cursor-deeplink/mcp/install?name=colabora-workspace&config=${encodeURIComponent(btoa(JSON.stringify({ url: workspace })))}` },
     { id: "gemini-cli", name: CONNECT_AGENT_NAMES["gemini-cli"], route: "message", action: "Copy setup message", helper: "Paste this into Gemini CLI. Then follow its sign-in prompt.", intro: guide("Gemini CLI", "gemini-cli"), cmd: urls, outro: "" },
     { id: "antigravity", name: CONNECT_AGENT_NAMES["antigravity"], route: "settings", action: "Show setup steps", helper: "Add colabora.si in Google Antigravity’s connection settings, then approve access in your browser.", intro: guide("Google Antigravity", "antigravity"), cmd: urls, outro: "", url: "https://antigravity.google/" },

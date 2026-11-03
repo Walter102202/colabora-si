@@ -80,7 +80,7 @@ export function seedWorkspace(): { pages: Record<string, Page>; rootOrder: strin
       createBlock("paragraph", { html: 'See who is linked in <a href="/agents">Connected agents</a>.' }),
       createBlock("heading2", { html: "Choose your agent" }),
       ...[
-        ["claude-code", "Claude Code"], ["codex", "Codex"], ["muse-code", "Muse Code"],
+        ["claude-code", "Claude Code"], ["codex", "Codex"], ["muse-code", "Muse Code"], ["muse", "Muse (Meta)"],
         ["cursor", "Cursor"], ["gemini-cli", "Gemini CLI"], ["antigravity", "Google Antigravity"],
         ["chatgpt", "ChatGPT"], ["claude", "Claude"], ["hermes", "Hermes Agent"],
         ["openclaw", "OpenClaw"], ["grokbot", "Grok Bot"], ["instinct", "Instinct"],

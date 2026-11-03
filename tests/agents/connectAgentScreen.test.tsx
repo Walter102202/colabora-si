@@ -36,12 +36,27 @@ const mount = (path = "/connect") => act(async () => root.render(<MemoryRouter i
   <Route path="/" element={<p>Home</p>} />
 </Routes></MemoryRouter>));
 const button = (name: string) => [...container.querySelectorAll("button")].find((node) => node.textContent === name)!;
-it("offers thirteen accessible choices, decorative logos and the notice", async () => {
+it("offers fourteen accessible choices, decorative logos and the notice", async () => {
   await mount();
-  expect(container.querySelectorAll('button[aria-label^="Connect with "]')).toHaveLength(13);
-  expect(container.querySelectorAll('img[alt=""]')).toHaveLength(12);
+  expect(container.querySelectorAll('button[aria-label^="Connect with "]')).toHaveLength(14);
+  expect(container.querySelectorAll('img[alt=""]')).toHaveLength(13);
   expect(container.textContent).toContain("Product names and logos belong to their respective owners.");
   expect(container.textContent).toContain("Which agent do you use?");
+});
+it("copies a pages-only custom connector for Muse without using the Muse Code CLI", async () => {
+  await mount();
+  expect(container.querySelector('[aria-label="Connect with Muse Code"]')).not.toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Connect with Muse (Meta)"]')!.click());
+  expect(container.querySelector("h1")?.textContent).toBe("Connect Muse (Meta)");
+  expect(container.querySelector('a[href="/connect/muse.md"]')).not.toBeNull();
+  const message = container.querySelector("pre")!.textContent;
+  await act(async () => button("Copy setup message").click());
+  expect(f.copy).toHaveBeenCalledExactlyOnceWith(message);
+  expect(message).toContain("https://example.test/functions/v1/workspace-mcp");
+  expect(message).not.toMatch(/functions\/v1\/mcp\b|muse mcp|colabora-tasks/);
+  expect(message).toContain("OAuth");
+  expect(message).toContain("read the Getting started page");
+  expect(container.textContent).toContain("Waiting for your agent");
 });
 it.each([["Grok Bot", "grokbot"], ["Instinct", "instinct"]])("opens the %s guide and copies an OAuth setup for both endpoints", async (name, slug) => {
   await mount();
@@ -65,7 +80,7 @@ it("chooses one setup action, copies exactly the visible message and changes bac
   expect(f.copy).toHaveBeenCalledExactlyOnceWith(message);
   expect([...container.querySelectorAll('[role="status"]')].some((status) => status.textContent?.includes("Copied — paste into Claude Code"))).toBe(true);
   await act(async () => button("Change agent").click());
-  expect(container.querySelectorAll('button[aria-label^="Connect with "]')).toHaveLength(13);
+  expect(container.querySelectorAll('button[aria-label^="Connect with "]')).toHaveLength(14);
 });
 it("handles clipboard denial and deep links without requiring a session", async () => {
   f.copy.mockRejectedValue(new Error("denied")); await mount("/connect/codex");

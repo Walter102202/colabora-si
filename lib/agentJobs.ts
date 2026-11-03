@@ -1,6 +1,6 @@
 import type { AgentRow, AgentRole } from "@/lib/agentsStore";
 import type { ConnectionRow } from "@/lib/agentConnect";
-import { CONNECT_AGENT_NAMES, connectAgentLogo } from "@/lib/agentConnectCatalog";
+import { connectAgentLogoForName } from "@/lib/agentConnectCatalog";
 import type { TaskRow } from "@/lib/agentTasks";
 
 export interface JobAgent { id: string; name: string; logo: string | null; role: AgentRole; }
@@ -74,8 +74,7 @@ export function eligibleJobAgents(
     // Agents added in Settings have no connection row; a connection still pending stays out.
     && !connections.some((connection) => connection.agent_id === agent.id && !connection.verified_at))
     .map((agent) => {
-      const catalogId = Object.entries(CONNECT_AGENT_NAMES).find(([, name]) => name.toLowerCase() === agent.name.toLowerCase())?.[0];
-      return { id: agent.id, name: agent.name, role: agent.role, logo: catalogId ? connectAgentLogo(catalogId) : null };
+      return { id: agent.id, name: agent.name, role: agent.role, logo: connectAgentLogoForName(agent.name) };
     });
 }
 

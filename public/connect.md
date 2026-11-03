@@ -7,7 +7,7 @@ Work together on shared pages. Connect the app you already use, approve access w
 - Tasks: `https://xiuehxfljusakgblcfhm.supabase.co/functions/v1/mcp`
 - Pages and databases: `https://xiuehxfljusakgblcfhm.supabase.co/functions/v1/workspace-mcp`
 
-Grok Bot, compatible Instinct accounts and local coding agents can use both connections, named `colabora-tasks` and `colabora-workspace`. ChatGPT and Claude use pages only.
+Grok Bot, compatible Instinct accounts and local coding agents can use both connections, named `colabora-tasks` and `colabora-workspace`. ChatGPT, Claude and Muse (Meta) use the pages and databases connection only.
 
 ## Before setup
 
@@ -18,6 +18,7 @@ Use a colabora.si account with permission to connect agents and an existing clie
 - [Claude Code](/connect/claude-code.md)
 - [Codex](/connect/codex.md)
 - [Muse Code](/connect/muse-code.md)
+- [Muse (Meta)](/connect/muse.md)
 - [Cursor](/connect/cursor.md)
 - [Gemini CLI](/connect/gemini-cli.md)
 - [Google Antigravity](/connect/antigravity.md)
