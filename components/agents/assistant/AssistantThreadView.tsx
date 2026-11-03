@@ -54,6 +54,7 @@ export interface AssistantThreadViewProps {
 // Pure view of the conversation with the workspace agent. P12 mounts it in its own surface.
 export function AssistantThreadView({ messages, draft, reviewing, busy = false, error, voice, avatar, empty, onPropose, onSettleAgent, hasTaskDatabase, agentProposalError, proposing, onDraft, onPaste, onSend, onRetrySend, onUndo, onOpenNotes, onNewConversation, resetting, scrollRequest = 0, status = null }: AssistantThreadViewProps) {
   const { listRef, contentRef, onScroll, scrollToLatest, showScrollToLatest } = useConversationScroll(messages, scrollRequest);
+  const hasUserMessage = messages.some((message) => message.direction === "in" && message.kind !== "system");
   return (
     <div className="flex min-h-0 min-w-0 flex-1 w-full flex-col gap-3 text-sm">
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-1 pb-2">
@@ -61,10 +62,10 @@ export function AssistantThreadView({ messages, draft, reviewing, busy = false, 
           {avatar}
           <span className="flex flex-col items-start gap-1">
             <span className="font-medium leading-4">Trama</span>
-            <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-accent/15 bg-accent/5 px-1.5 py-0.5 text-[10px] leading-[14px] text-[#196eb9] dark:text-[#8fc5ff]">
+            {hasUserMessage && <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-accent/15 bg-accent/5 px-1.5 py-0.5 text-[10px] leading-[14px] text-[#196eb9] dark:text-[#8fc5ff]">
               <Sparkles size={10} strokeWidth={1.8} aria-hidden="true" />
               <span>Powered by <span className="font-semibold">Muse</span></span>
-            </span>
+            </span>}
           </span>
         </span>
         <span className="flex min-w-0 flex-1 flex-col items-end gap-1">
