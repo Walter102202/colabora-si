@@ -1,4 +1,4 @@
-import { reasonFor } from './wait.ts';
+import { reasonFor, requestsFirst } from './wait.ts';
 import assert from 'node:assert/strict';
 import type { Db, Filter, SelectSpec } from '../db.ts';
 import type { ToolContext, ToolDef } from '../mcp.ts';
@@ -723,4 +723,28 @@ Deno.test('notice fetch is recoverable; acknowledgement covers only the delivere
   assert.equal(tables.agent_events[1].status,'queued','another agent cannot acknowledge the recipient event');
   h.ctx.principal.agentId=null;
   await assert.rejects(()=>tool('wait_for_my_tasks').handler({after:notices[1].ack_cursor,timeout_s:0},h.ctx),/agent/i);
+});
+
+Deno.test('wait_for_my_tasks offers conversations before older work on snapshot and cursor paths', async () => {
+  const tables = { agent_tasks: [
+    task({ id: 'work', state: 'queued', active_run_id: null, request_kind: null }),
+    task({ id: 'chat', state: 'queued', active_run_id: null, request_kind: 'assist',
+      created_at: '2026-10-27T10:00:01Z', updated_at: '2026-10-27T10:00:01Z' }),
+  ] };
+  const h = harness(tables);
+  const first = await tool('wait_for_my_tasks').handler({ timeout_s: 0 }, h.ctx);
+  assert.deepEqual((first.structured.tasks as Row[]).map(t => t.task_id), ['chat', 'work']);
+  for (const [i, t] of tables.agent_tasks.entries()) t.updated_at = `2026-10-27T10:00:0${i + 2}Z`;
+  const next = await tool('wait_for_my_tasks').handler({ after: first.structured.next_cursor, timeout_s: 0 }, h.ctx);
+  assert.deepEqual((next.structured.tasks as Row[]).map(t => t.task_id), ['chat', 'work']);
+  const unchanged = await tool('wait_for_my_tasks').handler({ after: next.structured.next_cursor, timeout_s: 0 }, h.ctx);
+  assert.deepEqual(unchanged.structured.tasks, []);
+});
+
+Deno.test('requestsFirst preserves relative order within both groups without mutating input', () => {
+  const tasks = [{ id: 'w1', request_kind: null }, { id: 'r1', request_kind: 'assist' },
+    { id: 'w2' }, { id: 'r2', request_kind: 'source_check' }, { id: 'w3', request_kind: null }];
+  assert.deepEqual(requestsFirst(tasks).map(t => t.id), ['r1', 'r2', 'w1', 'w2', 'w3']);
+  assert.deepEqual(tasks.map(t => t.id), ['w1', 'r1', 'w2', 'r2', 'w3']);
+  assert.deepEqual(requestsFirst([]), []);
 });

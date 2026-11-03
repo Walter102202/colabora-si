@@ -64,6 +64,7 @@
       "supabase/migrations/*_0061_*",
       "supabase/migrations/*_0062_*",
       "supabase/migrations/*_0063_*",
+      "supabase/migrations/*_0064_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -116,6 +117,10 @@
     ]
   },
   "branchExceptions": {
+    "a/agent-concurrency": [
+      "OWNERS.json",
+      "README.md"
+    ],
     "b/local-copy": [
       "CLAUDE.md",
       "AGENTS.md"
