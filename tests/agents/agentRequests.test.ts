@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { extractFile, runRequest } from "../../agent/requests.mjs";
 import { runAgent } from "../../agent/loop.mjs";
 import { createStubMcp } from "../../agent/test/stub-mcp.mjs";
-import { createStubModel } from "../../agent/test/stub-model.mjs";
+import { createStubModel, toolCall } from "../../agent/test/stub-model.mjs";
 afterEach(() => vi.unstubAllGlobals());
 
 it.each([400, 503])("does not persist a model HTTP %s as a permanent file failure", async (status) => {
@@ -202,4 +202,21 @@ it.each(["stop", "shutdown"] as const)("does not write a fill when %s arrives du
   expect(h.values()).toEqual([]);
   expect(h.mcp.calls.some((c) => c.name === "complete_ai_request")).toBe(false);
   if (kind === "stop") expect(h.mcp.calls.at(-1)?.name).toBe("ack_stop");
+});
+
+it.each(["valid", "missing", "blank", "long", "wrong id"])("work proposals validate the visible summary: %s", async (variant) => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const summary = variant === "missing" ? undefined : variant === "blank" ? "  " : variant === "long" ? "x".repeat(601) : "  Create an offsite board on Home.  ";
+  const mcp = createStubMcp({ handlers: {
+    get_ai_request: () => ({ kind: "assist", messages: [{ id, text: "Do it" }], through_seq: 7, page: { id: "home", title: "Home" }, proposal_message_id: id }),
+    heartbeat: () => ({}), reply_person_message: () => ({}),
+  } });
+  const model = createStubModel([{ tool_calls: [toolCall("propose_work", { message_id: variant === "wrong id" ? "00000000-0000-4000-8000-000000000002" : id, summary })] }, { content: "Review the card." }]);
+  await runRequest({ call: mcp.callTool, model, task: { task_id: "t" }, runId: "r", log: () => {} });
+  const sent = mcp.calls.find((c) => c.name === "reply_person_message")!.args;
+  expect(sent.propose_message_id).toBe(variant === "valid" ? id : undefined);
+  expect(sent.work_summary).toBe(variant === "valid" ? summary!.trim() : undefined);
+  const result = JSON.parse(model.requests[1].messages.find((m) => m.role === "tool").content);
+  expect(result).toEqual(variant === "valid" ? { proposed: true, requires_person: true } : { proposed: false, reason: "summary_required", requires_person: true });
+  expect(model.requests[0].messages[0].content).toContain("the person approves the summary they see");
 });
