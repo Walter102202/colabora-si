@@ -237,6 +237,7 @@ const claimTask: ToolDef = {
     data.environment = await loadEnvironment(ctx.db, String(data.task_id));
     const brief = data.brief as Row | null;
     const isRequest = Boolean((brief?.policies as Row | undefined)?.ai_request);
+    const pkg = isRequest ? null : await contextPackage(ctx, String(data.run_id), String(data.row_page_id), brief);
     if (!isRequest) {
       try {
         const agents = await must(ctx.db.rpc<Row[]>('list_agents', {})) ?? [];
@@ -245,7 +246,6 @@ const claimTask: ToolDef = {
         // The claim already succeeded; roster availability must not invalidate it.
       }
     }
-    const pkg = isRequest ? null : await contextPackage(ctx, String(data.run_id), String(data.row_page_id), brief);
     return {
       text: `Claimed task ${String(data.task_id)}: run ${String(data.run_id)} on page ${String(data.row_page_id)}. Read the brief before writing.` + (data.resume ? ` ${String((data.resume as Row).summary)}` : '') + (isRequest ? '' : contextLine(pkg)) + (Array.isArray(data.agents) ? ` ${data.agents.length} agents available for delegation.` : ''),
       structured: isRequest ? data : { ...data, context_package: pkg },
