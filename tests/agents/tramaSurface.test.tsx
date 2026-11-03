@@ -18,7 +18,7 @@ import { HOME_URL } from "@/lib/routes";
 
 vi.mock("@/lib/agentActions", () => ({ createTask: vi.fn() }));
 vi.mock("@/lib/agentConversation", async (original) => ({ ...await original<object>(), settleAgentProposal: vi.fn(), refreshAgentConversation: vi.fn(async () => {}) }));
-vi.mock("@/lib/agentClient", () => ({ getAgentClient: () => ({}), agentErrorMessage: String }));
+vi.mock("@/lib/agentClient", async (original) => ({ ...await original<object>(), getAgentClient: () => ({}) }));
 vi.mock("@/lib/agentVoice", async (original) => ({ ...(await original<typeof import("@/lib/agentVoice")>()), startRecorder: vi.fn(), uploadWav: vi.fn() }));
 let root: Root;
 let host: HTMLDivElement;
@@ -254,4 +254,26 @@ it.each([false, true])("only the wrapper jumps; reduced motion=%s still allows w
   act(() => trigger.click()); pointer(trigger, "over"); advance(350);
   expect(document.body.textContent).not.toContain("In progress:");
   expect(animate).toHaveBeenCalledTimes(reduced ? 0 : 1);
+});
+
+it.each([
+  ["task_exists", "This page already has an active task. Finish or close it first, or ask me from another page."],
+  ["not_found", "This proposal is no longer available."],
+  ["already_settled", "This proposal was already answered."],
+  ["no_objective", "This proposal has nothing to start. Ask Trama again."],
+  ["forbidden", "You are not allowed to do that."],
+  ["budget_exceeded", "This workspace reached its monthly agent budget."],
+])("shows a readable proposal error for %s", async (code, text) => {
+  vi.stubEnv("VITE_TRAMA_MANAGED", "1");
+  const api = await import("@/lib/agentClient");
+  const rpc = vi.fn(async () => ({ data: null, error: { message: code } }));
+  vi.spyOn(api, "getAgentClient").mockReturnValue({ rpc } as unknown as ReturnType<typeof api.getAgentClient>);
+  useAgentConversation.setState({ messages: [message({ id: "reply", direction: "out", outcome: { kind: "work_proposed", page_title: "Home", summary: "Create tasks on Home." } })] });
+  mount(); act(() => button("Talk to Trama").click());
+  for (const label of ["Do it on Home", "Not now on Home"]) {
+    await act(async () => button(label).click());
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(text);
+    expect(button("Do it on Home")).not.toBeNull();
+    expect(document.body.textContent).not.toContain("Started.");
+  }
 });

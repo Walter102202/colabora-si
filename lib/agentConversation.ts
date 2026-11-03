@@ -69,11 +69,18 @@ export function mergeMessages(current: PersonMessage[], incoming: PersonMessage[
 
 const COLUMNS = "id,seq,workspace_id,direction,channel,kind,body,forwarded,needs_reply,outcome,created_at";
 
+const proposalErrors: Record<string, string> = {
+  task_exists: "This page already has an active task. Finish or close it first, or ask me from another page.",
+  not_found: "This proposal is no longer available.",
+  already_settled: "This proposal was already answered.",
+  no_objective: "This proposal has nothing to start. Ask Trama again.",
+};
+
 export async function startProposedWork(messageId: string): Promise<{ task_id: string; page_id: string; already_started?: boolean }> {
   const client = getAgentClient();
   if (!client) throw new Error("Sign in to start work.");
   const { data, error } = await client.rpc("start_proposed_work", { p_message_id: messageId });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(Object.hasOwn(proposalErrors, error.message) ? proposalErrors[error.message] : agentErrorMessage(error));
   return data;
 }
 
@@ -81,7 +88,7 @@ export async function declineProposedWork(messageId: string): Promise<void> {
   const client = getAgentClient();
   if (!client) throw new Error("Sign in to manage work.");
   const { error } = await client.rpc("decline_proposed_work", { p_message_id: messageId });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(Object.hasOwn(proposalErrors, error.message) ? proposalErrors[error.message] : agentErrorMessage(error));
 }
 
 export async function settleAgentProposal(messageId: string, accept: boolean): Promise<{ name: string; harness: string; role: "worker" | "lead" }> {
