@@ -130,7 +130,7 @@ export async function runRequest({ call, model, task, runId, log, signal, reply,
               && job.worker_agent_ids.every((id) => id !== job.lead_agent_id && request.agents?.some((a) => a.id === id));
             const allowed = (job ? jobValid : request.page) && request.proposal_message_id && args?.message_id === request.proposal_message_id && UUID.test(String(args.message_id));
             const valid = allowed && typeof args.summary === "string" && args.summary.trim().length > 0 && args.summary.trim().length <= 600;
-            if (valid) { proposal = { id: args.message_id, summary: args.summary.trim(), ...(job ? { job: { ...job, title: job.title.trim() } } : {}) }; messageProposal = undefined; }
+            if (valid) { proposal = { id: args.message_id, summary: args.summary.trim(), ...(job ? { job: { board_id: job.board_id, title: job.title.trim(), lead_agent_id: job.lead_agent_id, worker_agent_ids: job.worker_agent_ids } } : {}) }; messageProposal = undefined; }
             messages.push({ role: "tool", tool_call_id: id, content: JSON.stringify({ proposed: Boolean(valid), ...(!valid ? { reason: allowed ? "summary_required" : "not_allowed" } : {}), requires_person: true }) });
             continue;
           }
