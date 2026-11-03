@@ -352,3 +352,15 @@ Deno.test('active-run messages are appended once without changing structured out
   assert.match(second.body.result.content[0].text, /^Echo hello/);
   assert.doesNotMatch(second.body.result.content[0].text, /New message/);
 });
+
+Deno.test('approval decisions read as decisions and empty prompts add no notice line', async () => {
+  const db: Db = { ...fakeDb, rpc: <T>(name: string) => Promise.resolve({ data: (name === 'take_pending_messages' ? [
+    { title: 'Offsite', author: 'Walter', text: '', decision: 'approve' },
+    { title: 'Offsite', author: 'Walter', text: '' },
+  ] : []) as T, error: null }) };
+  const request = post({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'echo', arguments: { text: 'hello' } } });
+  const text: string = (await call(request, server, deps({ makeDb: () => db }))).body.result.content[0].text;
+  assert.match(text, /Walter decided on your approval request on Offsite: approve\./);
+  assert.doesNotMatch(text, /from Walter: *$/m);
+  assert.equal(text.split('\n').filter((line) => line.includes('Offsite')).length, 1);
+});
