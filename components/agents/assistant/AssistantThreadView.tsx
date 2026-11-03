@@ -56,7 +56,7 @@ export interface AssistantThreadViewProps {
   decisions?: ReactNode;
   avatar?: ReactNode;
   empty?: ReactNode;
-  onSendMessage?: (message: PersonMessage) => void;
+  onSendMessage?: (message: PersonMessage, addRequirement?: boolean) => void;
   onDeclineWork?: (message: PersonMessage) => void;
   onPropose?: (message: PersonMessage) => void;
   onSettleAgent?: (message: PersonMessage, accept: boolean) => void;
@@ -131,8 +131,9 @@ export function AssistantThreadView({ messages, draft, reviewing, busy = false, 
                       {m.outcome.kind === "work_started" && m.outcome.page_id && m.outcome.task_id && <a className="text-accent underline" href={taskUrl(m.outcome.page_id, m.outcome.task_id)}>{m.outcome.job ? "Open job" : "Open task"}</a>}
                     </div>}
                     {m.outcome?.kind === "message_proposed" && <div className="mt-2 space-y-1 rounded border border-border p-3">
-                      <p className="font-medium">Send to {m.outcome.agent_name}?</p><p>On {m.outcome.task_title}</p><p className="whitespace-pre-wrap">{m.outcome.text}</p>
-                      <div className="flex gap-2 pt-2"><button type="button" aria-label={`Send to ${m.outcome.agent_name}`} disabled={proposing?.id === m.id || !onSendMessage} className="min-h-9 rounded bg-accent px-3 text-white disabled:opacity-50" onClick={() => onSendMessage?.(m)}>{proposing?.id === m.id && proposing.action === "message" ? "Sending…" : "Send"}</button>
+                      <p className="font-medium">{m.outcome.adds_requirement ? "Add to the brief and tell" : "Send to"} {m.outcome.agent_name}?</p><p>On {m.outcome.task_title}</p><p className="whitespace-pre-wrap">{m.outcome.text}</p>
+                      <div className="flex gap-2 pt-2"><button type="button" aria-label={`${m.outcome.adds_requirement ? "Add and send" : "Send"} to ${m.outcome.agent_name}`} disabled={proposing?.id === m.id || !onSendMessage} className="min-h-9 rounded bg-accent px-3 text-white disabled:opacity-50" onClick={() => onSendMessage?.(m, m.outcome?.adds_requirement === true)}>{proposing?.id === m.id && proposing.action === "message" ? "Sending…" : m.outcome.adds_requirement ? "Add and send" : "Send"}</button>
+                      {m.outcome.adds_requirement && <button type="button" aria-label={`Send only to ${m.outcome.agent_name}`} disabled={proposing?.id === m.id || !onSendMessage} className="min-h-9 rounded border border-border px-3 disabled:opacity-50" onClick={() => onSendMessage?.(m, false)}>Send only</button>}
                       <button type="button" aria-label={`Not now for ${m.outcome.agent_name}`} disabled={proposing?.id === m.id || !onDeclineWork} className="min-h-9 rounded border border-border px-3 disabled:opacity-50" onClick={() => onDeclineWork?.(m)}>{proposing?.id === m.id && proposing.action === "decline" ? "Closing…" : "Not now"}</button></div>
                     </div>}
                     {m.outcome?.kind === "message_sent" && <SentMessage outcome={m.outcome} />}

@@ -274,7 +274,7 @@ function makeContext(state: RequestState, signal: AbortSignal): ToolContext {
   };
 }
 
-type PendingMessage = { title: string; author: string; text?: string | null; decision?: string | null; via?: string; author_type?: string; seq?: number };
+type PendingMessage = { title: string; author: string; text?: string | null; decision?: string | null; via?: string; author_type?: string; seq?: number; requirement_id?: string };
 
 /** One line per pending prompt: an approval decision reads as a decision, and an empty prompt adds nothing. */
 function noticeLine(m: PendingMessage): string | null {
@@ -315,6 +315,9 @@ async function callTool(state: RequestState, params: Record<string, unknown>) {
         const lines = messages.map(noticeLine).filter((line): line is string => line !== null);
         if (messages.some((m) => m.author_type === 'human' && !m.decision && m.text?.trim())) {
           lines.push('A person wrote this while you work. First reply with post_activity (type "response", one sentence: what you will do about it), then keep working. If it adds work and you lead this job, update the plan with create_subtask or update_subtask.');
+        }
+        if (messages.some((m) => m.author_type === 'human' && !m.decision && m.text?.trim() && m.requirement_id)) {
+          lines.push('It was added to the brief as a Done when criterion: re-read the brief with get_task before continuing.');
         }
         if (lines.length) { notified = true; out.text += '\n\n' + lines.join('\n'); }
       } catch { /* The next tool or heartbeat can deliver pending messages. */ }

@@ -253,17 +253,20 @@ it("sends only the four job fields, so an extra model key cannot fail the reply"
   expect(mcp.calls.find((c) => c.name === "reply_person_message")!.args.job).toEqual({ board_id: "board", title: "Offsite", lead_agent_id: "lead", worker_agent_ids: ["worker"] });
 });
 
-it.each(["valid", "unknown task", "empty", "long", "wrong message", "job", "subtask", "closed job", "closed subtask"])("proposes only authorized exact messages: %s", async (variant) => {
+it.each(["valid", "unknown task", "empty", "long", "wrong message", "job", "subtask", "closed job", "closed subtask", "requirement", "message only", "invalid requirement"])("proposes only authorized exact messages: %s", async (variant) => {
   const id = "00000000-0000-4000-8000-000000000001";
   const text = variant === "empty" ? "" : variant === "long" ? "x".repeat(1001) : "Use local dates.";
   const task = { task_id: "task", title: "Research", agent: { name: "Codex" }, state: variant.startsWith("closed") ? "done" : "working" };
   const fromJobs = variant.includes("job") || variant.includes("subtask");
   const jobs = fromJobs ? [variant.includes("subtask") ? { task_id: "lead", state: "working", subtasks: [task] } : { ...task, subtasks: [] }] : [];
   const mcp = createStubMcp({ handlers: { get_ai_request: () => ({ kind: "assist", page: null, messages: [{ text: "Tell Codex" }], through_seq: 1, proposal_message_id: id, active_tasks: fromJobs ? [] : [task], jobs }), heartbeat: () => ({}), reply_person_message: () => ({}) } });
-  const model = createStubModel([{ tool_calls: [toolCall("propose_message", { message_id: variant === "wrong message" ? "bad" : id, task_id: variant === "unknown task" ? "invented" : "task", text })] }, { content: "Review the message." }]);
+  const requirement = variant === "requirement" ? { adds_requirement: true } : variant === "message only" ? { adds_requirement: false } : variant === "invalid requirement" ? { adds_requirement: "true" } : {};
+  const model = createStubModel([{ tool_calls: [toolCall("propose_message", { ...requirement, message_id: variant === "wrong message" ? "bad" : id, task_id: variant === "unknown task" ? "invented" : "task", text })] }, { content: "Review the message." }]);
   await runRequest({ call: mcp.callTool, model, task: { task_id: "t", request_kind: "assist" }, runId: "r", log: () => {} });
   expect((model.requests[0].tools ?? []).some((t) => t.function.name === "propose_message")).toBe(variant !== "closed job");
-  expect(mcp.calls.find((c) => c.name === "reply_person_message")!.args.message).toEqual(["valid", "job", "subtask"].includes(variant) ? { task_id: "task", text } : undefined);
+  expect(model.requests[0].messages[0].content).toContain("Set adds_requirement true only when the person's words add something the work must deliver.");
+  if (variant === "requirement") expect(model.requests[0].tools!.find((t) => t.function.name === "propose_message")!.function.parameters.properties.adds_requirement).toEqual({ type: "boolean" });
+  expect(mcp.calls.find((c) => c.name === "reply_person_message")!.args.message).toEqual(["valid", "job", "subtask", "requirement", "message only"].includes(variant) ? { task_id: "task", text, ...requirement } : undefined);
 });
 
 it("keeps an ambiguous two-job request as a question without a proposal", async () => {

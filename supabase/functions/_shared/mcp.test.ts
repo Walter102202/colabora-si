@@ -367,15 +367,15 @@ Deno.test('approval decisions read as decisions and empty prompts add no notice 
   assert.equal(text.split('\n').filter((line) => line.includes('Offsite')).length, 1);
 });
 
-for (const via of [undefined, 'Trama']) {
-  Deno.test(`human message notices request one acknowledgement per batch (via ${via})`, async () => {
+for (const [via, requirement_id] of [[undefined, undefined], ['Trama', undefined], ['Trama', 'c2']]) {
+  Deno.test(`human message notices request one acknowledgement per batch (via ${via}, requirement ${requirement_id})`, async () => {
     const db: Db = { ...fakeDb, rpc: <T>(name: string) => Promise.resolve({ data: (name === 'take_pending_messages' ? [
-      { title: 'Offsite', author: 'Walter', author_type: 'human', text: 'Check the dates', via, seq: 7 },
-      { title: 'Launch', author: 'Walter', author_type: 'human', text: 'Add Y', seq: 8 },
+      { title: 'Offsite', author: 'Walter', author_type: 'human', text: 'Check the dates', via, seq: 7, requirement_id },
+      { title: 'Launch', author: 'Walter', author_type: 'human', text: 'Add Y', seq: 8, requirement_id },
     ] : []) as T, error: null }) };
     const request = post({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'echo', arguments: { text: 'hello' } } });
     const text: string = (await call(request, server, deps({ makeDb: () => db }))).body.result.content[0].text;
     const instruction = 'A person wrote this while you work. First reply with post_activity (type "response", one sentence: what you will do about it), then keep working. If it adds work and you lead this job, update the plan with create_subtask or update_subtask.';
-    assert.equal(text, `Echo hello\n\nNew message on Offsite from Walter${via ? ' (via Trama)' : ''}: Check the dates\nNew message on Launch from Walter: Add Y\n${instruction}\n\n{"text":"hello"}`);
+    assert.equal(text, `Echo hello\n\nNew message on Offsite from Walter${via ? ' (via Trama)' : ''}: Check the dates\nNew message on Launch from Walter: Add Y\n${instruction}${requirement_id ? '\nIt was added to the brief as a Done when criterion: re-read the brief with get_task before continuing.' : ''}\n\n{"text":"hello"}`);
   });
 }

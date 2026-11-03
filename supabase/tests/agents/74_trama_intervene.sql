@@ -108,7 +108,7 @@ select tests.set_human(:'owner');
 select public.send_agent_message(:'child1','Direct panel message');
 select tests.reset_role();
 select is((select body->>'source' from public.agent_activities where task_id=:'child1' and body->>'text'='Direct panel message'),'row_panel','direct callers cannot impersonate Trama provenance');
-select ok(not has_function_privilege('authenticated','private.send_agent_message_core(uuid,text,text,text[],text,text)','EXECUTE'),'private send core is inaccessible to clients');
+select ok(not has_function_privilege('authenticated','private.send_agent_message_core(uuid,text,text,text[],text,text,text)','EXECUTE'),'private send core is inaccessible to clients');
 -- Receipt transitions exercise each existing delivery route without extra model turns.
 create function tests.intervene_proposal(p_template uuid, p_task uuid, p_text text) returns uuid language plpgsql as $$
 declare v_id uuid;
@@ -196,5 +196,80 @@ select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent'
 select ok(public.heartbeat(:'lead_run')->'pending_prompts' @> '[{"text":"Platform delivery","via":"Trama"}]','platform heartbeat receives the prompt');
 select tests.reset_role();
 select ok((select outcome ? 'received_at' from public.agent_messages where id=:'platform_proposal'),'platform heartbeat marks receipt');
+-- Add-and-send keeps the saved brief and its editable row in one transaction.
+update public.agents set is_platform=false where id=(:'lead'::jsonb->>'agent')::uuid;
+update public.agents set is_platform=true where id=:'pa';
+select tests.set_human(:'owner');
+select public.update_brief(:'job','{"done_when":[{"id":"c2","text":"Existing criterion","check":"human"}],"constraints":"Keep constraints"}');
+select tests.reset_role();
+select tests.intervene_proposal(:'proposal',:'job','Add <Y> & sources.') as requirement_proposal \gset
+select tests.set_human(:'owner');
+select public.send_proposed_message(:'requirement_proposal',true) as requirement_sent \gset
+select is(:'requirement_sent'::jsonb->>'requirement_id','c3','criterion IDs skip an existing length-plus-one ID');
+select is(public.send_proposed_message(:'requirement_proposal',true),:'requirement_sent'::jsonb||'{"already_sent":true}','Add and send is idempotent');
+select tests.reset_role();
+select is((select brief_version from public.agent_tasks where id=:'job'),3,'adding a criterion increments the brief once');
+select is((select done_when->1 from public.task_briefs where task_id=:'job' and version=3),'{"id":"c3","text":"Add <Y> & sources.","check":"human"}'::jsonb,'exact person text becomes a human criterion');
+select ok((select constraints='Keep constraints' and author_type='human' and author_id=:'owner' from public.task_briefs where task_id=:'job' and version=3),'brief preserves other fields and human authorship');
+select is((select data#>>'{blocks,0,key}' from public.pages where id='digest-job'),'brief:done_when','missing Done when section is created');
+select is((select data#>>'{blocks,1,html}' from public.pages where id='digest-job'),'Existing criterion','missing section materializes existing criteria too');
+select ok((select data#>>'{blocks,2,type}'='todo' and data#>>'{blocks,2,html}'='Add &lt;Y&gt; &amp; sources.' and data#>>'{blocks,2,attr,by}'='human' and data#>>'{blocks,2,attr,id}'=:'owner' from public.pages where id='digest-job'),'new todo safely renders exact text with person attribution');
+select is((select body->>'requirement_id' from public.agent_activities where task_id=:'job' and body->>'text'='Add <Y> & sources.'),'c3','prompt carries criterion ID');
+select is((select payload->>'requirement_id' from public.agent_events where task_id=:'job' and type='task.message' and payload->>'text'='Add <Y> & sources.'),'c3','message event carries criterion ID');
+select ok(exists(select 1 from public.agent_events where task_id=:'job' and type='brief.updated' and payload->>'brief_version'='3'),'brief update event is emitted');
+select data#>>'{blocks,2,id}' as last_criterion from public.pages where id='digest-job' \gset
+select tests.set_human(:'owner');
+select public.apply_page_ops('digest-job',jsonb_build_array(jsonb_build_object('op','insert_block','after',:'last_criterion','block','{"id":"later-section","type":"heading2","html":"Constraints","key":"brief:constraints"}'::jsonb)));
+select tests.reset_role();
+select tests.intervene_proposal(:'proposal',:'job','Include examples.') as second_requirement \gset
+select tests.set_human(:'owner');
+select public.send_proposed_message(:'second_requirement',true);
+select tests.reset_role();
+select ok((select data#>>'{blocks,3,html}'='Include examples.' and data#>>'{blocks,4,id}'='later-section' from public.pages where id='digest-job'),'existing section receives new todo before the next brief section');
+select data#>>'{blocks,1,id}' as existing_criterion from public.pages where id='digest-job' \gset
+select tests.intervene_proposal(:'proposal',:'job','Conflicting requirement') as conflict_proposal \gset
+select tests.set_human(:'owner');
+select public.apply_page_ops('digest-job',jsonb_build_array(jsonb_build_object('op','update_block','id',:'existing_criterion','patch','{"html":"Unsaved draft"}'::jsonb)));
+select is(tests.error_of(format('select public.send_proposed_message(%L,true)',:'conflict_proposal')),'brief_out_of_sync','unsaved criteria conflict blocks Add and send');
+select tests.reset_role();
+select ok((select brief_version=4 from public.agent_tasks where id=:'job') and (select data#>>'{blocks,1,html}'='Unsaved draft' from public.pages where id='digest-job') and not exists(select 1 from private.sent_person_messages where message_id=:'conflict_proposal'),'conflict preserves saved brief, draft and unsent proposal');
+select tests.set_human(:'owner');
+select public.apply_page_ops('digest-job',jsonb_build_array(jsonb_build_object('op','update_block','id',:'existing_criterion','patch','{"html":"Existing criterion"}'::jsonb)));
+select tests.reset_role();
+select tests.intervene_proposal(:'proposal',:'job','Atomic requirement') as atomic_proposal \gset
+create function tests.reject_intervene_page() returns trigger language plpgsql as $$ begin raise exception 'forced page failure'; end $$;
+create trigger reject_intervene_page before update on public.pages for each row when (new.id='digest-job') execute function tests.reject_intervene_page();
+select tests.set_human(:'owner');
+select is(tests.error_of(format('select public.send_proposed_message(%L,true)',:'atomic_proposal')),'forced page failure','page write failure is reported');
+select tests.reset_role();
+select ok((select brief_version=4 from public.agent_tasks where id=:'job') and not exists(select 1 from public.task_briefs where task_id=:'job' and version>4) and not exists(select 1 from public.agent_activities where task_id=:'job' and body->>'text'='Atomic requirement') and not exists(select 1 from private.sent_person_messages where message_id=:'atomic_proposal'),'page failure rolls back brief, prompt and receipt');
+drop trigger reject_intervene_page on public.pages;
+drop function tests.reject_intervene_page();
+select tests.intervene_proposal(:'proposal',:'job','Unauthorized criterion') as forbidden_proposal \gset
+update public.agent_messages set user_id=:'viewer' where id=:'forbidden_proposal';
+select tests.set_human(:'viewer');
+select is(tests.error_of(format('select public.send_proposed_message(%L,true)',:'forbidden_proposal')),'forbidden','read-only person cannot add a criterion');
+select tests.reset_role();
+select tests.intervene_proposal(:'proposal',:'job','Send only') as send_only \gset
+select tests.set_human(:'owner');
+select public.send_proposed_message(:'send_only',false);
+select tests.reset_role();
+select ok((select brief_version=4 from public.agent_tasks where id=:'job') and not (select outcome ? 'requirement_id' from public.agent_messages where id=:'send_only'),'Send only does not change the brief');
+select tests.intervene_proposal(:'proposal',:'job','Default send') as default_send \gset
+select tests.set_human(:'owner');
+select public.send_proposed_message(:'default_send');
+select tests.reset_role();
+select is((select brief_version from public.agent_tasks where id=:'job'),4,'omitted parameter retains send-only behavior');
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select ok(public.heartbeat(:'lead_run')->'pending_prompts' @> '[{"requirement_id":"c3","text":"Add <Y> & sources."}]','pending prompts carry the criterion notice');
+select tests.set_human(:'owner');
+select public.post_agent_message(:'ws','Ask the Lead to include a checklist',gen_random_uuid())->>'message_id' as requirement_request \gset
+select tests.set_agent(:'pu',:'pa');
+select public.assist_request_context(:'req')->>'through_seq' as requirement_through \gset
+select jsonb_build_object('message',jsonb_build_object('task_id',:'job','text','Include a checklist','adds_requirement',true)) as requirement_spec \gset
+select is(tests.error_of(format('select public.reply_person_message(%L,''Review'',%s,null,%L,null,%L::jsonb)',:'run',:'requirement_through',:'requirement_request',jsonb_set(:'requirement_spec','{message,adds_requirement}','"yes"'))),'invalid_message','adds_requirement must be a boolean');
+select public.reply_person_message(:'run','Review',:'requirement_through',null,:'requirement_request',null,:'requirement_spec'::jsonb)->>'message_id' as flagged_proposal \gset
+select tests.reset_role();
+select is((select outcome->'adds_requirement' from public.agent_messages where id=:'flagged_proposal'),'true'::jsonb,'proposal persists the boolean requirement flag');
 select * from finish();
 rollback;

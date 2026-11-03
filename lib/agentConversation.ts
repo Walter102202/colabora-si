@@ -16,7 +16,7 @@ export interface PersonMessage {
   body: string;
   forwarded: boolean;
   needs_reply?: boolean;
-  outcome: { sent_at?: string; delivery?: "queued_for_run" | "dispatched" | "queued_for_next_session" | "waiting_on_human"; prompt_seq?: number; received_at?: string; reply?: { text: string; at: string; agent_name: string }; task_title?: string; agent_name?: string; text?: string; job?: ProposedJob; summary?: string; page_title?: string; task_id?: string; agent_id?: string; kind?: string; from_seq?: number; note_id?: string; page_id?: string; message_id?: string; name?: string; harness?: string; role?: "worker" | "lead" } | null;
+  outcome: { adds_requirement?: boolean; requirement_id?: string; sent_at?: string; delivery?: "queued_for_run" | "dispatched" | "queued_for_next_session" | "waiting_on_human"; prompt_seq?: number; received_at?: string; reply?: { text: string; at: string; agent_name: string }; task_title?: string; agent_name?: string; text?: string; job?: ProposedJob; summary?: string; page_title?: string; task_id?: string; agent_id?: string; kind?: string; from_seq?: number; note_id?: string; page_id?: string; message_id?: string; name?: string; harness?: string; role?: "worker" | "lead" } | null;
   created_at: string;
 }
 
@@ -78,6 +78,7 @@ const proposalErrors: Record<string, string> = {
   owner_required: "Only someone who can edit the workspace can give agents access to this board.",
   job_started: "This job already started with another team.",
   task_closed: "This task is already closed. Ask Trama about another task.",
+  brief_out_of_sync: "The page has unsaved brief changes. Use Update brief on the task, then try again.",
   invalid_message: "This task is no longer available for that message. Ask Trama again.",
   invalid_job: "The board or team is no longer available for this job. Ask Trama to check it again.",
   task_exists: "This page already has an active task. Finish or close it first, or ask me from another page.",
@@ -94,10 +95,10 @@ export async function startProposedWork(messageId: string): Promise<{ task_id: s
   return data;
 }
 
-export async function sendProposedMessage(messageId: string): Promise<{ task_id: string; page_id: string; already_sent?: boolean }> {
+export async function sendProposedMessage(messageId: string, addRequirement = false): Promise<{ task_id: string; page_id: string; delivery: string; requirement_id?: string; already_sent?: boolean }> {
   const client = getAgentClient();
   if (!client) throw new Error("Sign in to send messages.");
-  const { data, error } = await client.rpc("send_proposed_message", { p_message_id: messageId });
+  const { data, error } = await client.rpc("send_proposed_message", { p_message_id: messageId, p_add_requirement: addRequirement });
   if (error) throw new Error(Object.hasOwn(proposalErrors, error.message) ? proposalErrors[error.message] : agentErrorMessage(error));
   return data;
 }
