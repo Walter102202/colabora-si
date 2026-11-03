@@ -232,3 +232,11 @@ it("delivers worker progress once to the existing Lead session without claiming"
   expect(result.queue.mock.calls[0][1]).not.toContain("claim_task(");
   expect(result.calls.some((c) => c.name === "claim_task")).toBe(false);
 });
+
+it("routes active-run feedback to the current session without asking for another claim", async () => {
+  const active = task({ state: "working", active_run_id: "current-run" });
+  const result = await exercise([answer([active]), answer([active])], { detail: { activities: [{ seq: 7, type: "prompt", body: { signal: "feedback", text: "Use local dates" } }] } });
+  expect(result.queue).toHaveBeenCalledTimes(1);
+  expect(result.queue.mock.calls[0][1]).not.toContain("claim_task(");
+  expect(result.queue.mock.calls[0][1]).toContain("current-run");
+});
