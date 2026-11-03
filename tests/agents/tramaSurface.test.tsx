@@ -34,7 +34,7 @@ beforeEach(() => {
   useAgentLessons.setState({ lessons: {}, subscribe: vi.fn(() => () => {}) });
   useAgentSources.setState({ discrepancies: {}, subscribe: vi.fn(() => () => {}) });
 });
-afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllEnvs(); });
 const mount = () => act(() => root.render(<MemoryRouter initialEntries={["/p/page"]}><TramaSurface workspaceId="w" userId="person" /></MemoryRouter>));
 const button = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
 const originalCreateAgent = useAgentsStore.getState().createAgent;
@@ -128,6 +128,8 @@ it("stays visible when folded and restores focus after Escape", () => {
 });
 
 it("does not infer absence from loading and shows a real unanswered message", () => {
+  // A developer's .env.local may run the managed Trama; this test describes the self-hosted surface.
+  vi.stubEnv("VITE_TRAMA_MANAGED", "");
   useAgentsStore.setState({ agents: [], status: "loading" });
   useAgentConversation.setState({ messages: [message({ needs_reply: true, created_at: new Date(Date.now() - 61_000).toISOString() })] });
   mount();
