@@ -15,7 +15,8 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const NUM = "text-right tabular-nums";
-const HEAD = "text-left text-[11px] font-medium uppercase tracking-wide text-text-tertiary";
+const HEAD = "px-2 py-1.5 text-left text-[11px] font-medium uppercase tracking-wide text-text-tertiary";
+const CELL = "px-2 py-1.5";
 
 function exactTokens(n: number): string {
   return n.toLocaleString("en-US");
@@ -23,13 +24,22 @@ function exactTokens(n: number): string {
 
 function exactUsd(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return "$0";
-  return `$${String(Number(n.toFixed(4)))}`;
+  return `$${String(Number(n.toFixed(6)))}`;
+}
+
+function isEstimated(run: RunsCardRun): boolean {
+  return run.costKind === "estimated" || (run.costKind !== "measured" && run.costUsd > 0);
+}
+
+function isCostDashed(run: RunsCardRun): boolean {
+  return run.costKind === "unknown" && run.costUsd === 0;
 }
 
 function CostCell({ run }: { run: RunsCardRun }) {
-  if (run.costKind === "unknown" && run.costUsd === 0) return <span className="text-text-tertiary">—</span>;
-  const title = run.costKind === "estimated" ? `${exactUsd(run.costUsd)}, estimated` : exactUsd(run.costUsd);
-  return <span title={title}>{formatUsd(run.costUsd)}{run.costKind === "estimated" ? " est." : ""}</span>;
+  if (isCostDashed(run)) return <span className="text-text-tertiary">—</span>;
+  const estimated = isEstimated(run);
+  const title = estimated ? `${exactUsd(run.costUsd)}, estimated` : exactUsd(run.costUsd);
+  return <span title={title}>{formatUsd(run.costUsd)}{estimated ? " est." : ""}</span>;
 }
 
 function TokenCell({ value, dashed }: { value: number; dashed: boolean }) {
@@ -49,9 +59,12 @@ export function RunsCard({ runs }: RunsCardProps) {
   const totalIn = runs.reduce((sum, r) => sum + (Number.isFinite(r.inputTokens) ? r.inputTokens : 0), 0);
   const totalOut = runs.reduce((sum, r) => sum + (Number.isFinite(r.outputTokens) ? r.outputTokens : 0), 0);
   const totalCost = runs.reduce((sum, r) => sum + (Number.isFinite(r.costUsd) ? r.costUsd : 0), 0);
-  const anyEstimated = runs.some((r) => r.costKind === "estimated");
+  const anyEstimated = runs.some(isEstimated);
+  const allTokensDashed = runs.every((r) => !r.model && r.inputTokens === 0 && r.outputTokens === 0);
+  const allCostDashed = runs.every(isCostDashed);
   return (
     <section aria-label="Runs & cost" className="space-y-2">
+      <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <caption className="pb-1.5 text-left text-xs font-medium uppercase tracking-wide text-text-tertiary">Runs &amp; cost</caption>
         <thead>
@@ -72,9 +85,9 @@ export function RunsCard({ runs }: RunsCardProps) {
             const duration = run.endedAt === null ? "running" : formatDuration(new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime());
             return (
               <Fragment key={run.id}>
-                <tr>
-                  <td>{run.agentName ?? run.harness}</td>
-                  <td>
+                <tr className="border-b border-border">
+                  <td className={CELL}>{run.agentName ?? run.harness}</td>
+                  <td className={CELL}>
                     {info ? (
                       <>
                         <span title={info.id}>{info.label}</span>
@@ -84,15 +97,15 @@ export function RunsCard({ runs }: RunsCardProps) {
                       <span className="text-text-tertiary">Not reported by harness</span>
                     )}
                   </td>
-                  <td>{STATUS_LABEL[run.status] ?? run.status}</td>
-                  <td className={NUM}><TokenCell value={run.inputTokens} dashed={noTokens} /></td>
-                  <td className={NUM}><TokenCell value={run.outputTokens} dashed={noTokens} /></td>
-                  <td className={NUM}><CostCell run={run} /></td>
-                  <td className={run.endedAt === null ? `${NUM} text-text-tertiary` : NUM}>{duration}</td>
+                  <td className={CELL}>{STATUS_LABEL[run.status] ?? run.status}</td>
+                  <td className={`${CELL} ${NUM}`}><TokenCell value={run.inputTokens} dashed={noTokens} /></td>
+                  <td className={`${CELL} ${NUM}`}><TokenCell value={run.outputTokens} dashed={noTokens} /></td>
+                  <td className={`${CELL} ${NUM}`}><CostCell run={run} /></td>
+                  <td className={run.endedAt === null ? `${CELL} ${NUM} text-text-tertiary` : `${CELL} ${NUM}`}>{duration}</td>
                 </tr>
                 {run.errorMessage ? (
-                  <tr>
-                    <td colSpan={7} className="text-[11px] text-text-tertiary">{run.errorMessage}</td>
+                  <tr className="border-b border-border">
+                    <td colSpan={7} className="px-2 pt-0 text-[11px] text-text-tertiary">{run.errorMessage}</td>
                   </tr>
                 ) : null}
               </Fragment>
@@ -100,21 +113,26 @@ export function RunsCard({ runs }: RunsCardProps) {
           })}
         </tbody>
         <tfoot>
-          <tr className="font-medium">
-            <td>Total</td>
-            <td />
-            <td />
-            <td className={NUM}><span title={exactTokens(totalIn)}>{formatTokens(totalIn)}</span></td>
-            <td className={NUM}><span title={exactTokens(totalOut)}>{formatTokens(totalOut)}</span></td>
-            <td className={NUM}>
-              <span title={anyEstimated ? `${exactUsd(totalCost)}, part estimated` : exactUsd(totalCost)}>
-                {formatUsd(totalCost)}{anyEstimated ? " est." : ""}
-              </span>
+          <tr className="border-t border-border font-medium">
+            <td className={CELL}>Total</td>
+            <td className={CELL} />
+            <td className={CELL} />
+            <td className={`${CELL} ${NUM}`}>{allTokensDashed ? <span className="text-text-tertiary">—</span> : <span title={exactTokens(totalIn)}>{formatTokens(totalIn)}</span>}</td>
+            <td className={`${CELL} ${NUM}`}>{allTokensDashed ? <span className="text-text-tertiary">—</span> : <span title={exactTokens(totalOut)}>{formatTokens(totalOut)}</span>}</td>
+            <td className={`${CELL} ${NUM}`}>
+              {allCostDashed ? (
+                <span className="text-text-tertiary">—</span>
+              ) : (
+                <span title={anyEstimated ? `${exactUsd(totalCost)}, part estimated` : exactUsd(totalCost)}>
+                  {formatUsd(totalCost)}{anyEstimated ? " est." : ""}
+                </span>
+              )}
             </td>
-            <td />
+            <td className={CELL} />
           </tr>
         </tfoot>
       </table>
+      </div>
     </section>
   );
 }

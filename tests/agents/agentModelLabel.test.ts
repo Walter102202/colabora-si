@@ -17,6 +17,12 @@ describe("modelInfo", () => {
     expect(modelInfo("some-other-model")).toEqual({ id: "some-other-model", label: "some-other-model", provider: null, kind: "unknown" });
   });
 
+  it("does not mistake inherited object members for known models", () => {
+    expect(modelInfo("constructor")).toEqual({ id: "constructor", label: "constructor", provider: null, kind: "unknown" });
+    expect(modelInfo("toString")).toEqual({ id: "toString", label: "toString", provider: null, kind: "unknown" });
+    expect(modelInfo("__proto__")).toEqual({ id: "__proto__", label: "__proto__", provider: null, kind: "unknown" });
+  });
+
   it("reports null and empty ids as an unknown model", () => {
     const unknown = { id: "", label: "Unknown model", provider: null, kind: "unknown" };
     expect(modelInfo(null)).toEqual(unknown);

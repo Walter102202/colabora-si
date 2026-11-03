@@ -80,6 +80,42 @@ describe("RunsCard", () => {
     expect(cells()[5]).toBe("—");
   });
 
+  it("carries the exact cost to six decimals in the title", () => {
+    render([run({ costUsd: 0.000012 })]);
+    expect(cells()[5]).toBe("<$0.0001");
+    expect(container.querySelectorAll("tbody td")[5].querySelector("span")?.getAttribute("title")).toBe("$0.000012");
+  });
+
+  it("marks a positive unmeasured cost as estimated, in the row and the total", () => {
+    render([run({ costUsd: 0.0096, costKind: "unknown" })]);
+    expect(cells()[5]).toBe("$0.0096 est.");
+    expect(container.querySelectorAll("tbody td")[5].querySelector("span")?.getAttribute("title")).toBe("$0.0096, estimated");
+    const total = [...container.querySelectorAll("tfoot td")].map((c) => c.textContent);
+    expect(total[5]).toBe("$0.0096 est.");
+  });
+
+  it("dashes the totals when every run reports nothing", () => {
+    const blank = (id: string) => run({ id, agentName: null, harness: "codex", model: null, inputTokens: 0, outputTokens: 0, costUsd: 0, costKind: "unknown" });
+    render([blank("r1"), blank("r2")]);
+    const total = [...container.querySelectorAll("tfoot td")].map((c) => c.textContent);
+    expect(total[0]).toBe("Total");
+    expect(total[3]).toBe("—");
+    expect(total[4]).toBe("—");
+    expect(total[5]).toBe("—");
+  });
+
+  it("pads cells, separates rows and scrolls the table sideways", () => {
+    render([run({ status: "error", errorMessage: "Boom." })]);
+    expect(container.querySelector("div.overflow-x-auto")).not.toBeNull();
+    expect(container.querySelector("th")?.className).toContain("px-2");
+    expect(container.querySelector("th")?.className).toContain("py-1.5");
+    expect(container.querySelector("tbody td")?.className).toContain("px-2");
+    expect(container.querySelector("tbody tr")?.className).toContain("border-b");
+    expect(container.querySelector("tfoot tr")?.className).toContain("border-t");
+    const errorCell = [...container.querySelectorAll("tbody td")].find((c) => c.textContent === "Boom.");
+    expect(errorCell?.className).toContain("pt-0");
+  });
+
   it("shows Not reported by harness and dashed tokens when a run has no model and no tokens", () => {
     render([run({ agentName: null, harness: "codex", model: null, inputTokens: 0, outputTokens: 0, costUsd: 0, costKind: "unknown" })]);
     const row = cells();
