@@ -679,7 +679,7 @@ it("delivers a terminal Lead environment notice to the model without trying to c
   const model=createStubModel([{content:"Check the current reservation before stopping anything."}]);
   await runAgent({mcp,model,clock:fakeClock(),maxTasks:1,signal:abort.signal});
   expect(model.requests).toHaveLength(1);
-  expect(model.requests[0].tools.map((t: { function: { name: string } }) => t.function.name)).toContain("import_plan");
+  expect(model.requests[0].tools?.map((t: { function: { name: string } }) => t.function.name)).toContain("import_plan");
   expect(JSON.stringify(model.requests[0].messages)).toContain("environment_release");
   expect(mcp.calls.some(c=>c.name==="claim_task")).toBe(false);
 });
