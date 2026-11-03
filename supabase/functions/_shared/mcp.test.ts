@@ -248,7 +248,7 @@ Deno.test('domain errors come back as isError results, not JSON-RPC errors', asy
 
 Deno.test('every real tool has a title, hints and an output schema; $defs are always inlined', async () => {
   const real = buildServer();
-  assert.ok(real.instructions.length <= 1500);
+  assert.ok(real.instructions.length <= 1800);
   const { body } = await call(post({ jsonrpc: '2.0', id: 1, method: 'tools/list' }), real);
   for (const tool of body.result.tools) {
     assert.ok(tool.title, tool.name);
@@ -332,4 +332,7 @@ Deno.test('a stalled denial log times out without changing the original denial',
   } finally {
     clearTimeout(watchdog);
   }
+});
+Deno.test('server instructions route named projects through join_job before work', () => {
+  assert.match(buildServer().instructions ?? '', /take, continue or help/);
 });

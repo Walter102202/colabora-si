@@ -353,3 +353,51 @@ Deno.test('list_my_tasks offers conversations before more recently updated work'
   const out = await tool('list_my_tasks').handler({}, h.ctx);
   assert.deepEqual((out.structured.tasks as Row[]).map(t => t.task_id), ['chat', 'work']);
 });
+Deno.test('list_agents returns the delegation roster and readable names', async () => {
+  const agents = [{ id: 'a', name: 'Claude Code', harness: 'claude_code', role: 'lead', me: true }, { id: 'b', name: 'Codex', harness: 'codex', role: 'worker', me: false }];
+  const out = await tool('list_agents').handler({}, ctxWith((fn, args) => {
+    assert.equal(fn, 'list_agents');
+    assert.deepEqual(args, {});
+    return Promise.resolve({ data: agents, error: null });
+  }));
+  assert.deepEqual(out.structured, { agents });
+  assert.equal(out.text, '2 agents: Claude Code (claude_code, lead); Codex (codex, worker)');
+});
+
+Deno.test('claim_task offers delegation only to leads and roster failures never invalidate a claim', async () => {
+  const peer = { id: 'b', name: 'Codex', harness: 'codex', role: 'worker', me: false };
+  for (const mode of ['lead', 'worker', 'rpc-error', 'throw', 'request', 'empty']) {
+    const calls: string[] = [];
+    const out = await tool('claim_task').handler({ harness: 'custom' }, ctxWith((fn) => {
+      calls.push(fn);
+      if (fn === 'claim_task') return Promise.resolve({ data: mode === 'empty' ? { task_id: null } : {
+        task_id: 't1', run_id: 'r1', row_page_id: 'p1', brief: mode === 'request' ? { policies: { ai_request: true } } : {},
+      }, error: null });
+      if (fn === 'list_agents') {
+        if (mode === 'throw') throw new Error('offline');
+        if (mode === 'rpc-error') return Promise.resolve({ data: null, error: { code: 'PT429', message: 'rate_limited' } });
+        return Promise.resolve({ data: [{ id: 'a', role: mode, me: true }, peer], error: null });
+      }
+      return Promise.resolve({ data: {}, error: null });
+    }));
+    assert.equal(out.structured?.task_id, mode === 'empty' ? null : 't1');
+    if (mode === 'lead') {
+      assert.deepEqual(out.structured?.agents, [peer]);
+      assert.match(out.text, /1 agents available for delegation\./);
+    } else assert.equal(out.structured?.agents, undefined);
+    assert.equal(calls.includes('list_agents'), !['request', 'empty'].includes(mode));
+  }
+});
+
+Deno.test('join_job names projects and explains missing assignments', async () => {
+  for (const role of ['worker', 'lead']) {
+    const data = { status: 'joined', kind: 'project', title: 'Beta launch', lead_name: 'Trama', database: null, subtasks: [{ id: 's1' }] };
+    const out = await tool('join_job').handler({ name: 'Beta launch', as: role }, ctxWith(() => Promise.resolve({ data, error: null })));
+    assert.equal(out.text, `${role === 'lead' ? 'Found' : 'Working on'} Beta launch, a project led by Trama: 1 subtasks assigned to you.`);
+    assert.deepEqual(out.structured, data);
+  }
+  const out = await tool('join_job').handler({ name: 'Beta launch', as: 'worker' }, ctxWith(() => Promise.resolve({
+    data: { status: 'not_assigned', title: 'Beta launch', lead_name: 'Trama' }, error: null,
+  })));
+  assert.equal(out.text, 'Refused: Beta launch has no work assigned to you. Ask Trama or a person to assign it.');
+});

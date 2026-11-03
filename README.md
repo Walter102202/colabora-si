@@ -109,7 +109,7 @@ With a seeded, served local stack and its public key in `.env.local`, set `P11_T
 |---|---|
 | Read | `search`, `fetch`, `list_pages`, `read_page`, `query_database` |
 | Write | `append_blocks`, `edit_page`, `update_block`, `add_row`, `update_row`, `add_comment` |
-| Tasks | `join_job`, `list_my_tasks`, `get_task`, `claim_task`, `save_checkpoint`, `hand_over`, `post_activity`, `add_artifact`, `request_input`, `await_questions`, `request_approval`, `submit_for_review`, `send_message`, `heartbeat`, `end_run`, `ack_stop`, `begin_external_op`, `finish_external_op` |
+| Tasks | `join_job`, `list_agents`, `list_my_tasks`, `get_task`, `claim_task`, `save_checkpoint`, `hand_over`, `post_activity`, `add_artifact`, `request_input`, `await_questions`, `request_approval`, `submit_for_review`, `send_message`, `heartbeat`, `end_run`, `ack_stop`, `begin_external_op`, `finish_external_op` |
 | Dependencies | `list_my_tasks`: a task with `blocked_by` is waiting for those tasks to finish: do not claim it. |
 | Learning | `get_context_package`, `cite_lesson`, `propose_lesson`, `declare_sources`: lessons people accepted reach the next agent, each with why it is there |
 | A person and the agent | `relay_person_message` hands over what a person sent on a chat channel, `reply_person_message` answers; `deliver_person_replies` retries and acknowledges persisted channel replies. The platform loop calls them and hides them from the model. `save_to_notes` is the agent's skill for "save this in notes": its model calls it with the person's message, and the server checks that message before writing. |
@@ -119,7 +119,7 @@ With a seeded, served local stack and its public key in `.env.local`, set `P11_T
 | Files | `read_file` reads attached text (2 MB) and PDF text layers (5 MB) under page permissions, with at most 50,000 characters per reply. The platform loop can extract scans/images once with a compatible model and cache them through `save_file_text`. The built-in PDF reader supports content/object streams, FlateDecode and ToUnicode; other filters and Form XObjects are outside its supported subset. |
 | Lead | `create_task`, `create_subtask`, `import_plan`, `update_subtask`, `list_subtasks`, `review_task`, `close_subtask` |
 | Environment | `reserve_environment`, `release_environment`, `list_environments` |
-| Wait | `wait_for_task`, `wait_for_my_tasks` (the server holds the call up to 120 s and answers on the first change; pass `job_id` from `join_job` to follow only that job and its subtasks) |
+| Wait | `wait_for_task`, `wait_for_my_tasks` (the server holds the call up to 120 s and answers on the first change; pass `job_id` from `join_job`, which finds jobs and agent-led projects, to follow only that job or project and its subtasks) |
 | People (chat hosts) | `list_waiting_on_me`, `decide_approval`, `close_task`; with `get_task`, each renders the task card in hosts that support MCP Apps |
 
 Prompts: `continue_task`, `review_as_lead`, `review_delivery`. Resources: `workspace://page/<id>` (Markdown) and `workspace://task/<id>/brief` (JSON).
