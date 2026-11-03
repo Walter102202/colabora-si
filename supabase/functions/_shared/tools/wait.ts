@@ -499,6 +499,11 @@ async function leadNotices(ctx: ToolContext, events: Row[], ids?: string[]): Pro
   });
 }
 
+/** Stable partition of returned tasks; scan order and cursors remain unchanged. */
+export function requestsFirst<T extends { request_kind?: unknown }>(tasks: T[]): T[] {
+  return [...tasks.filter(task => task.request_kind != null), ...tasks.filter(task => task.request_kind == null)];
+}
+
 /** Tasks that need the agent right now (no cursor yet), and a cursor at the current high-water mark. */
 async function initialState(ctx: ToolContext, ids?: string[]) {
   const mine = myTasksFilter(ctx);
@@ -544,7 +549,7 @@ async function initialState(ctx: ToolContext, ids?: string[]) {
     ...(latestPrompt ?? []).map((a) => normTs(String(a.created_at))),
   ];
   const t = marks.length ? marks.sort().at(-1)! : normTs(new Date(ctx.now()).toISOString());
-  return { tasks, cursor: { t, k: [] } as Cursor };
+  return { tasks: requestsFirst(tasks), cursor: { t, k: [] } as Cursor };
 }
 
 interface Delta {
@@ -624,7 +629,7 @@ async function changesSince(ctx: ToolContext, cursor: Cursor, ids?: string[]): P
     const atT = items.filter((i) => i.ts === t).map((i) => i.key);
     next = { t, k: t === cursor.t ? [...new Set([...cursor.k, ...atT])] : atT };
   }
-  return { tasks: out, cursor: next };
+  return { tasks: requestsFirst(out), cursor: next };
 }
 
 // Human rows change the database page, not the task cursor. Inspect them on every full poll
