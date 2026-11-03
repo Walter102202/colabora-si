@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { readConfig, readFleetConfig } from "../../agent/config.mjs";
-import { runFleet } from "../../agent/fleet.mjs";
+import { buildMcp, runFleet } from "../../agent/fleet.mjs";
 import { createMcpClient } from "../../agent/mcpClient.mjs";
 
 const never = (signal: AbortSignal) => new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
@@ -120,5 +120,38 @@ describe("the runtime image", () => {
     visit(resolve(root, "fleet.mjs"));
     expect(seen.size).toBeGreaterThan(5);
     for (const file of seen) expect(relative(root, file).startsWith("..")).toBe(false);
+  });
+});
+
+describe("the managed runtime's workspace endpoint", () => {
+  const env = { VITE_SUPABASE_URL: "https://x.supabase.co/", TRAMA_RUNTIME_SECRET: "s", META_MODEL_API_KEY: "k", VITE_APP_URL: "https://app.test" };
+
+  it("derives the workspace endpoint and the per-turn efforts from the deployment", () => {
+    const { config } = readFleetConfig(env);
+    expect(config.workspaceMcpUrl).toBe("https://x.supabase.co/functions/v1/workspace-mcp");
+    expect(config.modelEffort).toBe("low");
+    expect(config.modelEffortPlan).toBe("medium");
+    expect(config.modelEffortChat).toBe("minimal");
+    expect(readFleetConfig({ ...env, MODEL_EFFORT_PLAN: "high" }).config.modelEffortPlan).toBe("high");
+  });
+
+  it("buildMcp composes a client per endpoint and keeps a single client without a workspace endpoint", async () => {
+    const made: string[] = [];
+    const make = (url: string) => {
+      made.push(url);
+      const names = url.endsWith("/workspace-mcp") ? ["create_database", "read_page"] : ["read_page", "claim_task"];
+      return { instructions: url, async initialize() {}, async listTools() { return names.map((name) => ({ name })); }, async callTool(name: string) { return { isError: false, data: { url, name }, text: name }; }, async accessToken() { return "jwt"; } };
+    };
+    const { config } = readFleetConfig(env);
+    const composed = buildMcp(config, make);
+    expect(made).toEqual(["https://x.supabase.co/functions/v1/mcp", "https://x.supabase.co/functions/v1/workspace-mcp"]);
+    expect((await composed.listTools()).map((t) => t.name)).toEqual(["claim_task", "create_database", "read_page"]);
+    expect((await composed.callTool("create_database", {})).data.url).toBe("https://x.supabase.co/functions/v1/workspace-mcp");
+    expect((await composed.callTool("read_page", {})).data.url).toBe("https://x.supabase.co/functions/v1/mcp");
+
+    made.length = 0;
+    const single = buildMcp({ ...config, workspaceMcpUrl: undefined }, make);
+    expect(made).toEqual(["https://x.supabase.co/functions/v1/mcp"]);
+    expect(single.instructions).toBe("https://x.supabase.co/functions/v1/mcp");
   });
 });

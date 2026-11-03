@@ -44,3 +44,15 @@ describe("reference agent config", () => {
     expect(parseDotenv(text)).toEqual({ A: "1", B: "two\nlines", C: "three", D: "four" });
   });
 });
+
+describe("workspace endpoint and effort settings", () => {
+  it("reads WORKSPACE_TOOLS_MCP_URL only when set", () => {
+    expect(readConfig(BASE).workspaceMcpUrl).toBeUndefined();
+    expect(readConfig({ ...BASE, WORKSPACE_TOOLS_MCP_URL: "https://ws.test/functions/v1/workspace-mcp" }).workspaceMcpUrl).toBe("https://ws.test/functions/v1/workspace-mcp");
+  });
+  it("defaults the planning effort to medium and the chat effort to minimal, both overridable", () => {
+    expect(readConfig(BASE).modelEffortPlan).toBe("medium");
+    expect(readConfig(BASE).modelEffortChat).toBe("minimal");
+    expect(readConfig({ ...BASE, MODEL_EFFORT_PLAN: "high", MODEL_EFFORT_CHAT: "low" })).toMatchObject({ modelEffortPlan: "high", modelEffortChat: "low" });
+  });
+});

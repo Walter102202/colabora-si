@@ -4,6 +4,7 @@
 // model and reports back to the workspace through its MCP server.
 
 import { loadEnvFile, readConfig } from "./config.mjs";
+import { buildMcp } from "./fleet.mjs";
 import { createMcpClient } from "./mcpClient.mjs";
 import { createModel } from "./model.mjs";
 import { serveAgent } from "./serve.mjs";
@@ -31,7 +32,7 @@ for (const sig of ["SIGINT", "SIGTERM"]) {
   });
 }
 
-const mcp = createMcpClient({ url: config.mcpUrl, pat: config.agentPat, tokenUrl: config.tokenUrl, clientName: config.harness });
+const mcp = buildMcp(config, (url) => createMcpClient({ url, pat: config.agentPat, tokenUrl: config.tokenUrl, clientName: config.harness }));
 const model = createModel({ baseUrl: config.modelBaseUrl, apiKey: config.modelApiKey, model: config.modelName, reasoningEffort: config.modelEffort });
 
 log(`${config.harness} started: model ${config.modelName}, effort ${config.modelEffort || "provider default"}, workspace ${new URL(config.mcpUrl).host}`);

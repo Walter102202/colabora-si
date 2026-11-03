@@ -6,10 +6,23 @@ import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { readFleetConfig } from "./config.mjs";
 import { createMcpClient } from "./mcpClient.mjs";
+import { composeMcp } from "./mcpCompose.mjs";
 import { createModel } from "./model.mjs";
 import { serveAgent } from "./serve.mjs";
 
 export const LIST_EVERY_MS = 30_000;
+
+/**
+ * The client an agent talks to: the task endpoint alone, or the task and workspace endpoints composed into one.
+ * @template {import("./mcpClient.mjs").McpClient} C
+ * @param {{mcpUrl: string, workspaceMcpUrl?: string}} config
+ * @param {(url: string) => C} make  creates a client for one endpoint (same credentials for both)
+ * @returns {C}
+ */
+export function buildMcp(config, make) {
+  const tasks = make(config.mcpUrl);
+  return config.workspaceMcpUrl ? /** @type {C} */ (composeMcp(tasks, make(config.workspaceMcpUrl))) : tasks;
+}
 
 /** @param {number} ms @param {AbortSignal} signal */
 const rest = (ms, signal) => delay(ms, undefined, { signal }).catch(() => undefined);
@@ -75,7 +88,8 @@ async function main() {
     log,
     listAgents: async () => (await runtime({ action: "agents" })).agents,
     serve(agentId, signal) {
-      const mcp = createMcpClient({ url: config.mcpUrl, clientName: config.harness, signIn: async () => (await runtime({ action: "token", agent_id: agentId })).access_token });
+      const signIn = async () => (await runtime({ action: "token", agent_id: agentId })).access_token;
+      const mcp = buildMcp(config, (url) => createMcpClient({ url, clientName: config.harness, signIn }));
       return serveAgent({ config, mcp, model, signal, log });
     },
   });
