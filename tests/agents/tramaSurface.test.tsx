@@ -11,12 +11,12 @@ import { useAgentsStore, type AgentRow } from "@/lib/agentsStore";
 import { buildDecisionsHome } from "@/lib/agentHome";
 import { useAgentTasks, type TaskRow, type ApprovalRow } from "@/lib/agentTasks";
 import { startRecorder, uploadWav } from "@/lib/agentVoice";
-import { createTask } from "@/lib/agentActions";
+import { createTask, decideApproval } from "@/lib/agentActions";
 import { useAgentLessons, type LessonRow } from "@/lib/agentLessons";
 import { useAgentSources, type DiscrepancyRow } from "@/lib/agentSources";
 import { HOME_URL } from "@/lib/routes";
 
-vi.mock("@/lib/agentActions", () => ({ createTask: vi.fn() }));
+vi.mock("@/lib/agentActions", () => ({ createTask: vi.fn(), decideApproval: vi.fn() }));
 vi.mock("@/lib/agentConversation", async (original) => ({ ...await original<object>(), settleAgentProposal: vi.fn(), refreshAgentConversation: vi.fn(async () => {}) }));
 vi.mock("@/lib/agentClient", async (original) => ({ ...await original<object>(), getAgentClient: () => ({}) }));
 vi.mock("@/lib/agentVoice", async (original) => ({ ...(await original<typeof import("@/lib/agentVoice")>()), startRecorder: vi.fn(), uploadWav: vi.fn() }));
@@ -291,4 +291,56 @@ it.each(["start", "decline"])("labels pending work settlement accurately: %s", a
   expect(button("Not now on Home").textContent).toBe(action === "decline" ? "Closing…" : "Not now");
   expect(button("Do it on Home").disabled && button("Not now on Home").disabled).toBe(true);
   await act(async () => finish({ data: { task_id: "task", page_id: "page" }, error: null }));
+});
+
+const actionApproval = (id: string, taskId: string, over: Partial<ApprovalRow> = {}): ApprovalRow => ({
+  id, task_id: taskId, run_id: null, kind: "action", action: "publish_page", params: {}, artifact_version: 1,
+  question: "Publish the plan", options: ["approve", "reject"], status: "pending", decision: null,
+  response: null, decided_by: null, decided_at: null, expires_at: "2099-01-01T00:00:00Z", created_at: "2026-11-03T00:00:00Z", ...over,
+});
+it.each(["approve", "reject"] as const)("decides a pending action from the chat using the person's %s click", async (decision) => {
+  vi.stubEnv("VITE_TRAMA_MANAGED", "1");
+  const own = task("own"), foreign = task("foreign", { workspace_id: "other" }), someone = task("someone", { owner_user_id: "someone" });
+  const pending = actionApproval("pending", own.id);
+  useAgentTasks.setState({ tasks: { own, foreign, someone }, approvals: { pending, foreign: actionApproval("foreign", foreign.id), someone: actionApproval("someone", someone.id) } });
+  let finish!: (value: { status: string }) => void;
+  vi.mocked(decideApproval).mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+  mount(); act(() => button("Talk to Trama").click());
+  const section = document.querySelector('[aria-label="Needs your decision"]')!;
+  expect(section).not.toBeNull();
+  expect(section.querySelectorAll("button")).toHaveLength(2);
+  expect(section.compareDocumentPosition(document.querySelector('[aria-label="Message to the agent"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const action = [...section.querySelectorAll("button")].find((b) => b.textContent === (decision === "approve" ? "Approve" : "Reject"))!;
+  act(() => { action.click(); action.click(); });
+  expect(decideApproval).toHaveBeenCalledExactlyOnceWith("pending", decision, null);
+  await act(async () => {});
+  expect(action.disabled).toBe(true);
+  await act(async () => {
+    if (decision === "approve") useAgentTasks.setState({ approvals: { ...useAgentTasks.getState().approvals, pending: { ...pending, status: "decided", decision } } });
+    finish({ status: "decided" });
+  });
+  expect(document.querySelector('[aria-label="Needs your decision"]')?.textContent).toContain(decision === "approve" ? "Approved." : "Denied.");
+  act(() => useAgentTasks.setState({ approvals: { ...useAgentTasks.getState().approvals, pending: { ...pending, status: "decided", decision } } }));
+  expect(document.querySelector('[aria-label="Needs your decision"]')).toBeNull();
+});
+it.each(["none", "decided", "terminal"])("does not show chat decisions for %s approvals", (state) => {
+  vi.stubEnv("VITE_TRAMA_MANAGED", "1");
+  const own = task("own", state === "terminal" ? { state: "done" } : {});
+  useAgentTasks.setState({ tasks: { own }, approvals: state === "none" ? {} : { a: actionApproval("a", own.id, state === "decided" ? { status: "decided" } : {}) } });
+  mount(); act(() => button("Talk to Trama").click());
+  expect(document.querySelector('[aria-label="Needs your decision"]')).toBeNull();
+  expect(decideApproval).not.toHaveBeenCalled();
+});
+
+it("keeps a rejected approval request actionable and shows its error", async () => {
+  vi.stubEnv("VITE_TRAMA_MANAGED", "1");
+  const own = task("own");
+  useAgentTasks.setState({ tasks: { own }, approvals: { a: actionApproval("a", own.id) } });
+  vi.mocked(decideApproval).mockRejectedValueOnce(new Error("The task changed state. Refresh and try again."));
+  mount(); act(() => button("Talk to Trama").click());
+  const section = document.querySelector('[aria-label="Needs your decision"]')!;
+  await act(async () => [...section.querySelectorAll("button")].find((b) => b.textContent === "Approve")!.click());
+  expect(section.textContent).toContain("The task changed state. Refresh and try again.");
+  expect(section.textContent).not.toContain("Approved.");
+  expect(section.querySelector<HTMLButtonElement>("button")!.disabled).toBe(false);
 });

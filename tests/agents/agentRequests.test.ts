@@ -228,6 +228,7 @@ it("guides work requests without an open page instead of offering a proposal", a
   } });
   const model = createStubModel([{ content: "Open the page where the work belongs and ask me there." }]);
   await runRequest({ call: mcp.callTool, model, task: { task_id: "t", request_kind: "assist" }, runId: "r", log: () => {} });
+  expect(model.requests[0].messages[0].content).toContain("Pending decisions appear as cards in this chat. The person decides with their buttons. You never decide for them or say that anything was approved.");
   expect(model.requests[0].tools ?? []).toEqual([]);
   expect(model.requests[0].messages[0].content).toContain("If the person asks for work and page is null, explain that work starts from a page: ask them to open the page where the work belongs and ask you there.");
   expect(mcp.calls.find((c) => c.name === "reply_person_message")!.args.propose_message_id).toBeUndefined();

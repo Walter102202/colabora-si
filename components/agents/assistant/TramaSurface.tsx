@@ -8,7 +8,9 @@ import { TRAMA_GREETING, tramaSuggestions } from "@/lib/tramaSuggestions";
 import { useStore } from "@/lib/store";
 import { useAgentsStore } from "@/lib/agentsStore";
 import { buildDecisionsHome } from "@/lib/agentHome";
-import { useAgentTasks } from "@/lib/agentTasks";
+import { useAgentTasks, type ApprovalRow } from "@/lib/agentTasks";
+import { decideApproval, type ApprovalDecision } from "@/lib/agentActions";
+import { ApprovalCard } from "@/components/agents/panel/ApprovalCard";
 import { proposedLessons, useAgentLessons } from "@/lib/agentLessons";
 import { openDiscrepancies, useAgentSources } from "@/lib/agentSources";
 import { useAuthStore } from "@/lib/auth";
@@ -61,6 +63,14 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const [selected, setSelected] = useState(false);
   const [now, setNow] = useState(Date.now);
   const home = useMemo(() => buildDecisionsHome({ tasks: Object.values(tasks).filter((t) => t.workspace_id === workspaceId), approvals: Object.values(approvals), runs, agents, userId, now }), [tasks, workspaceId, approvals, runs, agents, userId, now]);
+  const pendingDecisions = useMemo(() => {
+    const waitingIds = new Set(home.waiting.map((item) => item.key));
+    return Object.values(approvals).filter((approval) => approval.kind === "action" && waitingIds.has(`approval:${approval.id}`));
+  }, [approvals, home.waiting]);
+  const [decisionReceipts, setDecisionReceipts] = useState<Record<string, { approval: ApprovalRow; approved: boolean; snapshot: typeof approvals; workspaceId: string; userId: string }>>({});
+  const decisionLocks = useRef(new Map<string, Promise<void>>());
+  const currentReceipts = Object.values(decisionReceipts).filter((receipt) => receipt.snapshot === approvals && receipt.workspaceId === workspaceId && receipt.userId === userId);
+  const decisions = [...pendingDecisions, ...currentReceipts.filter((receipt) => !pendingDecisions.some((approval) => approval.id === receipt.approval.id)).map((receipt) => receipt.approval)];
   const waiting = home.waiting.length;
   const [revealed, setRevealed] = useState(false);
   const descriptionId = useId();
@@ -171,6 +181,22 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
         ref.current?.querySelector("textarea")?.focus();
       } else setResetError("Could not start a new conversation.");
     } finally { resetLock.current = false; setResetting(false); }
+  }
+  function decideInChat(approval: ApprovalRow, decision: ApprovalDecision, response: Record<string, unknown> | null): Promise<void> {
+    const pending = decisionLocks.current.get(approval.id);
+    if (pending) return pending;
+    const request = (async () => {
+      try {
+        await decideApproval(approval.id, decision, response);
+        const snapshot = useAgentTasks.getState().approvals;
+        setDecisionReceipts((current) => ({
+          ...Object.fromEntries(Object.entries(current).filter(([, receipt]) => receipt.snapshot === snapshot)),
+          [approval.id]: { approval, approved: decision === "approve" || decision === "edit", snapshot, workspaceId, userId },
+        }));
+      } finally { decisionLocks.current.delete(approval.id); }
+    })();
+    decisionLocks.current.set(approval.id, request);
+    return request;
   }
   async function propose(message: PersonMessage) {
     if (proposalLock.current) return;
@@ -370,6 +396,14 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
         <div className="flex shrink-0 justify-end"><button type="button" aria-label="Close Trama" className="icon-button" onClick={close}><X size={16} /></button></div>
         <AssistantThreadView key={workspaceId} messages={thread} draft={draft} scrollRequest={scrollRequest} status={status} busy={voiceBusy} reviewing={voice.phase === "review"}
           onNewConversation={() => { void resetConversation(); }} resetting={resetting}
+          decisions={decisions.length > 0 ? <section aria-label="Needs your decision" className="max-h-60 shrink-0 space-y-2 overflow-y-auto rounded-lg border border-border p-2">
+            <h3 className="text-sm font-medium">Needs your decision</h3>
+            {decisions.map((approval) => {
+              const receipt = currentReceipts.find((item) => item.approval.id === approval.id);
+              return receipt ? <p key={approval.id} role="status" className="text-sm">{receipt.approved ? "Approved." : "Denied."}</p>
+                : <ApprovalCard key={approval.id} approval={approval} onDecide={(decision, response) => decideInChat(approval, decision, response)} />;
+            })}
+          </section> : null}
           error={proposalError ?? resetError ?? failed?.error ?? null} avatar={<TramaAvatar size={28} decorative />}
           empty={<span className="flex flex-col items-center gap-3 py-5">
             <TramaAvatar size={96} decorative />
