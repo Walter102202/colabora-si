@@ -1,3 +1,7 @@
+-- True only for what an agent posts itself through post_activity. Server write receipts ("Added a row") stay false,
+-- so they are neither reported as progress nor taken as an agent's reply to a person.
+alter table public.agent_activities add column if not exists posted boolean not null default false;
+
 -- Person-scoped job activity for Trama. Content is data, never authorization.
 create or replace function private.person_jobs(p_ws uuid, p_user uuid, p_open_page text)
 returns jsonb language sql stable security definer set search_path = '' as $$
@@ -30,6 +34,7 @@ returns jsonb language sql stable security definer set search_path = '' as $$
       left join auth.users u on act.author_type = 'human' and u.id = act.author_id
       where (t.id = j.id or t.parent_task_id = j.id) and not act.ephemeral
         and act.type in ('thought','action','response','checkpoint','handover','prompt','elicitation')
+        and (act.type <> 'action' or act.posted)
         and nullif(btrim(coalesce(act.body->>'text', act.body->>'summary')), '') is not null
       order by act.created_at desc, act.seq desc, act.id limit 4
     ) x),
@@ -42,6 +47,7 @@ returns jsonb language sql stable security definer set search_path = '' as $$
         'last', (select jsonb_build_object('at', act.created_at, 'text', left(coalesce(act.body->>'text', act.body->>'summary'), 160))
           from public.agent_activities act where act.task_id = c.id and not act.ephemeral
             and act.type in ('thought','action','response','checkpoint','handover','prompt','elicitation')
+            and (act.type <> 'action' or act.posted)
             and nullif(btrim(coalesce(act.body->>'text', act.body->>'summary')), '') is not null
           order by act.created_at desc, act.seq desc limit 1)) as item
       from visible c where c.parent_task_id = j.id
@@ -377,7 +383,7 @@ create trigger agent_events_person_receipt after update of status on public.agen
   for each row when (new.type = 'task.message' and new.status = 'delivered' and old.status is distinct from new.status)
   execute function private.receive_person_message();
 
--- Full copy of post_activity (0066); only the app.posted_activity mark around its insert is new.
+-- Full copy of post_activity (0066); only posted = true on its insert is new.
 create or replace function public.post_activity(p_run_id uuid, p_type text, p_body jsonb, p_ephemeral boolean default false,
   p_idempotency_key text default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
@@ -405,13 +411,10 @@ begin
   end if;
 
   perform set_config('app.run_id', v_r.id::text, true);
-  -- Marks this insert as the agent's own words, so a reply to a person's message never comes from a server write receipt.
-  perform set_config('app.posted_activity', 'on', true);
-  insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, ephemeral, author_type, author_id, idempotency_key)
+  insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, ephemeral, author_type, author_id, idempotency_key, posted)
   values (v_r.workspace_id, v_r.task_id, v_r.id, private.next_seq(v_r.task_id), p_type, p_body, coalesce(p_ephemeral, false),
-          'agent', v_r.agent_id, p_idempotency_key)
+          'agent', v_r.agent_id, p_idempotency_key, true)
   returning id, seq into v_id, v_seq;
-  perform set_config('app.posted_activity', '', true);
   v_text:=left(coalesce(p_body->>'text',p_body->>'summary',''),300);
   if not coalesce(p_ephemeral,false) and p_type in ('thought','action','response') and btrim(v_text)<>'' then
     select * into v_child from public.agent_tasks where id=v_r.task_id;
@@ -436,7 +439,7 @@ declare v_name text; v_text text := coalesce(nullif(btrim(new.body->>'text'), ''
 begin
   -- Only what the agent itself posts (post_activity) answers; a server write receipt such as "Added a row" never does.
   if new.author_type <> 'agent' or new.ephemeral or new.type not in ('response','thought','action')
-    or coalesce(current_setting('app.posted_activity', true), '') <> 'on' or v_text is null then return new; end if;
+    or not new.posted or v_text is null then return new; end if;
   select case when a.is_platform then 'Trama' else a.name end into v_name
     from public.agent_tasks t join public.agents a on a.id = t.delegate_agent_id
     where t.id = new.task_id and a.id = new.author_id;
@@ -457,8 +460,7 @@ exception when others then
 end $$;
 revoke all on function private.reply_to_person_message() from public, anon, authenticated;
 create trigger agent_activities_person_reply after insert on public.agent_activities
-  for each row when (new.type in ('response','thought','action') and not new.ephemeral and new.author_type = 'agent'
-    and current_setting('app.posted_activity', true) = 'on')
+  for each row when (new.type in ('response','thought','action') and not new.ephemeral and new.author_type = 'agent' and new.posted)
   execute function private.reply_to_person_message();
 
 create or replace function public.reply_person_message(p_run_id uuid, p_text text, p_through_seq bigint, p_usage jsonb, p_propose_message_id uuid, p_propose_agent jsonb, p_proposal jsonb)

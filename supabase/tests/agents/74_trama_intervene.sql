@@ -26,8 +26,11 @@ update public.agent_tasks set owner_user_id=:'viewer' where id=:'other';
 insert into public.private_pages(page_id,workspace_id,owner_user_id,root_page_id) values ('secret-child',:'ws',:'viewer','secret-child');
 insert into public.agent_activities(workspace_id,task_id,seq,type,body,author_type,author_id,created_at)
 select :'ws',:'job',100+n,'response',jsonb_build_object('text','Update '||n),'agent',(:'lead'::jsonb->>'agent')::uuid,now()+make_interval(mins=>n) from generate_series(1,5) n;
+-- An action the agent posted itself counts as progress; a server write receipt ("Added a row") never does.
+insert into public.agent_activities(workspace_id,task_id,seq,type,body,author_type,author_id,created_at,posted) values
+(:'ws',:'child1',100,'action',jsonb_build_object('summary',repeat('x',300)),'agent',(:'worker'::jsonb->>'agent')::uuid,now()+interval '10 minutes',true),
+(:'ws',:'child1',102,'action','{"op":"add_row","summary":"Added a row"}','agent',(:'worker'::jsonb->>'agent')::uuid,now()+interval '15 minutes',false);
 insert into public.agent_activities(workspace_id,task_id,seq,type,body,author_type,author_id,created_at) values
-(:'ws',:'child1',100,'action',jsonb_build_object('summary',repeat('x',300)),'agent',(:'worker'::jsonb->>'agent')::uuid,now()+interval '10 minutes'),
 (:'ws',:'secret',100,'response','{"text":"secret activity"}','agent',(:'worker'::jsonb->>'agent')::uuid,now()),
 (:'ws',:'child2',100,'response','{"text":"   "}','agent',(:'worker'::jsonb->>'agent')::uuid,now());
 insert into public.agent_activities(workspace_id,task_id,seq,type,body,author_type,author_id,ephemeral) values
@@ -56,6 +59,7 @@ select is(:'ctx'::jsonb#>>'{jobs,0,recent,1,text}','Update 5','recent is newest 
 select is((select s#>>'{last,text}' from jsonb_array_elements(:'ctx'::jsonb#>'{jobs,0,subtasks}') s where s->>'task_id'=:'child2'),'Write','blank and ephemeral activities do not replace the initial prompt');
 select ok((:'ctx'::jsonb->'jobs')::text not like '%secret%' and (:'ctx'::jsonb->'jobs')::text not like '%ephemeral activity%','private and ephemeral activity never leaks');
 select ok(not exists(select 1 from jsonb_array_elements(:'ctx'::jsonb->'jobs') j where j->>'task_id'=:'other'),'another owner job is excluded');
+select ok((:'ctx'::jsonb->'jobs')::text not like '%Added a row%','server write receipts are not reported as progress');
 select is(:'ctx'::jsonb#>>'{jobs,0,url}','/p/digest-job?task='||:'job','job links to the row and task');
 select is(:'ctx'::jsonb->'last_answer_at','null'::jsonb,'no previous answer has a null cursor');
 select tests.reset_role();
