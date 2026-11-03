@@ -220,3 +220,15 @@ it.each(["valid", "missing", "blank", "long", "wrong id", "no page", "no authori
   expect(result).toEqual(variant === "valid" ? { proposed: true, requires_person: true } : { proposed: false, reason: ["wrong id", "no page", "no authorization"].includes(variant) ? "not_allowed" : "summary_required", requires_person: true });
   expect(model.requests[0].messages[0].content).toContain("the person approves the summary they see");
 });
+
+it("guides work requests without an open page instead of offering a proposal", async () => {
+  const mcp = createStubMcp({ handlers: {
+    get_ai_request: () => ({ kind: "assist", messages: [{ text: "Do it" }], through_seq: 7, page: null, proposal_message_id: null }),
+    heartbeat: () => ({}), reply_person_message: () => ({}),
+  } });
+  const model = createStubModel([{ content: "Open the page where the work belongs and ask me there." }]);
+  await runRequest({ call: mcp.callTool, model, task: { task_id: "t", request_kind: "assist" }, runId: "r", log: () => {} });
+  expect(model.requests[0].tools ?? []).toEqual([]);
+  expect(model.requests[0].messages[0].content).toContain("If the person asks for work and page is null, explain that work starts from a page: ask them to open the page where the work belongs and ask you there.");
+  expect(mcp.calls.find((c) => c.name === "reply_person_message")!.args.propose_message_id).toBeUndefined();
+});
