@@ -1,6 +1,6 @@
 -- Visible summaries are the only authority approved by a direct person session.
 begin;
-select plan(27);
+select plan(28);
 select tests.fixture() as f \gset
 select (:'f'::jsonb->>'ws') as ws, (:'f'::jsonb->>'owner') as owner, (:'f'::jsonb->>'viewer') as viewer \gset
 select tests.make_agent(:'ws', 'proposals@test.invalid', 'lead', 'page_B') as pl \gset
@@ -41,6 +41,8 @@ select is(public.start_proposed_work(:'reply'),:'started'::jsonb || '{"already_s
 select tests.reset_role();
 select is((select count(*) from public.agent_tasks where row_page_id='page_B'),:'before_count'::bigint,'no duplicate task');
 update public.agent_tasks set state='done' where id=(:'started'::jsonb->>'task_id')::uuid;
+select tests.set_human(:'viewer');
+select is(tests.error_of(format('select public.send_agent_message(%L,%L,%L)',:'started'::jsonb->>'task_id','','continue')),'forbidden','authorize before disclosing the task continuation rule');
 select tests.set_human(:'owner');
 select is(tests.error_of(format('select public.send_agent_message(%L,%L,%L)',:'started'::jsonb->>'task_id','  ','continue')),'message_required','done needs text');
 select tests.reset_role();

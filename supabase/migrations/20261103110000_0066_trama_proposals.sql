@@ -130,11 +130,6 @@ begin
   select * into v_t from public.agent_tasks where id = p_task_id for update;
   if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
 
-  if private.principal_type()='human' and p_signal='continue'
-    and v_t.state in ('ready_for_review','done') and btrim(coalesce(p_body,''))='' then
-    raise exception using errcode='PT400',message='message_required';
-  end if;
-
   if private.is_agent() then
     v_agent := private.current_agent_id();
     if v_agent is null then raise exception using errcode = 'PT403', message = 'agent_disabled'; end if;
@@ -150,6 +145,11 @@ begin
     end if;
     v_author := (select auth.uid()); v_author_type := 'human';
     v_source := case when p_comment_id is not null then 'comment' else 'row_panel' end;
+  end if;
+
+  if private.principal_type()='human' and p_signal='continue'
+    and v_t.state in ('ready_for_review','done') and btrim(coalesce(p_body,''))='' then
+    raise exception using errcode='PT400',message='message_required';
   end if;
 
   if v_t.request_kind is not null and v_t.state in ('done','failed','cancelled') then
