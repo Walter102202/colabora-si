@@ -11,7 +11,7 @@ export function ConnectChooser({ catalog, onChoose }: { catalog: ConnectCatalogE
     </div>
     <div role="group" aria-labelledby="connect-choice" className="grid grid-cols-[repeat(auto-fit,minmax(136px,1fr))] gap-3">
       {catalog.map((entry) => <button key={entry.id} type="button" aria-label={`Connect with ${entry.name}`} onClick={() => onChoose(entry.id)}
-        className={`flex min-h-[116px] flex-col items-center justify-center gap-2.5 rounded-xl border border-border bg-bg px-2 py-4 text-sm font-medium transition-colors hover:bg-bg-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${entry.route === "own" ? "col-span-2" : ""}`}>
+        className={`flex min-h-[116px] flex-col items-center justify-center gap-2.5 rounded-xl border border-border bg-bg px-2 py-4 text-sm font-medium transition-colors hover:bg-bg-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${entry.route === "own" ? "col-span-full" : ""}`}>
         <span aria-hidden="true" className="flex h-11 w-11 items-center justify-center rounded-lg bg-white">
           {entry.route === "own" ? <Bot size={26} className="text-neutral-700" /> : <img src={entry.logo} alt="" width={36} height={36} className="h-9 w-9 object-contain" />}
         </span>

@@ -36,12 +36,26 @@ const mount = (path = "/connect") => act(async () => root.render(<MemoryRouter i
   <Route path="/" element={<p>Home</p>} />
 </Routes></MemoryRouter>));
 const button = (name: string) => [...container.querySelectorAll("button")].find((node) => node.textContent === name)!;
-it("offers eleven accessible choices, decorative logos and the notice", async () => {
+it("offers thirteen accessible choices, decorative logos and the notice", async () => {
   await mount();
-  expect(container.querySelectorAll('button[aria-label^="Connect with "]')).toHaveLength(11);
-  expect(container.querySelectorAll('img[alt=""]')).toHaveLength(10);
+  expect(container.querySelectorAll('button[aria-label^="Connect with "]')).toHaveLength(13);
+  expect(container.querySelectorAll('img[alt=""]')).toHaveLength(12);
   expect(container.textContent).toContain("Product names and logos belong to their respective owners.");
   expect(container.textContent).toContain("Which agent do you use?");
+});
+it.each([["Grok Bot", "grokbot"], ["Instinct", "instinct"]])("opens the %s guide and copies an OAuth setup for both endpoints", async (name, slug) => {
+  await mount();
+  await act(async () => container.querySelector<HTMLButtonElement>(`[aria-label="Connect with ${name}"]`)!.click());
+  expect(container.querySelector("h1")?.textContent).toBe(`Connect ${name}`);
+  expect(container.querySelector(`a[href="/connect/${slug}.md"]`)).not.toBeNull();
+  const message = container.querySelector("pre")!.textContent;
+  await act(async () => button("Copy setup message").click());
+  expect(f.copy).toHaveBeenCalledExactlyOnceWith(message);
+  expect(message).toContain("colabora-tasks: https://example.test/functions/v1/mcp");
+  expect(message).toContain("colabora-workspace: https://example.test/functions/v1/workspace-mcp");
+  expect(message).toContain("OAuth");
+  expect(message).toContain("read the Getting started page");
+  expect(container.textContent).not.toContain("Connection verified");
 });
 it("chooses one setup action, copies exactly the visible message and changes back", async () => {
   await mount(); await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Connect with Claude Code"]')!.click());
@@ -51,7 +65,7 @@ it("chooses one setup action, copies exactly the visible message and changes bac
   expect(f.copy).toHaveBeenCalledExactlyOnceWith(message);
   expect([...container.querySelectorAll('[role="status"]')].some((status) => status.textContent?.includes("Copied — paste into Claude Code"))).toBe(true);
   await act(async () => button("Change agent").click());
-  expect(container.querySelectorAll('button[aria-label^="Connect with "]')).toHaveLength(11);
+  expect(container.querySelectorAll('button[aria-label^="Connect with "]')).toHaveLength(13);
 });
 it("handles clipboard denial and deep links without requiring a session", async () => {
   f.copy.mockRejectedValue(new Error("denied")); await mount("/connect/codex");

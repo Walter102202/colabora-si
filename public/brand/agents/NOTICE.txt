@@ -10,6 +10,9 @@ hermes.svg: https://raw.githubusercontent.com/NousResearch/hermes-agent/main/ass
 openclaw.svg: https://openclaw.ai/brand/openclaw-mascot.svg
 cursor.svg: General Logos/Cube/SVG/CUBE_2D_LIGHT.svg from https://ptht05hbb1ssoooe.public.blob.vercel-storage.com/assets/brand/cursor-brand-assets.zip
 
+grokbot.jpg: Grok Bot app icon, X Corp. https://apps.apple.com/us/app/grok-bot/id6794501026 (Apple artworkUrl100)
+instinct.png: Instinct website icon (PNG as served), https://instinct.com/redesign/favicon.ico
+
 MIT License
 
 Copyright (c) 2023 LobeHub

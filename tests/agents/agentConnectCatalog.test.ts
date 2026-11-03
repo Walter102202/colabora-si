@@ -4,16 +4,16 @@ import { createAgentConnectCatalog, setupMessage } from "@/lib/agentConnectCatal
 const url = "https://example.supabase.co/functions/v1/mcp";
 const catalog = createAgentConnectCatalog(url);
 describe("agent connection catalog", () => {
-  it("keeps the eleven choices in design order and produces public setup messages", () => {
-    expect(catalog.map((entry) => entry.id)).toEqual(["claude-code", "codex", "muse-code", "cursor", "gemini-cli", "antigravity", "chatgpt", "claude", "hermes", "openclaw", "your-agent"]);
+  it("keeps the choices in design order and produces public setup messages", () => {
+    expect(catalog.map((entry) => entry.id)).toEqual(["claude-code", "codex", "muse-code", "cursor", "gemini-cli", "antigravity", "chatgpt", "claude", "hermes", "openclaw", "grokbot", "instinct", "your-agent"]);
     for (const entry of catalog) {
-      expect(entry.logo).toBe(`/brand/agents/${entry.id}.svg`);
+      expect(entry.logo.split(".")[0]).toBe(`/brand/agents/${entry.id}`);
       expect(entry.guide).toBe(`/connect/${entry.id}.md`);
       expect(setupMessage(entry)).toContain("Getting started");
       expect(setupMessage(entry)).not.toMatch(/<project>|agt_|\bjust\b|\bsimply\b|\binstant\b|one click|partners|official integrations|verified agents/i);
     }
   });
-  it.each(["claude-code", "codex", "hermes", "openclaw"])("%s connects tasks and pages", (id) => {
+  it.each(["claude-code", "codex", "hermes", "openclaw", "grokbot", "instinct"])("%s connects tasks and pages", (id) => {
     const entry = catalog.find((item) => item.id === id)!;
     expect(entry.intro).toContain("Add only these two connections");
     expect(entry.cmd).toContain(url);

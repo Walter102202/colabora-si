@@ -83,7 +83,8 @@ export function seedWorkspace(): { pages: Record<string, Page>; rootOrder: strin
         ["claude-code", "Claude Code"], ["codex", "Codex"], ["muse-code", "Muse Code"],
         ["cursor", "Cursor"], ["gemini-cli", "Gemini CLI"], ["antigravity", "Google Antigravity"],
         ["chatgpt", "ChatGPT"], ["claude", "Claude"], ["hermes", "Hermes Agent"],
-        ["openclaw", "OpenClaw"], ["your-agent", "Your own agent"],
+        ["openclaw", "OpenClaw"], ["grokbot", "Grok Bot"], ["instinct", "Instinct"],
+        ["your-agent", "Your own agent"],
       ].map(([slug, name]) => createBlock("bulleted", { html: `<a href="/connect/${slug}">${name}</a>` })),
     ]),
   });

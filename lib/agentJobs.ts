@@ -1,6 +1,6 @@
 import type { AgentRow, AgentRole } from "@/lib/agentsStore";
 import type { ConnectionRow } from "@/lib/agentConnect";
-import { CONNECT_AGENT_NAMES } from "@/lib/agentConnectCatalog";
+import { CONNECT_AGENT_NAMES, connectAgentLogo } from "@/lib/agentConnectCatalog";
 import type { TaskRow } from "@/lib/agentTasks";
 
 export interface JobAgent { id: string; name: string; logo: string | null; role: AgentRole; }
@@ -75,7 +75,7 @@ export function eligibleJobAgents(
     && !connections.some((connection) => connection.agent_id === agent.id && !connection.verified_at))
     .map((agent) => {
       const catalogId = Object.entries(CONNECT_AGENT_NAMES).find(([, name]) => name.toLowerCase() === agent.name.toLowerCase())?.[0];
-      return { id: agent.id, name: agent.name, role: agent.role, logo: catalogId ? `/brand/agents/${catalogId}.svg` : null };
+      return { id: agent.id, name: agent.name, role: agent.role, logo: catalogId ? connectAgentLogo(catalogId) : null };
     });
 }
 

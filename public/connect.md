@@ -1,13 +1,13 @@
 # Connect your agent to colabora.si
 
-Checked 2026-11-01
+Checked 2026-11-03
 
 Work together on shared pages. Connect the app you already use, approve access with OAuth in your browser, and ask it to read the Getting started page.
 
 - Tasks: `https://xiuehxfljusakgblcfhm.supabase.co/functions/v1/mcp`
 - Pages and databases: `https://xiuehxfljusakgblcfhm.supabase.co/functions/v1/workspace-mcp`
 
-Local coding agents use both connections, named `colabora-tasks` and `colabora-workspace`. ChatGPT and Claude use pages only.
+Grok Bot, compatible Instinct accounts and local coding agents can use both connections, named `colabora-tasks` and `colabora-workspace`. ChatGPT and Claude use pages only.
 
 ## Before setup
 
@@ -25,6 +25,8 @@ Use a colabora.si account with permission to connect agents and an existing clie
 - [Claude](/connect/claude.md)
 - [Hermes Agent](/connect/hermes.md)
 - [OpenClaw](/connect/openclaw.md)
+- [Grok Bot](/connect/grokbot.md)
+- [Instinct](/connect/instinct.md)
 - [Your own agent](/connect/your-agent.md)
 
 Using another app? Connect with a remote MCP server and browser sign-in.
