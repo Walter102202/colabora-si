@@ -1,3 +1,43 @@
+-- Settings/PAT agents need no OAuth connection row; an unfinished connection is ineligible.
+create or replace function private.agent_assignable(p_agent uuid)
+returns boolean language sql stable security definer set search_path='' as $$
+  select exists(select 1 from public.agents a where a.id=p_agent and a.status='enabled'
+    and a.revoked_at is null and not a.is_platform
+    and not exists(select 1 from public.agent_connections c where c.agent_id=a.id and c.verified_at is null));
+$$;
+revoke all on function private.agent_assignable(uuid) from public,anon,authenticated;
+
+create or replace function private.grant_job_agents(p_database_id text, p_agent_ids uuid[])
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_db public.pages%rowtype; v_a public.agents%rowtype; v_id uuid; v_granted jsonb := '[]';
+begin
+  select * into v_db from public.pages where id=p_database_id and deleted_at is null;
+  if not found or not private.can_write_page(v_db.id,v_db.workspace_id) then
+    raise exception using errcode='PT403',message='owner_required';
+  end if;
+  for v_id in select distinct id from unnest(p_agent_ids) id order by id loop
+    select * into v_a from public.agents a where a.id=v_id and a.workspace_id=v_db.workspace_id
+      and private.agent_assignable(a.id) for update;
+    if not found then raise exception using errcode='PT422',message='agent_not_available'; end if;
+    if not exists (
+      with recursive chain as (
+        select p.id,p.parent_id,0 as depth from public.pages p where p.id=v_db.id
+        union all select p.id,p.parent_id,c.depth+1 from chain c join public.pages p on p.id=c.parent_id where c.depth<2
+      ) select 1 from public.agent_grants g join chain c on c.id=g.page_id
+        where g.agent_id=v_id and g.inherit and g.revoked_at is null and (g.expires_at is null or g.expires_at>now())
+          and g.scopes @> array['read','write','comment']
+    ) then
+      if not private.can_edit_workspace(v_db.workspace_id) then
+        raise exception using errcode='PT403',message='owner_required',detail=v_a.name;
+      end if;
+      perform public.grant_agent_page(v_id,v_db.id,array['read','write','comment'],true);
+      v_granted := v_granted || jsonb_build_array(jsonb_build_object('id',v_id,'name',v_a.name));
+    end if;
+  end loop;
+  return v_granted;
+end $$;
+revoke all on function private.grant_job_agents(text,uuid[]) from public,anon,authenticated;
+
 -- Proposal validation always uses the person's access, never Trama's grants.
 create or replace function private.person_job_board(p_page text,p_ws uuid,p_user uuid)
 returns boolean language sql stable security definer set search_path='' as $$
@@ -27,8 +67,7 @@ begin
   for item in select value from jsonb_array_elements(jsonb_build_array(p_job->'lead_agent_id')||(p_job->'worker_agent_ids')) loop
     field:=case when lead is null then 'lead_agent_id' else 'worker_agent_ids' end;
     select * into a from public.agents where id::text=item#>>'{}' and workspace_id=p_ws
-      and status='enabled' and revoked_at is null and not is_platform
-      and exists(select 1 from public.agent_connections c where c.agent_id=agents.id and c.verified_at is not null);
+      and private.agent_assignable(agents.id);
     if not found or a.id::text=any(ids) or (lead is null and a.role<>'lead') then
       raise exception using errcode='PT422',message='invalid_job',detail=field;
     end if;
@@ -339,8 +378,7 @@ begin
       order by t.updated_at desc limit 10) x;
   select coalesce(jsonb_agg(x),'[]') into v_agents from (
     select a.id,a.name,a.role,a.connection->>'harness' as harness from public.agents a
-      where a.workspace_id=v_t.workspace_id and a.status='enabled' and a.revoked_at is null and not a.is_platform
-        and exists(select 1 from public.agent_connections c where c.agent_id=a.id and c.verified_at is not null)
+      where a.workspace_id=v_t.workspace_id and private.agent_assignable(a.id)
       order by a.name,a.id limit 20) x;
   select coalesce(jsonb_agg(x),'[]') into v_boards from (
     select p.id,p.title from public.pages p where private.person_job_board(p.id,v_t.workspace_id,v_t.owner_user_id)

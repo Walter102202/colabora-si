@@ -11,6 +11,8 @@ select tests.make_agent(:'ws','Codex','worker','page_A') as worker \gset
 select tests.make_agent(:'ws','Muse Code','worker','page_A') as worker2 \gset
 insert into public.agent_connections(workspace_id,agent_id,page_id,created_by,verified_at)
 select :'ws',id,'page_A',:'owner',now() from public.agents where workspace_id=:'ws' and not is_platform;
+-- Settings/PAT agents have no connection row; pending OAuth agents remain excluded.
+delete from public.agent_connections where agent_id in ((:'lead'::jsonb->>'agent')::uuid,(:'worker2'::jsonb->>'agent')::uuid);
 select tests.make_page(:'ws','demo-board',null,'{"id":"demo-board","title":"Demo jobs","blocks":[],"database":{"properties":[{"id":"title","name":"Name","type":"text"},{"id":"status","type":"agentStatus"}],"rows":[],"views":[]}}');
 select jsonb_build_object('board_id','demo-board','title','Team offsite','lead_agent_id',:'lead'::jsonb->>'agent','worker_agent_ids',jsonb_build_array(:'worker'::jsonb->>'agent',:'worker2'::jsonb->>'agent')) as job \gset
 select jsonb_build_object('summary','Organize Team offsite. Codex researches; Muse writes pages; Claude reviews progress and gives feedback.','job',:'job'::jsonb) as spec \gset
@@ -28,7 +30,8 @@ select public.assist_request_context(:'req') as context \gset
 select (:'context'::jsonb->>'through_seq')::bigint as seq \gset
 select is(:'context'::jsonb->>'proposal_message_id',:'msg','a board enables proposals without an open page');
 select is(:'context'::jsonb#>>'{boards,0,id}','demo-board','writable job board in context');
-select is(jsonb_array_length(:'context'::jsonb->'agents'),4,'only verified external agents offered');
+select ok(exists(select 1 from jsonb_array_elements(:'context'::jsonb->'agents') a where a->>'id'=:'lead'::jsonb->>'agent'),'Settings Lead is offered in Trama context');
+select is(jsonb_array_length(:'context'::jsonb->'agents'),4,'both Settings and verified external agents offered');
 select is(tests.error_of(format('select public.reply_person_message(%L,%L,%s,null,%L,null,%L::jsonb)',:'run','Offer',:'seq',:'msg',jsonb_set(:'spec','{job,board_id}','"page_A"'))),'invalid_job','reject plain page');
 select is(tests.error_of(format('select public.reply_person_message(%L,%L,%s,null,%L,null,%L::jsonb)',:'run','Offer',:'seq',:'msg',jsonb_set(:'spec','{job,lead_agent_id}',to_jsonb(gen_random_uuid()::text)))),'invalid_job','reject unknown agent');
 select is(tests.error_of(format('select public.reply_person_message(%L,%L,%s,null,%L,null,%L::jsonb)',:'run','Offer',:'seq',:'msg',jsonb_set(:'spec','{job,lead_agent_id}',to_jsonb(:'pa'::text)))),'invalid_job','reject platform');
@@ -39,6 +42,7 @@ select tests.reset_role();
 update public.agent_connections set verified_at=null where agent_id=(:'worker'::jsonb->>'agent')::uuid;
 select tests.set_agent(:'pu',:'pa');
 select is(tests.error_of(format('select public.reply_person_message(%L,%L,%s,null,%L,null,%L::jsonb)',:'run','Offer',:'seq',:'msg',:'spec')),'invalid_job','reject unverified worker');
+select ok(not exists(select 1 from jsonb_array_elements(public.assist_request_context(:'req')->'agents') a where a->>'id'=:'worker'::jsonb->>'agent'),'pending connection stays out of Trama context');
 select tests.reset_role();
 update public.agent_connections set verified_at=now() where agent_id=(:'worker'::jsonb->>'agent')::uuid;
 insert into public.private_pages(page_id,workspace_id,owner_user_id,root_page_id) values ('demo-board',:'ws',:'owner','demo-board');
@@ -66,6 +70,15 @@ select is(jsonb_array_length((select data#>'{database,rows}' from public.pages w
 select is((select count(*) from public.agent_tasks where row_page_id=:'job_page'),1::bigint,'one task');
 select is((select objective from public.task_briefs where task_id=:'job_task'),:'spec'::jsonb->>'summary','exact summary becomes lead brief');
 select is((select delegate_agent_id::text from public.agent_tasks where id=:'job_task'),:'lead'::jsonb->>'agent','requested Lead delegated');
+select ok(private.agent_assignable((:'lead'::jsonb->>'agent')::uuid),'Settings agent without a connection is assignable');
+select ok(private.agent_assignable((:'worker'::jsonb->>'agent')::uuid),'verified connection is assignable');
+update public.agent_connections set verified_at=null where agent_id=(:'worker'::jsonb->>'agent')::uuid;
+select ok(not private.agent_assignable((:'worker'::jsonb->>'agent')::uuid),'pending connection is not assignable');
+update public.agent_connections set verified_at=now() where agent_id=(:'worker'::jsonb->>'agent')::uuid;
+select tests.set_human(:'owner');
+select is(public.assign_job(:'job_page',(:'lead'::jsonb->>'agent')::uuid,array[(:'worker'::jsonb->>'agent')::uuid,(:'worker2'::jsonb->>'agent')::uuid])->>'task_id',:'job_task','assign_job accepts a Settings Lead and worker');
+select tests.reset_role();
+
 select ok((select named_worker_ids @> array[(:'worker'::jsonb->>'agent')::uuid,(:'worker2'::jsonb->>'agent')::uuid] and cardinality(named_worker_ids)=2 from public.agent_tasks where id=:'job_task'),'named workers assigned');
 select is((select count(*) from public.agent_grants where page_id='demo-board' and scopes @> array['read','write','comment'] and inherit),3::bigint,'team receives inherited board access');
 -- Decline a copy with a distinct incoming proposal key; no second row.
