@@ -114,3 +114,23 @@ describe("stub model server failures", () => {
     }
   });
 });
+
+describe("per-call effort and prompt cache", () => {
+  const cached = () => Response.json({ choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 9, completion_tokens: 1, prompt_tokens_details: { cached_tokens: 7 } } });
+  it("overrides the instance effort per call, keys the prompt cache and reports cached tokens", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const client = createModel({ baseUrl: "http://m.test/v1", model: "stub", reasoningEffort: "low",
+      fetchImpl: async (_input, init) => { bodies.push(JSON.parse(String(init?.body))); return cached(); } });
+    const first = await client.chat({ messages: [], reasoningEffort: "minimal", promptCacheKey: "agent-1" });
+    await client.chat({ messages: [] });
+    expect(bodies[0]).toEqual({ model: "stub", messages: [], reasoning_effort: "minimal", prompt_cache_key: "agent-1" });
+    expect(bodies[1]).toEqual({ model: "stub", messages: [], reasoning_effort: "low" });
+    expect(first.usage).toEqual({ input_tokens: 9, output_tokens: 1, cached_tokens: 7 });
+  });
+  it("omits the effort when neither the instance nor the call sets one", async () => {
+    let body: Record<string, unknown> = {};
+    const client = createModel({ baseUrl: "http://m.test/v1", model: "stub", fetchImpl: async (_input, init) => { body = JSON.parse(String(init?.body)); return ok(); } });
+    await client.chat({ messages: [], reasoningEffort: "" });
+    expect(body).toEqual({ model: "stub", messages: [] });
+  });
+});

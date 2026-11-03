@@ -8,9 +8,12 @@ import { readFile } from "node:fs/promises";
  * @property {string} modelBaseUrl      OpenAI-compatible base URL (POST {modelBaseUrl}/chat/completions)
  * @property {string} modelApiKey       bearer key for the model endpoint ("" for local endpoints)
  * @property {string} modelName         model id sent in every request
- * @property {string} modelEffort       optional reasoning effort (empty omits the provider field)
+ * @property {string} modelEffort       reasoning effort of an ordinary task step (empty omits the provider field)
+ * @property {string} modelEffortPlan   reasoning effort of a planning turn: the first one, and after an error, a conflict or a changed brief
+ * @property {string} modelEffortChat   reasoning effort of the conversation with a person
  * @property {{input: number, output: number}} prices  USD per million tokens
- * @property {string} mcpUrl            remote MCP endpoint of the workspace
+ * @property {string} mcpUrl            remote MCP endpoint of the workspace (tasks)
+ * @property {string} [workspaceMcpUrl] optional second endpoint with the page and database tools; its names join the catalog
  * @property {string} agentPat          personal access token of this agent (agt_...)
  * @property {string} tokenUrl          PAT -> JWT exchange endpoint
  * @property {string} displayName       optional public agent identity
@@ -87,8 +90,12 @@ export function readConfig(env) {
     modelApiKey: env.MODEL_API_KEY ?? "",
     modelName: /** @type {string} */ (env.MODEL_NAME),
     modelEffort: env.MODEL_REASONING_EFFORT ?? "",
+    // A provider without reasoning_effort (empty step effort) keeps every turn unset unless a value is given explicitly.
+    modelEffortPlan: env.MODEL_EFFORT_PLAN ?? (env.MODEL_REASONING_EFFORT ? "medium" : ""),
+    modelEffortChat: env.MODEL_EFFORT_CHAT ?? (env.MODEL_REASONING_EFFORT ? "minimal" : ""),
     prices: { input: num(env.MODEL_PRICE_IN, 0), output: num(env.MODEL_PRICE_OUT, 0) },
     mcpUrl,
+    workspaceMcpUrl: env.WORKSPACE_TOOLS_MCP_URL || undefined,
     agentPat: /** @type {string} */ (env.WORKSPACE_AGENT_PAT),
     tokenUrl: env.WORKSPACE_AGENT_TOKEN_URL || `${new URL(mcpUrl).origin}/functions/v1/agent-token`,
     displayName: env.AGENT_DISPLAY_NAME ?? "",
@@ -130,10 +137,13 @@ export function readFleetConfig(env) {
       MODEL_BASE_URL: env.MODEL_BASE_URL || "https://api.meta.ai/v1",
       MODEL_NAME: modelName,
       MODEL_REASONING_EFFORT: env.MODEL_REASONING_EFFORT ?? "low",
+      MODEL_EFFORT_PLAN: env.MODEL_EFFORT_PLAN,
+      MODEL_EFFORT_CHAT: env.MODEL_EFFORT_CHAT,
       MODEL_PRICE_IN: String(prices.input),
       MODEL_PRICE_OUT: String(prices.output),
       MODEL_API_KEY: env.META_MODEL_API_KEY,
       WORKSPACE_MCP_URL: `${functions}/mcp`,
+      WORKSPACE_TOOLS_MCP_URL: `${functions}/workspace-mcp`,
       WORKSPACE_AGENT_PAT: "managed",
       WORKSPACE_APP_URL: env.VITE_APP_URL,
       AGENT_HARNESS_NAME: "trama",

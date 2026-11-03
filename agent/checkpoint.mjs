@@ -2,6 +2,12 @@ import { createHash } from "node:crypto";
 
 export const CHECKPOINT_VERSION = 1;
 export const WRITE_TOOLS = new Set(["append_blocks", "edit_page", "update_block", "update_row", "add_row"]);
+/**
+ * A write is any tool whose contract takes an idempotency_key (the workspace endpoint declares one on every write),
+ * plus the task endpoint's partial writes, whose schemas predate that convention.
+ * @param {string} name @param {Record<string, any>} [schema]
+ */
+export const isWriteTool = (name, schema) => WRITE_TOOLS.has(name) || !!schema?.properties?.idempotency_key;
 const list = (value) => Array.isArray(value) ? value : [];
 const record = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : {};
 // Cut by UTF-16 code units, as the server's maxLength counts, and never leave half of a surrogate pair at the end.
@@ -93,8 +99,8 @@ export function guardsFromResume(resume) {
   return guards;
 }
 
-export function guardFor(name, args, guards) {
-  if (!WRITE_TOOLS.has(name)) return null;
+export function guardFor(name, args, guards, schema) {
+  if (!isWriteTool(name, schema)) return null;
   const hash = argsHash(name, args);
   const guard = guards.get(hash);
   if (!guard) return null;

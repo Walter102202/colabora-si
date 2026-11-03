@@ -11,6 +11,7 @@ export interface AssistantMessage {
 export interface Usage {
   input_tokens: number;
   output_tokens: number;
+  cached_tokens?: number;
 }
 export interface ChatResult {
   message: AssistantMessage;
@@ -19,7 +20,7 @@ export interface ChatResult {
 }
 export interface Model {
   name: string;
-  chat(req: { messages: object[]; tools?: object[]; signal?: AbortSignal }): Promise<ChatResult>;
+  chat(req: { messages: object[]; tools?: object[]; signal?: AbortSignal; reasoningEffort?: string; promptCacheKey?: string }): Promise<ChatResult>;
 }
 export function normalizeMessage(message: unknown): AssistantMessage;
 export function createModel(opts: {

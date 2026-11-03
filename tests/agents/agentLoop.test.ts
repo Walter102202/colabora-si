@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { costUsd, runAgent, type ChannelEvent, type Clock } from "../../agent/loop.mjs";
+import { argsHash } from "../../agent/checkpoint.mjs";
 import { createModel } from "../../agent/model.mjs";
 import { createStubMcp } from "../../agent/test/stub-mcp.mjs";
 import { createStubModel, startStubModelServer, toolCall } from "../../agent/test/stub-model.mjs";
@@ -716,4 +717,107 @@ it("restarts with acknowledgement-only work after the model received a notice", 
   const restarted=createStubModel([]);
   await runAgent({mcp,model:restarted,noticeState,clock:fakeClock(),maxTasks:1,signal:abort.signal});
   expect(restarted.requests).toHaveLength(0);expect(acks).toBe(2);expect(saved.delivered).toEqual({});
+});
+
+const createDatabaseTool = { name: "create_database", description: "Create a database with its properties, views and rows", inputSchema: { type: "object", properties: { parent_id: { type: "string" }, title: { type: "string" }, idempotency_key: { type: "string" } }, required: ["parent_id", "title", "idempotency_key"] } };
+const saveCheckpointTool = { name: "save_checkpoint", description: "Save a checkpoint", inputSchema: { type: "object", properties: { run_id: { type: "string" }, checkpoint: { type: "object" } }, required: ["run_id", "checkpoint"] } };
+const emptyCheckpoint = { v: 1, next_step: "Continue.", ops: { confirmed: [], pending: [] }, effects: { confirmed: [], not_executed: [], unknown: [] }, evidence: [] };
+
+describe("workspace writes in the task loop", () => {
+  it("fills the idempotency key of a keyed workspace tool and ledgers the write before executing it", async () => {
+    const mcp = createStubMcp({ tasks: queued, tools: [createDatabaseTool, saveCheckpointTool], handlers: {
+      create_database: () => ({ id: "db-1", page_id: "db-1", url: "/p/db-1", revision: 1 }), save_checkpoint: () => ({ ok: true }),
+    } });
+    const model = createStubModel([
+      { tool_calls: [toolCall("create_database", { parent_id: "row-task-1", title: "Launch" })] },
+      { tool_calls: [toolCall("submit_for_review", { summary: "Database created", artifact_ids: [] })] },
+    ]);
+    await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, maxTurns: 4 });
+    const createIndex = mcp.calls.findIndex((c) => c.name === "create_database");
+    expect(mcp.calls[createIndex]?.args.idempotency_key).toBe("run-task-1:0:0");
+    const ledger = mcp.calls.findIndex((c) => c.name === "save_checkpoint");
+    expect(ledger).toBeGreaterThan(-1);
+    expect(ledger).toBeLessThan(createIndex);
+    const checkpoint = mcp.calls[ledger].args.checkpoint as { ops: { pending: Record<string, unknown>[] } };
+    expect(checkpoint.ops.pending).toEqual([expect.objectContaining({ key: "run-task-1:0:0", tool: "create_database", page_id: "row-task-1" })]);
+  });
+
+  it("answers a workspace write that may have happened with the key to reuse instead of repeating it blindly", async () => {
+    const args = { parent_id: "row-task-1", title: "Launch" };
+    const mcp = createStubMcp({ tasks: queued, tools: [createDatabaseTool, saveCheckpointTool], handlers: {
+      claim_task: (a) => ({ task_id: a.task_id, run_id: "run-task-1", row_page_id: "row-task-1", brief: {}, artifacts: [], recent_activities: [],
+        resume: { from: { run_id: "run-0", harness: "trama", delivered: false }, checkpoint: { readable: true, body: emptyCheckpoint }, blocks: [],
+          pending_ops: [{ key: "k1", tool: "create_database", args_hash: argsHash("create_database", args), status: "unknown", page_id: "row-task-1", summary: "create_database on row-task-1" }] } }),
+      create_database: () => ({ id: "db-1", page_id: "db-1", url: "/p/db-1", revision: 1 }), save_checkpoint: () => ({ ok: true }),
+    } });
+    const model = createStubModel([
+      { tool_calls: [toolCall("create_database", args)] },
+      { tool_calls: [toolCall("create_database", { ...args, idempotency_key: "k1" })] },
+      { tool_calls: [toolCall("submit_for_review", { summary: "Database created", artifact_ids: [] })] },
+    ]);
+    await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, maxTurns: 5 });
+    const creates = mcp.calls.filter((c) => c.name === "create_database");
+    expect(creates.map((c) => c.args.idempotency_key)).toEqual(["k1"]);
+    const warned = String(model.requests[1].messages.at(-1)?.content);
+    expect(warned).toContain("verify_first");
+    expect(warned).toContain("k1");
+  });
+});
+
+describe("effort per turn in the task loop", () => {
+  it("plans at the planning effort, steps at the step effort and replans after a tool error, keyed to the agent's cache", async () => {
+    const mcp = createStubMcp({ tasks: queued, handlers: { append_blocks: () => ({ isError: true, data: { code: "invalid_input", message: "markdown is required" } }) } });
+    const model = createStubModel([
+      { tool_calls: [toolCall("read_page", { page_id: "row-task-1" })] },
+      { tool_calls: [toolCall("append_blocks", { page_id: "row-task-1" })] },
+      { tool_calls: [toolCall("read_page", { page_id: "row-task-1" })] },
+      { tool_calls: [toolCall("submit_for_review", { summary: "Done", artifact_ids: [] })] },
+    ]);
+    await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, maxTurns: 6, efforts: { step: "low", plan: "medium", chat: "minimal" }, cacheKey: "agent-1" });
+    const requests = model.requests as { reasoningEffort?: string; promptCacheKey?: string }[];
+    expect(requests.map((r) => r.reasoningEffort)).toEqual(["medium", "low", "medium", "low"]);
+    expect(new Set(requests.map((r) => r.promptCacheKey))).toEqual(new Set(["agent-1"]));
+  });
+  it("replans at the planning effort on the turn after a person answers the question the run was blocked on", async () => {
+    const mcp = createStubMcp({
+      tasks: queued,
+      waits: [
+        seed(),
+        { changed: true, stop_requested: false, next_seq: 12, activities: [{ seq: 12, type: "prompt", author_type: "human", signal: "feedback", approval_id: "input-1", excerpt: "Casual" }] },
+      ],
+    });
+    const model = createStubModel([
+      { tool_calls: [toolCall("request_input", { question: "Formal or casual?", blocking: false })] },
+      { content: "Waiting for the tone." },
+      { tool_calls: [toolCall("submit_for_review", { summary: "Draft written", artifact_ids: ["art-1"] })] },
+    ]);
+    await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, efforts: { step: "low", plan: "medium", chat: "minimal" }, cacheKey: "agent-1" });
+    const requests = model.requests as { reasoningEffort?: string }[];
+    expect(requests.map((r) => r.reasoningEffort)).toEqual(["medium", "low", "medium"]);
+  });
+  it("leaves the effort to the model when no efforts are configured", async () => {
+    const mcp = createStubMcp({ tasks: queued });
+    const model = createStubModel([{ content: "Done" }]);
+    await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, maxTurns: 1 });
+    expect((model.requests[0] as { reasoningEffort?: string }).reasoningEffort).toBeUndefined();
+  });
+});
+
+describe("a stable catalog for the prompt cache", () => {
+  const extra = (name: string) => ({ name, description: name, inputSchema: { type: "object", properties: {} } });
+  it("offers the same tools in alphabetical order and the same system prompt on every run of the agent", async () => {
+    const run = async (tools: object[]) => {
+      const model = createStubModel([{ content: "Done" }]);
+      await runAgent({ mcp: createStubMcp({ tasks: queued, tools: tools as never }), model, clock: fakeClock(), maxTasks: 1, maxTurns: 1 });
+      return model.requests[0] as { tools: { function: { name: string } }[]; messages: { role: string; content: string }[] };
+    };
+    const first = await run([extra("zz_last"), extra("aaa_first")]);
+    const second = await run([extra("aaa_first"), extra("zz_last")]);
+    const names = first.tools.map((t) => t.function.name);
+    expect(names[0]).toBe("aaa_first");
+    expect(names.at(-1)).toBe("zz_last");
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b, "en")));
+    expect(second.tools).toEqual(first.tools);
+    expect(second.messages[0]).toEqual(first.messages[0]);
+  });
 });

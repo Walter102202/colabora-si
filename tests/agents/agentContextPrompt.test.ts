@@ -11,3 +11,10 @@ it("uses the display identity without replacing the harness fallback", () => {
   expect(buildSystemPrompt({ harness: "codex-host", displayName: "Trama" })).toContain('You are "Trama"');
   expect(buildSystemPrompt({ harness: "codex-host" })).toContain('You are "codex-host"');
 });
+
+it("tells the agent to build under its task page, in one create_database call, and to read it back before delivering", () => {
+  const prompt = buildSystemPrompt({ harness: "trama" });
+  expect(prompt).toContain("never at the root");
+  expect(prompt).toContain("Create a database complete in one create_database call");
+  expect(prompt).toContain("read it back with query_database");
+});

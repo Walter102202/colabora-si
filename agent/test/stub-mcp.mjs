@@ -33,10 +33,10 @@ export const STUB_TOOLS = [
  * @typedef {(args: Record<string, any>) => Record<string, any> | {isError: true, data: Record<string, any>}} Handler
  * @param {{
  *   tasks?: Record<string, any>[], heartbeats?: Record<string, any>[], waits?: Record<string, any>[],
- *   handlers?: Record<string, Handler>, instructions?: string,
+ *   handlers?: Record<string, Handler>, instructions?: string, tools?: import("../mcpClient.mjs").McpTool[],
  * }} [opts]
  */
-export function createStubMcp({ tasks = [], heartbeats = [], waits = [], handlers = {}, instructions } = {}) {
+export function createStubMcp({ tasks = [], heartbeats = [], waits = [], handlers = {}, instructions, tools = [] } = {}) {
   /** @type {{name: string, args: Record<string, any>}[]} */
   const calls = [];
   let seq = 10;
@@ -85,7 +85,7 @@ export function createStubMcp({ tasks = [], heartbeats = [], waits = [], handler
     instructions,
     async initialize() {},
     async listTools() {
-      return STUB_TOOLS;
+      return [...STUB_TOOLS, ...tools];
     },
     /** @param {string} name @param {Record<string, any>} args */
     async callTool(name, args) {

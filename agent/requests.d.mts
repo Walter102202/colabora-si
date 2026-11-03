@@ -10,6 +10,8 @@ export interface RequestOptions {
   signal?: AbortSignal;
   reply?: (chatId: string, text: string) => Promise<unknown>;
   appUrl?: string;
+  efforts?: { step?: string; plan?: string; chat?: string };
+  cacheKey?: string;
 }
 export interface RequestOutcome {
   status: "completed" | "completed_with_errors" | "failed";

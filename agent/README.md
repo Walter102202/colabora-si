@@ -26,7 +26,7 @@ Ctrl+C stops after the current step; press it twice to quit at once.
 
 ## Managed runtime
 
-`fleet.mjs` runs one agent per workspace of a deployment, as the `trama` daemon of `vercel.json`. It reads `VITE_SUPABASE_URL`, `VITE_APP_URL`, `META_MODEL_API_KEY` and `TRAMA_RUNTIME_SECRET` from the project and refuses to start without them. It defaults to `muse-wonder-1.0` with `MODEL_REASONING_EFFORT=low`, priced at $4 input / $20 output per million tokens. `MODEL_NAME=muse-spark-1.3` selects the $1.25 / $4.25 rates; unknown models report zero (unknown) cost. Set `MODEL_REASONING_EFFORT` to another supported value, or an empty value to omit the field. This folder is the Docker build context, so nothing `fleet.mjs` loads may live outside it.
+`fleet.mjs` runs one agent per workspace of a deployment, as the `trama` daemon of `vercel.json`. It reads `VITE_SUPABASE_URL`, `VITE_APP_URL`, `META_MODEL_API_KEY` and `TRAMA_RUNTIME_SECRET` from the project and refuses to start without them. It defaults to `muse-wonder-1.0` with `MODEL_REASONING_EFFORT=low`, priced at $4 input / $20 output per million tokens. `MODEL_NAME=muse-spark-1.3` selects the $1.25 / $4.25 rates; unknown models report zero (unknown) cost. Set `MODEL_REASONING_EFFORT` to another supported value, or an empty value to omit the field. It also connects the workspace endpoint (`/functions/v1/workspace-mcp`), so Trama can create pages and databases under its task page; both endpoints appear to the model as one tool catalog, and a name served by both belongs to the task endpoint. This folder is the Docker build context, so nothing `fleet.mjs` loads may live outside it.
 
 ## Settings
 
@@ -35,9 +35,12 @@ Ctrl+C stops after the current step; press it twice to quit at once.
 | `MODEL_BASE_URL` | yes | OpenAI-compatible base URL; the agent calls `POST {MODEL_BASE_URL}/chat/completions` with `tools` |
 | `MODEL_API_KEY` | no | Bearer key for that endpoint (empty for local servers) |
 | `MODEL_NAME` | yes | Model id sent with every request |
-| `MODEL_REASONING_EFFORT` | no | Provider reasoning effort; omitted when empty, managed Trama defaults to `low` |
+| `MODEL_REASONING_EFFORT` | no | Provider reasoning effort of an ordinary task step; omitted when empty, managed Trama defaults to `low` |
+| `MODEL_EFFORT_PLAN` | no | Effort of a planning turn: the first one, and after a tool error, a block conflict, a person's answer or a changed brief; `medium` when `MODEL_REASONING_EFFORT` is set, otherwise omitted |
+| `MODEL_EFFORT_CHAT` | no | Effort of the conversation with a person; `minimal` when `MODEL_REASONING_EFFORT` is set, otherwise omitted |
 | `MODEL_PRICE_IN`, `MODEL_PRICE_OUT` | no | USD per million input and output tokens; default 0 |
-| `WORKSPACE_MCP_URL` | yes | Remote MCP endpoint of the workspace |
+| `WORKSPACE_MCP_URL` | yes | Remote MCP endpoint of the workspace (tasks) |
+| `WORKSPACE_TOOLS_MCP_URL` | no | The workspace endpoint (pages, databases, views); its tools join the catalog. Managed Trama derives it |
 | `WORKSPACE_AGENT_PAT` | yes | Personal access token of this agent, from Settings > Agents |
 | `WORKSPACE_AGENT_TOKEN_URL` | no | PAT exchange endpoint; default `<MCP origin>/functions/v1/agent-token` |
 | `AGENT_HARNESS_NAME` | no | Name shown on each run; default `reference-agent` |
