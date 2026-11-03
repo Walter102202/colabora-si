@@ -109,5 +109,92 @@ select public.send_agent_message(:'child1','Direct panel message');
 select tests.reset_role();
 select is((select body->>'source' from public.agent_activities where task_id=:'child1' and body->>'text'='Direct panel message'),'row_panel','direct callers cannot impersonate Trama provenance');
 select ok(not has_function_privilege('authenticated','private.send_agent_message_core(uuid,text,text,text[],text,text)','EXECUTE'),'private send core is inaccessible to clients');
+-- Receipt transitions exercise each existing delivery route without extra model turns.
+create function tests.intervene_proposal(p_template uuid, p_task uuid, p_text text) returns uuid language plpgsql as $$
+declare v_id uuid;
+begin
+  insert into public.agent_messages(workspace_id,user_id,agent_id,direction,channel,kind,body,outcome)
+    select workspace_id,user_id,agent_id,'out','surface','text','Review',
+      jsonb_build_object('kind','message_proposed','task_id',p_task,'text',p_text)
+    from public.agent_messages where id=p_template returning id into v_id;
+  return v_id;
+end $$;
+select ok((select outcome ? 'received_at' from public.agent_messages where id=:'proposal'),'passive tool notices mark receipt');
+select tests.intervene_proposal(:'proposal',:'child1','Heartbeat delivery') as heartbeat_proposal \gset
+select tests.set_human(:'owner');
+select public.send_proposed_message(:'heartbeat_proposal');
+select tests.set_agent((:'worker'::jsonb->>'user')::uuid,(:'worker'::jsonb->>'agent')::uuid);
+select public.heartbeat(:'child_run');
+select tests.reset_role();
+select ok((select outcome ? 'received_at' from public.agent_messages where id=:'heartbeat_proposal'),'heartbeat cursor marks receipt');
+select tests.intervene_proposal(:'proposal',:'child1','Bridge delivery') as bridge_proposal \gset
+select tests.set_human(:'owner');
+select public.send_proposed_message(:'bridge_proposal');
+select tests.reset_role();
+select event_id as bridge_event from public.agent_events where task_id=:'child1' and payload->>'text'='Bridge delivery' \gset
+select tests.set_agent((:'worker'::jsonb->>'user')::uuid,(:'worker'::jsonb->>'agent')::uuid);
+select public.mark_events_delivered(array[:'bridge_event'::uuid]);
+select tests.reset_role();
+select ok((select outcome ? 'received_at' from public.agent_messages where id=:'bridge_proposal'),'bridge event delivery marks receipt');
+update public.agents set capabilities=capabilities||'{"continue":false}' where id=(:'lead'::jsonb->>'agent')::uuid;
+select tests.intervene_proposal(:'proposal',:'job','Next session delivery') as queued_proposal \gset
+select tests.set_human(:'owner');
+select is(public.send_proposed_message(:'queued_proposal')->>'delivery','queued_for_next_session','closed session waits for next run');
+select tests.reset_role();
+select ok(not (select outcome ? 'received_at' from public.agent_messages where id=:'queued_proposal'),'queued message is not prematurely received');
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select public.claim_task(:'job','intervene-lead')->>'run_id' as lead_run \gset
+select tests.reset_role();
+select ok((select outcome ? 'received_at' from public.agent_messages where id=:'queued_proposal'),'next run marks queued message received');
+select tests.intervene_proposal(:'proposal',:'child1','Acknowledge this') as reply_proposal \gset
+select tests.set_human(:'owner');
+select public.send_proposed_message(:'reply_proposal');
+select tests.reset_role();
+insert into public.agent_activities(workspace_id,task_id,seq,type,body,author_type,author_id) values
+(:'ws',:'child1',2,'response','{"text":"Older sequence"}','agent',(:'worker'::jsonb->>'agent')::uuid),
+(:'ws',:'child1',private.next_seq(:'child1'),'response','{"text":"Wrong author"}','agent',(:'lead'::jsonb->>'agent')::uuid);
+select tests.set_agent((:'worker'::jsonb->>'user')::uuid,(:'worker'::jsonb->>'agent')::uuid);
+select public.post_activity(:'child_run','response','{"text":"Transient"}',true);
+select public.post_activity(:'child_run','response','{"text":"   "}');
+select tests.reset_role();
+select ok(not (select outcome ? 'reply' from public.agent_messages where id=:'reply_proposal'),'old sequence, other author, ephemeral and blank activities do not acknowledge');
+select tests.set_agent((:'worker'::jsonb->>'user')::uuid,(:'worker'::jsonb->>'agent')::uuid);
+select public.post_activity(:'child_run','thought',jsonb_build_object('text',repeat('Acknowledged ',40)));
+select tests.reset_role();
+select ok((select outcome ? 'received_at' and outcome ? 'reply' from public.agent_messages where id=:'reply_proposal'),'first saved thought supplies receipt and reply');
+select is((select length(outcome#>>'{reply,text}') from public.agent_messages where id=:'reply_proposal'),300,'reply is bounded to 300 characters');
+select is((select outcome#>>'{reply,agent_name}' from public.agent_messages where id=:'reply_proposal'),'Codex','reply names the responding agent');
+select (select coalesce(outcome->'reply','null'::jsonb) from public.agent_messages where id=:'reply_proposal') as first_reply \gset
+select tests.set_agent((:'worker'::jsonb->>'user')::uuid,(:'worker'::jsonb->>'agent')::uuid);
+select public.post_activity(:'child_run','response','{"text":"Later response"}');
+select tests.reset_role();
+select is((select outcome->'reply' from public.agent_messages where id=:'reply_proposal'),:'first_reply'::jsonb,'later responses preserve the first reply');
+-- Deliberately fail the chat update: the activity must survive and the receipt must roll back.
+select tests.intervene_proposal(:'proposal',:'child1','Fail-open delivery') as fail_proposal \gset
+select tests.set_human(:'owner');
+select public.send_proposed_message(:'fail_proposal');
+select tests.reset_role();
+create function tests.reject_intervene_receipt() returns trigger language plpgsql as $$ begin raise exception 'forced receipt update failure'; end $$;
+create trigger reject_intervene_receipt before update on public.agent_messages
+for each row when (new.id=:'fail_proposal'::uuid) execute function tests.reject_intervene_receipt();
+select tests.set_agent((:'worker'::jsonb->>'user')::uuid,(:'worker'::jsonb->>'agent')::uuid);
+select lives_ok(format('select public.post_activity(%L,''response'',''{"text":"Survives receipt failure"}'')',:'child_run'),'receipt failure never aborts post_activity');
+select tests.reset_role();
+select ok(exists(select 1 from public.agent_activities where task_id=:'child1' and body->>'text'='Survives receipt failure'),'activity persisted despite receipt failure');
+select is((select reply_activity_id from private.sent_person_messages where message_id=:'fail_proposal'),null::uuid,'failed chat update rolls back the receipt update too');
+drop trigger reject_intervene_receipt on public.agent_messages;
+drop function tests.reject_intervene_receipt();
+-- A platform Lead has no task.message event, but its heartbeat takes the same prompts.
+update public.agents set is_platform=false where id=:'pa';
+update public.agents set is_platform=true where id=(:'lead'::jsonb->>'agent')::uuid;
+select tests.intervene_proposal(:'proposal',:'job','Platform delivery') as platform_proposal \gset
+select tests.set_human(:'owner');
+select public.send_proposed_message(:'platform_proposal');
+select tests.reset_role();
+select is((select count(*) from public.agent_events where task_id=:'job' and type='task.message' and payload->>'text'='Platform delivery'),0::bigint,'platform Lead has no session event');
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select ok(public.heartbeat(:'lead_run')->'pending_prompts' @> '[{"text":"Platform delivery","via":"Trama"}]','platform heartbeat receives the prompt');
+select tests.reset_role();
+select ok((select outcome ? 'received_at' from public.agent_messages where id=:'platform_proposal'),'platform heartbeat marks receipt');
 select * from finish();
 rollback;

@@ -290,3 +290,68 @@ begin
   return result;
 end $$;
 revoke all on function private.take_run_prompts(uuid,bigint) from public,anon,authenticated;
+
+-- Receipt bookkeeping is best-effort: it must never abort the delivery or agent write.
+create or replace function private.receive_person_message()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_seq bigint; v_started timestamptz; v_exact boolean := false;
+begin
+  if not exists (select 1 from public.agent_tasks t where t.id = new.task_id and t.delegate_agent_id = new.agent_id) then return new; end if;
+  if tg_table_name = 'agent_runs' then
+    if tg_op = 'INSERT' then
+      if new.status not in ('running','waiting') then return new; end if;
+      v_started := new.started_at;
+    else
+      v_seq := new.prompt_delivered_seq;
+    end if;
+  else
+    v_seq := (new.payload->>'prompt_seq')::bigint;
+    v_exact := true;
+  end if;
+  with received as (
+    update private.sent_person_messages s set received_at = now()
+    where s.task_id = new.task_id and s.reply_activity_id is null and s.received_at is null
+      and ((v_started is not null and s.sent_at <= v_started)
+        or (v_exact and s.prompt_seq = v_seq) or (not v_exact and s.prompt_seq <= v_seq))
+    returning s.message_id, s.received_at
+  )
+  update public.agent_messages m set outcome = m.outcome || jsonb_build_object('received_at', r.received_at)
+    from received r where m.id = r.message_id;
+  return new;
+exception when others then
+  return new;
+end $$;
+revoke all on function private.receive_person_message() from public, anon, authenticated;
+
+create trigger agent_runs_person_receipt after insert or update of prompt_delivered_seq on public.agent_runs
+  for each row execute function private.receive_person_message();
+create trigger agent_events_person_receipt after update of status on public.agent_events
+  for each row when (new.type = 'task.message' and new.status = 'delivered' and old.status is distinct from new.status)
+  execute function private.receive_person_message();
+
+create or replace function private.reply_to_person_message()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_name text;
+begin
+  if new.author_type <> 'agent' or new.ephemeral or new.type not in ('response','thought')
+    or nullif(btrim(new.body->>'text'), '') is null then return new; end if;
+  select case when a.is_platform then 'Trama' else a.name end into v_name
+    from public.agent_tasks t join public.agents a on a.id = t.delegate_agent_id
+    where t.id = new.task_id and a.id = new.author_id;
+  if not found then return new; end if;
+  with replied as (
+    update private.sent_person_messages s set reply_activity_id = new.id, received_at = coalesce(s.received_at, now())
+    where s.task_id = new.task_id and s.reply_activity_id is null and s.prompt_seq < new.seq
+    returning s.message_id, s.received_at
+  )
+  update public.agent_messages m set outcome = m.outcome || jsonb_build_object('received_at', r.received_at,
+    'reply', jsonb_build_object('text', left(new.body->>'text', 300), 'at', new.created_at, 'agent_name', v_name))
+    from replied r where m.id = r.message_id;
+  return new;
+exception when others then
+  return new;
+end $$;
+revoke all on function private.reply_to_person_message() from public, anon, authenticated;
+create trigger agent_activities_person_reply after insert on public.agent_activities
+  for each row when (new.type in ('response','thought') and not new.ephemeral and new.author_type = 'agent')
+  execute function private.reply_to_person_message();
