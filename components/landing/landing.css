@@ -185,7 +185,7 @@ html:has(.landing){-webkit-text-size-adjust:100%;scroll-behavior:smooth}
 .landing .cs-connect-agent{display:inline-flex;align-items:center;gap:18px;margin-top:18px;padding:9px 13px;border:1px solid var(--cs-line);border-radius:7px;color:var(--cs-blue);font-size:var(--fs-ui);font-weight:600;transition:background .15s ease,border-color .15s ease}
 .landing .cs-connect-agent:hover{border-color:var(--cs-blue);background:var(--cs-blue-soft)}
 .landing .cs-connection-beta{display:block;font-size:11px;color:var(--cs-muted);margin-top:7px}
-.landing .cs-available-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.landing .cs-available-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}
 .landing .cs-available-agent{position:relative;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:9px;height:100%;min-height:105px;padding:12px 6px;border:1px solid transparent;border-radius:9px;background:var(--cs-paper);text-align:center;font-size:11.5px;line-height:1.35;font-weight:500;transition:background .15s ease,transform .15s ease,border-color .15s ease}
 .landing .cs-available-agent:hover,.landing .cs-available-agent:focus-visible{background:var(--cs-blue-soft);border-color:var(--cs-line);transform:translateY(-2px)}
 .landing .cs-available-logo{display:flex;align-items:center;justify-content:center;width:44px;height:44px;padding:7px;background:#fff;border:1px solid #eaeaea;border-radius:11px}
@@ -294,6 +294,9 @@ html:has(.landing){-webkit-text-size-adjust:100%;scroll-behavior:smooth}
 .landing .cs-tp__qs button[aria-pressed="true"]{border-color:var(--cs-blue);color:var(--cs-blue)}
 .landing .cs-tp__a{font-size:15px;line-height:1.5}
 .landing .cs-tp__a .cs-primary{margin-top:10px;font-size:14px}
+@media (max-width:1180px){
+  .landing .cs-available-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
 @media (max-width:850px){
   .landing .cs-hero{grid-template-columns:1.2fr 1fr;gap:24px;padding-block:52px 36px}
   .landing .cs-hero-copy{padding-top:30px}
@@ -364,7 +367,6 @@ html:has(.landing){-webkit-text-size-adjust:100%;scroll-behavior:smooth}
   .landing .cs-available-copy h3{font-size:32px}
   .landing .cs-available-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
   .landing .cs-available-agent{min-height:102px;font-size:11px;padding:11px 5px}
-  .landing .cs-available-grid li:last-child{grid-column:2}
   .landing .cs-connect-agent{min-height:44px}
   .landing .cs-own-agent{min-height:44px;margin-top:9px}
   .landing .cs-footer{align-items:flex-start}

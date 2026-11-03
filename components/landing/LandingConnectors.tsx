@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { CONNECT_AGENT_NAMES } from "@/lib/agentConnectCatalog";
+import { CONNECT_AGENT_NAMES, connectAgentLogo } from "@/lib/agentConnectCatalog";
 import { CONNECT_URL, connectUrl } from "@/lib/routes";
 import { TramaImage } from "./TramaImage";
 
@@ -18,7 +18,12 @@ const UPCOMING = [
   { id: "dropbox", name: "Dropbox", file: "dropbox.svg", x: 12, y: 70, tilt: 8, scale: .9, filled: true },
 ];
 
-const AVAILABLE_AGENTS = ["claude-code", "codex", "chatgpt", "claude", "cursor", "muse-code", "gemini-cli", "antigravity", "hermes", "openclaw"];
+const FEATURED_AGENTS = ["claude-code", "codex", "chatgpt", "claude", "cursor"];
+const namedAgents = Object.keys(CONNECT_AGENT_NAMES).filter((id) => id !== "your-agent");
+const AVAILABLE_AGENTS = [
+  ...FEATURED_AGENTS.filter((id) => namedAgents.includes(id)),
+  ...namedAgents.filter((id) => !FEATURED_AGENTS.includes(id)),
+];
 
 export function LandingConnectors() {
   const [active, setActive] = useState<string | null>(null);
@@ -113,7 +118,7 @@ export function LandingConnectors() {
             {AVAILABLE_AGENTS.map((id) => (
               <li key={id}>
                 <a className="cs-available-agent" href={connectUrl(id)} aria-label={`Connect ${CONNECT_AGENT_NAMES[id]}`}>
-                  <span className="cs-available-logo"><img src={`/brand/agents/${id}.svg`} alt="" width={32} height={32} loading="lazy" /></span>
+                  <span className="cs-available-logo"><img src={connectAgentLogo(id)} alt="" width={32} height={32} loading="lazy" /></span>
                   <span>{CONNECT_AGENT_NAMES[id]}</span>
                   <span className="cs-agent-link-arrow" aria-hidden="true">↗</span>
                 </a>
