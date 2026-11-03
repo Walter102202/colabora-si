@@ -90,8 +90,9 @@ export function readConfig(env) {
     modelApiKey: env.MODEL_API_KEY ?? "",
     modelName: /** @type {string} */ (env.MODEL_NAME),
     modelEffort: env.MODEL_REASONING_EFFORT ?? "",
-    modelEffortPlan: env.MODEL_EFFORT_PLAN || "medium",
-    modelEffortChat: env.MODEL_EFFORT_CHAT || "minimal",
+    // A provider without reasoning_effort (empty step effort) keeps every turn unset unless a value is given explicitly.
+    modelEffortPlan: env.MODEL_EFFORT_PLAN ?? (env.MODEL_REASONING_EFFORT ? "medium" : ""),
+    modelEffortChat: env.MODEL_EFFORT_CHAT ?? (env.MODEL_REASONING_EFFORT ? "minimal" : ""),
     prices: { input: num(env.MODEL_PRICE_IN, 0), output: num(env.MODEL_PRICE_OUT, 0) },
     mcpUrl,
     workspaceMcpUrl: env.WORKSPACE_TOOLS_MCP_URL || undefined,

@@ -90,7 +90,7 @@ async function main() {
     serve(agentId, signal) {
       const signIn = async () => (await runtime({ action: "token", agent_id: agentId })).access_token;
       const mcp = buildMcp(config, (url) => createMcpClient({ url, clientName: config.harness, signIn }));
-      return serveAgent({ config, mcp, model, signal, log });
+      return serveAgent({ config, mcp, model, signal, log, cacheKey: agentId });
     },
   });
   log("stopped");

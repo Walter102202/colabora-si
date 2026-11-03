@@ -36,6 +36,6 @@ const mcp = buildMcp(config, (url) => createMcpClient({ url, pat: config.agentPa
 const model = createModel({ baseUrl: config.modelBaseUrl, apiKey: config.modelApiKey, model: config.modelName, reasoningEffort: config.modelEffort });
 
 log(`${config.harness} started: model ${config.modelName}, effort ${config.modelEffort || "provider default"}, workspace ${new URL(config.mcpUrl).host}`);
-await serveAgent({ config, mcp, model, noticeState: fileState(`${resolve(envPath)}.notices.json`), signal: controller.signal, log });
+await serveAgent({ config, mcp, model, noticeState: fileState(`${resolve(envPath)}.notices.json`), signal: controller.signal, log, cacheKey: config.harness });
 log("stopped");
 process.exit(0);

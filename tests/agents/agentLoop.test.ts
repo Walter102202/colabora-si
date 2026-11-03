@@ -763,3 +763,25 @@ describe("workspace writes in the task loop", () => {
     expect(warned).toContain("k1");
   });
 });
+
+describe("effort per turn in the task loop", () => {
+  it("plans at the planning effort, steps at the step effort and replans after a tool error, keyed to the agent's cache", async () => {
+    const mcp = createStubMcp({ tasks: queued, handlers: { append_blocks: () => ({ isError: true, data: { code: "invalid_input", message: "markdown is required" } }) } });
+    const model = createStubModel([
+      { tool_calls: [toolCall("read_page", { page_id: "row-task-1" })] },
+      { tool_calls: [toolCall("append_blocks", { page_id: "row-task-1" })] },
+      { tool_calls: [toolCall("read_page", { page_id: "row-task-1" })] },
+      { tool_calls: [toolCall("submit_for_review", { summary: "Done", artifact_ids: [] })] },
+    ]);
+    await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, maxTurns: 6, efforts: { step: "low", plan: "medium", chat: "minimal" }, cacheKey: "agent-1" });
+    const requests = model.requests as { reasoningEffort?: string; promptCacheKey?: string }[];
+    expect(requests.map((r) => r.reasoningEffort)).toEqual(["medium", "low", "medium", "low"]);
+    expect(new Set(requests.map((r) => r.promptCacheKey))).toEqual(new Set(["agent-1"]));
+  });
+  it("leaves the effort to the model when no efforts are configured", async () => {
+    const mcp = createStubMcp({ tasks: queued });
+    const model = createStubModel([{ content: "Done" }]);
+    await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, maxTurns: 1 });
+    expect((model.requests[0] as { reasoningEffort?: string }).reasoningEffort).toBeUndefined();
+  });
+});

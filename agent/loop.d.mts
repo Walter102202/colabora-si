@@ -38,6 +38,8 @@ export function runAgent(opts: {
   resume?: boolean;
   modelVision?: boolean;
   modelPdf?: boolean;
+  efforts?: { step?: string; plan?: string; chat?: string };
+  cacheKey?: string;
   prices?: { input: number; output: number };
   appUrl?: string;
   signal?: AbortSignal;

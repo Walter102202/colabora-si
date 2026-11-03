@@ -4,9 +4,9 @@
 /**
  * @typedef {{id: string, type: "function", function: {name: string, arguments: string}}} ToolCall
  * @typedef {{role: "assistant", content: string | null, tool_calls?: ToolCall[]}} AssistantMessage
- * @typedef {{input_tokens: number, output_tokens: number}} Usage
+ * @typedef {{input_tokens: number, output_tokens: number, cached_tokens?: number}} Usage
  * @typedef {{message: AssistantMessage, usage: Usage, finish_reason?: string}} ChatResult
- * @typedef {{name: string, chat: (req: {messages: object[], tools?: object[]}) => Promise<ChatResult>}} Model
+ * @typedef {{name: string, chat: (req: {messages: object[], tools?: object[], signal?: AbortSignal, reasoningEffort?: string, promptCacheKey?: string}) => Promise<ChatResult>}} Model
  */
 
 /**
@@ -57,10 +57,14 @@ export function createModel({ baseUrl, apiKey = "", model, reasoningEffort = "",
   const endpoint = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
   return {
     name: model,
-    async chat({ messages, tools, signal }) {
+    async chat({ messages, tools, signal, reasoningEffort: effortForCall, promptCacheKey }) {
       /** @type {Record<string, unknown>} */
       const body = { model, messages };
-      if (reasoningEffort) body.reasoning_effort = reasoningEffort;
+      // A call may ask for more or less thinking than the instance default; an empty value omits the field.
+      const effort = effortForCall ?? reasoningEffort;
+      if (effort) body.reasoning_effort = effort;
+      // Same key, same prefix: the provider's prefix cache serves the catalog and the system prompt from one agent to its next turn.
+      if (promptCacheKey) body.prompt_cache_key = promptCacheKey;
       if (tools?.length) {
         body.tools = tools;
         body.tool_choice = "auto";
@@ -87,7 +91,8 @@ export function createModel({ baseUrl, apiKey = "", model, reasoningEffort = "",
             if (!choice?.message) throw new Error("model response has no choices");
             return {
               message: normalizeMessage(choice.message),
-              usage: { input_tokens: Number(json.usage?.prompt_tokens ?? 0), output_tokens: Number(json.usage?.completion_tokens ?? 0) },
+              usage: { input_tokens: Number(json.usage?.prompt_tokens ?? 0), output_tokens: Number(json.usage?.completion_tokens ?? 0),
+                cached_tokens: Number(json.usage?.prompt_tokens_details?.cached_tokens ?? 0) },
               finish_reason: choice.finish_reason,
             };
           }

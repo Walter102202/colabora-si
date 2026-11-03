@@ -156,3 +156,13 @@ describe("the model and the channel tools", () => {
     expect(h.mcp.calls.at(-1)).toMatchObject({ name: "reply_person_message", args: { through_seq: 0 } });
   });
 });
+
+describe("the chat's effort", () => {
+  const ID = "00000000-0000-4000-8000-000000000002";
+  it("talks to a person at the chat effort", async () => {
+    const mcp = createStubMcp({ handlers: { get_ai_request: () => ({ kind: "assist", messages: [{ id: ID, from: "person", text: "hi" }], through_seq: 1 }), heartbeat: () => ({}), reply_person_message: () => ({ channel: "app", text: "Hello." }) } });
+    const model = createStubModel([{ content: "Hello." }]);
+    await runRequest({ call: mcp.callTool, model, task: { task_id: "t", request_kind: "assist" }, runId: "run", log: () => {}, efforts: { chat: "minimal" } });
+    expect((model.requests[0] as { reasoningEffort?: string }).reasoningEffort).toBe("minimal");
+  });
+});
