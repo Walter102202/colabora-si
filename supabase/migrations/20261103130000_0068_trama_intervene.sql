@@ -100,6 +100,8 @@ begin
       order by (p.id=v_last.context->>'page_id') desc nulls last,p.title,p.id limit 10) x;
   select coalesce(jsonb_agg(x),'[]') into v_active from (
     select t.id as task_id,t.title,jsonb_build_object('id',a.id,'name',a.name) as agent,t.state,
+      t.parent_task_id, t.context_id as job_task_id,
+      (coalesce(a.role = 'lead', false) or exists (select 1 from public.agent_tasks c where c.parent_task_id = t.id)) as is_lead,
       case when private.person_reads_page(parent.row_page_id,v_t.workspace_id,v_t.owner_user_id) then parent.title end as parent_title
     from public.agent_tasks t left join public.agents a on a.id=t.delegate_agent_id left join public.agent_tasks parent on parent.id=t.parent_task_id
     where t.workspace_id=v_t.workspace_id and t.request_kind is null and t.state not in ('done','failed','cancelled')

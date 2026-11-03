@@ -40,6 +40,11 @@ select id as req from public.agent_tasks where request_kind='assist' and owner_u
 select tests.set_agent(:'pu',:'pa');
 select public.claim_task(:'req','digest')->>'run_id' as run \gset
 select public.assist_request_context(:'req') as ctx \gset
+select is((select t->>'is_lead' from jsonb_array_elements(:'ctx'::jsonb->'active_tasks') t where t->>'task_id'=:'job'),'true','job task is a Lead target');
+select is((select t->>'job_task_id' from jsonb_array_elements(:'ctx'::jsonb->'active_tasks') t where t->>'task_id'=:'job'),:'job','top-level job points to itself');
+select is((select t->>'parent_task_id' from jsonb_array_elements(:'ctx'::jsonb->'active_tasks') t where t->>'task_id'=:'child1'),:'job','subtask names its parent');
+select is((select t->>'job_task_id' from jsonb_array_elements(:'ctx'::jsonb->'active_tasks') t where t->>'task_id'=:'child1'),:'job','subtask points to its job');
+select is((select t->>'is_lead' from jsonb_array_elements(:'ctx'::jsonb->'active_tasks') t where t->>'task_id'=:'child1'),'false','worker task is not a Lead target');
 select is(:'ctx'::jsonb#>>'{jobs,0,task_id}',:'job','open subtask puts its job first');
 select is(:'ctx'::jsonb#>>'{jobs,0,open}','true','open subtask marks its job open');
 select is(:'ctx'::jsonb#>>'{jobs,0,lead,name}','Claude Code','job names its Lead');
