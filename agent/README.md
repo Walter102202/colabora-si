@@ -36,8 +36,8 @@ Ctrl+C stops after the current step; press it twice to quit at once.
 | `MODEL_API_KEY` | no | Bearer key for that endpoint (empty for local servers) |
 | `MODEL_NAME` | yes | Model id sent with every request |
 | `MODEL_REASONING_EFFORT` | no | Provider reasoning effort of an ordinary task step; omitted when empty, managed Trama defaults to `low` |
-| `MODEL_EFFORT_PLAN` | no | Effort of a planning turn: the first one, and after a tool error, a block conflict or a changed brief; default `medium` |
-| `MODEL_EFFORT_CHAT` | no | Effort of the conversation with a person; default `minimal` |
+| `MODEL_EFFORT_PLAN` | no | Effort of a planning turn: the first one, and after a tool error, a block conflict, a person's answer or a changed brief; `medium` when `MODEL_REASONING_EFFORT` is set, otherwise omitted |
+| `MODEL_EFFORT_CHAT` | no | Effort of the conversation with a person; `minimal` when `MODEL_REASONING_EFFORT` is set, otherwise omitted |
 | `MODEL_PRICE_IN`, `MODEL_PRICE_OUT` | no | USD per million input and output tokens; default 0 |
 | `WORKSPACE_MCP_URL` | yes | Remote MCP endpoint of the workspace (tasks) |
 | `WORKSPACE_TOOLS_MCP_URL` | no | The workspace endpoint (pages, databases, views); its tools join the catalog. Managed Trama derives it |

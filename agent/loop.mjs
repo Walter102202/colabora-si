@@ -771,6 +771,8 @@ export async function runAgent(opts) {
           }
           const lines = [...sideAnswers.splice(0), ...w.answer.map((/** @type {any} */ p) => `- (${p.signal ?? "message"}) ${answerText(p)}`)];
           messages.push(answersMessage(lines));
+          // The answer the run was blocked on changes the plan: the next turn runs at the planning effort.
+          learned.afterHuman = true;
           continue;
         }
         if (reviewed) {

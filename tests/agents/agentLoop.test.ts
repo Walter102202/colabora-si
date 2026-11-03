@@ -778,6 +778,23 @@ describe("effort per turn in the task loop", () => {
     expect(requests.map((r) => r.reasoningEffort)).toEqual(["medium", "low", "medium", "low"]);
     expect(new Set(requests.map((r) => r.promptCacheKey))).toEqual(new Set(["agent-1"]));
   });
+  it("replans at the planning effort on the turn after a person answers the question the run was blocked on", async () => {
+    const mcp = createStubMcp({
+      tasks: queued,
+      waits: [
+        seed(),
+        { changed: true, stop_requested: false, next_seq: 12, activities: [{ seq: 12, type: "prompt", author_type: "human", signal: "feedback", approval_id: "input-1", excerpt: "Casual" }] },
+      ],
+    });
+    const model = createStubModel([
+      { tool_calls: [toolCall("request_input", { question: "Formal or casual?", blocking: false })] },
+      { content: "Waiting for the tone." },
+      { tool_calls: [toolCall("submit_for_review", { summary: "Draft written", artifact_ids: ["art-1"] })] },
+    ]);
+    await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, efforts: { step: "low", plan: "medium", chat: "minimal" }, cacheKey: "agent-1" });
+    const requests = model.requests as { reasoningEffort?: string }[];
+    expect(requests.map((r) => r.reasoningEffort)).toEqual(["medium", "low", "medium"]);
+  });
   it("leaves the effort to the model when no efforts are configured", async () => {
     const mcp = createStubMcp({ tasks: queued });
     const model = createStubModel([{ content: "Done" }]);
