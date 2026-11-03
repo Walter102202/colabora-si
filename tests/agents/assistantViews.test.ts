@@ -107,3 +107,18 @@ describe("AssistantThreadView", () => {
     expect(view({ messages: [message({ body: "<img src=x onerror=alert(1)>" })] })).not.toContain("<img");
   });
 });
+
+it.each(["work_proposed", "work_started", "work_declined", "legacy"])("renders durable work card: %s", (state) => {
+  const host = document.createElement("div");
+  host.innerHTML = view({ messages: [message({ direction: "out", outcome: { kind: state === "legacy" ? "work_proposed" : state, page_id: "home", task_id: "task", page_title: "Home", ...(state === "legacy" ? {} : { summary: "Create five tasks on Home." }) } })], onPropose: noop, onDeclineWork: noop });
+  if (state === "work_proposed") {
+    expect(host.textContent).toContain("Start this work?On HomeCreate five tasks on Home.");
+    expect(host.querySelector('[aria-label="Do it on Home"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Not now on Home"]')).not.toBeNull();
+  } else if (state === "legacy") expect(host.textContent).toContain("Do it");
+  else {
+    expect(host.textContent).not.toContain("Do it");
+    expect(host.textContent).toContain(state === "work_started" ? "Started." : "Not started.");
+    if (state === "work_started") expect(host.querySelector('a')?.getAttribute("href")).toBe("/p/home?task=task");
+  }
+});

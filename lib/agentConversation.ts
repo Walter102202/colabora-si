@@ -14,7 +14,7 @@ export interface PersonMessage {
   body: string;
   forwarded: boolean;
   needs_reply?: boolean;
-  outcome: { kind?: string; from_seq?: number; note_id?: string; page_id?: string; message_id?: string; name?: string; harness?: string; role?: "worker" | "lead" } | null;
+  outcome: { summary?: string; page_title?: string; task_id?: string; agent_id?: string; kind?: string; from_seq?: number; note_id?: string; page_id?: string; message_id?: string; name?: string; harness?: string; role?: "worker" | "lead" } | null;
   created_at: string;
 }
 
@@ -68,6 +68,21 @@ export function mergeMessages(current: PersonMessage[], incoming: PersonMessage[
 }
 
 const COLUMNS = "id,seq,workspace_id,direction,channel,kind,body,forwarded,needs_reply,outcome,created_at";
+
+export async function startProposedWork(messageId: string): Promise<{ task_id: string; page_id: string; already_started?: boolean }> {
+  const client = getAgentClient();
+  if (!client) throw new Error("Sign in to start work.");
+  const { data, error } = await client.rpc("start_proposed_work", { p_message_id: messageId });
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function declineProposedWork(messageId: string): Promise<void> {
+  const client = getAgentClient();
+  if (!client) throw new Error("Sign in to manage work.");
+  const { error } = await client.rpc("decline_proposed_work", { p_message_id: messageId });
+  if (error) throw new Error(error.message);
+}
 
 export async function settleAgentProposal(messageId: string, accept: boolean): Promise<{ name: string; harness: string; role: "worker" | "lead" }> {
   const client = getAgentClient();

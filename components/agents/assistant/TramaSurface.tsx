@@ -12,13 +12,12 @@ import { useAgentTasks } from "@/lib/agentTasks";
 import { proposedLessons, useAgentLessons } from "@/lib/agentLessons";
 import { openDiscrepancies, useAgentSources } from "@/lib/agentSources";
 import { useAuthStore } from "@/lib/auth";
-import { createTask } from "@/lib/agentActions";
 import { type ClipboardEvent, type FocusEvent, type PointerEvent, useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { AssistantThreadView } from "@/components/agents/assistant/AssistantThreadView";
 import { VoiceButton } from "@/components/agents/assistant/VoiceButton";
 import { getAgentClient } from "@/lib/agentClient";
-import { currentThread, refreshAgentConversation, settleAgentProposal, type Draft, type PersonMessage, useAgentConversation } from "@/lib/agentConversation";
+import { currentThread, declineProposedWork, startProposedWork, refreshAgentConversation, settleAgentProposal, type Draft, type PersonMessage, useAgentConversation } from "@/lib/agentConversation";
 import { agentInputFor } from "@/lib/agentDefaults";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { MAX_RECORDING_MS, type Recorder, startRecorder, uploadWav, voiceFailure, voiceReducer } from "@/lib/agentVoice";
@@ -174,14 +173,23 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
     } finally { resetLock.current = false; setResetting(false); }
   }
   async function propose(message: PersonMessage) {
-    const original = messages.find((m) => m.id === message.outcome?.message_id && m.direction === "in");
-    if (!trama || !original || !message.outcome?.page_id || proposalLock.current) return;
+    if (proposalLock.current) return;
     proposalLock.current = true; setProposing(message.id); setProposalError(null);
     try {
-      const result = await createTask(message.outcome.page_id, { objective: original.body }, trama.id, { idempotencyKey: "proposal:" + original.id });
-      close(); void navigate(taskUrl(message.outcome.page_id, result.task_id));
+      const result = await startProposedWork(message.id);
+      close(); void navigate(taskUrl(result.page_id, result.task_id));
     } catch (e) { setProposalError(e instanceof Error ? e.message : "Could not start the task."); }
     finally { proposalLock.current = false; setProposing(null); }
+  }
+  async function declineWork(message: PersonMessage) {
+    if (proposalLock.current) return;
+    proposalLock.current = true; setProposing(message.id); setProposalError(null);
+    try { await declineProposedWork(message.id); }
+    catch (e) { setProposalError(e instanceof Error ? e.message : "Could not decline the task."); }
+    finally {
+      await refreshAgentConversation(workspaceId).catch(() => {});
+      proposalLock.current = false; setProposing(null);
+    }
   }
   const suggest = (body: string) => {
     selection.current = window.getSelection()?.toString().trim() || selection.current;
@@ -376,7 +384,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
           onRetrySend={failed ? () => void submit(failed) : null}
           onDraft={(text) => { setDraft(text); if (!text) { pasted.current = false; clip.current = null; if (voice.phase === "review") dispatch({ type: "reset" }); } }}
           onPaste={onPaste} onSend={() => void submit()} onUndo={(id) => void undo(id)}
-          onPropose={(message) => void propose(message)} proposing={proposing}
+          onPropose={(message) => void propose(message)} onDeclineWork={(message) => void declineWork(message)} proposing={proposing}
           onSettleAgent={(message, accept) => void settleAgent(message, accept)} hasTaskDatabase={Boolean(taskDatabase)} agentProposalError={proposalError?.startsWith("We couldn’t create this agent.")}
           onOpenNotes={() => { void openNotes().then((id) => { if (id) { close(); void navigate(pageUrl(id)); } }); }}
           voice={<VoiceButton state={voice} elapsedMs={elapsed} onPress={() => void press()} onStop={() => void finish()} onCancel={cancel} onRetry={retry} />}

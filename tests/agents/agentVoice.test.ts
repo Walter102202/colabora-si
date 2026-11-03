@@ -175,3 +175,22 @@ it.each(["account", "workspace"])("discards old conversation data after switchin
 it("starts a new recording from transcript review with stop and cancel state", () => {
   expect(run([{ type: "press" }, { type: "granted", at: 9 }], { phase: "review", clipId: "old", transcript: "previous" })).toEqual({ phase: "recording", startedAt: 9 });
 });
+
+it("Realtime updates settle the existing work card without duplicating it", async () => {
+  const api = await import("@/lib/agentClient");
+  const { useAgentConversation } = await import("@/lib/agentConversation");
+  let receive!: (payload: { new: PersonMessage }) => void;
+  const on = vi.fn((_event, _filter, callback) => { receive = callback; return channel; });
+  const channel = { on, subscribe: vi.fn() };
+  const query = { select: () => query, eq: () => query, order: () => query, limit: async () => ({ data: [] }) };
+  const spy = vi.spyOn(api, "getAgentClient").mockReturnValue({ from: () => query, channel: () => channel, realtime: { channels: [] }, removeChannel: vi.fn() } as unknown as ReturnType<typeof api.getAgentClient>);
+  const release = useAgentConversation.getState().subscribe("w", "person");
+  try {
+    await Promise.resolve();
+    expect(on).toHaveBeenCalledWith("postgres_changes", expect.objectContaining({ event: "*", table: "agent_messages" }), expect.any(Function));
+    const row: PersonMessage = { id: "m", seq: 1, workspace_id: "w", direction: "out", channel: "surface", kind: "text", body: "Offer", forwarded: false, outcome: { kind: "work_proposed" }, created_at: "" };
+    receive({ new: row });
+    receive({ new: { ...row, outcome: { kind: "work_started", task_id: "task" } } });
+    expect(useAgentConversation.getState().messages).toEqual([{ ...row, outcome: { kind: "work_started", task_id: "task" } }]);
+  } finally { release(); spy.mockRestore(); }
+});

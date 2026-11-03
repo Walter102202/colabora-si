@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation } from "react-router";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { TramaSurface } from "@/components/agents/assistant/TramaSurface";
 import { refreshAgentConversation, settleAgentProposal, useAgentConversation, type PersonMessage } from "@/lib/agentConversation";
@@ -35,7 +35,8 @@ beforeEach(() => {
   useAgentSources.setState({ discrepancies: {}, subscribe: vi.fn(() => () => {}) });
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllEnvs(); });
-const mount = () => act(() => root.render(<MemoryRouter initialEntries={["/p/page"]}><TramaSurface workspaceId="w" userId="person" /></MemoryRouter>));
+function Location() { const location = useLocation(); return <output>{location.pathname}{location.search}</output>; }
+const mount = () => act(() => root.render(<MemoryRouter initialEntries={["/p/page"]}><TramaSurface workspaceId="w" userId="person" /><Location /></MemoryRouter>));
 const button = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
 const originalCreateAgent = useAgentsStore.getState().createAgent;
 
@@ -142,16 +143,19 @@ it("does not infer absence from loading and shows a real unanswered message", ()
   expect(document.querySelector('[data-trama-surface] > [role="status"]')).toBeNull();
 });
 
-it("creates work only on the click using the original words and a stable retry key", async () => {
-  const original = message({ id: "original" });
-  useAgentConversation.setState({ messages: [original, message({ id: "reply", seq: 2, direction: "out", body: "The model's wording", outcome: { kind: "work_proposed", page_id: "page", message_id: "original" } })] });
-  vi.mocked(createTask).mockResolvedValue({ task_id: "task", context_id: "context", brief_version: 1 });
-  mount();
-  act(() => button("Talk to Trama").click());
+it.each(["start", "decline"])("settles work through the server once: %s", async (action) => {
+  vi.stubEnv("VITE_TRAMA_MANAGED", "1");
+  const api = await import("@/lib/agentClient");
+  const rpc = vi.fn(async () => ({ data: { task_id: "task", page_id: "page" }, error: null }));
+  vi.spyOn(api, "getAgentClient").mockReturnValue({ rpc } as unknown as ReturnType<typeof api.getAgentClient>);
+  // The original can be outside the 50-message window: only the server resolves it.
+  useAgentConversation.setState({ messages: [message({ id: "reply", direction: "out", outcome: { kind: "work_proposed", page_id: "page", page_title: "Home", summary: "Create five tasks on Home.", message_id: "original" } })] });
+  mount(); act(() => button("Talk to Trama").click());
+  expect(rpc).not.toHaveBeenCalled();
+  await act(async () => { button(action === "start" ? "Do it on Home" : "Not now on Home").click(); button(action === "start" ? "Do it on Home" : "Not now on Home").click(); });
+  expect(rpc).toHaveBeenCalledExactlyOnceWith(action === "start" ? "start_proposed_work" : "decline_proposed_work", { p_message_id: "reply" });
   expect(createTask).not.toHaveBeenCalled();
-  const start = [...document.querySelectorAll("button")].find((b) => b.textContent === "Do it")!;
-  await act(async () => { start.click(); start.click(); });
-  expect(createTask).toHaveBeenCalledExactlyOnceWith("page", { objective: original.body }, "trama", { idempotencyKey: "proposal:original" });
+  if (action === "start") expect(host.querySelector("output")?.textContent).toBe("/p/page?task=task");
 });
 
 it("can record again after review, blocks sending during capture, and cancels on close", async () => {
