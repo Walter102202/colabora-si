@@ -357,6 +357,8 @@ begin
   with received as (
     update private.sent_person_messages s set received_at = now()
     where s.task_id = new.task_id and s.reply_activity_id is null and s.received_at is null
+      and exists (select 1 from public.agent_messages m join public.agent_tasks t on t.id = s.task_id
+        where m.id = s.message_id and private.person_reads_page(t.row_page_id, t.workspace_id, m.user_id))
       and ((v_started is not null and s.sent_at <= v_started)
         or (v_exact and s.prompt_seq = v_seq) or (not v_exact and s.prompt_seq <= v_seq))
     returning s.message_id, s.received_at
@@ -388,6 +390,8 @@ begin
   with replied as (
     update private.sent_person_messages s set reply_activity_id = new.id, received_at = coalesce(s.received_at, now())
     where s.task_id = new.task_id and s.reply_activity_id is null and s.prompt_seq < new.seq
+      and exists (select 1 from public.agent_messages m join public.agent_tasks t on t.id = s.task_id
+        where m.id = s.message_id and private.person_reads_page(t.row_page_id, t.workspace_id, m.user_id))
     returning s.message_id, s.received_at
   )
   update public.agent_messages m set outcome = m.outcome || jsonb_build_object('received_at', r.received_at,

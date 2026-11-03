@@ -271,5 +271,17 @@ select is(tests.error_of(format('select public.reply_person_message(%L,''Review'
 select public.reply_person_message(:'run','Review',:'requirement_through',null,:'requirement_request',null,:'requirement_spec'::jsonb)->>'message_id' as flagged_proposal \gset
 select tests.reset_role();
 select is((select outcome->'adds_requirement' from public.agent_messages where id=:'flagged_proposal'),'true'::jsonb,'proposal persists the boolean requirement flag');
+-- Revocation must stop future task information from being copied into an old sender's chat.
+select tests.intervene_proposal(:'proposal',:'child1','Message before access revocation') as revoked_proposal \gset
+select tests.set_human(:'owner');
+select public.send_proposed_message(:'revoked_proposal');
+select tests.reset_role();
+insert into public.private_pages(page_id,workspace_id,owner_user_id,root_page_id) values ('digest-child-1',:'ws',:'viewer','digest-child-1');
+select tests.set_agent((:'worker'::jsonb->>'user')::uuid,(:'worker'::jsonb->>'agent')::uuid);
+select public.heartbeat(:'child_run');
+select public.post_activity(:'child_run','response','{"text":"New confidential work after revocation"}');
+select tests.reset_role();
+select ok((select not (outcome ? 'received_at') and not (outcome ? 'reply') from public.agent_messages where id=:'revoked_proposal'),'revoked sender receives no new receipt or response details');
+select is((select outcome->>'text' from public.agent_messages where id=:'revoked_proposal'),'Message before access revocation','revocation preserves the historical sent message');
 select * from finish();
 rollback;
