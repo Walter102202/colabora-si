@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Sparkles } from "lucide-react";
 import { LOGIN_UNREACHABLE } from "@/lib/landingAccess";
 import { HOME_URL, LANDING_LOGIN_URL, LANDING_URL, withQuery } from "@/lib/routes";
 import { SET_PASSWORD_MIN, fragmentEmail, parseInviteLink, passwordProblem, submitPassword } from "@/lib/setPassword";
@@ -13,7 +14,10 @@ function Page({ children }: { children: React.ReactNode }) {
         {children}
         <footer className="cs-solo__foot">
           <a href={LANDING_URL} className="cs-wordmark">colabora<span>.si</span></a>
-          <TramaImage px={64} />
+          <div className="cs-solo__trama">
+            <TramaImage px={64} alt="Trama" />
+            <span className="cs-muse-badge"><Sparkles size={11} strokeWidth={1.8} aria-hidden="true" />Powered by <b>Muse</b></span>
+          </div>
         </footer>
       </main>
     </div>
