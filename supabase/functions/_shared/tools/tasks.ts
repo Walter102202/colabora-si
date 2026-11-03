@@ -56,11 +56,28 @@ async function pendingPrompts(ctx: ToolContext, taskIds: string[]): Promise<Map<
   return out;
 }
 
+const listAgents: ToolDef = {
+  name: 'list_agents',
+  title: 'List workspace agents',
+  description: 'Agents of this workspace: id, name, harness and role. Use the id as delegate_agent_id in create_subtask or import_plan, as worker in create_task, or in hand_over.',
+  inputSchema: object({}),
+  outputSchema: output({ agents: { type: 'array', items: { type: 'object' } } }),
+  annotations: READ,
+  cacheTtlMs: 0,
+  async handler(_args, ctx) {
+    const agents = await must(ctx.db.rpc<Row[]>('list_agents', {})) ?? [];
+    return {
+      text: `${agents.length} agents: ${agents.map((a) => `${String(a.name)} (${String(a.harness)}, ${String(a.role)})`).join('; ')}`,
+      structured: { agents },
+    };
+  },
+};
+
 const joinJob: ToolDef = {
   name: 'join_job',
-  title: 'Find and join a job by name',
-  description: 'Call first when asked to work on a named job as Lead or worker. The row decides your role, not the chat. ' +
-    'Searches only readable job rows; does not grant access or start a run. If refused, say why and stop. ' +
+  title: 'Find and join a job or project by name',
+  description: 'Call first when asked to work on a named job or project as Lead or worker. The row decides your role, not the chat. ' +
+    'Searches only readable job rows and agent-led projects; does not grant access or start a run. If refused, say why and stop. ' +
     'For ambiguous names, ask which database and retry with job_id. After joining, claim your assigned task and pass job_id to wait_for_my_tasks.',
   inputSchema: object({
     name: { type: 'string', minLength: 1 },
@@ -68,8 +85,10 @@ const joinJob: ToolDef = {
     job_id: { type: 'string', description: 'Disambiguate with the job_id returned for the chosen database.' },
   }, ['name', 'as']),
   outputSchema: output({
-    status: { type: 'string', enum: ['joined', 'other_lead', 'no_lead', 'ambiguous', 'not_found'] },
-    job_id: { type: ['string', 'null'] }, title: { type: 'string' }, database: { type: 'object' },
+    status: { type: 'string', enum: ['joined', 'other_lead', 'no_lead', 'ambiguous', 'not_found', 'not_assigned'] },
+    job_id: { type: ['string', 'null'] }, title: { type: 'string' }, database: { type: ['object', 'null'] },
+    kind: { type: 'string', enum: ['job', 'project'] }, row_page_id: { type: 'string' },
+    pending_rows: { type: 'array', items: { type: 'object' } },
     lead_name: { type: ['string', 'null'] }, subtasks: { type: 'array', items: { type: 'object' } },
     workers: { type: 'array', items: { type: 'object' } }, plan: { type: 'array', items: { type: 'object' } },
     brief: { type: ['object', 'null'] }, jobs: { type: 'array', items: { type: 'object' } },
@@ -80,7 +99,10 @@ const joinJob: ToolDef = {
     const database = data.database as Row | undefined;
     const count = Array.isArray(data.jobs) ? data.jobs.length : 0;
     const text = data.status === 'joined'
-      ? `${args.as === 'lead' ? 'Found' : 'Working on'} ${String(data.title)} in ${String(database?.title)}.`
+      ? data.kind === 'project'
+        ? `${args.as === 'lead' ? 'Found' : 'Working on'} ${String(data.title)}, a project led by ${String(data.lead_name)}: ${Array.isArray(data.subtasks) ? data.subtasks.length : 0} subtasks assigned to you.`
+        : `${args.as === 'lead' ? 'Found' : 'Working on'} ${String(data.title)} in ${String(database?.title)}.`
+      : data.status === 'not_assigned' ? `Refused: ${String(data.title)} has no work assigned to you. Ask ${String(data.lead_name)} or a person to assign it.`
       : data.status === 'other_lead' ? `Refused: this job names ${String(data.lead_name)} as Lead.`
       : data.status === 'no_lead' ? 'Refused: this job has no Lead yet. A person must choose the Lead on its row.'
       : data.status === 'ambiguous' ? `${count === 2 ? 'Two' : count} jobs are called ${String(args.name)}. Which one?`
@@ -201,6 +223,7 @@ const claimTask: ToolDef = {
     environment: { type: 'array', items: { type: 'object' } },
     resume: { type: ['object', 'null'] },
     context_package: { type: ['object', 'null'] },
+    agents: { type: 'array', items: { type: 'object' } },
   }),
   annotations: WRITE,
   async handler(args, ctx) {
@@ -214,9 +237,17 @@ const claimTask: ToolDef = {
     data.environment = await loadEnvironment(ctx.db, String(data.task_id));
     const brief = data.brief as Row | null;
     const isRequest = Boolean((brief?.policies as Row | undefined)?.ai_request);
+    if (!isRequest) {
+      try {
+        const agents = await must(ctx.db.rpc<Row[]>('list_agents', {})) ?? [];
+        if (agents.find((a) => a.me === true)?.role === 'lead') data.agents = agents.filter((a) => a.me !== true);
+      } catch {
+        // The claim already succeeded; roster availability must not invalidate it.
+      }
+    }
     const pkg = isRequest ? null : await contextPackage(ctx, String(data.run_id), String(data.row_page_id), brief);
     return {
-      text: `Claimed task ${String(data.task_id)}: run ${String(data.run_id)} on page ${String(data.row_page_id)}. Read the brief before writing.` + (data.resume ? ` ${String((data.resume as Row).summary)}` : '') + (isRequest ? '' : contextLine(pkg)),
+      text: `Claimed task ${String(data.task_id)}: run ${String(data.run_id)} on page ${String(data.row_page_id)}. Read the brief before writing.` + (data.resume ? ` ${String((data.resume as Row).summary)}` : '') + (isRequest ? '' : contextLine(pkg)) + (Array.isArray(data.agents) ? ` ${data.agents.length} agents available for delegation.` : ''),
       structured: isRequest ? data : { ...data, context_package: pkg },
     };
   },
@@ -536,6 +567,6 @@ const sendMessage: ToolDef = {
 };
 
 export const taskTools: ToolDef[] = [
-  joinJob, listMyTasks, getTask, claimTask, heartbeat, postActivity, addArtifact, requestInput, awaitQuestions, requestApproval,
+  joinJob, listAgents, listMyTasks, getTask, claimTask, heartbeat, postActivity, addArtifact, requestInput, awaitQuestions, requestApproval,
   beginExternalOp, finishExternalOp, submitForReview, endRun, ackStop, sendMessage,
 ];
