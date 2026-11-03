@@ -98,3 +98,10 @@ Deno.test('job proposal is carried in the single proposal payload', async () => 
   assert.deepEqual(h.calls[0].args.p_proposal, { summary: 'Organize offsite', job });
   assert.equal(Object.keys(h.calls[0].args).length, 7);
 });
+
+Deno.test('confirmed message proposal shares the single JSON proposal contract', async () => {
+  const h = harness();
+  const message = { task_id: 't', text: 'Use local dates.' };
+  await tool('reply_person_message').handler({ run_id: 'r', text: 'Review', through_seq: 7, propose_message_id: 'm', message }, h.ctx);
+  assert.deepEqual(h.calls[0].args, { p_run_id: 'r', p_text: 'Review', p_through_seq: 7, p_usage: null, p_propose_message_id: 'm', p_propose_agent: null, p_proposal: { message } });
+});

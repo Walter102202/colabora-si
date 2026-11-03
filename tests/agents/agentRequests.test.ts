@@ -243,3 +243,13 @@ it.each(["valid", "unknown board", "unknown lead", "wrong role", "duplicate work
   expect(model.requests[0].tools!.some((t) => t.function.name === "propose_work")).toBe(true);
   expect(mcp.calls.find((c) => c.name === "reply_person_message")!.args.job).toEqual(variant === "valid" ? job : undefined);
 });
+
+it.each(["valid", "unknown task", "empty", "long", "wrong message"])("proposes only authorized exact messages: %s", async (variant) => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const text = variant === "empty" ? "" : variant === "long" ? "x".repeat(1001) : "Use local dates.";
+  const mcp = createStubMcp({ handlers: { get_ai_request: () => ({ kind: "assist", page: null, messages: [{ text: "Tell Codex" }], through_seq: 1, proposal_message_id: id, active_tasks: [{ task_id: "task", title: "Research", agent: { name: "Codex" }, state: "working" }] }), heartbeat: () => ({}), reply_person_message: () => ({}) } });
+  const model = createStubModel([{ tool_calls: [toolCall("propose_message", { message_id: variant === "wrong message" ? "bad" : id, task_id: variant === "unknown task" ? "invented" : "task", text })] }, { content: "Review the message." }]);
+  await runRequest({ call: mcp.callTool, model, task: { task_id: "t", request_kind: "assist" }, runId: "r", log: () => {} });
+  expect(model.requests[0].tools!.some((t) => t.function.name === "propose_message")).toBe(true);
+  expect(mcp.calls.find((c) => c.name === "reply_person_message")!.args.message).toEqual(variant === "valid" ? { task_id: "task", text } : undefined);
+});

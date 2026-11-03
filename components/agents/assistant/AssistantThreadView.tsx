@@ -35,12 +35,13 @@ export interface AssistantThreadViewProps {
   decisions?: ReactNode;
   avatar?: ReactNode;
   empty?: ReactNode;
+  onSendMessage?: (message: PersonMessage) => void;
   onDeclineWork?: (message: PersonMessage) => void;
   onPropose?: (message: PersonMessage) => void;
   onSettleAgent?: (message: PersonMessage, accept: boolean) => void;
   hasTaskDatabase?: boolean;
   agentProposalError?: boolean;
-  proposing?: { id: string; action: "start" | "decline" | "agent" } | null;
+  proposing?: { id: string; action: "start" | "decline" | "agent" | "message" } | null;
   onDraft: (text: string) => void;
   onPaste: (e: ClipboardEvent<HTMLTextAreaElement>) => void;
   onSend: () => void;
@@ -54,7 +55,7 @@ export interface AssistantThreadViewProps {
 }
 
 // Pure view of the conversation with the workspace agent. P12 mounts it in its own surface.
-export function AssistantThreadView({ messages, draft, reviewing, busy = false, error, voice, decisions, avatar, empty, onPropose, onDeclineWork, onSettleAgent, hasTaskDatabase, agentProposalError, proposing, onDraft, onPaste, onSend, onRetrySend, onUndo, onOpenNotes, onNewConversation, resetting, scrollRequest = 0, status = null }: AssistantThreadViewProps) {
+export function AssistantThreadView({ messages, draft, reviewing, busy = false, error, voice, decisions, avatar, empty, onPropose, onDeclineWork, onSendMessage, onSettleAgent, hasTaskDatabase, agentProposalError, proposing, onDraft, onPaste, onSend, onRetrySend, onUndo, onOpenNotes, onNewConversation, resetting, scrollRequest = 0, status = null }: AssistantThreadViewProps) {
   const { listRef, contentRef, onScroll, scrollToLatest, showScrollToLatest } = useConversationScroll(messages, scrollRequest);
   const hasUserMessage = messages.some((message) => message.direction === "in" && message.kind !== "system");
   return (
@@ -103,11 +104,18 @@ export function AssistantThreadView({ messages, draft, reviewing, busy = false, 
                         </div>
                       </div>
                     )}
-                    {(m.outcome?.kind === "work_started" || m.outcome?.kind === "work_declined") && <div className={`mt-2 space-y-1 ${m.outcome.kind === "work_declined" ? "text-text-secondary" : ""}`}>
+                    {(m.outcome?.kind === "work_started" || m.outcome?.kind === "work_declined") && !m.outcome.text && <div className={`mt-2 space-y-1 ${m.outcome.kind === "work_declined" ? "text-text-secondary" : ""}`}>
                       <p>{m.outcome.kind === "work_started" ? "Started." : "Not started."}</p>
                       {m.outcome.summary && <><p>On {m.outcome.page_title || "this page"}</p><p className="whitespace-pre-wrap">{m.outcome.summary}</p></>}
                       {m.outcome.kind === "work_started" && m.outcome.page_id && m.outcome.task_id && <a className="text-accent underline" href={taskUrl(m.outcome.page_id, m.outcome.task_id)}>{m.outcome.job ? "Open job" : "Open task"}</a>}
                     </div>}
+                    {m.outcome?.kind === "message_proposed" && <div className="mt-2 space-y-1 rounded border border-border p-3">
+                      <p className="font-medium">Send to {m.outcome.agent_name}?</p><p>On {m.outcome.task_title}</p><p className="whitespace-pre-wrap">{m.outcome.text}</p>
+                      <div className="flex gap-2 pt-2"><button type="button" aria-label={`Send to ${m.outcome.agent_name}`} disabled={proposing?.id === m.id || !onSendMessage} className="min-h-9 rounded bg-accent px-3 text-white disabled:opacity-50" onClick={() => onSendMessage?.(m)}>{proposing?.id === m.id && proposing.action === "message" ? "Sending…" : "Send"}</button>
+                      <button type="button" aria-label={`Not now for ${m.outcome.agent_name}`} disabled={proposing?.id === m.id || !onDeclineWork} className="min-h-9 rounded border border-border px-3 disabled:opacity-50" onClick={() => onDeclineWork?.(m)}>{proposing?.id === m.id && proposing.action === "decline" ? "Closing…" : "Not now"}</button></div>
+                    </div>}
+                    {m.outcome?.kind === "message_sent" && <p className="mt-2">Sent. {m.outcome.page_id && m.outcome.task_id && <a className="text-accent underline" href={taskUrl(m.outcome.page_id, m.outcome.task_id)}>Open task</a>}</p>}
+                    {m.outcome?.kind === "work_declined" && m.outcome.text && <p className="mt-2 text-text-secondary">Not sent.</p>}
                     {m.outcome?.kind === "agent_proposed" && onSettleAgent ? <div className="mt-2 space-y-1 rounded border border-border bg-bg-secondary p-3">
                       <p className="font-medium">Create this agent?</p><p>Name: {m.outcome.name}</p><p>Works with: {CONNECT_AGENT_NAMES[m.outcome.harness ?? ""] ?? m.outcome.harness}</p><p>Role: {m.outcome.role === "lead" ? "Lead" : "Worker"}</p><p>Page access: {hasTaskDatabase ? "Agent Tasks" : "none yet"}</p>
                       <div className="flex gap-2 pt-2"><button type="button" className="min-h-9 rounded bg-accent px-3 text-white disabled:opacity-50" disabled={proposing?.id === m.id} onClick={() => onSettleAgent(m, true)}>Create agent</button><button type="button" className="min-h-9 rounded border border-border px-3 disabled:opacity-50" disabled={proposing?.id === m.id} onClick={() => onSettleAgent(m, false)}>Cancel</button></div>

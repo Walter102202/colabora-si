@@ -344,3 +344,15 @@ it("keeps a rejected approval request actionable and shows its error", async () 
   expect(section.textContent).not.toContain("Approved.");
   expect(section.querySelector<HTMLButtonElement>("button")!.disabled).toBe(false);
 });
+
+it.each(["send", "decline"])("confirms a proposed agent message once: %s", async (action) => {
+  vi.stubEnv("VITE_TRAMA_MANAGED", "1");
+  const api = await import("@/lib/agentClient");
+  const rpc = vi.fn(async () => ({ data: { task_id: "task", page_id: "page" }, error: null }));
+  vi.spyOn(api, "getAgentClient").mockReturnValue({ rpc } as unknown as ReturnType<typeof api.getAgentClient>);
+  useAgentConversation.setState({ messages: [message({ id: "reply", direction: "out", outcome: { kind: "message_proposed", task_id: "task", task_title: "Research", agent_name: "Codex", text: "Use local dates." } })] });
+  mount(); act(() => button("Talk to Trama").click());
+  expect(rpc).not.toHaveBeenCalled();
+  await act(async () => { const target = button(action === "send" ? "Send to Codex" : "Not now for Codex"); target.click(); target.click(); });
+  expect(rpc).toHaveBeenCalledExactlyOnceWith(action === "send" ? "send_proposed_message" : "decline_proposed_work", { p_message_id: "reply" });
+});

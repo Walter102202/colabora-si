@@ -48,7 +48,7 @@ drop function if exists public.reply_person_message(uuid,text,bigint,jsonb,uuid,
 create or replace function public.reply_person_message(p_run_id uuid, p_text text, p_through_seq bigint, p_usage jsonb, p_propose_message_id uuid, p_propose_agent jsonb, p_proposal jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare v_r public.agent_runs%rowtype; v_t public.agent_tasks%rowtype; v_last public.agent_messages%rowtype; v_m public.agent_messages%rowtype;
-        v_text text := btrim(coalesce(p_text, '')); v_notice text; v_page text; v_reply uuid; v_proposal public.agent_messages%rowtype; v_outcome jsonb := '{"kind":"reply"}'::jsonb; v_work_summary text:=p_proposal->>'summary'; v_job jsonb;
+        v_text text := btrim(coalesce(p_text, '')); v_notice text; v_page text; v_reply uuid; v_proposal public.agent_messages%rowtype; v_outcome jsonb := '{"kind":"reply"}'::jsonb; v_work_summary text:=p_proposal->>'summary'; v_job jsonb; v_message_task public.agent_tasks%rowtype;
 begin
   if private.jwt_client_id() is not null then raise exception using errcode = 'PT403', message = 'direct_session_required'; end if;
   v_r := private.own_run(p_run_id);
@@ -68,9 +68,22 @@ begin
       select * into v_proposal from public.agent_messages m where m.id = p_propose_message_id
         and m.workspace_id = v_t.workspace_id and m.user_id = v_t.owner_user_id and m.direction = 'in'
         and m.channel = 'surface' and m.needs_reply and m.seq <= p_through_seq and not m.forwarded and not m.pasted
-        and (p_proposal ? 'job' or private.person_reads_page(m.context->>'page_id', v_t.workspace_id, v_t.owner_user_id));
+        and (p_proposal ? 'job' or p_proposal ? 'message' or private.person_reads_page(m.context->>'page_id', v_t.workspace_id, v_t.owner_user_id));
       if found then
-        if p_proposal ? 'job' then
+        if p_proposal ? 'message' then
+          if p_proposal ? 'job' or jsonb_typeof(p_proposal#>'{message,text}') is distinct from 'string'
+            or char_length(p_proposal#>>'{message,text}') not between 1 and 1000 or btrim(p_proposal#>>'{message,text}')='' then
+            raise exception using errcode='PT422',message='invalid_message',detail='text';
+          end if;
+          select * into v_message_task from public.agent_tasks t where t.id::text=p_proposal#>>'{message,task_id}'
+            and t.workspace_id=v_t.workspace_id and t.request_kind is null and t.state not in ('done','failed','cancelled')
+            and private.person_reads_page(t.row_page_id,v_t.workspace_id,v_t.owner_user_id);
+          if not found then raise exception using errcode='PT422',message='invalid_message',detail='task_id'; end if;
+          v_outcome:=jsonb_build_object('kind','message_proposed','task_id',v_message_task.id,'page_id',v_message_task.row_page_id,
+            'task_title',v_message_task.title,'agent_name',coalesce((select name from public.agents where id=v_message_task.delegate_agent_id),'Agent'),
+            'text',p_proposal#>>'{message,text}');
+        else
+        if p_proposal ? 'job'  then
           if nullif(btrim(v_work_summary),'') is null then raise exception using errcode='PT400',message='invalid_input',detail='work_summary'; end if;
           v_job:=private.validate_proposed_job(p_proposal->'job',v_t.workspace_id,v_t.owner_user_id);
         end if;
@@ -79,6 +92,7 @@ begin
           'page_title',left(coalesce((select title from public.pages where id=v_proposal.context->>'page_id'),''),200),
           'summary',btrim(v_work_summary),'job',v_job));
         if v_job is not null then v_outcome:=v_outcome||jsonb_build_object('page_id',v_job->>'board_id','page_title',v_job->>'board_title'); end if;
+        end if;
       end if;
     elsif jsonb_typeof(p_propose_agent)='object'
       and char_length(btrim(coalesce(p_propose_agent->>'name',''))) between 1 and 80
@@ -171,9 +185,9 @@ begin
   if private.principal_type() is distinct from 'human' then raise exception using errcode='PT403',message='humans_only'; end if;
   if private.jwt_client_id() is not null then raise exception using errcode='PT403',message='direct_session_required'; end if;
   select * into m from public.agent_messages proposal where id=p_message_id and user_id=auth.uid()
-    and private.is_human_member(proposal.workspace_id) and direction='out' and outcome->>'kind' in ('work_proposed','work_started','work_declined') for update;
+    and private.is_human_member(proposal.workspace_id) and direction='out' and outcome->>'kind' in ('work_proposed','work_started','work_declined','message_proposed','message_sent') for update;
   if not found then raise exception using errcode='PT404',message='not_found'; end if;
-  if m.outcome->>'kind'<>'work_proposed' then raise exception using errcode='PT409',message='already_settled'; end if;
+  if m.outcome->>'kind' not in ('work_proposed','message_proposed') then raise exception using errcode='PT409',message='already_settled'; end if;
   update public.agent_messages set outcome=outcome||'{"kind":"work_declined"}'::jsonb where id=m.id;
   return jsonb_build_object('declined',true);
 end $$;
@@ -284,7 +298,7 @@ grant execute on function public.send_agent_message(uuid, text, text, text[], te
 
 create or replace function public.assist_request_context(p_task_id uuid)
 returns jsonb language plpgsql stable security definer set search_path = '' as $$
-declare v_agent uuid := private.current_agent_id(); v_t public.agent_tasks%rowtype; v_items jsonb; v_through bigint; v_last public.agent_messages%rowtype; v_page jsonb; v_selection text; v_waiting jsonb; v_start bigint; v_agents jsonb; v_boards jsonb;
+declare v_agent uuid := private.current_agent_id(); v_t public.agent_tasks%rowtype; v_items jsonb; v_through bigint; v_last public.agent_messages%rowtype; v_page jsonb; v_selection text; v_waiting jsonb; v_start bigint; v_agents jsonb; v_boards jsonb; v_active jsonb;
 begin
   if private.jwt_client_id() is not null then raise exception using errcode = 'PT403', message = 'direct_session_required'; end if;
   select * into v_t from public.agent_tasks
@@ -331,9 +345,16 @@ begin
   select coalesce(jsonb_agg(x),'[]') into v_boards from (
     select p.id,p.title from public.pages p where private.person_job_board(p.id,v_t.workspace_id,v_t.owner_user_id)
       order by (p.id=v_last.context->>'page_id') desc nulls last,p.title,p.id limit 10) x;
-  return jsonb_build_object('agents',v_agents,'boards',v_boards,'to_review', private.person_to_review(v_t.workspace_id, v_t.owner_user_id), 'running_work', private.person_running_work(v_t.workspace_id, v_t.owner_user_id), 'page', v_page, 'selection', v_selection, 'waiting_on_you', v_waiting,
+  select coalesce(jsonb_agg(x),'[]') into v_active from (
+    select t.id as task_id,t.title,jsonb_build_object('id',a.id,'name',a.name) as agent,t.state,
+      case when private.person_reads_page(parent.row_page_id,v_t.workspace_id,v_t.owner_user_id) then parent.title end as parent_title
+    from public.agent_tasks t left join public.agents a on a.id=t.delegate_agent_id left join public.agent_tasks parent on parent.id=t.parent_task_id
+    where t.workspace_id=v_t.workspace_id and t.request_kind is null and t.state not in ('done','failed','cancelled')
+      and private.person_reads_page(t.row_page_id,v_t.workspace_id,v_t.owner_user_id)
+    order by t.updated_at desc,t.id limit 15) x;
+  return jsonb_build_object('active_tasks',v_active,'agents',v_agents,'boards',v_boards,'to_review', private.person_to_review(v_t.workspace_id, v_t.owner_user_id), 'running_work', private.person_running_work(v_t.workspace_id, v_t.owner_user_id), 'page', v_page, 'selection', v_selection, 'waiting_on_you', v_waiting,
     'agent_proposal_message_id', case when v_last.channel='surface' and not v_last.pasted and not v_last.forwarded then v_last.id end,
-    'proposal_message_id', case when v_last.channel='surface' and (v_page is not null or jsonb_array_length(v_boards)>0) and not v_last.pasted and not v_last.forwarded then v_last.id end,
+    'proposal_message_id', case when v_last.channel='surface' and (v_page is not null or jsonb_array_length(v_boards)>0 or jsonb_array_length(v_active)>0) and not v_last.pasted and not v_last.forwarded then v_last.id end,
     'kind', 'assist', 'task_id', v_t.id, 'messages', v_items, 'through_seq', v_through);
 end $$;
 
@@ -476,3 +497,25 @@ begin
     'status', v_r.status,
     'pending_prompts',private.take_run_prompts(v_r.id,p_after_seq));
 end $$;
+
+create or replace function public.send_proposed_message(p_message_id uuid)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare m public.agent_messages%rowtype; t public.agent_tasks%rowtype;
+begin
+  if private.principal_type() is distinct from 'human' then raise exception using errcode='PT403',message='humans_only'; end if;
+  if private.jwt_client_id() is not null then raise exception using errcode='PT403',message='direct_session_required'; end if;
+  select * into m from public.agent_messages proposal where id=p_message_id and user_id=auth.uid() and direction='out'
+    and private.is_human_member(proposal.workspace_id) and outcome->>'kind' in ('message_proposed','message_sent','work_declined') for update;
+  if not found then raise exception using errcode='PT404',message='not_found'; end if;
+  if m.outcome->>'kind'='work_declined' then raise exception using errcode='PT409',message='already_settled'; end if;
+  if m.outcome->>'kind'='message_sent' then return jsonb_build_object('task_id',m.outcome->>'task_id','page_id',m.outcome->>'page_id','already_sent',true); end if;
+  select * into t from public.agent_tasks where id=(m.outcome->>'task_id')::uuid and workspace_id=m.workspace_id
+    and request_kind is null and private.person_reads_page(row_page_id,m.workspace_id,m.user_id) for update;
+  if not found then raise exception using errcode='PT404',message='not_found'; end if;
+  if t.state in ('done','failed','cancelled') then raise exception using errcode='PT409',message='task_closed'; end if;
+  perform public.send_agent_message(p_task_id:=t.id,p_body:=m.outcome->>'text',p_signal:='feedback');
+  update public.agent_messages set outcome=outcome||jsonb_build_object('kind','message_sent','page_id',t.row_page_id) where id=m.id;
+  return jsonb_build_object('task_id',t.id,'page_id',t.row_page_id);
+end $$;
+revoke all on function public.send_proposed_message(uuid) from public,anon;
+grant execute on function public.send_proposed_message(uuid) to authenticated;

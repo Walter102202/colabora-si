@@ -125,5 +125,65 @@ select tests.reset_role();
 select is((select count(*) from public.agent_events where task_id=:'job_task' and type='subtask.progress'),2::bigint,'platform Lead is not notified');
 update public.agents set is_platform=false where id=(:'lead'::jsonb->>'agent')::uuid;
 update public.agents set is_platform=true where id=:'pa';
+-- Confirmed messages use the same explicit-person proposal boundary.
+select tests.set_human(:'owner');
+select public.post_agent_message(:'ws','Tell Codex to use local dates',gen_random_uuid())->>'message_id' as message_request \gset
+select tests.reset_role();
+select id as req from public.agent_tasks where request_kind='assist' and owner_user_id=:'owner' and state='queued' \gset
+select tests.set_agent(:'pu',:'pa');
+select public.claim_task(:'req','message-proposal')->>'run_id' as run \gset
+select public.assist_request_context(:'req') as message_context \gset
+select (:'message_context'::jsonb->>'through_seq')::bigint as seq \gset
+select ok(exists(select 1 from jsonb_array_elements(:'message_context'::jsonb->'active_tasks') t where t->>'task_id'=:'child'),'readable active child offered');
+select jsonb_build_object('message',jsonb_build_object('task_id',:'child','text','Use local dates exactly.')) as message_spec \gset
+select is(tests.error_of(format('select public.reply_person_message(%L,%L,%s,null,%L,null,%L::jsonb)',:'run','Review',:'seq',:'message_request',jsonb_set(:'message_spec','{message,text}','""'))),'invalid_message','empty proposed message rejected');
+select is(tests.error_of(format('select public.reply_person_message(%L,%L,%s,null,%L,null,%L::jsonb)',:'run','Review',:'seq',:'message_request',jsonb_set(:'message_spec','{message,task_id}',to_jsonb(gen_random_uuid()::text)))),'invalid_message','unknown task rejected');
+select tests.reset_role();
+update public.agent_tasks set state='done' where id=:'child';
+select tests.set_agent(:'pu',:'pa');
+select is(tests.error_of(format('select public.reply_person_message(%L,%L,%s,null,%L,null,%L::jsonb)',:'run','Review',:'seq',:'message_request',:'message_spec')),'invalid_message','closed task rejected');
+select tests.reset_role();
+update public.agent_tasks set state='working' where id=:'child';
+insert into public.private_pages(page_id,workspace_id,owner_user_id,root_page_id) values ('demo-child',:'ws',:'viewer','demo-child');
+select tests.set_agent(:'pu',:'pa');
+select is(tests.error_of(format('select public.reply_person_message(%L,%L,%s,null,%L,null,%L::jsonb)',:'run','Review',:'seq',:'message_request',:'message_spec')),'invalid_message','unreadable task rejected');
+select tests.reset_role();
+delete from public.private_pages where page_id='demo-child';
+select tests.set_agent(:'pu',:'pa');
+select public.reply_person_message(:'run','Review the message',:'seq',null,:'message_request',null,:'message_spec'::jsonb)->>'message_id' as message_proposal \gset
+select is(tests.error_of(format('select public.send_proposed_message(%L)',:'message_proposal')),'humans_only','agent cannot send a proposal');
+select tests.reset_role();
+select tests.set_human(:'viewer');
+select is(tests.error_of(format('select public.send_proposed_message(%L)',:'message_proposal')),'not_found','another person cannot send');
+select tests.set_human(:'owner','chat-client');
+select is(tests.error_of(format('select public.send_proposed_message(%L)',:'message_proposal')),'direct_session_required','OAuth cannot send');
+select tests.reset_role();
+update public.agent_tasks set state='done' where id=:'child';
+select tests.set_human(:'owner');
+select is(tests.error_of(format('select public.send_proposed_message(%L)',:'message_proposal')),'task_closed','task closed after proposing cannot receive the message');
+select tests.reset_role();
+update public.agent_tasks set state='working' where id=:'child';
+insert into public.private_pages(page_id,workspace_id,owner_user_id,root_page_id) values ('demo-child',:'ws',:'viewer','demo-child');
+select tests.set_human(:'owner');
+select is(tests.error_of(format('select public.send_proposed_message(%L)',:'message_proposal')),'not_found','read access rechecked when sending');
+select tests.reset_role();
+delete from public.private_pages where page_id='demo-child';
+select tests.set_human(:'owner');
+select public.send_proposed_message(:'message_proposal') as sent \gset
+select is(public.send_proposed_message(:'message_proposal'),:'sent'::jsonb||'{"already_sent":true}','second send is idempotent');
+select tests.reset_role();
+select is((select count(*) from public.agent_activities where task_id=:'child' and type='prompt' and body->>'text'='Use local dates exactly.'),1::bigint,'exact visible text sent once');
+select is((select outcome->>'kind' from public.agent_messages where id=:'message_proposal'),'message_sent','sent state persisted');
+insert into public.agent_messages(workspace_id,user_id,agent_id,direction,channel,kind,body,outcome)
+select workspace_id,user_id,agent_id,direction,channel,kind,body,outcome||'{"kind":"message_proposed"}' from public.agent_messages where id=:'message_proposal' returning id as declined_message \gset
+select tests.set_human(:'owner');
+select is(public.decline_proposed_work(:'declined_message'),'{"declined":true}'::jsonb,'message can be declined');
+select is(tests.error_of(format('select public.send_proposed_message(%L)',:'declined_message')),'already_settled','declined message cannot send');
+select tests.reset_role();
+update public.agent_messages set user_id=:'viewer',outcome=outcome||'{"kind":"message_proposed"}' where id=:'declined_message';
+delete from public.workspace_members where workspace_id=:'ws' and user_id=:'viewer';
+select tests.set_human(:'viewer');
+select is(tests.error_of(format('select public.send_proposed_message(%L)',:'declined_message')),'not_found','former member cannot send');
+select tests.reset_role();
 select * from finish();
 rollback;

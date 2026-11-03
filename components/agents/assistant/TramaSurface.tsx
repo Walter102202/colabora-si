@@ -19,7 +19,7 @@ import { useLocation, useNavigate } from "react-router";
 import { AssistantThreadView } from "@/components/agents/assistant/AssistantThreadView";
 import { VoiceButton } from "@/components/agents/assistant/VoiceButton";
 import { getAgentClient } from "@/lib/agentClient";
-import { currentThread, declineProposedWork, startProposedWork, refreshAgentConversation, settleAgentProposal, type Draft, type PersonMessage, useAgentConversation } from "@/lib/agentConversation";
+import { currentThread, declineProposedWork, startProposedWork, sendProposedMessage, refreshAgentConversation, settleAgentProposal, type Draft, type PersonMessage, useAgentConversation } from "@/lib/agentConversation";
 import { agentInputFor } from "@/lib/agentDefaults";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { MAX_RECORDING_MS, type Recorder, startRecorder, uploadWav, voiceFailure, voiceReducer } from "@/lib/agentVoice";
@@ -79,7 +79,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastJump = useRef(-Infinity);
   const suppressFocus = useRef(false);
-  const [proposing, setProposing] = useState<{ id: string; action: "start" | "decline" | "agent" } | null>(null);
+  const [proposing, setProposing] = useState<{ id: string; action: "start" | "decline" | "agent" | "message" } | null>(null);
   const [proposalError, setProposalError] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
@@ -206,6 +206,16 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
       close(); void navigate(taskUrl(result.page_id, result.task_id));
     } catch (e) { setProposalError(e instanceof Error ? e.message : "Could not start the task."); }
     finally { proposalLock.current = false; setProposing(null); }
+  }
+  async function sendMessageProposal(message: PersonMessage) {
+    if (proposalLock.current) return;
+    proposalLock.current = true; setProposing({ id: message.id, action: "message" }); setProposalError(null);
+    try { await sendProposedMessage(message.id); }
+    catch (e) { setProposalError(e instanceof Error ? e.message : "Could not send the message."); }
+    finally {
+      await refreshAgentConversation(workspaceId).catch(() => {});
+      proposalLock.current = false; setProposing(null);
+    }
   }
   async function declineWork(message: PersonMessage) {
     if (proposalLock.current) return;
@@ -418,7 +428,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
           onRetrySend={failed ? () => void submit(failed) : null}
           onDraft={(text) => { setDraft(text); if (!text) { pasted.current = false; clip.current = null; if (voice.phase === "review") dispatch({ type: "reset" }); } }}
           onPaste={onPaste} onSend={() => void submit()} onUndo={(id) => void undo(id)}
-          onPropose={(message) => void propose(message)} onDeclineWork={(message) => void declineWork(message)} proposing={proposing}
+          onPropose={(message) => void propose(message)} onDeclineWork={(message) => void declineWork(message)} onSendMessage={(message) => void sendMessageProposal(message)} proposing={proposing}
           onSettleAgent={(message, accept) => void settleAgent(message, accept)} hasTaskDatabase={Boolean(taskDatabase)} agentProposalError={proposalError?.startsWith("We couldn’t create this agent.")}
           onOpenNotes={() => { void openNotes().then((id) => { if (id) { close(); void navigate(pageUrl(id)); } }); }}
           voice={<VoiceButton state={voice} elapsedMs={elapsed} onPress={() => void press()} onStop={() => void finish()} onCancel={cancel} onRetry={retry} />}
