@@ -1,4 +1,5 @@
 import { AGENT_TASKS_TEMPLATE } from "@/lib/agentTasksTemplate";
+import { tramaCoverUrl } from "@/lib/cover";
 import { createBlock, createPage, newId } from "@/lib/factories";
 import { addRow, updateCell } from "@/lib/dbMutations";
 import type { Block, Page, TemplatePlan } from "@/lib/types";
@@ -39,6 +40,7 @@ export function createPageFromTemplate(plan: TemplatePlan, parentId: string | nu
 export function seedWorkspace(): { pages: Record<string, Page>; rootOrder: string[] } {
   const welcome = createPage({
     title: "Getting started",
+    cover: tramaCoverUrl("explorer"),
     icon: "👋",
     blocks: [
       createBlock("heading1", { html: "Welcome to colabora.si" }),
@@ -56,6 +58,7 @@ export function seedWorkspace(): { pages: Record<string, Page>; rootOrder: strin
   });
   const working = createPage({
     title: "Working with agents",
+    cover: tramaCoverUrl("conductor"),
     icon: "🤝",
     blocks: [
       createBlock("heading1", { html: "Working with agents" }),
@@ -73,6 +76,7 @@ export function seedWorkspace(): { pages: Record<string, Page>; rootOrder: strin
   });
   const connections = createPage({
     title: "Connect your agents",
+    cover: tramaCoverUrl("same-page"),
     icon: "🔌",
     blocks: sanitizeBlocks([
       createBlock("heading1", { html: "Connect your agents" }),
@@ -90,7 +94,10 @@ export function seedWorkspace(): { pages: Record<string, Page>; rootOrder: strin
   });
   const agentTasks = createPageFromTemplate(AGENT_TASKS_TEMPLATE.build());
   return {
-    pages: { [welcome.id]: welcome, [working.id]: working, [connections.id]: connections, ...agentTasks.pages },
+    pages: {
+      [welcome.id]: welcome, [working.id]: working, [connections.id]: connections, ...agentTasks.pages,
+      [agentTasks.page.id]: { ...agentTasks.page, cover: tramaCoverUrl("detective") },
+    },
     rootOrder: [welcome.id, working.id, connections.id, agentTasks.page.id],
   };
 }

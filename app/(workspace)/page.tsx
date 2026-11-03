@@ -1,3 +1,4 @@
+import { tramaCoverPreviewBackground } from "@/lib/cover";
 import { CONNECT_URL, pageUrl } from "@/lib/routes";
 import { Navigate, useLocation, useNavigate } from "react-router";
 import { Database, Plus } from "lucide-react";
@@ -29,7 +30,7 @@ export default function Home() {
     <DecisionsHome />
     <h2 className="mb-3 text-xs text-text-tertiary">Recently edited</h2>
     {recent.length ? <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">{recent.map((page) => <button className="home-card" key={page.id} onClick={() => open(page.id)}>
-      <div className="h-11 bg-bg-secondary" /><div className="px-3 pb-3"><div className="-mt-4 mb-3"><Emoji emoji={page.icon ?? "📄"} size={28} /></div><div className="truncate text-sm font-medium">{page.title || "Untitled"}</div><div className="mt-1 text-xs text-text-tertiary">{formatRelative(page.updatedAt)}</div></div>
+      <div aria-hidden="true" className="h-11 bg-bg-secondary bg-cover" style={{ backgroundImage: tramaCoverPreviewBackground(page.cover), backgroundPosition: `center ${page.coverPosition ?? 50}%` }} /><div className="px-3 pb-3"><div className="-mt-4 mb-3"><Emoji emoji={page.icon ?? "📄"} size={28} /></div><div className="truncate text-sm font-medium">{page.title || "Untitled"}</div><div className="mt-1 text-xs text-text-tertiary">{formatRelative(page.updatedAt)}</div></div>
     </button>)}</div> : <div className="empty-state">No pages yet. Create your first page to get started.<button className="action-button" onClick={() => open(useStore.getState().createPage())}>New page</button></div>}
   </div></div>;
 }
