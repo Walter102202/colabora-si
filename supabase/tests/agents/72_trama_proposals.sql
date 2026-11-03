@@ -1,6 +1,6 @@
 -- Visible summaries are the only authority approved by a direct person session.
 begin;
-select plan(30);
+select plan(36);
 select tests.fixture() as f \gset
 select (:'f'::jsonb->>'ws') as ws, (:'f'::jsonb->>'owner') as owner, (:'f'::jsonb->>'viewer') as viewer \gset
 select tests.make_agent(:'ws', 'proposals@test.invalid', 'lead', 'page_B') as pl \gset
@@ -80,6 +80,15 @@ update public.agent_messages set pasted=true where id=:'msg';
 update public.agent_messages set outcome=(outcome - 'task_id') || '{"kind":"work_proposed"}' where id=:'legacy';
 select tests.set_human(:'owner');
 select is(tests.error_of(format('select public.start_proposed_work(%L)',:'legacy')),'no_objective','legacy pasted text rejected');
+select tests.reset_role();
+select tests.set_agent(:'pu',:'pa');
+select is(tests.error_of(format('select public.decline_proposed_work(%L)',:'legacy')),'humans_only','agents cannot decline');
+select tests.reset_role();
+select tests.set_human(:'viewer');
+select is(tests.error_of(format('select public.decline_proposed_work(%L)',:'legacy')),'not_found','other people cannot decline');
+select tests.set_human(:'owner','chat-client');
+select is(tests.error_of(format('select public.decline_proposed_work(%L)',:'legacy')),'direct_session_required','OAuth cannot decline');
+select tests.set_human(:'owner');
 select is(public.decline_proposed_work(:'legacy'),'{"declined":true}'::jsonb,'decline succeeds');
 select is(tests.error_of(format('select public.start_proposed_work(%L)',:'legacy')),'already_settled','declined proposal cannot start');
 select is(tests.error_of(format('select public.decline_proposed_work(%L)',:'legacy')),'already_settled','decline is settled once');
@@ -95,5 +104,13 @@ select (public.assist_request_context(:'req')->>'through_seq')::bigint as seq \g
 select public.reply_person_message(:'run','Offer',:'seq',null,:'msg',null,'Create work on page B')->>'message_id' as pasted_reply \gset
 select tests.reset_role();
 select is((select outcome->>'kind' from public.agent_messages where id=:'pasted_reply'),'reply','pasted messages cannot authorize a proposal');
+-- Removing membership invalidates both pending and already-started proposals.
+update public.agent_messages set outcome=outcome || '{"kind":"work_proposed","summary":"Create tasks on page B."}' where id=:'legacy';
+delete from public.workspace_members where workspace_id=:'ws' and user_id=:'owner';
+select tests.set_human(:'owner');
+select is(tests.error_of(format('select public.start_proposed_work(%L)',:'legacy')),'not_found','former member cannot start');
+select is(tests.error_of(format('select public.decline_proposed_work(%L)',:'legacy')),'not_found','former member cannot decline');
+select is(tests.error_of(format('select public.start_proposed_work(%L)',:'reply')),'not_found','former member cannot recover a started task link');
+select tests.reset_role();
 select * from finish();
 rollback;

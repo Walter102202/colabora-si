@@ -79,8 +79,8 @@ declare m public.agent_messages%rowtype; v_objective text; v_task jsonb;
 begin
   if private.principal_type() is distinct from 'human' then raise exception using errcode='PT403',message='humans_only'; end if;
   if private.jwt_client_id() is not null then raise exception using errcode='PT403',message='direct_session_required'; end if;
-  select * into m from public.agent_messages where id=p_message_id and user_id=auth.uid()
-    and direction='out' and outcome->>'kind' in ('work_proposed','work_started','work_declined') for update;
+  select * into m from public.agent_messages proposal where id=p_message_id and user_id=auth.uid()
+    and private.is_human_member(proposal.workspace_id) and direction='out' and outcome->>'kind' in ('work_proposed','work_started','work_declined') for update;
   if not found then raise exception using errcode='PT404',message='not_found'; end if;
   if m.outcome->>'kind'='work_started' then
     return jsonb_build_object('task_id',m.outcome->>'task_id','page_id',m.outcome->>'page_id','already_started',true);
@@ -108,8 +108,8 @@ declare m public.agent_messages%rowtype;
 begin
   if private.principal_type() is distinct from 'human' then raise exception using errcode='PT403',message='humans_only'; end if;
   if private.jwt_client_id() is not null then raise exception using errcode='PT403',message='direct_session_required'; end if;
-  select * into m from public.agent_messages where id=p_message_id and user_id=auth.uid()
-    and direction='out' and outcome->>'kind' in ('work_proposed','work_started','work_declined') for update;
+  select * into m from public.agent_messages proposal where id=p_message_id and user_id=auth.uid()
+    and private.is_human_member(proposal.workspace_id) and direction='out' and outcome->>'kind' in ('work_proposed','work_started','work_declined') for update;
   if not found then raise exception using errcode='PT404',message='not_found'; end if;
   if m.outcome->>'kind'<>'work_proposed' then raise exception using errcode='PT409',message='already_settled'; end if;
   update public.agent_messages set outcome=outcome||'{"kind":"work_declined"}'::jsonb where id=m.id;
