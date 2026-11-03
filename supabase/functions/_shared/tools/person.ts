@@ -43,6 +43,7 @@ const reply: ToolDef = {
   inputSchema: object({
     run_id: { type: 'string', minLength: 1 }, text: { type: 'string', minLength: 1, maxLength: 4000 }, through_seq: { type: 'integer', minimum: 0 }, usage, propose_message_id: { type: 'string', minLength: 1 },
     work_summary: { type: 'string', minLength: 1, maxLength: 600 },
+    job: object({ board_id: { type: 'string', minLength: 1 }, title: { type: 'string', minLength: 1, maxLength: 120 }, lead_agent_id: { type: 'string', minLength: 1 }, worker_agent_ids: { type: 'array', maxItems: 4, uniqueItems: true, items: { type: 'string' } } }, ['board_id','title','lead_agent_id','worker_agent_ids']),
     propose_agent: object({ message_id: { type: 'string' }, name: { type: 'string', minLength: 1, maxLength: 80 },
       harness: { type: 'string', enum: ['claude-code','codex','muse-code','cursor','gemini-cli','antigravity','hermes','openclaw'] },
       role: { type: 'string', enum: ['worker','lead'] } }, ['message_id','name','harness','role']),
@@ -51,7 +52,7 @@ const reply: ToolDef = {
   annotations: WRITE, cacheTtlMs: 0,
   async handler(args, ctx) {
     const data = await must(ctx.db.rpc<Record<string, unknown>>('reply_person_message', {
-      p_run_id: str(args.run_id), p_text: str(args.text), p_through_seq: num(args.through_seq), p_usage: args.usage ?? null, ...(args.propose_message_id && args.work_summary ? { p_propose_message_id: str(args.propose_message_id), p_propose_agent: null, p_work_summary: str(args.work_summary) } : args.propose_agent ? { p_propose_agent: args.propose_agent, p_propose_message_id: str(args.propose_message_id) ?? null } : args.propose_message_id ? { p_propose_message_id: str(args.propose_message_id) } : {}),
+      p_run_id: str(args.run_id), p_text: str(args.text), p_through_seq: num(args.through_seq), p_usage: args.usage ?? null, ...(args.propose_message_id && args.work_summary ? { p_propose_message_id: str(args.propose_message_id), p_propose_agent: null, p_proposal: { summary: str(args.work_summary), ...(args.job ? { job: args.job } : {}) } } : args.propose_agent ? { p_propose_agent: args.propose_agent, p_propose_message_id: str(args.propose_message_id) ?? null } : args.propose_message_id ? { p_propose_message_id: str(args.propose_message_id) } : {}),
     }));
     return { text: 'Answered.', structured: data ?? {} };
   },

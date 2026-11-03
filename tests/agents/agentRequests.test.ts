@@ -232,3 +232,13 @@ it("guides work requests without an open page instead of offering a proposal", a
   expect(model.requests[0].messages[0].content).toContain("If the person asks for work and page is null, explain that work starts from a page: ask them to open the page where the work belongs and ask you there.");
   expect(mcp.calls.find((c) => c.name === "reply_person_message")!.args.propose_message_id).toBeUndefined();
 });
+
+it.each(["valid", "unknown board", "unknown lead", "wrong role", "duplicate workers", "long title"])("validates job proposals against supplied context: %s", async (variant) => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const job = { board_id: variant === "unknown board" ? "invented" : "board", title: variant === "long title" ? "x".repeat(121) : "Offsite", lead_agent_id: variant === "unknown lead" ? "invented" : "lead", worker_agent_ids: variant === "duplicate workers" ? ["worker", "worker"] : ["worker"] };
+  const mcp = createStubMcp({ handlers: { get_ai_request: () => ({ kind: "assist", page: null, messages: [{ text: "Build a job" }], through_seq: 1, proposal_message_id: id, boards: [{ id: "board", title: "Jobs" }], agents: [{ id: "lead", name: "Claude", role: variant === "wrong role" ? "worker" : "lead" }, { id: "worker", name: "Codex", role: "worker" }] }), heartbeat: () => ({}), reply_person_message: () => ({}) } });
+  const model = createStubModel([{ tool_calls: [toolCall("propose_work", { message_id: id, summary: "Codex writes; Claude reviews progress.", job })] }, { content: "Review it." }]);
+  await runRequest({ call: mcp.callTool, model, task: { task_id: "t", request_kind: "assist" }, runId: "r", log: () => {} });
+  expect(model.requests[0].tools!.some((t) => t.function.name === "propose_work")).toBe(true);
+  expect(mcp.calls.find((c) => c.name === "reply_person_message")!.args.job).toEqual(variant === "valid" ? job : undefined);
+});

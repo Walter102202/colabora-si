@@ -32,6 +32,7 @@ export interface AssistantThreadViewProps {
   busy?: boolean;
   error: string | null;
   voice: ReactNode;
+  decisions?: ReactNode;
   avatar?: ReactNode;
   empty?: ReactNode;
   onDeclineWork?: (message: PersonMessage) => void;
@@ -53,7 +54,7 @@ export interface AssistantThreadViewProps {
 }
 
 // Pure view of the conversation with the workspace agent. P12 mounts it in its own surface.
-export function AssistantThreadView({ messages, draft, reviewing, busy = false, error, voice, avatar, empty, onPropose, onDeclineWork, onSettleAgent, hasTaskDatabase, agentProposalError, proposing, onDraft, onPaste, onSend, onRetrySend, onUndo, onOpenNotes, onNewConversation, resetting, scrollRequest = 0, status = null }: AssistantThreadViewProps) {
+export function AssistantThreadView({ messages, draft, reviewing, busy = false, error, voice, decisions, avatar, empty, onPropose, onDeclineWork, onSettleAgent, hasTaskDatabase, agentProposalError, proposing, onDraft, onPaste, onSend, onRetrySend, onUndo, onOpenNotes, onNewConversation, resetting, scrollRequest = 0, status = null }: AssistantThreadViewProps) {
   const { listRef, contentRef, onScroll, scrollToLatest, showScrollToLatest } = useConversationScroll(messages, scrollRequest);
   const hasUserMessage = messages.some((message) => message.direction === "in" && message.kind !== "system");
   return (
@@ -92,9 +93,10 @@ export function AssistantThreadView({ messages, draft, reviewing, busy = false, 
                     {(m.kind === "voice" || m.forwarded || m.channel !== "surface") && (
                       <p className={`mt-1 text-xs ${m.direction === "in" ? "text-white/90" : "text-text-secondary"}`}>{[m.channel === "telegram" ? "Telegram" : null, m.kind === "voice" ? "voice" : null, m.forwarded ? "forwarded" : null].filter(Boolean).join(" · ")}</p>
                     )}
+                    {m.outcome?.job && <p className={`mt-2 ${m.outcome.kind === "work_declined" ? "text-text-secondary" : ""}`}>Lead: {m.outcome.job.lead.name} · Workers: {m.outcome.job.workers.map((a) => a.name).join(", ") || "none"}</p>}
                     {m.outcome?.kind === "work_proposed" && onPropose && (
                       <div className={m.outcome.summary ? "mt-2 space-y-1 rounded border border-border bg-bg-secondary p-3" : "mt-1"}>
-                        {m.outcome.summary && <><p className="font-medium">Start this work?</p><p>On {m.outcome.page_title || "this page"}</p><p className="whitespace-pre-wrap">{m.outcome.summary}</p></>}
+                        {m.outcome.summary && <><p className="font-medium">{m.outcome.job ? "Start this job?" : "Start this work?"}</p><p>{m.outcome.job ? `New job on ${m.outcome.job.board_title}: ${m.outcome.job.title}` : `On ${m.outcome.page_title || "this page"}`}</p><p className="whitespace-pre-wrap">{m.outcome.summary}</p></>}
                         <div className="flex gap-2 pt-2">
                           <button type="button" aria-label={`Do it on ${m.outcome.page_title || "this page"}`} className="min-h-9 rounded bg-accent px-3 text-white disabled:opacity-50" disabled={proposing?.id === m.id} onClick={() => onPropose(m)}>{proposing?.id === m.id && proposing.action === "start" ? "Starting…" : "Do it"}</button>
                           {m.outcome.summary && onDeclineWork && <button type="button" aria-label={`Not now on ${m.outcome.page_title || "this page"}`} className="min-h-9 rounded border border-border px-3 disabled:opacity-50" disabled={proposing?.id === m.id} onClick={() => onDeclineWork(m)}>{proposing?.id === m.id && proposing.action === "decline" ? "Closing…" : "Not now"}</button>}
@@ -104,7 +106,7 @@ export function AssistantThreadView({ messages, draft, reviewing, busy = false, 
                     {(m.outcome?.kind === "work_started" || m.outcome?.kind === "work_declined") && <div className={`mt-2 space-y-1 ${m.outcome.kind === "work_declined" ? "text-text-secondary" : ""}`}>
                       <p>{m.outcome.kind === "work_started" ? "Started." : "Not started."}</p>
                       {m.outcome.summary && <><p>On {m.outcome.page_title || "this page"}</p><p className="whitespace-pre-wrap">{m.outcome.summary}</p></>}
-                      {m.outcome.kind === "work_started" && m.outcome.page_id && m.outcome.task_id && <a className="text-accent underline" href={taskUrl(m.outcome.page_id, m.outcome.task_id)}>Open task</a>}
+                      {m.outcome.kind === "work_started" && m.outcome.page_id && m.outcome.task_id && <a className="text-accent underline" href={taskUrl(m.outcome.page_id, m.outcome.task_id)}>{m.outcome.job ? "Open job" : "Open task"}</a>}
                     </div>}
                     {m.outcome?.kind === "agent_proposed" && onSettleAgent ? <div className="mt-2 space-y-1 rounded border border-border bg-bg-secondary p-3">
                       <p className="font-medium">Create this agent?</p><p>Name: {m.outcome.name}</p><p>Works with: {CONNECT_AGENT_NAMES[m.outcome.harness ?? ""] ?? m.outcome.harness}</p><p>Role: {m.outcome.role === "lead" ? "Lead" : "Worker"}</p><p>Page access: {hasTaskDatabase ? "Agent Tasks" : "none yet"}</p>
@@ -134,6 +136,7 @@ export function AssistantThreadView({ messages, draft, reviewing, busy = false, 
           {onRetrySend && <button type="button" className="underline" onClick={onRetrySend}>Try again</button>}
         </p>
       )}
+      {decisions}
       {reviewing && <p className="shrink-0 px-1 text-xs text-text-secondary">Check the text before sending. {VOICE_NOTICE}</p>}
       <div className="flex shrink-0 items-end gap-1">
         <textarea

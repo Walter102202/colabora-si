@@ -13,9 +13,9 @@ select id as req from public.agent_tasks where request_kind='assist' and owner_u
 select tests.set_agent(:'pu',:'pa');
 select public.claim_task(:'req','test')->>'run_id' as run \gset
 select (public.assist_request_context(:'req')->>'through_seq')::bigint as seq \gset
-select is(tests.error_of(format('select public.reply_person_message(%L,%L,%s,null,%L,null,%L)',:'run','Offer',:'seq',:'msg','  ')), 'invalid_input','blank summary rejected');
-select is(tests.error_of(format('select public.reply_person_message(%L,%L,%s,null,%L,null,%L)',:'run','Offer',:'seq',:'msg',repeat('x',601))), 'invalid_input','long summary rejected');
-select public.reply_person_message(:'run','Offer',:'seq',null,:'msg',null,'  Create five offsite tasks on page B.  ')->>'message_id' as reply \gset
+select is(tests.error_of(format('select public.reply_person_message(%L,%L,%s,null,%L,null,%L)',:'run','Offer',:'seq',:'msg',jsonb_build_object('summary','  '))), 'invalid_input','blank summary rejected');
+select is(tests.error_of(format('select public.reply_person_message(%L,%L,%s,null,%L,null,%L)',:'run','Offer',:'seq',:'msg',jsonb_build_object('summary',repeat('x',601)))), 'invalid_input','long summary rejected');
+select public.reply_person_message(:'run','Offer',:'seq',null,:'msg',null,jsonb_build_object('summary','  Create five offsite tasks on page B.  '))->>'message_id' as reply \gset
 select tests.reset_role();
 select is((select outcome->>'summary' from public.agent_messages where id=:'reply'),'Create five offsite tasks on page B.','trimmed visible summary saved');
 select is((select outcome->>'page_title' from public.agent_messages where id=:'reply'),(select left(title,200) from public.pages where id='page_B'),'page title saved');
@@ -101,7 +101,7 @@ select id as req from public.agent_tasks where request_kind='assist' and owner_u
 select tests.set_agent(:'pu',:'pa');
 select public.claim_task(:'req','test')->>'run_id' as run \gset
 select (public.assist_request_context(:'req')->>'through_seq')::bigint as seq \gset
-select public.reply_person_message(:'run','Offer',:'seq',null,:'msg',null,'Create work on page B')->>'message_id' as pasted_reply \gset
+select public.reply_person_message(:'run','Offer',:'seq',null,:'msg',null,jsonb_build_object('summary','Create work on page B'))->>'message_id' as pasted_reply \gset
 select tests.reset_role();
 select is((select outcome->>'kind' from public.agent_messages where id=:'pasted_reply'),'reply','pasted messages cannot authorize a proposal');
 -- Removing membership invalidates both pending and already-started proposals.

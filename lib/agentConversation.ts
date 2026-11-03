@@ -4,6 +4,8 @@ import { agentErrorMessage, getAgentClient } from "@/lib/agentClient";
 
 // Non-persisted thread of the signed-in person with the workspace agent, kept live through Realtime. Only RPCs write it.
 
+export interface ProposedJob { board_id: string; board_title: string; title: string; lead: { id: string; name: string }; workers: { id: string; name: string }[]; }
+
 export interface PersonMessage {
   id: string;
   seq: number;
@@ -14,7 +16,7 @@ export interface PersonMessage {
   body: string;
   forwarded: boolean;
   needs_reply?: boolean;
-  outcome: { summary?: string; page_title?: string; task_id?: string; agent_id?: string; kind?: string; from_seq?: number; note_id?: string; page_id?: string; message_id?: string; name?: string; harness?: string; role?: "worker" | "lead" } | null;
+  outcome: { job?: ProposedJob; summary?: string; page_title?: string; task_id?: string; agent_id?: string; kind?: string; from_seq?: number; note_id?: string; page_id?: string; message_id?: string; name?: string; harness?: string; role?: "worker" | "lead" } | null;
   created_at: string;
 }
 
@@ -70,6 +72,12 @@ export function mergeMessages(current: PersonMessage[], incoming: PersonMessage[
 const COLUMNS = "id,seq,workspace_id,direction,channel,kind,body,forwarded,needs_reply,outcome,created_at";
 
 const proposalErrors: Record<string, string> = {
+  not_a_job: "That board can't hold agent jobs.",
+  lead_required: "Pick an agent with the Lead role.",
+  agent_not_available: "One of these agents isn't connected.",
+  owner_required: "Only someone who can edit the workspace can give agents access to this board.",
+  job_started: "This job already started with another team.",
+  invalid_job: "The board or team is no longer available for this job. Ask Trama to check it again.",
   task_exists: "This page already has an active task. Finish or close it first, or ask me from another page.",
   not_found: "This proposal is no longer available.",
   already_settled: "This proposal was already answered.",

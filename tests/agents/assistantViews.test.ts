@@ -127,3 +127,10 @@ it.each(["work_proposed", "work_started", "work_declined", "legacy"])("renders d
     if (state === "work_started") expect(host.querySelector('a')?.getAttribute("href")).toBe("/p/home?task=task");
   }
 });
+
+it.each(["work_proposed", "work_started", "work_declined"])("shows the proposed job team in %s", (kind) => {
+  const html = view({ messages: [message({ direction: "out", outcome: { kind, page_id: "row", task_id: "task", summary: "Codex researches; Claude reviews.", job: { board_id: "b", board_title: "Jobs", title: "Offsite", lead: { id: "l", name: "Claude" }, workers: [{ id: "w", name: "Codex" }] } } })], onPropose: noop, onDeclineWork: noop });
+  expect(html).toContain("Lead: Claude"); expect(html).toContain("Workers: Codex"); expect(html).toContain("Codex researches; Claude reviews.");
+  if (kind === "work_proposed") { expect(html).toContain("Start this job?"); expect(html).toContain("New job on Jobs: Offsite"); }
+  if (kind === "work_started") { expect(html).toContain("Open job"); expect(html).toContain('href="/p/row?task=task"'); }
+});
