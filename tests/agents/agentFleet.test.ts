@@ -140,7 +140,7 @@ describe("the managed runtime's workspace endpoint", () => {
     const make = (url: string) => {
       made.push(url);
       const names = url.endsWith("/workspace-mcp") ? ["create_database", "read_page"] : ["read_page", "claim_task"];
-      return { instructions: url, async initialize() {}, async listTools() { return names.map((name) => ({ name })); }, async callTool(name: string) { return { isError: false, data: { url, name }, text: name }; }, async accessToken() { return "jwt"; } };
+      return { instructions: url, async initialize() {}, async listTools() { return names.map((name) => ({ name })); }, async callTool(name: string, args: Record<string, unknown>) { return { isError: false, data: { url, name, args }, text: name }; }, async accessToken() { return "jwt"; } };
     };
     const { config } = readFleetConfig(env);
     const composed = buildMcp(config, make);

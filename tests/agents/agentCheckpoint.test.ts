@@ -92,7 +92,7 @@ describe("writes by contract", () => {
   it("guardFor guards a keyed workspace write only when its schema says it is a write", () => {
     const schema = { properties: { idempotency_key: { type: "string" } } };
     const args = { parent_id: "row-1", title: "Launch" };
-    const guards = () => new Map([[argsHash("create_database", args), { status: "unknown", key: "k1", summary: "create_database on row-1" }]]);
+    const guards = () => new Map([[argsHash("create_database", args), { status: "unknown" as const, key: "k1", summary: "create_database on row-1" }]]);
     expect(guardFor("create_database", args, guards())).toBeNull();
     expect(guardFor("create_database", args, guards(), schema)).toMatchObject({ error: "verify_first", key: "k1" });
     expect(guardFor("create_database", args, new Map(), schema)).toBeNull();
