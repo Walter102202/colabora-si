@@ -24,6 +24,7 @@ vi.mock("@/lib/agentClient", async (original) => ({ ...await original<typeof imp
 const agents = [
   { id: "lead", name: "Claude Code", role: "lead", status: "enabled", revoked_at: null, is_platform: false },
   { id: "worker", name: "Codex", role: "worker", status: "enabled", revoked_at: null, is_platform: false },
+  { id: "muse", name: "Muse Code", role: "worker", status: "enabled", revoked_at: null, is_platform: false },
 ] as AgentRow[];
 const task = { ...(mockCard("1") as TaskCardData).task, id: "job-task", row_page_id: "job", db_page_id: "db", title: "Market research", delegate_agent_id: "lead", parent_task_id: null, state: "queued" as const, active_run_id: null, named_worker_ids: ["worker"], joined_worker_ids: [] };
 const ops = { pageId: "db", database, readOnly: false } as DbOps;
@@ -102,6 +103,33 @@ it("an adopted subtask keeps its Worker locked even before its first run", async
   await act(async () => root.render(createElement(AgentPropertyCell, { pageId: "child", dbPageId: "db", propertyId: "worker", kind: "agentDelegate", isSubtask: true })));
   expect(container.textContent).toContain("Codex");
   expect(container.querySelector("button")?.disabled).toBe(true);
+});
+it("a job's Worker cell shows a Worker the Lead gave a subtask, locked until that subtask changes", async () => {
+  const job = { ...task, state: "working" as const, named_worker_ids: [] };
+  useAgentTasks.setState({ tasks: { [job.id]: job, child: { ...task, id: "child", row_page_id: "child", parent_task_id: job.id, delegate_agent_id: "worker" } } });
+  await mountCell(2);
+  expect(container.textContent).toContain("Codex");
+  expect(container.textContent).not.toContain("Optional");
+  await act(async () => (container.querySelector("button") as HTMLButtonElement).click());
+  const codex = [...document.querySelectorAll("[role='dialog'] button")].find((button) => button.textContent === "Codex") as HTMLButtonElement;
+  expect(codex.getAttribute("aria-pressed")).toBe("true");
+  expect(codex.disabled).toBe(true);
+  const muse = [...document.querySelectorAll("[role='dialog'] button")].find((button) => button.textContent === "Muse Code") as HTMLButtonElement;
+  expect(muse.disabled).toBe(false);
+  expect(f.assign).not.toHaveBeenCalled();
+});
+it("a job's Worker cell counts named Workers and subtask Workers together, each once", async () => {
+  const job = { ...task, state: "working" as const, named_worker_ids: ["muse"] };
+  useAgentTasks.setState({ tasks: {
+    [job.id]: job,
+    a: { ...task, id: "a", row_page_id: "a", parent_task_id: job.id, delegate_agent_id: "worker" },
+    b: { ...task, id: "b", row_page_id: "b", parent_task_id: job.id, delegate_agent_id: "muse" },
+    c: { ...task, id: "c", row_page_id: "c", parent_task_id: job.id, delegate_agent_id: "lead" },
+  } });
+  await mountCell(2);
+  expect(container.textContent).toContain("2 workers");
+  expect(container.querySelector("button")?.getAttribute("aria-label")).toBe("Workers: Codex and Muse Code");
+  expect(container.querySelectorAll("img").length).toBe(2);
 });
 it("an existing subtask stays locked in row properties even without persisted row nesting", async () => {
   useAgentTasks.setState({ tasks: { child: { ...task, id: "child", row_page_id: "job", parent_task_id: "parent", delegate_agent_id: "worker" } } });

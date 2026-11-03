@@ -29,7 +29,7 @@ import { setMergeRule } from "@/lib/agentActions";
 import { TaskLessons } from "@/components/agents/TaskLessons";
 import { AssignView, TaskView, type SubtaskItem } from "@/components/agents/panel";
 import { JobReadyPanel } from "@/components/agents/panel/JobReadyPanel";
-import { jobReadyPanel, type JobSentence } from "@/lib/agentJobs";
+import { jobReadyPanel, jobWorkerIds, type JobSentence } from "@/lib/agentJobs";
 import { connectedRows } from "@/lib/agentConnect";
 import { AgentPropertyCell } from "@/components/agents/AgentPropertyCell";
 
@@ -120,7 +120,7 @@ function JobReadyConnector({ pageId, onOpenPage }: { pageId: string; onOpenPage:
   const subs = Object.values(tasks).filter((child) => child.parent_task_id === task.id && child.request_kind == null);
   const database = pages?.[task.db_page_id ?? ""]?.database, row = database?.rows.find((item) => item.pageId === pageId);
   const pending = database?.rows.filter((item) => item.parentRowId === row?.id && !subs.some((child) => child.row_page_id === item.pageId)) ?? [];
-  const workerIds = new Set([...(task.named_worker_ids ?? []), ...subs.map((child) => child.delegate_agent_id), ...pending.map((item) => rowPlans[item.pageId]?.worker_agent_id)]);
+  const workerIds = new Set(jobWorkerIds(task, subs, pending.map((item) => rowPlans[item.pageId]?.worker_agent_id)));
   const title = pages?.[pageId]?.title?.trim() || task.title.trim();
   if (!title) return <p className="px-4 py-3 text-sm text-text-secondary">Name this job and the sentence for the Lead appears here.</p>;
   const data = jobReadyPanel({ title, lead, workers: known.filter((agent) => workerIds.has(agent.id)), subtaskCount: subs.length + pending.length, hasPlan: !!pages?.[pageId]?.blocks?.some((block) => block.html?.trim()) });

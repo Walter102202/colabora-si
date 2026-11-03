@@ -8,7 +8,7 @@ import { activeRunFor, subtaskWorkers, taskForPage, useAgentTasks } from "@/lib/
 import { taskSubtitle } from "@/lib/agentTaskText";
 import { StatusBadge } from "@/components/agents/panel/StatusBadge";
 import { JobAgentPicker } from "@/components/agents/panel/JobAgentPicker";
-import { eligibleJobAgents, jobAgentNames, jobState, jobWait, subtaskState, subWait, JOB_STATE_LABEL, SUBTASK_STATE_LABEL, type JobAgent } from "@/lib/agentJobs";
+import { eligibleJobAgents, jobAgentNames, jobState, jobWait, jobWorkerIds, subtaskState, subWait, JOB_STATE_LABEL, SUBTASK_STATE_LABEL, type JobAgent } from "@/lib/agentJobs";
 import { connectedRows, loadConnections } from "@/lib/agentConnect";
 import { connectWorkspaces } from "@/lib/agentConsent";
 import { getAgentClient } from "@/lib/agentClient";
@@ -111,6 +111,7 @@ function JobAssignmentCell({ pageId, dbPageId, kind, readOnly, fallbackName, isS
   const agents = useAgentsStore((state) => state.agents), grants = useAgentsStore((state) => state.grants), loadAgents = useAgentsStore((state) => state.load);
   const subscribe = useAgentTasks((state) => state.subscribe), task = useAgentTasks((state) => taskForPage(state, pageId));
   const plan = useAgentTasks((state) => state.rowPlans[pageId]);
+  const tasks = useAgentTasks((state) => state.tasks), rowPlans = useAgentTasks((state) => state.rowPlans);
   const [anchor, setAnchor] = useState<DOMRect | null>(null), [choices, setChoices] = useState<JobAgent[]>([]);
   const [canGrant, setCanGrant] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null), [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
@@ -125,11 +126,20 @@ function JobAssignmentCell({ pageId, dbPageId, kind, readOnly, fallbackName, isS
     return subscribe(workspaceId);
   }, [workspaceId, subscribe, loadAgents]);
   const lead = kind === "jobLead", workerIds = task?.named_worker_ids ?? [];
-  const selectedIds = lead || isSubtask ? (task?.delegate_agent_id ?? (isSubtask ? plan?.worker_agent_id : null)) ? [task?.delegate_agent_id ?? plan!.worker_agent_id!] : [] : workerIds;
+  // A job's Worker cell shows everyone on the job, not only the Workers a person named: the Lead
+  // gives subtasks to agents of its own, and a person can set one on a subtask before the Lead adopts it.
+  const subtasks = !lead && !isSubtask && task ? Object.values(tasks).filter((child) => child.parent_task_id === task.id && child.request_kind == null) : [];
+  const database = pages[dbPageId ?? ""]?.database, row = !lead && !isSubtask ? database?.rows.find((item) => item.pageId === pageId) : undefined;
+  const planned = row ? database!.rows.filter((item) => item.parentRowId === row.id && !subtasks.some((child) => child.row_page_id === item.pageId)).map((item) => rowPlans[item.pageId]?.worker_agent_id) : [];
+  const jobWorkers = lead || isSubtask ? [] : jobWorkerIds(task, subtasks, planned);
+  const selectedIds = lead || isSubtask ? (task?.delegate_agent_id ?? (isSubtask ? plan?.worker_agent_id : null)) ? [task?.delegate_agent_id ?? plan!.worker_agent_id!] : [] : jobWorkers;
   const selected = connectedRows(agents, []).filter((agent) => selectedIds.includes(agent.agentId));
   const started = !!task && (task.state !== "queued" || !!task.active_run_id);
   const locked = readOnly || (isSubtask && !!task) || (lead && started) || task?.state === "done";
+  // A Worker that came through a subtask is removed on that subtask, not here; a named one stays once the job started.
+  const lockedIds = lead || isSubtask ? [] : started ? selectedIds : selectedIds.filter((id) => !workerIds.includes(id));
   const label = selected.length ? lead || selected.length === 1 ? selected[0].name : `${selected.length} workers` : lead ? fallbackName || "Choose a Lead" : isSubtask ? "Lead chooses" : "Optional";
+  const names = selected.length > 1 ? jobAgentNames(selected.map((agent) => agent.name)) : undefined;
   const open = async (rect: DOMRect) => {
     setError(null); setBusy(true);
     try {
@@ -157,13 +167,13 @@ function JobAssignmentCell({ pageId, dbPageId, kind, readOnly, fallbackName, isS
   };
   const blocked = canGrant ? [] : choices.filter((agent) => !dbPageId || !grants.some((grant) => grant.agent_id === agent.id && databaseGrant(grant, dbPageId, pages, ["read", "write", "comment"]))).map((agent) => agent.id);
   return <div className="min-w-0">
-    <button type="button" className="cell-button flex items-center gap-1.5" aria-label={lead ? `Lead: ${label}` : `Workers: ${label}`} aria-haspopup="dialog" aria-expanded={!!anchor} disabled={locked || busy} onClick={(event) => { void open(event.currentTarget.getBoundingClientRect()); }}>
+    <button type="button" className="cell-button flex items-center gap-1.5" aria-label={lead ? `Lead: ${label}` : `Workers: ${names ?? label}`} title={names} aria-haspopup="dialog" aria-expanded={!!anchor} disabled={locked || busy} onClick={(event) => { void open(event.currentTarget.getBoundingClientRect()); }}>
       {selected.map((agent) => agent.logo && <img key={agent.agentId} src={agent.logo} alt="" className="h-5 w-5 shrink-0 object-contain" />)}<span className={`truncate ${!selected.length ? "text-text-secondary" : ""}`}>{label}</span>
     </button>
     {notice && <p role="status" className="px-2 text-xs text-[var(--c-green)]">{notice}</p>}
     {error && <p role="alert" className="px-2 text-xs text-[var(--c-red)]">{error}</p>}
     {anchor && createPortal(<><button type="button" className="cell-backdrop" aria-label="Close menu" onClick={() => setAnchor(null)} /><div className="cell-popover max-h-[70vh] overflow-auto" style={{ width: Math.min(340, innerWidth - 16), left: Math.max(8, Math.min(anchor.left, innerWidth - 348)), top: Math.max(8, Math.min(anchor.bottom + 4, innerHeight - 360)) }}>
-      <JobAgentPicker kind={lead ? "lead" : isSubtask ? "subtask" : "workers"} agents={choices} selectedIds={selectedIds} leadId={task?.delegate_agent_id ?? undefined} busy={busy} blockedAgentIds={blocked} lockedIds={!lead && started ? workerIds : []} onChoose={(id) => { void choose(id); }} onClose={() => setAnchor(null)} connectHref={CONNECT_URL} agentsHref={AGENTS_URL} />
+      <JobAgentPicker kind={lead ? "lead" : isSubtask ? "subtask" : "workers"} agents={choices} selectedIds={selectedIds} leadId={task?.delegate_agent_id ?? undefined} busy={busy} blockedAgentIds={blocked} lockedIds={lockedIds} onChoose={(id) => { void choose(id); }} onClose={() => setAnchor(null)} connectHref={CONNECT_URL} agentsHref={AGENTS_URL} />
     </div></>, document.body)}
   </div>;
 }

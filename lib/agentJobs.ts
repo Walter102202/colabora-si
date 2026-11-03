@@ -78,6 +78,17 @@ export function eligibleJobAgents(
     });
 }
 
+// Everyone working on a job: the Workers a person named, the ones the Lead gave a subtask and the
+// ones a person set on a subtask the Lead has not adopted yet. Named first, each once, never the Lead.
+export function jobWorkerIds(
+  task: Pick<TaskRow, "delegate_agent_id" | "named_worker_ids"> | null | undefined,
+  subtasks: Pick<TaskRow, "delegate_agent_id">[],
+  plannedWorkerIds: (string | null | undefined)[] = [],
+): string[] {
+  const ids = [...(task?.named_worker_ids ?? []), ...subtasks.map((subtask) => subtask.delegate_agent_id), ...plannedWorkerIds];
+  return [...new Set(ids.filter((id): id is string => !!id && id !== task?.delegate_agent_id))];
+}
+
 export function jobAgentNames(names: string[]): string {
   return names.length < 2 ? names.join("") : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
 }

@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { eligibleJobAgents, jobReadyPanel, jobState, jobWait, subWait, subtaskState, type JobAgent } from "@/lib/agentJobs";
+import { eligibleJobAgents, jobReadyPanel, jobState, jobWait, jobWorkerIds, subWait, subtaskState, type JobAgent } from "@/lib/agentJobs";
 import { JobAgentPicker } from "@/components/agents/panel/JobAgentPicker";
 import { JobReadyPanel } from "@/components/agents/panel/JobReadyPanel";
 import { JobsBoard } from "@/components/agents/panel/JobsBoard";
@@ -49,6 +49,13 @@ describe("job preparation", () => {
     expect(jobWait(missing, [{ state: "queued" }])).toEqual({ label: "Worker", count: 0 });
     expect(jobWait(missing, [{ state: "queued" }, { state: "input_required", waiting_on: "human" }])).toEqual({ label: "You", count: 1 });
     expect(jobWait(missing, [{ state: "queued" }, { state: "ready_for_review" }])).toEqual({ label: "Lead", count: 1 });
+  });
+  it("counts every Worker on a job once: named, given a subtask by the Lead or set on a planned one, never the Lead", () => {
+    const job = { delegate_agent_id: "lead", named_worker_ids: ["muse"] };
+    const subtasks = [{ delegate_agent_id: "codex" }, { delegate_agent_id: "muse" }, { delegate_agent_id: "lead" }, { delegate_agent_id: null }];
+    expect(jobWorkerIds(job, subtasks, ["cursor", "codex", null, undefined])).toEqual(["muse", "codex", "cursor"]);
+    expect(jobWorkerIds(null, [{ delegate_agent_id: "codex" }])).toEqual(["codex"]);
+    expect(jobWorkerIds({ delegate_agent_id: "lead", named_worker_ids: [] }, [])).toEqual([]);
   });
   it("offers enabled external agents, verified or added in Settings, and never a pending connection", () => {
     const agent = { id: "a", name: "Codex", is_platform: false, status: "enabled" as const, revoked_at: null, role: "worker" as const };
