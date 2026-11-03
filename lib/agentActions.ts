@@ -2,6 +2,7 @@ import type { AutonomyLevel, AutonomyPolicy, TaskAutonomy } from "@/lib/agentAut
 import type { ButtonAction } from "@/lib/types";
 import type { TaskDiff } from "@/lib/agentRunDiff";
 import type { MetricsResult } from "@/lib/agentMetrics";
+import { taskUrl } from "@/lib/routes";
 import { useStore } from "@/lib/store";
 import { stripHtml } from "@/lib/utils";
 import { agentErrorMessage, getAgentClient } from "@/lib/agentClient";
@@ -263,6 +264,15 @@ export async function runAgentAction(action: ButtonAction, ctx: { pageId: string
   switch (action.mode) {
     case "new":
     case "continue": {
+      if (task && ["done", "ready_for_review"].includes(task.state) && !action.message?.trim()) {
+        // Use the app's existing same-origin link handler without changing the button callers.
+        const link = document.createElement("a");
+        link.href = taskUrl(task.row_page_id, task.id);
+        link.hidden = true;
+        document.body.append(link);
+        try { link.click(); } finally { link.remove(); }
+        return;
+      }
       if (task && (open || action.mode === "continue")) {
         await sendMessage(task.id, action.message ?? "", "continue");
         return;
