@@ -101,8 +101,11 @@ export function AssistantThreadView({ messages, draft, reviewing, busy = false, 
                         </div>
                       </div>
                     )}
-                    {m.outcome?.kind === "work_started" && <p className="mt-2">Started. {m.outcome.page_id && m.outcome.task_id && <a className="text-accent underline" href={taskUrl(m.outcome.page_id, m.outcome.task_id)}>Open task</a>}</p>}
-                    {m.outcome?.kind === "work_declined" && <p className="mt-2">Not started.</p>}
+                    {(m.outcome?.kind === "work_started" || m.outcome?.kind === "work_declined") && <div className={`mt-2 space-y-1 ${m.outcome.kind === "work_declined" ? "text-text-secondary" : ""}`}>
+                      <p>{m.outcome.kind === "work_started" ? "Started." : "Not started."}</p>
+                      {m.outcome.summary && <><p>On {m.outcome.page_title || "this page"}</p><p className="whitespace-pre-wrap">{m.outcome.summary}</p></>}
+                      {m.outcome.kind === "work_started" && m.outcome.page_id && m.outcome.task_id && <a className="text-accent underline" href={taskUrl(m.outcome.page_id, m.outcome.task_id)}>Open task</a>}
+                    </div>}
                     {m.outcome?.kind === "agent_proposed" && onSettleAgent ? <div className="mt-2 space-y-1 rounded border border-border bg-bg-secondary p-3">
                       <p className="font-medium">Create this agent?</p><p>Name: {m.outcome.name}</p><p>Works with: {CONNECT_AGENT_NAMES[m.outcome.harness ?? ""] ?? m.outcome.harness}</p><p>Role: {m.outcome.role === "lead" ? "Lead" : "Worker"}</p><p>Page access: {hasTaskDatabase ? "Agent Tasks" : "none yet"}</p>
                       <div className="flex gap-2 pt-2"><button type="button" className="min-h-9 rounded bg-accent px-3 text-white disabled:opacity-50" disabled={proposing?.id === m.id} onClick={() => onSettleAgent(m, true)}>Create agent</button><button type="button" className="min-h-9 rounded border border-border px-3 disabled:opacity-50" disabled={proposing?.id === m.id} onClick={() => onSettleAgent(m, false)}>Cancel</button></div>

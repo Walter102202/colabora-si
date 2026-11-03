@@ -118,6 +118,11 @@ it.each(["work_proposed", "work_started", "work_declined", "legacy"])("renders d
   } else if (state === "legacy") expect(host.textContent).toContain("Do it");
   else {
     expect(host.textContent).not.toContain("Do it");
+    expect(host.textContent).toContain("On Home");
+    const summary = [...host.querySelectorAll("p")].find((p) => p.textContent === "Create five tasks on Home.")!;
+    expect(summary).toBeDefined();
+    expect(summary.classList.contains("whitespace-pre-wrap")).toBe(true);
+    if (state === "work_declined") expect(summary.closest(".text-text-secondary")).not.toBeNull();
     expect(host.textContent).toContain(state === "work_started" ? "Started." : "Not started.");
     if (state === "work_started") expect(host.querySelector('a')?.getAttribute("href")).toBe("/p/home?task=task");
   }
