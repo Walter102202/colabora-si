@@ -55,7 +55,7 @@ Trama and the reviewer are instances of the reference agent; [`agent/README.md`]
 
 Trama stays visible in the signed-in workspace. It can answer about the open page, explain selected text, and name decisions waiting for you. Page context is checked against the person's access and bounded to 6,000 characters (selection: 2,000). Suggestions are local and use no model.
 
-When Trama proposes work, **Do it** creates a normal task with your original message as its objective. A proposal alone changes no page. An existing active task on that page must be handled through the normal task flow.
+When Trama proposes work, **Do it** creates a normal task whose objective is the summary shown on the card; **Not now** closes the card. A proposal alone changes no page. An existing active task on that page must be handled through the normal task flow.
 
 Voice is transcribed through `voice-transcribe`; browser clips are reviewed before sending. Audio stays in memory and is not stored by colabora.si. Meta receives it for transcription; Telegram retains its own copy. Limits are five minutes in the app, ten minutes for Telegram voice notes, plus person, workspace-agent budget and global quotas enforced by the server before calling Meta. Telegram requires `ffmpeg` on the agent host.
 
