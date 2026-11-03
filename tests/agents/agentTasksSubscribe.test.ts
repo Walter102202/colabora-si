@@ -252,3 +252,21 @@ describe("useAgentNotifications.subscribe", () => {
     expect(created).toHaveLength(2);
   });
 });
+
+it("loads closed child conversation activity and receives its realtime messages", async () => {
+  const parent = (mockCard("1") as TaskCardData).task;
+  const child = { ...parent, id: "closed-child", parent_task_id: parent.id, state: "done" };
+  read.mockImplementation(async (table, filters) => ({ data: table === "agent_tasks" && filters.parent_task_id === parent.id ? [child] : [], error: null }));
+  const release = useAgentTasks.getState().subscribe(parent.workspace_id);
+  await vi.waitFor(() => expect(useAgentTasks.getState().status).toBe("ready"));
+  useAgentTasks.setState({ tasks: { [parent.id]: parent } });
+  try {
+    await useAgentTasks.getState().loadTaskConversation(parent.id);
+    expect(useAgentTasks.getState().tasks[child.id]).toMatchObject(child);
+    expect(read).toHaveBeenCalledWith("agent_activities", { task_id: child.id });
+    expect(read).toHaveBeenCalledWith("agent_reviews", { task_id: child.id });
+    const row = { id: "child-message", task_id: child.id, seq: 1, type: "prompt", body: { text: "Keep going" } };
+    created.at(-1)!.handlers.get("agent_activities")!({ new: row, eventType: "INSERT" });
+    expect(useAgentTasks.getState().activities[child.id]).toEqual([row]);
+  } finally { release(); }
+});

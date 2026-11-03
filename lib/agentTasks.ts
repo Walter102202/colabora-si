@@ -180,6 +180,7 @@ export interface AgentTasksState {
   refreshCiChecks: (workspaceId?: string) => Promise<void>;
   subscribe: (workspaceId: string) => () => void;
   loadActivities: (taskId: string) => Promise<void>;
+  loadTaskConversation: (taskId: string) => Promise<void>;
   loadBriefs: (taskId: string) => Promise<void>;
 }
 
@@ -520,6 +521,22 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
         void client.removeChannel(ch);
       }
     };
+  },
+
+  // The job panel includes closed children even when they fell outside the workspace's closed-task page.
+  async loadTaskConversation(taskId) {
+    const client = getAgentClient();
+    const before = get();
+    if (!client || !before.tasks[taskId]) return;
+    const generation = workspaceGeneration;
+    const revision = realtimeSequence;
+    const { data, error } = await client.from("agent_tasks").select("*").eq("parent_task_id", taskId).order("created_at").limit(OPEN_LIMIT);
+    if (error || generation !== workspaceGeneration || get().workspaceId !== before.workspaceId) return;
+    const children = (data ?? []) as TaskRow[];
+    set({ tasks: mergeFetched("tasks", get().tasks, before.tasks, children, revision) });
+    await Promise.all(children.map(async ({ id }) => {
+      await Promise.all([get().loadActivities(id), get().loadTaskDetail(id)]);
+    }));
   },
 
   // First call: the last ACTIVITIES_PAGE_SIZE activities of the task. Later calls: only

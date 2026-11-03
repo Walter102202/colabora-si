@@ -15,6 +15,7 @@ import { ApprovalCard } from "@/components/agents/panel/ApprovalCard";
 import { DecisionCard } from "@/components/agents/panel/DecisionCard";
 import { LeadReviewCard, type ReviewFinding, type ReviewVerdict } from "@/components/agents/panel/LeadReviewCard";
 import { SubtaskList, type SubtaskItem } from "@/components/agents/panel/SubtaskList";
+import { TaskConversation, type ConversationData } from "@/components/agents/panel/TaskConversation";
 import { ActivityTimeline } from "@/components/agents/panel/ActivityTimeline";
 import { AcceptCard } from "@/components/agents/panel/AcceptCard";
 import { activityLabel, deliverySummary } from "@/lib/agentTaskText";
@@ -63,6 +64,8 @@ export interface TaskViewProps {
   ciChecks?: CiCheckRow[];
   environment?: EnvironmentResource[];
   activities: ActivityRow[];
+  conversation?: ConversationData;
+  agentNames?: Record<string, string>;
   subtasks: SubtaskItem[];
   reviewerName: string | null;
   // Results of the task and its subtasks (task_metrics); the chat card leaves them out.
@@ -149,7 +152,7 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ agentAvatar = null, lessons = null, task, agent, run, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, environment = [], activities, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ agentAvatar = null, lessons = null, task, agent, run, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, environment = [], activities, conversation, agentNames = {}, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -216,6 +219,7 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
     }
   };
 
+  const names = { ...Object.fromEntries(subtasks.filter((s) => s.task.delegate_agent_id && s.agentName).map((s) => [s.task.delegate_agent_id!, s.agentName!])), ...(agent ? { [agent.id]: agent.name } : {}), ...agentNames };
   const recentActions = activities.filter((a) => a.type === "action").slice(-3);
   const nextText = whatWillHappen(task, agentLike, "continue", { artifactVersion: artifact?.version ?? null });
 
@@ -312,6 +316,8 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
       {lessons}
 
       <SubtaskList subtasks={subtasks} onOpenTask={onOpenTask} />
+      {subtasks.length > 0 && <TaskConversation task={task} subtasks={subtasks.map((s) => s.task)} agentNames={names}
+        activities={conversation?.activities ?? activities} reviews={conversation?.reviews ?? (review ? [review] : [])} />}
 
       {actionApprovals && onDecideApproval
         ? <ApprovalGroupCard approvals={actionApprovals} onDecide={onDecideApproval} focusApprovalId={focusApprovalId} />
@@ -415,7 +421,7 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
       {showTimeline && (
         <section className="space-y-1">
           <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Timeline</h4>
-          <ActivityTimeline activities={activities} />
+          <ActivityTimeline activities={activities} agentNames={names} />
         </section>
       )}
     </div>
