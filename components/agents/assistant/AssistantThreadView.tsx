@@ -2,6 +2,7 @@
 
 import { ArrowDown, Send, Sparkles } from "lucide-react";
 import type { ClipboardEvent, ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { TramaAvatar } from "@/components/agents/TramaAvatar";
 import { useConversationScroll } from "@/components/agents/assistant/useConversationScroll";
 import type { PersonMessage } from "@/lib/agentConversation";
@@ -25,6 +26,26 @@ function appLinks(body: string): ReactNode {
   });
 }
 
+function SentMessage({ outcome }: { outcome: NonNullable<PersonMessage["outcome"]> }) {
+  const [now, setNow] = useState(Date.now);
+  const due = outcome.sent_at ? Date.parse(outcome.sent_at) + 5 * 60_000 : NaN;
+  const received = outcome.received_at ? new Date(outcome.received_at) : null;
+  const waiting = !received && (outcome.delivery === "queued_for_next_session" || now >= due);
+  useEffect(() => {
+    if (outcome.received_at || outcome.delivery === "queued_for_next_session" || !Number.isFinite(due) || now >= due) return;
+    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, due - Date.now()));
+    return () => clearTimeout(timer);
+  }, [outcome.received_at, outcome.delivery, due, now]);
+  return <div className="mt-2 space-y-1">
+    <p>{received ? `${outcome.agent_name || "The agent"} got it at ${received.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}.` : `Sent${outcome.agent_name ? ` to ${outcome.agent_name}` : ""}.`}</p>
+    {outcome.task_title && <p>On {outcome.task_title}</p>}
+    {outcome.text && <p className="whitespace-pre-wrap">{outcome.text}</p>}
+    {waiting && <p>{outcome.agent_name || "The agent"} hasn't picked it up yet. It will see it when its session resumes.</p>}
+    {outcome.reply && <p className="whitespace-pre-wrap">{outcome.reply.agent_name}: "{outcome.reply.text}"</p>}
+    {outcome.page_id && outcome.task_id && <a className="text-accent underline" href={taskUrl(outcome.page_id, outcome.task_id)}>Open task</a>}
+  </div>;
+}
+
 export interface AssistantThreadViewProps {
   messages: PersonMessage[];
   draft: string;
@@ -35,7 +56,7 @@ export interface AssistantThreadViewProps {
   decisions?: ReactNode;
   avatar?: ReactNode;
   empty?: ReactNode;
-  onSendMessage?: (message: PersonMessage) => void;
+  onSendMessage?: (message: PersonMessage, addRequirement?: boolean) => void;
   onDeclineWork?: (message: PersonMessage) => void;
   onPropose?: (message: PersonMessage) => void;
   onSettleAgent?: (message: PersonMessage, accept: boolean) => void;
@@ -110,16 +131,12 @@ export function AssistantThreadView({ messages, draft, reviewing, busy = false, 
                       {m.outcome.kind === "work_started" && m.outcome.page_id && m.outcome.task_id && <a className="text-accent underline" href={taskUrl(m.outcome.page_id, m.outcome.task_id)}>{m.outcome.job ? "Open job" : "Open task"}</a>}
                     </div>}
                     {m.outcome?.kind === "message_proposed" && <div className="mt-2 space-y-1 rounded border border-border p-3">
-                      <p className="font-medium">Send to {m.outcome.agent_name}?</p><p>On {m.outcome.task_title}</p><p className="whitespace-pre-wrap">{m.outcome.text}</p>
-                      <div className="flex gap-2 pt-2"><button type="button" aria-label={`Send to ${m.outcome.agent_name}`} disabled={proposing?.id === m.id || !onSendMessage} className="min-h-9 rounded bg-accent px-3 text-white disabled:opacity-50" onClick={() => onSendMessage?.(m)}>{proposing?.id === m.id && proposing.action === "message" ? "Sending…" : "Send"}</button>
+                      <p className="font-medium">{m.outcome.adds_requirement ? "Add to the brief and tell" : "Send to"} {m.outcome.agent_name}?</p><p>On {m.outcome.task_title}</p><p className="whitespace-pre-wrap">{m.outcome.text}</p>
+                      <div className="flex gap-2 pt-2"><button type="button" aria-label={`${m.outcome.adds_requirement ? "Add and send" : "Send"} to ${m.outcome.agent_name}`} disabled={proposing?.id === m.id || !onSendMessage} className="min-h-9 rounded bg-accent px-3 text-white disabled:opacity-50" onClick={() => onSendMessage?.(m, m.outcome?.adds_requirement === true)}>{proposing?.id === m.id && proposing.action === "message" ? "Sending…" : m.outcome.adds_requirement ? "Add and send" : "Send"}</button>
+                      {m.outcome.adds_requirement && <button type="button" aria-label={`Send only to ${m.outcome.agent_name}`} disabled={proposing?.id === m.id || !onSendMessage} className="min-h-9 rounded border border-border px-3 disabled:opacity-50" onClick={() => onSendMessage?.(m, false)}>Send only</button>}
                       <button type="button" aria-label={`Not now for ${m.outcome.agent_name}`} disabled={proposing?.id === m.id || !onDeclineWork} className="min-h-9 rounded border border-border px-3 disabled:opacity-50" onClick={() => onDeclineWork?.(m)}>{proposing?.id === m.id && proposing.action === "decline" ? "Closing…" : "Not now"}</button></div>
                     </div>}
-                    {m.outcome?.kind === "message_sent" && <div className="mt-2 space-y-1">
-                      <p>Sent{m.outcome.agent_name ? ` to ${m.outcome.agent_name}` : ""}.</p>
-                      {m.outcome.task_title && <p>On {m.outcome.task_title}</p>}
-                      {m.outcome.text && <p className="whitespace-pre-wrap">{m.outcome.text}</p>}
-                      {m.outcome.page_id && m.outcome.task_id && <a className="text-accent underline" href={taskUrl(m.outcome.page_id, m.outcome.task_id)}>Open task</a>}
-                    </div>}
+                    {m.outcome?.kind === "message_sent" && <SentMessage outcome={m.outcome} />}
                     {m.outcome?.kind === "work_declined" && m.outcome.text && <div className="mt-2 space-y-1 text-text-secondary"><p>Not sent.</p><p className="whitespace-pre-wrap">{m.outcome.text}</p></div>}
                     {m.outcome?.kind === "agent_proposed" && onSettleAgent ? <div className="mt-2 space-y-1 rounded border border-border bg-bg-secondary p-3">
                       <p className="font-medium">Create this agent?</p><p>Name: {m.outcome.name}</p><p>Works with: {CONNECT_AGENT_NAMES[m.outcome.harness ?? ""] ?? m.outcome.harness}</p><p>Role: {m.outcome.role === "lead" ? "Lead" : "Worker"}</p><p>Page access: {hasTaskDatabase ? "Agent Tasks" : "none yet"}</p>

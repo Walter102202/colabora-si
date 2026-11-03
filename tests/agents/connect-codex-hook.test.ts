@@ -47,6 +47,20 @@ const sleep = async () => {};
 const none: Tasks = { tasks: [], next_cursor: "c-0" };
 
 describe("Codex stop hook", () => {
+  it.each(["human", "agent"])("preserves acknowledgement authority in long feedback (%s)", async (authorType) => {
+    const { fetchImpl } = fakeRemote([{ tasks: [{ task_id: TASK, state: "working", reason: "feedback", active_run_id: "run" }], next_cursor: "c-1" }],
+      { activities: [{ seq: 4, type: "prompt", author_type: authorType, body: { source: "trama", text: "Add Y ".repeat(1000) } }] });
+    const result = await runStopHook({ input: {}, env: ENV, fetchImpl, now: clock(1000), sleep });
+    const reason = JSON.parse(result.output ?? "{}").reason;
+    const instruction = `A person sent a message on ${TASK}. Read it with get_task, reply first with post_activity (type "response", one sentence: what you will do), then keep working.`;
+    expect(reason.includes(instruction)).toBe(authorType === "human");
+    if (authorType === "human") {
+      expect(reason.indexOf(instruction)).toBeGreaterThan(reason.indexOf(">>>"));
+      expect(reason).toContain("(via Trama)");
+    }
+    expect(reason.length).toBeLessThanOrEqual(MAX_REASON_CHARS);
+    expect(reason).toContain("Do not claim another run");
+  });
   it("continues the session on a handover with a resume instruction", async () => {
     const { fetchImpl } = fakeRemote([{ tasks: [{ task_id: TASK, state: "queued", reason: "handover" }], next_cursor: "c-1" }]);
     const result = await runStopHook({ input: {}, env: ENV, fetchImpl, now: clock(1000), sleep });

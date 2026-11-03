@@ -345,14 +345,24 @@ it("keeps a rejected approval request actionable and shows its error", async () 
   expect(section.querySelector<HTMLButtonElement>("button")!.disabled).toBe(false);
 });
 
-it.each(["send", "decline"])("confirms a proposed agent message once: %s", async (action) => {
+it.each(["send", "decline", "add", "send only", "stale brief"])("confirms a proposed agent message once: %s", async (action) => {
   vi.stubEnv("VITE_TRAMA_MANAGED", "1");
   const api = await import("@/lib/agentClient");
-  const rpc = vi.fn(async () => ({ data: { task_id: "task", page_id: "page" }, error: null }));
+  const rpc = vi.fn(async () => ({ data: { task_id: "task", page_id: "page" }, error: action === "stale brief" ? { message: "brief_out_of_sync" } : null }));
   vi.spyOn(api, "getAgentClient").mockReturnValue({ rpc } as unknown as ReturnType<typeof api.getAgentClient>);
-  useAgentConversation.setState({ messages: [message({ id: "reply", direction: "out", outcome: { kind: "message_proposed", task_id: "task", task_title: "Research", agent_name: "Codex", text: "Use local dates." } })] });
+  useAgentConversation.setState({ messages: [message({ id: "reply", direction: "out", outcome: { kind: "message_proposed", task_id: "task", task_title: "Research", agent_name: "Codex", text: "Use local dates.", ...(["add", "send only", "stale brief"].includes(action) ? { adds_requirement: true } : {}) } })] });
   mount(); act(() => button("Talk to Trama").click());
   expect(rpc).not.toHaveBeenCalled();
-  await act(async () => { const target = button(action === "send" ? "Send to Codex" : "Not now for Codex"); target.click(); target.click(); });
-  expect(rpc).toHaveBeenCalledExactlyOnceWith(action === "send" ? "send_proposed_message" : "decline_proposed_work", { p_message_id: "reply" });
+  if (["add", "send only"].includes(action)) {
+    expect(document.body.textContent).toContain("Add to the brief and tell Codex?");
+    expect(document.body.textContent).toContain("Use local dates.");
+    expect(button("Add and send to Codex").textContent).toBe("Add and send");
+    expect(button("Send only to Codex").textContent).toBe("Send only");
+  }
+  await act(async () => { const target = button(["add", "stale brief"].includes(action) ? "Add and send to Codex" : action === "send only" ? "Send only to Codex" : action === "send" ? "Send to Codex" : "Not now for Codex"); target.click(); target.click(); });
+  expect(rpc).toHaveBeenCalledExactlyOnceWith(action === "decline" ? "decline_proposed_work" : "send_proposed_message", { p_message_id: "reply", ...(action === "decline" ? {} : { p_add_requirement: ["add", "stale brief"].includes(action) }) });
+  if (action === "stale brief") {
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("The page has unsaved brief changes. Use Update brief on the task, then try again.");
+    expect(button("Add and send to Codex").disabled).toBe(false);
+  }
 });

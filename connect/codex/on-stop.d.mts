@@ -4,9 +4,11 @@ export declare const CONTINUE_REASONS: Set<string>;
 export declare function isLeadNotice(task: unknown): boolean;
 export declare const FINISHED_STATES: Set<string>;
 export declare function feedbackExcerpt(detail: unknown): string;
+export declare function feedbackPrompt(detail: unknown): { author_type?: string; body?: { source?: string } } | undefined;
 export declare function buildReason(
   task: { task_id: string; title?: string; reason?: string; brief_version?: number; notice?: { event_id: string; type: string; payload?: Record<string, unknown> } },
   excerpt: string,
+  prompt?: { author_type?: string; body?: { source?: string } },
 ): string;
 export declare function runStopHook(options: {
   input: { stop_hook_active?: boolean; [key: string]: unknown };

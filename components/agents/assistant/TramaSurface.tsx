@@ -207,10 +207,10 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
     } catch (e) { setProposalError(e instanceof Error ? e.message : "Could not start the task."); }
     finally { proposalLock.current = false; setProposing(null); }
   }
-  async function sendMessageProposal(message: PersonMessage) {
+  async function sendMessageProposal(message: PersonMessage, addRequirement = false) {
     if (proposalLock.current) return;
     proposalLock.current = true; setProposing({ id: message.id, action: "message" }); setProposalError(null);
-    try { await sendProposedMessage(message.id); }
+    try { await sendProposedMessage(message.id, addRequirement); }
     catch (e) { setProposalError(e instanceof Error ? e.message : "Could not send the message."); }
     finally {
       await refreshAgentConversation(workspaceId).catch(() => {});
@@ -428,7 +428,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
           onRetrySend={failed ? () => void submit(failed) : null}
           onDraft={(text) => { setDraft(text); if (!text) { pasted.current = false; clip.current = null; if (voice.phase === "review") dispatch({ type: "reset" }); } }}
           onPaste={onPaste} onSend={() => void submit()} onUndo={(id) => void undo(id)}
-          onPropose={(message) => void propose(message)} onDeclineWork={(message) => void declineWork(message)} onSendMessage={(message) => void sendMessageProposal(message)} proposing={proposing}
+          onPropose={(message) => void propose(message)} onDeclineWork={(message) => void declineWork(message)} onSendMessage={(message, addRequirement) => void sendMessageProposal(message, addRequirement)} proposing={proposing}
           onSettleAgent={(message, accept) => void settleAgent(message, accept)} hasTaskDatabase={Boolean(taskDatabase)} agentProposalError={proposalError?.startsWith("We couldn’t create this agent.")}
           onOpenNotes={() => { void openNotes().then((id) => { if (id) { close(); void navigate(pageUrl(id)); } }); }}
           voice={<VoiceButton state={voice} elapsedMs={elapsed} onPress={() => void press()} onStop={() => void finish()} onCancel={cancel} onRetry={retry} />}

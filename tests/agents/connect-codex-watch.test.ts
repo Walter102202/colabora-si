@@ -59,6 +59,11 @@ describe("Codex watcher", () => {
     expect(message).toContain("<<<Fix tag quoted code>>>");
     expect(message.endsWith(SESSION_HINT)).toBe(true);
   });
+  it("asks the live session to acknowledge a human prompt via Trama", async () => {
+    const result = await exercise([answer([task()])], { detail: { activities: [{ seq: 2, type: "prompt", author_type: "human", body: { source: "trama", text: "Add Y" } }] } });
+    expect(result.queue.mock.calls[0][1]).toContain('A person sent a message on task-1. Read it with get_task, reply first with post_activity (type "response", one sentence: what you will do), then keep working.');
+    expect(result.queue.mock.calls[0][1]).toContain("(via Trama)");
+  });
   it("logs a task with no session and uses only an explicit fallback", async () => {
     const missing = await exercise([answer([task({ session_id: null })])]);
     expect(missing.queue).not.toHaveBeenCalled(); expect(missing.logs.join()).toContain("task-1");
