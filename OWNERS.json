@@ -65,6 +65,7 @@
       "supabase/migrations/*_0062_*",
       "supabase/migrations/*_0063_*",
       "supabase/migrations/*_0064_*",
+      "supabase/migrations/*_0065_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -117,6 +118,7 @@
     ]
   },
   "branchExceptions": {
+    "a/trama-assigns": ["OWNERS.json", "README.md", "public/llms.txt"],
     "a/agent-concurrency": [
       "OWNERS.json",
       "README.md"
