@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDown, Send } from "lucide-react";
+import { ArrowDown, Send, Sparkles } from "lucide-react";
 import type { ClipboardEvent, ReactNode } from "react";
 import { TramaAvatar } from "@/components/agents/TramaAvatar";
 import { useConversationScroll } from "@/components/agents/assistant/useConversationScroll";
@@ -56,11 +56,20 @@ export function AssistantThreadView({ messages, draft, reviewing, busy = false, 
   const { listRef, contentRef, onScroll, scrollToLatest, showScrollToLatest } = useConversationScroll(messages, scrollRequest);
   return (
     <div className="flex min-h-0 min-w-0 flex-1 w-full flex-col gap-3 text-sm">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border px-1 pb-2">
-        <span className="flex items-center gap-2 font-medium">{avatar}Trama</span>
-        <span className="flex gap-3">
-          {onNewConversation && messages.length > 0 && <button type="button" className="text-xs text-text-secondary underline disabled:opacity-50" disabled={resetting} onClick={onNewConversation}>New conversation</button>}
-          <button type="button" className="text-xs text-text-secondary underline" onClick={onOpenNotes}>Open notes</button>
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-1 pb-2">
+        <span className="flex shrink-0 items-center gap-2">
+          {avatar}
+          <span className="flex flex-col items-start gap-1">
+            <span className="font-medium leading-4">Trama</span>
+            <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-accent/15 bg-accent/5 px-1.5 py-0.5 text-[10px] leading-[14px] text-[#196eb9] dark:text-[#8fc5ff]">
+              <Sparkles size={10} strokeWidth={1.8} aria-hidden="true" />
+              <span>Powered by <span className="font-semibold">Muse</span></span>
+            </span>
+          </span>
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col items-end gap-1">
+          {onNewConversation && messages.length > 0 && <button type="button" className="max-w-full text-right text-xs text-text-secondary underline disabled:opacity-50" disabled={resetting} onClick={onNewConversation}>New conversation</button>}
+          <button type="button" className="max-w-full text-right text-xs text-text-secondary underline" onClick={onOpenNotes}>Open notes</button>
         </span>
       </div>
       <div className="relative min-h-0 flex-1">
