@@ -8,7 +8,7 @@ export function FeedbackComposer({
 }: {
   disabled?: boolean;
   placeholder?: string;
-  onSend: (text: string) => Promise<void>;
+  onSend: (text: string) => Promise<void | boolean>;
 }) {
   const id = useId();
   const [text, setText] = useState("");
@@ -18,8 +18,7 @@ export function FeedbackComposer({
     if (!body || busy) return;
     setBusy(true);
     try {
-      await onSend(body);
-      setText("");
+      if (await onSend(body) !== false) setText("");
     } finally {
       setBusy(false);
     }

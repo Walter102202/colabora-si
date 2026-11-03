@@ -189,9 +189,11 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
     setError(null);
     try {
       await fn();
+      return true;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setError(message === "message_required" ? "Write what should change first." : message);
+      return false;
     } finally {
       setBusy(null);
     }

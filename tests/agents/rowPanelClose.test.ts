@@ -121,3 +121,17 @@ it("explains message_required without restarting the task", async () => {
   expect(onMessage).toHaveBeenCalledExactlyOnceWith("", "continue");
   expect(button("Reopen")).toBeUndefined();
 });
+
+it("keeps written feedback when the server refuses it", async () => {
+  const onMessage = vi.fn(async () => { throw new Error("message_required"); });
+  act(() => root.render(createElement(TaskView, { ...props("done"), onMessage })));
+  const input = container.querySelector<HTMLTextAreaElement>('textarea')!;
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "Change the dates");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => button("Send")!.click());
+  expect(container.textContent).toContain("Write what should change first.");
+  expect(input.value).toBe("Change the dates");
+  expect(button("Reopen")).toBeDefined();
+});
