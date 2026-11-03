@@ -785,3 +785,22 @@ describe("effort per turn in the task loop", () => {
     expect((model.requests[0] as { reasoningEffort?: string }).reasoningEffort).toBeUndefined();
   });
 });
+
+describe("a stable catalog for the prompt cache", () => {
+  const extra = (name: string) => ({ name, description: name, inputSchema: { type: "object", properties: {} } });
+  it("offers the same tools in alphabetical order and the same system prompt on every run of the agent", async () => {
+    const run = async (tools: object[]) => {
+      const model = createStubModel([{ content: "Done" }]);
+      await runAgent({ mcp: createStubMcp({ tasks: queued, tools: tools as never }), model, clock: fakeClock(), maxTasks: 1, maxTurns: 1 });
+      return model.requests[0] as { tools: { function: { name: string } }[]; messages: { role: string; content: string }[] };
+    };
+    const first = await run([extra("zz_last"), extra("aaa_first")]);
+    const second = await run([extra("aaa_first"), extra("zz_last")]);
+    const names = first.tools.map((t) => t.function.name);
+    expect(names[0]).toBe("aaa_first");
+    expect(names.at(-1)).toBe("zz_last");
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b, "en")));
+    expect(second.tools).toEqual(first.tools);
+    expect(second.messages[0]).toEqual(first.messages[0]);
+  });
+});

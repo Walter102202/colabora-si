@@ -98,7 +98,8 @@ export async function runAgent(opts) {
   await mcp.initialize();
   const allTools = await mcp.listTools();
   const toolSchemas = new Map(allTools.map((t) => [t.name, t.inputSchema ?? {}]));
-  const tools = toOpenAiTools(allTools.filter((t) => !RUNTIME_TOOLS.has(t.name) && !REQUEST_TOOLS.has(t.name)));
+  // Same order every turn and every run: the provider's prefix cache can then serve the catalog instead of reading it again.
+  const tools = toOpenAiTools(allTools.filter((t) => !RUNTIME_TOOLS.has(t.name) && !REQUEST_TOOLS.has(t.name)).sort((a, b) => a.name.localeCompare(b.name, "en")));
   const system = buildSystemPrompt({ harness, displayName, serverInstructions: mcp.instructions, reviewerAgentId });
 
   /** @param {ChannelEvent} event */
