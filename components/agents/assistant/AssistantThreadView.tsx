@@ -114,8 +114,13 @@ export function AssistantThreadView({ messages, draft, reviewing, busy = false, 
                       <div className="flex gap-2 pt-2"><button type="button" aria-label={`Send to ${m.outcome.agent_name}`} disabled={proposing?.id === m.id || !onSendMessage} className="min-h-9 rounded bg-accent px-3 text-white disabled:opacity-50" onClick={() => onSendMessage?.(m)}>{proposing?.id === m.id && proposing.action === "message" ? "Sending…" : "Send"}</button>
                       <button type="button" aria-label={`Not now for ${m.outcome.agent_name}`} disabled={proposing?.id === m.id || !onDeclineWork} className="min-h-9 rounded border border-border px-3 disabled:opacity-50" onClick={() => onDeclineWork?.(m)}>{proposing?.id === m.id && proposing.action === "decline" ? "Closing…" : "Not now"}</button></div>
                     </div>}
-                    {m.outcome?.kind === "message_sent" && <p className="mt-2">Sent. {m.outcome.page_id && m.outcome.task_id && <a className="text-accent underline" href={taskUrl(m.outcome.page_id, m.outcome.task_id)}>Open task</a>}</p>}
-                    {m.outcome?.kind === "work_declined" && m.outcome.text && <p className="mt-2 text-text-secondary">Not sent.</p>}
+                    {m.outcome?.kind === "message_sent" && <div className="mt-2 space-y-1">
+                      <p>Sent{m.outcome.agent_name ? ` to ${m.outcome.agent_name}` : ""}.</p>
+                      {m.outcome.task_title && <p>On {m.outcome.task_title}</p>}
+                      {m.outcome.text && <p className="whitespace-pre-wrap">{m.outcome.text}</p>}
+                      {m.outcome.page_id && m.outcome.task_id && <a className="text-accent underline" href={taskUrl(m.outcome.page_id, m.outcome.task_id)}>Open task</a>}
+                    </div>}
+                    {m.outcome?.kind === "work_declined" && m.outcome.text && <div className="mt-2 space-y-1 text-text-secondary"><p>Not sent.</p><p className="whitespace-pre-wrap">{m.outcome.text}</p></div>}
                     {m.outcome?.kind === "agent_proposed" && onSettleAgent ? <div className="mt-2 space-y-1 rounded border border-border bg-bg-secondary p-3">
                       <p className="font-medium">Create this agent?</p><p>Name: {m.outcome.name}</p><p>Works with: {CONNECT_AGENT_NAMES[m.outcome.harness ?? ""] ?? m.outcome.harness}</p><p>Role: {m.outcome.role === "lead" ? "Lead" : "Worker"}</p><p>Page access: {hasTaskDatabase ? "Agent Tasks" : "none yet"}</p>
                       <div className="flex gap-2 pt-2"><button type="button" className="min-h-9 rounded bg-accent px-3 text-white disabled:opacity-50" disabled={proposing?.id === m.id} onClick={() => onSettleAgent(m, true)}>Create agent</button><button type="button" className="min-h-9 rounded border border-border px-3 disabled:opacity-50" disabled={proposing?.id === m.id} onClick={() => onSettleAgent(m, false)}>Cancel</button></div>

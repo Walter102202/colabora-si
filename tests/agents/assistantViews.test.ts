@@ -138,6 +138,6 @@ it.each(["work_proposed", "work_started", "work_declined"])("shows the proposed 
 it.each(["message_proposed", "message_sent", "work_declined"])("renders a confirmed message as %s", (kind) => {
   const html = view({ messages: [message({ direction: "out", outcome: { kind, task_id: "task", task_title: "Research", page_id: "row", agent_name: "Codex", text: "Use local dates." } })], onSendMessage: noop, onDeclineWork: noop });
   if (kind === "message_proposed") { expect(html).toContain("Send to Codex?"); expect(html).toContain("On Research"); expect(html).toContain("Use local dates."); expect(html).toContain('aria-label="Send to Codex"'); }
-  if (kind === "message_sent") { expect(html).toContain("Sent."); expect(html).toContain('href="/p/row?task=task"'); }
-  if (kind === "work_declined") expect(html).toContain("Not sent.");
+  if (kind === "message_sent") { expect(html).toContain("Sent to Codex."); expect(html).toContain("On Research"); expect(html).toContain("Use local dates."); expect(html).toContain('href="/p/row?task=task"'); }
+  if (kind === "work_declined") { expect(html).toContain("Not sent."); expect(html).toContain("Use local dates."); }
 });
