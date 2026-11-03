@@ -39,7 +39,7 @@ export interface AssistantThreadViewProps {
   onSettleAgent?: (message: PersonMessage, accept: boolean) => void;
   hasTaskDatabase?: boolean;
   agentProposalError?: boolean;
-  proposing?: string | null;
+  proposing?: { id: string; action: "start" | "decline" | "agent" } | null;
   onDraft: (text: string) => void;
   onPaste: (e: ClipboardEvent<HTMLTextAreaElement>) => void;
   onSend: () => void;
@@ -96,8 +96,8 @@ export function AssistantThreadView({ messages, draft, reviewing, busy = false, 
                       <div className={m.outcome.summary ? "mt-2 space-y-1 rounded border border-border bg-bg-secondary p-3" : "mt-1"}>
                         {m.outcome.summary && <><p className="font-medium">Start this work?</p><p>On {m.outcome.page_title || "this page"}</p><p className="whitespace-pre-wrap">{m.outcome.summary}</p></>}
                         <div className="flex gap-2 pt-2">
-                          <button type="button" aria-label={`Do it on ${m.outcome.page_title || "this page"}`} className="min-h-9 rounded bg-accent px-3 text-white disabled:opacity-50" disabled={proposing === m.id} onClick={() => onPropose(m)}>{proposing === m.id ? "Starting…" : "Do it"}</button>
-                          {m.outcome.summary && onDeclineWork && <button type="button" aria-label={`Not now on ${m.outcome.page_title || "this page"}`} className="min-h-9 rounded border border-border px-3 disabled:opacity-50" disabled={proposing === m.id} onClick={() => onDeclineWork(m)}>Not now</button>}
+                          <button type="button" aria-label={`Do it on ${m.outcome.page_title || "this page"}`} className="min-h-9 rounded bg-accent px-3 text-white disabled:opacity-50" disabled={proposing?.id === m.id} onClick={() => onPropose(m)}>{proposing?.id === m.id && proposing.action === "start" ? "Starting…" : "Do it"}</button>
+                          {m.outcome.summary && onDeclineWork && <button type="button" aria-label={`Not now on ${m.outcome.page_title || "this page"}`} className="min-h-9 rounded border border-border px-3 disabled:opacity-50" disabled={proposing?.id === m.id} onClick={() => onDeclineWork(m)}>{proposing?.id === m.id && proposing.action === "decline" ? "Closing…" : "Not now"}</button>}
                         </div>
                       </div>
                     )}
@@ -105,7 +105,7 @@ export function AssistantThreadView({ messages, draft, reviewing, busy = false, 
                     {m.outcome?.kind === "work_declined" && <p className="mt-2">Not started.</p>}
                     {m.outcome?.kind === "agent_proposed" && onSettleAgent ? <div className="mt-2 space-y-1 rounded border border-border bg-bg-secondary p-3">
                       <p className="font-medium">Create this agent?</p><p>Name: {m.outcome.name}</p><p>Works with: {CONNECT_AGENT_NAMES[m.outcome.harness ?? ""] ?? m.outcome.harness}</p><p>Role: {m.outcome.role === "lead" ? "Lead" : "Worker"}</p><p>Page access: {hasTaskDatabase ? "Agent Tasks" : "none yet"}</p>
-                      <div className="flex gap-2 pt-2"><button type="button" className="min-h-9 rounded bg-accent px-3 text-white disabled:opacity-50" disabled={proposing === m.id} onClick={() => onSettleAgent(m, true)}>Create agent</button><button type="button" className="min-h-9 rounded border border-border px-3 disabled:opacity-50" disabled={proposing === m.id} onClick={() => onSettleAgent(m, false)}>Cancel</button></div>
+                      <div className="flex gap-2 pt-2"><button type="button" className="min-h-9 rounded bg-accent px-3 text-white disabled:opacity-50" disabled={proposing?.id === m.id} onClick={() => onSettleAgent(m, true)}>Create agent</button><button type="button" className="min-h-9 rounded border border-border px-3 disabled:opacity-50" disabled={proposing?.id === m.id} onClick={() => onSettleAgent(m, false)}>Cancel</button></div>
                     </div> : null}
                     {m.outcome?.kind === "agent_accepted" ? <p className="mt-2">{m.outcome.name} is ready. <a className="text-accent underline" href={connectUrl(m.outcome.harness)}>Connect {m.outcome.name}</a></p> : null}
                     {m.outcome?.kind === "agent_declined" ? <p className="mt-2">Cancelled.</p> : null}

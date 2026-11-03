@@ -69,7 +69,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastJump = useRef(-Infinity);
   const suppressFocus = useRef(false);
-  const [proposing, setProposing] = useState<string | null>(null);
+  const [proposing, setProposing] = useState<{ id: string; action: "start" | "decline" | "agent" } | null>(null);
   const [proposalError, setProposalError] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
@@ -174,7 +174,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   }
   async function propose(message: PersonMessage) {
     if (proposalLock.current) return;
-    proposalLock.current = true; setProposing(message.id); setProposalError(null);
+    proposalLock.current = true; setProposing({ id: message.id, action: "start" }); setProposalError(null);
     try {
       const result = await startProposedWork(message.id);
       close(); void navigate(taskUrl(result.page_id, result.task_id));
@@ -183,7 +183,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   }
   async function declineWork(message: PersonMessage) {
     if (proposalLock.current) return;
-    proposalLock.current = true; setProposing(message.id); setProposalError(null);
+    proposalLock.current = true; setProposing({ id: message.id, action: "decline" }); setProposalError(null);
     try { await declineProposedWork(message.id); }
     catch (e) { setProposalError(e instanceof Error ? e.message : "Could not decline the task."); }
     finally {
@@ -199,7 +199,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
 
   async function settleAgent(message: PersonMessage, accept: boolean) {
     if (proposalLock.current) return;
-    proposalLock.current = true; setProposing(message.id); setProposalError(null);
+    proposalLock.current = true; setProposing({ id: message.id, action: "agent" }); setProposalError(null);
     try {
       const proposal = await settleAgentProposal(message.id, accept);
       if (accept) {

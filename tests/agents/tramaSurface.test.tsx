@@ -277,3 +277,18 @@ it.each([
     expect(document.body.textContent).not.toContain("Started.");
   }
 });
+
+it.each(["start", "decline"])("labels pending work settlement accurately: %s", async (action) => {
+  vi.stubEnv("VITE_TRAMA_MANAGED", "1");
+  const api = await import("@/lib/agentClient");
+  let finish!: (value: object) => void;
+  const rpc = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+  vi.spyOn(api, "getAgentClient").mockReturnValue({ rpc } as unknown as ReturnType<typeof api.getAgentClient>);
+  useAgentConversation.setState({ messages: [message({ id: "reply", direction: "out", outcome: { kind: "work_proposed", page_title: "Home", summary: "Create tasks on Home." } })] });
+  mount(); act(() => button("Talk to Trama").click());
+  act(() => button(action === "start" ? "Do it on Home" : "Not now on Home").click());
+  expect(button("Do it on Home").textContent).toBe(action === "start" ? "Starting…" : "Do it");
+  expect(button("Not now on Home").textContent).toBe(action === "decline" ? "Closing…" : "Not now");
+  expect(button("Do it on Home").disabled && button("Not now on Home").disabled).toBe(true);
+  await act(async () => finish({ data: { task_id: "task", page_id: "page" }, error: null }));
+});
