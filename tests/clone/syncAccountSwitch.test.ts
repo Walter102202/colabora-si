@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { User } from "@supabase/supabase-js";
+import { TRAMA_COVERS, safeCover } from "@/lib/cover";
 import { useStore } from "@/lib/store";
 import { discardLocalCopy, flush, initSync, settleBeforeSignOut, stopSync, useSyncConflict } from "@/lib/sync";
 import { applyOps, type PageOp } from "@/lib/pageOps";
@@ -158,7 +159,11 @@ it("starts a new account from the default pages, without offering another accoun
   expect(state.pages[stale().id]).toBeUndefined();
   expect(state.syncUserId).toBe("user-b");
   expect(h.fake.inserted.map((row) => row.id)).not.toContain(stale().id);
-  expect(h.fake.inserted.map((row) => (row.data as { title: string }).title)).toContain("Agent Tasks");
+  const starters = h.fake.inserted.map((row) => row.data as Page);
+  expect(starters.map((p) => p.title).sort()).toEqual(["Agent Tasks", "Connect your agents", "Getting started", "Working with agents"]);
+  const savedCovers = starters.map((p) => safeCover(p.cover));
+  expect(new Set(savedCovers).size).toBe(4);
+  for (const cover of savedCovers) expect(TRAMA_COVERS.some((preset) => preset.url === cover)).toBe(true);
   expect(h.fake.workspaces[0].root_order).not.toContain(stale().id);
   expect(h.fake.writes).toEqual([]);
   expect(h.cleared).toEqual(expect.arrayContaining(["ops", "files"]));
@@ -204,7 +209,9 @@ it("still asks a person with local pages and no account yet", async () => {
 
 it.each([false, true])("joining an invited workspace preserves its pages and merges only meaningful local content (%s)", async (meaningful) => {
   h.fake.workspaces.push({ id: "ws-b", owner_id: "owner", revision: 1, root_order: ["owner-page"], settings: null, synced_blocks: {} });
-  h.fake.pages.push(cloudRow("owner-page", "The owner's page"));
+  const existing = cloudRow("owner-page", "Getting started");
+  const ownerCover = "https://example.test/owner-cover.jpg";
+  h.fake.pages.push({ ...existing, data: { ...(existing.data as Page), cover: ownerCover } });
   if (meaningful) {
     const local = page({ id: "local-work", title: "My notes", createdAt: 1, updatedAt: 2 });
     useStore.setState({ pages: { [local.id]: local }, rootOrder: [local.id], syncUserId: null, syncWorkspaceId: null });
@@ -215,6 +222,7 @@ it.each([false, true])("joining an invited workspace preserves its pages and mer
   const expected = meaningful ? ["owner-page", "local-work"] : ["owner-page"];
   expect(Object.keys(useStore.getState().pages).sort()).toEqual([...expected].sort());
   expect(useStore.getState().rootOrder).toEqual(expected);
+  expect(useStore.getState().pages["owner-page"].cover).toBe(ownerCover);
   expect(h.fake.inserted.map((row) => row.id)).toEqual(meaningful ? ["local-work"] : []);
   expect(h.fake.pages.find((row) => row.id === "owner-page")?.deleted_at).toBeNull();
   expect(useSyncConflict.getState().prompt).toBeNull();

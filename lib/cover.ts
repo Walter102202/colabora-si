@@ -1,13 +1,26 @@
-export const TRAMA_COVERS = [
+const tramaPresets = [
   { slug: "same-page", name: "On the same page" },
   { slug: "gardener", name: "Gardener" },
   { slug: "chef", name: "Chef" },
   { slug: "detective", name: "Detective" },
   { slug: "conductor", name: "Conductor" },
   { slug: "explorer", name: "Explorer" },
-].map(({ slug, name }) => ({
+] as const;
+
+type TramaCoverSlug = (typeof tramaPresets)[number]["slug"];
+const tramaCoverPath = (slug: TramaCoverSlug) => `/brand/trama/covers/v1/${slug}.webp`;
+
+export function tramaCoverUrl(slug: TramaCoverSlug): string {
+  // Covers live in the saved page and its HTML exports, so persist an absolute URL.
+  const location = globalThis.location;
+  const origin = import.meta.env.VITE_APP_URL || (location && /^https?:$/.test(location.protocol) ? location.origin : "https://colabora.si");
+  return new URL(tramaCoverPath(slug), origin).href;
+}
+
+export const TRAMA_COVERS = tramaPresets.map(({ slug, name }) => ({
   name,
-  src: `/brand/trama/covers/v1/${slug}.webp`,
+  src: tramaCoverPath(slug),
+  url: tramaCoverUrl(slug),
   thumbnail: `/brand/trama/covers/v1/${slug}-thumb.webp`,
 }));
 
@@ -41,3 +54,7 @@ export function coverBackground(value: string | null | undefined): string | unde
   const safe = safeCover(value); return safe ? safe.startsWith("linear-gradient") ? safe : `url(${JSON.stringify(safe)})` : undefined;
 }
 
+export function tramaCoverPreviewBackground(value: string | null | undefined): string | undefined {
+  const preset = value && TRAMA_COVERS.find((cover) => cover.url === value);
+  return preset ? `url(${JSON.stringify(preset.thumbnail)})` : undefined;
+}
