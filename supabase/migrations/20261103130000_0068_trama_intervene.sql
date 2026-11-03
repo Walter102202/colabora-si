@@ -377,12 +377,66 @@ create trigger agent_events_person_receipt after update of status on public.agen
   for each row when (new.type = 'task.message' and new.status = 'delivered' and old.status is distinct from new.status)
   execute function private.receive_person_message();
 
+-- Full copy of post_activity (0066); only the app.posted_activity mark around its insert is new.
+create or replace function public.post_activity(p_run_id uuid, p_type text, p_body jsonb, p_ephemeral boolean default false,
+  p_idempotency_key text default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_r public.agent_runs%rowtype; v_id uuid; v_seq bigint; v_state text; v_child public.agent_tasks%rowtype; v_parent public.agent_tasks%rowtype; v_text text;
+begin
+  v_r := private.own_run(p_run_id);
+  if p_idempotency_key is not null then
+    select a.id, a.seq into v_id, v_seq from public.agent_activities a where a.task_id = v_r.task_id and a.idempotency_key = p_idempotency_key;
+    if found then
+      select state into v_state from public.agent_tasks where id = v_r.task_id;
+      return jsonb_build_object('activity_id', v_id, 'seq', v_seq, 'task_state', v_state);
+    end if;
+  end if;
+  if v_r.status not in ('running','waiting') then raise exception using errcode = 'PT422', message = 'run_not_active'; end if;
+  if p_type is null or p_type not in ('thought','action','response','error') then
+    raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'type';
+  end if;
+  if jsonb_typeof(p_body) is distinct from 'object' then raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'body'; end if;
+  if (p_type = 'response' and p_body ? 'submit') or (p_type = 'action' and p_body->>'op' = 'revert_run') then
+    raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'body';
+  end if;
+  if p_type = 'action' and p_body->>'op' = 'external' and not exists (
+       select 1 from public.external_ops o where o.op_id = (p_body->>'external_op_id')::uuid and o.task_id = v_r.task_id) then
+    raise exception using errcode = 'PT422', message = 'unknown_external_op';
+  end if;
+
+  perform set_config('app.run_id', v_r.id::text, true);
+  -- Marks this insert as the agent's own words, so a reply to a person's message never comes from a server write receipt.
+  perform set_config('app.posted_activity', 'on', true);
+  insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, ephemeral, author_type, author_id, idempotency_key)
+  values (v_r.workspace_id, v_r.task_id, v_r.id, private.next_seq(v_r.task_id), p_type, p_body, coalesce(p_ephemeral, false),
+          'agent', v_r.agent_id, p_idempotency_key)
+  returning id, seq into v_id, v_seq;
+  perform set_config('app.posted_activity', '', true);
+  v_text:=left(coalesce(p_body->>'text',p_body->>'summary',''),300);
+  if not coalesce(p_ephemeral,false) and p_type in ('thought','action','response') and btrim(v_text)<>'' then
+    select * into v_child from public.agent_tasks where id=v_r.task_id;
+    select * into v_parent from public.agent_tasks where id=v_child.parent_task_id;
+    if v_parent.id is not null and exists(select 1 from public.agents where id=v_parent.delegate_agent_id and not is_platform) then
+      perform pg_advisory_xact_lock(hashtextextended('progress:'||v_child.id::text,0));
+      if not exists(select 1 from public.agent_events where task_id=v_parent.id and type='subtask.progress'
+        and payload->>'subtask_id'=v_child.id::text and created_at>now()-interval '2 minutes') then
+        insert into public.agent_events(workspace_id,task_id,run_id,agent_id,type,payload,seq)
+        values(v_parent.workspace_id,v_parent.id,v_parent.active_run_id,v_parent.delegate_agent_id,'subtask.progress',
+          jsonb_build_object('subtask_id',v_child.id,'subtask_title',v_child.title,'worker_name',(select name from public.agents where id=v_r.agent_id),'text',v_text),private.next_event_seq(v_parent.id));
+      end if;
+    end if;
+  end if;
+  select state into v_state from public.agent_tasks where id = v_r.task_id;
+  return jsonb_build_object('activity_id', v_id, 'seq', v_seq, 'task_state', v_state);
+end $$;
+
 create or replace function private.reply_to_person_message()
 returns trigger language plpgsql security definer set search_path = '' as $$
-declare v_name text;
+declare v_name text; v_text text := coalesce(nullif(btrim(new.body->>'text'), ''), nullif(btrim(new.body->>'summary'), ''));
 begin
-  if new.author_type <> 'agent' or new.ephemeral or new.type not in ('response','thought')
-    or nullif(btrim(new.body->>'text'), '') is null then return new; end if;
+  -- Only what the agent itself posts (post_activity) answers; a server write receipt such as "Added a row" never does.
+  if new.author_type <> 'agent' or new.ephemeral or new.type not in ('response','thought','action')
+    or coalesce(current_setting('app.posted_activity', true), '') <> 'on' or v_text is null then return new; end if;
   select case when a.is_platform then 'Trama' else a.name end into v_name
     from public.agent_tasks t join public.agents a on a.id = t.delegate_agent_id
     where t.id = new.task_id and a.id = new.author_id;
@@ -395,7 +449,7 @@ begin
     returning s.message_id, s.received_at
   )
   update public.agent_messages m set outcome = m.outcome || jsonb_build_object('received_at', r.received_at,
-    'reply', jsonb_build_object('text', left(new.body->>'text', 300), 'at', new.created_at, 'agent_name', v_name))
+    'reply', jsonb_build_object('text', left(v_text, 300), 'at', new.created_at, 'agent_name', v_name))
     from replied r where m.id = r.message_id;
   return new;
 exception when others then
@@ -403,7 +457,8 @@ exception when others then
 end $$;
 revoke all on function private.reply_to_person_message() from public, anon, authenticated;
 create trigger agent_activities_person_reply after insert on public.agent_activities
-  for each row when (new.type in ('response','thought') and not new.ephemeral and new.author_type = 'agent')
+  for each row when (new.type in ('response','thought','action') and not new.ephemeral and new.author_type = 'agent'
+    and current_setting('app.posted_activity', true) = 'on')
   execute function private.reply_to_person_message();
 
 create or replace function public.reply_person_message(p_run_id uuid, p_text text, p_through_seq bigint, p_usage jsonb, p_propose_message_id uuid, p_propose_agent jsonb, p_proposal jsonb)

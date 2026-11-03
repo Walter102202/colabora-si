@@ -169,6 +169,18 @@ select tests.set_agent((:'worker'::jsonb->>'user')::uuid,(:'worker'::jsonb->>'ag
 select public.post_activity(:'child_run','response','{"text":"Later response"}');
 select tests.reset_role();
 select is((select outcome->'reply' from public.agent_messages where id=:'reply_proposal'),:'first_reply'::jsonb,'later responses preserve the first reply');
+-- A real Lead answered with post_activity type action: an agent's own action answers too; a server write receipt never does.
+select tests.intervene_proposal(:'proposal',:'child1','Relay this') as action_proposal \gset
+select tests.set_human(:'owner');
+select public.send_proposed_message(:'action_proposal');
+select tests.reset_role();
+insert into public.agent_activities(workspace_id,task_id,run_id,seq,type,body,author_type,author_id) values
+(:'ws',:'child1',:'child_run',private.next_seq(:'child1'),'action','{"op":"add_row","summary":"Added a row"}','agent',(:'worker'::jsonb->>'agent')::uuid);
+select ok(not (select outcome ? 'reply' from public.agent_messages where id=:'action_proposal'),'a server write receipt is not a reply');
+select tests.set_agent((:'worker'::jsonb->>'user')::uuid,(:'worker'::jsonb->>'agent')::uuid);
+select public.post_activity(:'child_run','action','{"op":"relay_requirement","summary":"Added it to the subtask and told Codex"}');
+select tests.reset_role();
+select is((select outcome#>>'{reply,text}' from public.agent_messages where id=:'action_proposal'),'Added it to the subtask and told Codex','an agent''s own action summary is the reply');
 -- Deliberately fail the chat update: the activity must survive and the receipt must roll back.
 select tests.intervene_proposal(:'proposal',:'child1','Fail-open delivery') as fail_proposal \gset
 select tests.set_human(:'owner');
