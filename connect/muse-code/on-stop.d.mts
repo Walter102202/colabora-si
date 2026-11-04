@@ -11,3 +11,13 @@ export type CredentialOptions = {
 export declare function resolveCredentials(options: CredentialOptions): Record<string, string>;
 export declare function museStatePath(sessionId: string, home?: string, override?: string): string | null;
 export declare function redact(message: unknown, secrets: (string | undefined)[]): string;
+export declare function runMuseStopHook(options: CredentialOptions & {
+  input: { stop_hook_active?: boolean; session_id?: string; [key: string]: unknown } | null;
+  fetchImpl?: typeof fetch;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  stateFor?: (path: string) => {
+    load(): { delivered?: Record<string, string> };
+    save(state: { delivered: Record<string, string> }): void;
+  };
+}): Promise<{ exitCode: number; output?: string; acknowledge?: () => Promise<void> }>;
