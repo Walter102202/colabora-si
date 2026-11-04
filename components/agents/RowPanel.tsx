@@ -65,7 +65,7 @@ function FullRowPanel({ pageId, embedded = false, onOpenTask: openEmbeddedTask }
   const pageTask = useAgentTasks((s) => taskForPage(s, pageId));
   // `?task=<id>` selects that task when it belongs to this row; otherwise the
   // person is told explicitly instead of being shown another task as if it were it.
-  const openable = requested && requested.request_kind !== "lesson" && requested.request_kind !== "source_check";
+  const openable = requested && requested.request_kind !== "lesson" && requested.request_kind !== "source_check" && requested.request_kind !== "memory";
   const task = openable && requested.row_page_id === pageId ? requested : pageTask;
   const jobDatabase = Object.entries(pages ?? {}).find(([, page]) => !isShell(page) && page.database?.properties.some((property) => property.type === "agentStatus") && page.database.rows.some((row) => row.pageId === pageId && !row.parentRowId));
   const mismatch = requestedId && status === "ready" && (!requested || requested.row_page_id !== pageId) ? (requested ? "elsewhere" : "missing") : null;

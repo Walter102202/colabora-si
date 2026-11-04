@@ -60,8 +60,16 @@ Deno.test('assistRequest returns the thread as it came', async () => {
   assert.deepEqual(h.calls[0], { name: 'assist_request_context', args: { p_task_id: 't' } });
 });
 
-Deno.test('neither tool is offered as read-only', () => {
-  for (const t of personTools) assert.notEqual(t.annotations?.readOnlyHint, true);
+Deno.test('mutation tools are not offered as read-only', () => {
+  for (const t of personTools.filter((t) => t.name !== 'recall_conversation')) assert.notEqual(t.annotations?.readOnlyHint, true);
+});
+
+Deno.test('recall uses the caller run and does not cache private results', async () => {
+  const h = harness({ messages: [], notes: [] });
+  await tool('recall_conversation').handler({ run_id: 'r', query: 'Lima' }, h.ctx);
+  assert.deepEqual(h.calls[0], { name: 'recall_person_messages', args: { p_run_id: 'r', p_query: 'Lima' } });
+  assert.equal(tool('recall_conversation').cacheTtlMs, 0);
+  assert.equal(tool('recall_conversation').annotations?.readOnlyHint, true);
 });
 
 Deno.test('reply passes an agent proposal to the six-argument SQL contract', async () => {

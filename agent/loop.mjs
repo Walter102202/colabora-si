@@ -20,7 +20,7 @@ import { flushPersonReplies } from "./inbox.mjs";
 
 /** Tools the runtime drives itself; the model never sees them. */
 export const RUNTIME_TOOLS = new Set(["wait_for_my_tasks", "list_my_tasks", "claim_task", "heartbeat", "wait_for_task", "end_run", "ack_stop", "save_checkpoint", "hand_over", "await_questions"]);
-export const REQUEST_TOOLS = new Set(["take_channel_updates", "person_work_status", "relay_person_message", "reply_person_message", "deliver_person_replies", "save_to_notes", "get_ai_request", "fill_ai_cells", "complete_ai_request", "complete_lesson_request", "report_source_check", "apply_ai_rewrite", "save_file_text"]);
+export const REQUEST_TOOLS = new Set(["apply_memory_updates", "recall_conversation", "take_channel_updates", "person_work_status", "relay_person_message", "reply_person_message", "deliver_person_replies", "save_to_notes", "get_ai_request", "fill_ai_cells", "complete_ai_request", "complete_lesson_request", "report_source_check", "apply_ai_rewrite", "save_file_text"]);
 /** wait_for_my_tasks reasons that mean "there is work to claim". */
 const CLAIM_REASONS = new Set(["queued", "feedback", "brief", "handover"]);
 /** Activity signals that answer a pending human decision. */
@@ -254,7 +254,7 @@ export async function runAgent(opts) {
     const runId = String(claim.run_id);
     if (task.request_kind) {
       try {
-        const outcome = await runRequest({ call, model, task, runId, log, prices, signal, reply: channel?.reply, appUrl: channel?.appUrl, efforts, cacheKey });
+        const outcome = await runRequest({ call, model, memoryModel: opts.memoryModel, memoryPrices: opts.memoryPrices, task, runId, log, prices, signal, reply: channel?.reply, appUrl: channel?.appUrl, efforts, cacheKey });
         await notify({ kind: outcome.status === "failed" ? "error" : "delivered", task_id: taskId, text: outcome.summary });
         return { task_id: taskId, run_id: runId, outcome: outcome.status === "failed" ? "error" : "submitted", usage: outcome.usage };
       } catch (error) {
@@ -265,7 +265,7 @@ export async function runAgent(opts) {
           return { task_id: taskId, run_id: runId, outcome: "stopped", usage };
         }
         if (error?.name === "AbortError") {
-          if (usage.input_tokens || usage.output_tokens) await call("heartbeat", { run_id: runId, usage: { ...usage, model: model.name } });
+          if (usage.input_tokens || usage.output_tokens) await call("heartbeat", { run_id: runId, usage: { ...usage, model: task.request_kind === "memory" ? (opts.memoryModel ?? model).name : model.name } });
           const handover = await call("hand_over", { run_id: runId, idempotency_key: `${runId}:request-abort`,
             checkpoint: buildCheckpoint({ ...checkpoint, nextStep: "Continue the AI request.", handoverNote: text }) });
           if (handover.isError && handover.data.code === "stop_requested") {

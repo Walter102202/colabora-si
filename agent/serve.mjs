@@ -11,13 +11,14 @@ import { createVoiceClient } from "./voice.mjs";
  *   config: import("./config.mjs").AgentConfig,
  *   mcp: import("./mcpClient.mjs").McpClient,
  *   model: import("./model.mjs").Model,
+ *   memoryModel?: import("./model.mjs").Model,
  *   noticeState?: Parameters<typeof runAgent>[0]["noticeState"],
  *   signal: AbortSignal,
  *   log: (msg: string) => void,
  *   cacheKey?: string,
  * }} opts
  */
-export async function serveAgent({ config, mcp, model, noticeState, signal, log, cacheKey }) {
+export async function serveAgent({ config, mcp, model, memoryModel, noticeState, signal, log, cacheKey }) {
   let status = "waiting for tasks";
   const base = config.telegramBotToken
     ? createTelegramChannel({ token: config.telegramBotToken, ownerChatId: config.telegramOwnerChatId, log, transport: config.telegramTransport, channelRpc: async (name, args) => { const result = await mcp.callTool(name, args); if (result.isError) throw Object.assign(new Error("Channel request failed"), { code: result.data?.code }); return result.data; } })
@@ -43,6 +44,8 @@ export async function serveAgent({ config, mcp, model, noticeState, signal, log,
   await runAgent({
     mcp,
     model,
+    memoryModel,
+    memoryPrices: config.memoryPrices,
     noticeState,
     channel,
     harness: config.harness,
