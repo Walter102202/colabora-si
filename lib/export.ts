@@ -43,6 +43,7 @@ export function blocksToMarkdown(blocks: Block[], pages: Record<string, Page> = 
         for (const level of counts.keys()) if (level > block.indent) counts.delete(level);
         lines.push(`${pad}${count}. ${text}`); break;
       }
+      case "meeting": lines.push(`${pad}> ${meetingLabel(block)}`); break;
       case "quote": lines.push(`${pad}> ${text}`); break;
       case "callout": lines.push(`${pad}> ${block.icon ?? "💡"} ${text}`); break;
       case "code": lines.push(pad + "```" + (block.language ?? ""), block.html, pad + "```"); break;
@@ -119,6 +120,7 @@ async function blocksToHtml(blocks: Block[], pages: Record<string, Page>, synced
         parts.push(`<ol class="one" start="${count}"${ind}><li class="b${cls}">${text}</li></ol>`); break;
       }
       case "toggle": parts.push(`<details${ind}><summary class="b${cls}">${text}</summary></details>`); break;
+      case "meeting": parts.push(`<p class="meeting"${ind}>${escapeHtml(meetingLabel(block))}</p>`); break;
       case "quote": parts.push(`<blockquote class="b${cls}"${ind}>${text}</blockquote>`); break;
       case "callout": parts.push(`<div class="callout${cls}"${ind}><span>${escapeHtml(block.icon ?? "💡")}</span><div class="b">${text}</div></div>`); break;
       case "code": parts.push(`<pre class="code"${ind}><code>${escapeHtml(block.html)}</code></pre>`); break;
@@ -157,3 +159,9 @@ export async function downloadHtml(page: Page, pages: Record<string, Page>, sync
   downloadBlob(new Blob([await pageToHtml(page, pages, synced)], { type: "text/html;charset=utf-8" }), safeName(page.title) + ".html");
 }
 export function exportPagePdf(): void { setTimeout(() => window.print(), 50); }
+
+function meetingLabel(block: Block): string {
+  const ms = block.meeting?.durationMs ?? 0;
+  const seconds = Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 1000)) : 0;
+  return `Meeting · ${block.meeting?.status ?? "idle"} · ${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+}

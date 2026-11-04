@@ -1,3 +1,4 @@
+import { meetingBlockSet } from "@/lib/agentMeetingsPage";
 import { AGENTS_URL, CONNECT_URL, connectUrl, pageUrl } from "@/lib/routes";
 import { CONNECT_AGENT_NAMES } from "@/lib/agentConnectCatalog";
 import { Input } from "@/components/FormControls";
@@ -180,7 +181,12 @@ function EditorSurfaceContent({ pageId, blocks, onChange, emptyHint, locked = fa
       if (type === "embed") { patch.embedProvider = item?.provider; patch.url = undefined; }
       next[index] = { ...next[index], ...patch };
       handles.current.get(id)?.setHtml(next[index]?.html ?? "");
-      if (["page", "divider", "toc", "breadcrumb", "button", "database", "table", "equation", "columns", "synced"].includes(type)) {
+      if (type === "meeting") {
+        const [recorder, ...sections] = meetingBlockSet(id);
+        next[index] = { ...next[index], meeting: recorder.meeting };
+        next.splice(index + 1, 0, ...sections.map((section) => ({ ...section, indent: next[index].indent })));
+        commit(next, { id: sections[1].id });
+      } else if (["page", "divider", "toc", "breadcrumb", "button", "database", "table", "equation", "columns", "synced"].includes(type)) {
         const paragraph = createBlock("paragraph", { indent: next[index].indent }); next.splice(index + 1, 0, paragraph); commit(next, type === "page" && !nested ? undefined : { id: paragraph.id });
       } else commit(next, NON_TEXT.includes(type) ? undefined : { id, end: !nested });
       setSlash(null); slashRef.current = null;
