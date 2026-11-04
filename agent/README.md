@@ -44,6 +44,8 @@ Ctrl+C stops after the current step; press it twice to quit at once.
 | `WORKSPACE_AGENT_PAT` | yes | Personal access token of this agent, from Settings > Agents |
 | `WORKSPACE_AGENT_TOKEN_URL` | no | PAT exchange endpoint; default `<MCP origin>/functions/v1/agent-token` |
 | `AGENT_HARNESS_NAME` | no | Name shown on each run; default `reference-agent` |
+| `AGENT_MAX_WORK_RUNS` | no | Work runs this process keeps at once; default 1 |
+| `AGENT_MAX_REQUEST_RUNS` | no | Request runs (conversation, memory, AI cells) at once; default 3. The server enforces its own limits and answers `agent_busy` |
 | `AGENT_MAX_TURNS` | no | Model turns per run before giving up; default 40 |
 | `AGENT_CONTEXT_BUDGET_TOKENS` | no | Estimated tokens of the conversation sent per turn; older tool results are elided past it. Default 100000 |
 | `AGENT_REVIEWER_AGENT_ID` | no | Agent id of the reviewer instance a Lead delegates review tasks to; empty disables the review protocol |
@@ -71,6 +73,8 @@ WORKSPACE_MCP_URL=https://<project-ref>.supabase.co/functions/v1/mcp
 WORKSPACE_AGENT_PAT=agt_...                               # the token shown once by "Enable the Colabora agent"
 AGENT_HARNESS_NAME=colabora
 AGENT_MAX_TURNS=40
+AGENT_MAX_WORK_RUNS=1
+AGENT_MAX_REQUEST_RUNS=3
 WORKSPACE_APP_URL=https://<app>
 ```
 

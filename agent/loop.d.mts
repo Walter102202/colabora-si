@@ -36,6 +36,8 @@ export function runAgent(opts: {
   contextBudgetTokens?: number;
   contextKeepTurns?: number;
   maxTasks?: number;
+  maxWorkRuns?: number;
+  maxRequestRuns?: number;
   harness?: string;
   displayName?: string;
   reviewerAgentId?: string;

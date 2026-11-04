@@ -163,3 +163,13 @@ it("reads the context token budget and its default", () => {
   expect(readFleetConfig(managed).config.contextBudgetTokens).toBe(50_000);
   expect(readConfig({ ...env, AGENT_CONTEXT_BUDGET_TOKENS: "50000" }).contextBudgetTokens).toBe(50_000);
 });
+
+it("reads lane limits and their defaults for reference and managed agents", () => {
+  const env = { MODEL_BASE_URL: "http://model.test", MODEL_NAME: "other", WORKSPACE_MCP_URL: "http://app.test/mcp", WORKSPACE_AGENT_PAT: "test" };
+  const managed = { VITE_SUPABASE_URL: "https://app.test", TRAMA_RUNTIME_SECRET: "test", META_MODEL_API_KEY: "test" };
+  const overrides = { AGENT_MAX_WORK_RUNS: "2", AGENT_MAX_REQUEST_RUNS: "1" };
+  expect(readConfig(env)).toMatchObject({ maxWorkRuns: 1, maxRequestRuns: 3 });
+  expect(readConfig({ ...env, ...overrides })).toMatchObject({ maxWorkRuns: 2, maxRequestRuns: 1 });
+  expect(readFleetConfig(managed).config).toMatchObject({ maxWorkRuns: 1, maxRequestRuns: 3 });
+  expect(readFleetConfig({ ...managed, ...overrides }).config).toMatchObject({ maxWorkRuns: 2, maxRequestRuns: 1 });
+});
