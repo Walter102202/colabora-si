@@ -110,10 +110,10 @@ export async function runAgent(opts) {
       log(`channel error: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
-  /** @param {string} name @param {Record<string, unknown>} args */
-  const call = async (name, args) => {
+  /** @param {string} name @param {Record<string, unknown>} args @param {{signal?: AbortSignal}} [opts] */
+  const call = async (name, args, opts) => {
     try {
-      return await mcp.callTool(name, args);
+      return await mcp.callTool(name, args, opts);
     } catch (e) {
       const text = e instanceof Error ? e.message : String(e);
       // The server refused the call before running it (invalid arguments, unknown tool): nothing happened and the model sees why.
@@ -149,8 +149,9 @@ export async function runAgent(opts) {
   while (handled.length < maxTasks && !signal?.aborted) {
     if (channel?.reply) await flushPersonReplies({ call, reply: channel.reply, appUrl: channel.appUrl });
     await acknowledgeNotices();
-    const waited = await call("wait_for_my_tasks", cursor ? { after: cursor, timeout_s: waitTimeoutS } : { timeout_s: waitTimeoutS });
+    const waited = await call("wait_for_my_tasks", cursor ? { after: cursor, timeout_s: waitTimeoutS } : { timeout_s: waitTimeoutS }, { signal });
     if (waited.isError) {
+      if (signal?.aborted) break;
       log(`wait_for_my_tasks failed: ${waited.text}`);
       await clock.sleep(5000);
       continue;
@@ -432,8 +433,9 @@ export async function runAgent(opts) {
           const answer = take(hb.pending_prompts ?? []);
           if (answer) return { answer };
         }
-        const res = await call("wait_for_task", { task_id: taskId, run_id: runId, after_seq: seenSeq, timeout_s: waitTimeoutS });
+        const res = await call("wait_for_task", { task_id: taskId, run_id: runId, after_seq: seenSeq, timeout_s: waitTimeoutS }, { signal });
         if (res.isError) {
+          if (signal?.aborted) return { aborted: true };
           log(`wait_for_task failed: ${res.text}`);
           await clock.sleep(5000);
           continue;
@@ -465,8 +467,9 @@ export async function runAgent(opts) {
             return { subtasks: [], activities: [], all_subtasks_closed: openSubtasks.size === 0, prompts: rest, brief_stale: !!hb.brief_stale };
           }
         }
-        const res = await call("wait_for_task", { task_id: taskId, run_id: runId, after_seq: seenSeq, timeout_s: waitTimeoutS });
+        const res = await call("wait_for_task", { task_id: taskId, run_id: runId, after_seq: seenSeq, timeout_s: waitTimeoutS }, { signal });
         if (res.isError) {
+          if (signal?.aborted) return { aborted: true };
           log(`wait_for_task failed: ${res.text}`);
           await clock.sleep(5000);
           continue;

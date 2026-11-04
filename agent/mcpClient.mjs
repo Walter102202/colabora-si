@@ -119,11 +119,13 @@ export function createMcpClient({ url, pat, tokenUrl, signIn, fetchImpl = global
    * @param {string} method
    * @param {Record<string, unknown> | undefined} params
    * @param {boolean} notification
+   * @param {AbortSignal} [signal]
    */
-  async function send(method, params, notification) {
+  async function send(method, params, notification, signal) {
     const id = nextId++;
     const payload = notification ? { jsonrpc: "2.0", method, params } : { jsonrpc: "2.0", id, method, params };
     for (let attempt = 0; attempt < 2; attempt++) {
+      signal?.throwIfAborted();
       const bearer = token ?? (await exchange());
       /** @type {Record<string, string>} */
       const headers = {
@@ -133,7 +135,7 @@ export function createMcpClient({ url, pat, tokenUrl, signIn, fetchImpl = global
         "MCP-Protocol-Version": PROTOCOL_VERSION,
       };
       if (sessionId) headers["Mcp-Session-Id"] = sessionId;
-      const res = await fetchImpl(url, { method: "POST", headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(timeoutMs) });
+      const res = await fetchImpl(url, { method: "POST", headers, body: JSON.stringify(payload), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs) });
       if (res.status === 401 && attempt === 0) {
         token = null;
         continue;
@@ -184,9 +186,9 @@ export function createMcpClient({ url, pat, tokenUrl, signIn, fetchImpl = global
       } while (cursor);
       return tools;
     },
-    async callTool(name, args) {
+    async callTool(name, args, opts = {}) {
       await client.initialize();
-      return toToolResult(await send("tools/call", { name, arguments: args }, false));
+      return toToolResult(await send("tools/call", { name, arguments: args }, false, opts.signal));
     },
   };
   return client;

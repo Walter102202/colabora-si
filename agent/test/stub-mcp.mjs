@@ -30,7 +30,7 @@ export const STUB_TOOLS = [
 ];
 
 /**
- * @typedef {(args: Record<string, any>) => Record<string, any> | {isError: true, data: Record<string, any>}} Handler
+ * @typedef {(args: Record<string, any>, opts?: {signal?: AbortSignal}) => Record<string, any> | Promise<Record<string, any>>} Handler
  * @param {{
  *   tasks?: Record<string, any>[], heartbeats?: Record<string, any>[], waits?: Record<string, any>[],
  *   handlers?: Record<string, Handler>, instructions?: string, tools?: import("../mcpClient.mjs").McpTool[],
@@ -88,11 +88,11 @@ export function createStubMcp({ tasks = [], heartbeats = [], waits = [], handler
       return [...STUB_TOOLS, ...tools];
     },
     /** @param {string} name @param {Record<string, any>} args */
-    async callTool(name, args) {
+    async callTool(name, args, opts = {}) {
       calls.push({ name, args: structuredClone(args) });
       const handler = handlers[name] ?? defaults[name];
       if (!handler) return { isError: true, data: { code: "not_found" }, text: `unknown tool ${name}` };
-      const out = handler(args);
+      const out = await handler(args, opts);
       if (out && out.isError === true) return { isError: true, data: out.data, text: JSON.stringify(out.data) };
       return { isError: false, data: out, text: JSON.stringify(out) };
     },

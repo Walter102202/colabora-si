@@ -16,7 +16,7 @@ export interface ToolResult {
 export interface McpClient {
   initialize(): Promise<void>;
   listTools(): Promise<McpTool[]>;
-  callTool(name: string, args: Record<string, unknown>): Promise<ToolResult>;
+  callTool(name: string, args: Record<string, unknown>, opts?: { signal?: AbortSignal }): Promise<ToolResult>;
   instructions?: string;
 }
 export class McpError extends Error {

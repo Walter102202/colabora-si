@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { costUsd, runAgent, type ChannelEvent, type Clock } from "../../agent/loop.mjs";
 import { argsHash } from "../../agent/checkpoint.mjs";
 import { createModel } from "../../agent/model.mjs";
@@ -882,4 +882,25 @@ it("b) leaves a Lead notice undelivered when the process aborts during its model
   await runAgent({ mcp, model: hangingModel(), noticeState, clock: fakeClock(), maxTasks: 1, signal: abort.signal });
   expect(saved.delivered).toEqual({});
   expect(mcp.calls.filter((c) => c.name === "wait_for_my_tasks" && String(c.args.after).startsWith("ack:"))).toHaveLength(0);
+});
+
+it("c) releases wait_for_task at once when the process aborts", async () => {
+  const abort = new AbortController(); let waits = 0;
+  const sleep = vi.fn(async () => { await new Promise((resolve) => setTimeout(resolve, 1)); });
+  const mcp = createStubMcp({ tasks: queued, tools: [handOverTool], handlers: {
+    hand_over: () => ({ ok: true }),
+    wait_for_task: (_a, opts) => {
+      if (++waits === 1) return seed();
+      expect(opts?.signal).toBe(abort.signal);
+      return new Promise((resolve) => opts!.signal!.addEventListener("abort", () => resolve({ isError: true, data: { code: "aborted" } }), { once: true }));
+    },
+  } });
+  const model = createStubModel([{ tool_calls: [toolCall("request_input", { question: "Ready?", blocking: true })] }]);
+  setTimeout(() => abort.abort(), 20);
+  const started = Date.now();
+  const { tasks } = await runAgent({ mcp, model, clock: { now: () => 0, sleep }, maxTasks: 1, signal: abort.signal });
+  expect(Date.now() - started).toBeLessThan(1000);
+  expect(tasks[0].outcome).toBe("aborted");
+  expect(names(mcp.calls).at(-1)).toBe("hand_over");
+  expect(sleep).not.toHaveBeenCalled();
 });
