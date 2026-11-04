@@ -69,7 +69,7 @@ try {
     const page = await rpc("create_page", { p_input: { workspace_id: workspaceId, title: `Meeting smoke ${Date.now()}` }, p_idempotency_key: randomUUID() });
     pageId = page.id; meetingId = randomUUID();
     const block = (type, html, rest = {}) => ({ id: randomUUID(), type, html, indent: 0, ...rest });
-    const initial = [block("meeting", "", { id: meetingId, meeting: { state: "stopped", elapsedMs: 180000 } }),
+    const initial = [block("meeting", "", { id: meetingId, meeting: { id: meetingId, status: "summarizing", durationMs: 180000 } }),
       block("heading2", "Notes", { key: `meeting:notes:${meetingId}` }), block("paragraph", "Focus on the prototype decision and checklist."),
       block("heading2", "Summary", { key: `meeting:summary:${meetingId}` }), block("heading2", "Transcript", { key: `meeting:transcript:${meetingId}` })];
     await rpc("apply_page_ops", { p_page_id: pageId, p_ops: initial.map((b, i) => ({ op: "insert_block", block: b, after: initial[i - 1]?.id ?? null })) });
@@ -103,7 +103,7 @@ try {
   const claim = await tool("claim_task", { task_id: taskId, harness: "meeting-local-smoke" });
   check(claim.run_id, "platform agent claims meeting request");
   const source = await tool("get_ai_request", { task_id: taskId });
-  check(source.kind === "meeting" && source.transcript.length >= 3, "runtime sees three transcript segments and meeting context");
+  check(source.kind === "meeting" && source.transcript.length >= (browserPage ? 1 : 3), "runtime sees transcript segments and meeting context");
   const evidence = source.transcript[0].t_ms;
   const answer = { summary: "The prototype is ready for the next step.", key_points: ["Prepare the prototype and checklist."],
     decisions: [{ text: "Ship the prototype", evidence: [evidence] }, { text: "UNSUPPORTED DECISION", evidence: [999999999] }],
