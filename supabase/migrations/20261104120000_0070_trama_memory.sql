@@ -76,10 +76,18 @@ returns boolean language sql stable security definer set search_path='' as $$
 $$;
 revoke all on function private.person_memory_enabled(uuid,uuid) from public,anon,authenticated;
 
+
+-- Permissions and approval policy belong to direct decisions, never personal memory.
+create or replace function private.memory_is_authority_rule(p_text text)
+returns boolean language sql immutable set search_path='' as $$
+  select coalesce(p_text ~* '\m(approv[a-z]*|permission[a-z]*|authoriz[a-z]*|aprob[a-záéíóú]*|permiso[a-z]*|autoriz[a-záéíóú]*|access rights|permisos de acceso)\M',false);
+$$;
+revoke all on function private.memory_is_authority_rule(text) from public,anon,authenticated;
+
 create or replace function private.maintain_person_memory()
 returns trigger language plpgsql security definer set search_path='' as $$
 begin
-  if private.memory_has_secret(new.body) or private.memory_has_secret(new.source_quote)
+  if private.memory_has_secret(new.body) or private.memory_has_secret(new.source_quote) or private.memory_is_authority_rule(new.body)
     or not exists(select 1 from public.agent_messages m where m.id=new.source_message_id
       and m.workspace_id=new.workspace_id and m.user_id=new.user_id and m.direction='in'
       and m.kind<>'system' and not m.forwarded and not m.pasted and strpos(m.body,new.source_quote)>0
@@ -224,6 +232,7 @@ begin
     if not private.person_memory_enabled(p_msg.workspace_id,p_msg.user_id) then
       v_reply:='Memory is paused. You can turn it on in Settings → Memory.';
     elsif private.memory_has_secret(v_text) then v_reply:='I don''t keep passwords or keys.';
+    elsif private.memory_is_authority_rule(v_text) then v_reply:='Memory never changes permissions or approvals.';
     elsif char_length(v_text) not between 3 and 500 then v_reply:='Please keep a memory between 3 and 500 characters.';
     else
       insert into public.person_memories(workspace_id,user_id,kind,body,origin,source_message_id,source_quote)
@@ -657,7 +666,7 @@ begin
         elsif coalesce(v_op->>'quote','')='' or strpos(v_source.body,v_op->>'quote')=0 then v_reason:='quote_mismatch';
         elsif coalesce(v_op->>'op','') not in ('add','replace') or coalesce(v_op->>'kind','') not in ('preference','fact','commitment')
           or char_length(btrim(coalesce(v_op->>'text',''))) not between 3 and 300 or char_length(v_op->>'quote') not between 3 and 500
-          or private.memory_has_secret(v_op->>'text') or private.memory_has_secret(v_op->>'quote') then v_reason:='invalid';
+          or private.memory_has_secret(v_op->>'text') or private.memory_has_secret(v_op->>'quote') or private.memory_is_authority_rule(v_op->>'text') then v_reason:='invalid';
         else
           if v_op->>'op'='replace' then
             select * into v_old from public.person_memories where id::text=v_op->>'memory_id' and workspace_id=v_t.workspace_id and user_id=v_t.owner_user_id and status='active';
