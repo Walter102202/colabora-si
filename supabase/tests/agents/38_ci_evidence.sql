@@ -77,7 +77,7 @@ select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
 select public.claim_task(:'parent'::uuid, 'claude_code') ->> 'run_id' as lr \gset
 select public.review_task(:'sub'::uuid, 'approved', '[{"criterion_id":"c1","status":"verified","note":"looks right"}]'::jsonb,
-                          '[]'::jsonb, null, :'lr'::uuid);
+                          '[]'::jsonb, :'art'::uuid, :'lr'::uuid);
 select is(tests.error_of(format('do $b$ declare r jsonb; begin r := public.close_subtask(%L::uuid); raise exception using message = r->>''ci''; end $b$', :'sub')), 'deferred_to_job', 'an approved review defers a pending CI check');
 select tests.reset_role();
 update public.task_briefs set policies = '{"subtask_close":"lead"}' where task_id = :'parent'::uuid;
