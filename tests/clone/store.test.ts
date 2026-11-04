@@ -112,8 +112,8 @@ it("A-2-17 undo and redo traverse snapshots", () => {
 it("A-2-18 new changes discard redo", () => {
   change({ a: page() }); undo(); change({ b: page() }); expect(canRedo()).toBe(false);
 });
-it("ST-1 seed has four roots and the Agent Tasks contract", () => {
-  const seed = seedWorkspace(); expect(seed.rootOrder).toHaveLength(4);
+it("ST-1 seed has five roots and the Agent Tasks contract", () => {
+  const seed = seedWorkspace(); expect(seed.rootOrder).toHaveLength(5);
   const tasks = seed.pages[seed.rootOrder[3]];
   expect(tasks.title).toBe("Agent Tasks");
   expect(tasks.database!.properties.map((p) => p.name)).toEqual(["Name", "Lead", "Worker", "Done when", "Status", "Waiting on", "Depends on", "Output", "Cost", "Run"]);
@@ -126,7 +126,7 @@ it("clearing the local copy leaves the default pages and no account", () => {
   useStore.getState().clearLocalWorkspace();
   const state = useStore.getState();
   expect(state.pages.mine).toBeUndefined();
-  expect(state.rootOrder).toHaveLength(4);
+  expect(state.rootOrder).toHaveLength(5);
   expect(state.syncUserId).toBeNull(); expect(state.syncWorkspaceId).toBeNull();
   expect(state.reminders).toEqual([]); expect(state.settings).toBeUndefined();
 });

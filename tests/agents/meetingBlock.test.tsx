@@ -7,10 +7,12 @@ import type { MeetingRecorderOptions, Segment } from "@/lib/agentMeeting";
 import MeetingBlock from "@/components/agents/meeting/MeetingBlock";
 
 const mock = vi.hoisted(() => ({
+  navigate: vi.fn(), create: vi.fn(), microphone: vi.fn(), trackStop: vi.fn(),
   start: vi.fn(), pending: vi.fn(), mark: vi.fn(), remove: vi.fn(), transcribe: vi.fn(), append: vi.fn(), summary: vi.fn(), update: vi.fn(),
   requests: [] as { id: string; kind: string; state: string; request: { block_id: string } }[],
   state: {} as Record<string, unknown>,
 }));
+vi.mock("react-router", () => ({ useNavigate: () => mock.navigate }));
 vi.mock("@/lib/agentMeeting", () => ({
   startMeetingRecorder: mock.start, listPendingSegments: mock.pending, markSegment: mock.mark, deleteMeetingSegments: mock.remove,
   transcribeSegment: mock.transcribe, appendTranscript: mock.append,
@@ -27,11 +29,18 @@ async function render(readOnly = false) { await act(async () => { root.render(cr
 async function click(label: string) { const button = host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`); expect(button).not.toBeNull(); await act(async () => { button!.click(); }); }
 beforeEach(() => {
   vi.clearAllMocks(); durable = []; mock.requests = [];
+  mock.navigate.mockReturnValue(undefined);
+  mock.microphone.mockResolvedValue({ getTracks: () => [{ stop: mock.trackStop }] });
+  Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia: mock.microphone } });
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.stubEnv("VITE_SUPABASE_URL", "https://local.test"); vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "public");
   block = { id: "m", type: "meeting", html: "", indent: 0, meeting: { id: "m", status: "idle" } };
-  mock.state = { syncWorkspaceId: "ws", syncUserId: "u", pages: { p: { blocks: [block], locked: false, isDeleted: false } }, updateBlock: mock.update };
-  mock.update.mockImplementation((_page: string, _id: string, patch: Partial<Block>) => { Object.assign(block, patch); });
+  mock.state = { syncWorkspaceId: "ws", syncUserId: "u", pages: { p: { blocks: [block], locked: false, isDeleted: false } }, updateBlock: mock.update, createPage: mock.create };
+  mock.create.mockImplementation((_parent: string, patch: Record<string, unknown>) => {
+    (mock.state.pages as Record<string, unknown>).child = { ...patch, locked: false, isDeleted: false };
+    return "child";
+  });
+  mock.update.mockImplementation((pageId: string, id: string, patch: Partial<Block>) => { Object.assign((mock.state.pages as Record<string, { blocks: Block[] }>)[pageId].blocks.find((entry) => entry.id === id)!, patch); });
   mock.pending.mockImplementation(async () => durable.filter((s) => s.status !== "written"));
   mock.mark.mockImplementation(async (_id: string, n: number, status: Segment["status"], turns?: Segment["turns"]) => { Object.assign(durable.find((s) => s.n === n)!, { status, turns }); });
   mock.remove.mockImplementation(async () => { durable = []; });
@@ -128,4 +137,36 @@ it("attaches to an existing request after an ambiguous summary retry", async () 
   mock.requests = [{ id: "already", kind: "meeting", state: "working", request: { block_id: "m" } }];
   await render(); await click("Retry"); expect(block.meeting.status).toBe("summarizing");
   mock.requests = [{ ...mock.requests[0], state: "done" }]; await render(); expect(block.meeting.status).toBe("ready");
+});
+
+it.each([false, true])("launches into a new meeting page and retains launcher state (capture failure=%s)", async (captureFailure) => {
+  block.meeting!.launcher = true; await render(); await click("Start recording");
+  expect(mock.microphone).toHaveBeenCalledTimes(1); expect(mock.create).toHaveBeenCalledTimes(1);
+  const [parent, child] = mock.create.mock.calls[0] as [string, { title: string; icon: string; blocks: Block[] }];
+  expect(parent).toBe("p"); expect(child.title).toMatch(/^Meeting /);
+  expect(child.blocks.map((entry) => entry.type)).toEqual(["meeting", "heading2", "paragraph", "heading2", "heading2"]);
+  expect(child.blocks.filter((entry) => entry.key).map((entry) => entry.key)).toEqual(["notes", "summary", "transcript"].map((key) => `meeting:${key}:${child.blocks[0].id}`));
+  expect(mock.navigate).toHaveBeenCalledWith("/p/child"); expect(mock.start).not.toHaveBeenCalled(); expect(block.meeting!.status).toBe("idle");
+  const stream = await mock.microphone.mock.results[0].value;
+  if (captureFailure) mock.start.mockRejectedValueOnce(new Error("unsupported"));
+  await act(async () => root.render(createElement(MeetingBlock, { key: child.blocks[0].id, pageId: "child", block: child.blocks[0] })));
+  expect(mock.start).toHaveBeenCalledWith(expect.objectContaining({ meetingId: child.blocks[0].id, stream }));
+  expect(mock.trackStop).toHaveBeenCalledTimes(captureFailure ? 1 : 0); expect(block.meeting!.status).toBe("idle");
+});
+it("does not create an empty meeting when microphone permission is denied", async () => {
+  block.meeting!.launcher = true; mock.microphone.mockRejectedValueOnce(new DOMException("Denied", "NotAllowedError"));
+  await render(); await click("Start recording");
+  expect(mock.create).not.toHaveBeenCalled(); expect(mock.navigate).not.toHaveBeenCalled(); expect(host.textContent).toContain("site settings");
+});
+it("releases the transferred microphone if navigation fails", async () => {
+  block.meeting!.launcher = true; mock.navigate.mockImplementationOnce(() => { throw new Error("navigation_failed"); });
+  await render(); await click("Start recording"); expect(mock.trackStop).toHaveBeenCalled(); expect(mock.start).not.toHaveBeenCalled();
+});
+
+it("discards a launcher microphone granted after permission becomes read-only", async () => {
+  let grant!: (stream: unknown) => void;
+  mock.microphone.mockImplementationOnce(() => new Promise((resolve) => { grant = resolve; }));
+  block.meeting!.launcher = true; await render(); await click("Start recording"); await render(true);
+  await act(async () => grant({ getTracks: () => [{ stop: mock.trackStop }] }));
+  expect(mock.create).not.toHaveBeenCalled(); expect(mock.trackStop).toHaveBeenCalledTimes(1);
 });

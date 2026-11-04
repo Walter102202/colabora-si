@@ -1,9 +1,27 @@
+import { useNavigate } from "react-router";
+import { pageUrl } from "@/lib/routes";
+import { newId } from "@/lib/factories";
+import { meetingBlockSet } from "@/lib/agentMeetingsPage";
 import { useEffect, useRef, useState } from "react";
 import type { Block } from "@/lib/types";
 import { useStore } from "@/lib/store";
 import { getAgentClient } from "@/lib/agentClient";
 import { requestMeetingSummary, useAiRequests } from "@/lib/agentAiRequests";
 import { appendTranscript, deleteMeetingSegments, listPendingSegments, markSegment, mergeTurns, startMeetingRecorder, transcribeSegment, turnsToBlocks, type MeetingRecorder, type Segment } from "@/lib/agentMeeting";
+
+// A launcher hands its already-authorized microphone to the destination block.
+// Unclaimed transfers expire; neither audio nor credentials are persisted here.
+const transfers = new Map<string, { stream: MediaStream; userId: string | null; workspaceId: string | null; timer: ReturnType<typeof setTimeout> }>();
+function releaseTransfer(id: string) {
+  const transfer = transfers.get(id);
+  if (transfer) { clearTimeout(transfer.timer); transfer.stream.getTracks().forEach((track) => track.stop()); transfers.delete(id); }
+}
+function takeTransfer(id: string, userId: string | null, workspaceId: string | null) {
+  const transfer = transfers.get(id);
+  if (!transfer) return;
+  if (transfer.userId !== userId || transfer.workspaceId !== workspaceId) { releaseTransfer(id); return; }
+  clearTimeout(transfer.timer); transfers.delete(id); return transfer.stream;
+}
 
 type Meeting = NonNullable<Block["meeting"]>;
 interface View { status: Meeting["status"]; duration: number; pending: number; level: number; minute: number; recovered: number; busy: boolean; error: string; requestId?: string }
@@ -90,11 +108,11 @@ function session(pageId: string, block: Block, notify: (view: View) => void, all
     if (timer) clearInterval(timer);
     try { await recorder?.stop(); await finish(); } catch (error) { fail(error); }
   };
-  const start = async () => {
-    if (!allowed() || view.busy) return;
+  const start = async (stream?: MediaStream) => {
+    if (!allowed() || view.busy) { stream?.getTracks().forEach((track) => track.stop()); return; }
     failed = false; finishing = false; queue = Promise.resolve(); emit({ busy: true, error: "" });
     try {
-      const capture = await startMeetingRecorder({ meetingId: id, onLevel: (level) => emit({ level }),
+      const capture = await startMeetingRecorder({ meetingId: id, stream, onLevel: (level) => emit({ level }),
         onSegment: (seg) => enqueue(seg), onError: fail,
         onStop: () => { if (timer) clearInterval(timer); if (allowed() && !failed) { persist({ status: "transcribing" }); void finish(); } } });
       if (!allowed()) { await capture.stop().catch(() => {}); return; }
@@ -102,7 +120,7 @@ function session(pageId: string, block: Block, notify: (view: View) => void, all
       persist({ status: "recording", startedAt: meta.startedAt ?? Date.now(), lang: meta.lang ?? (navigator.language.startsWith("en") ? "en" : "es") });
       emit({ busy: false });
       timer = setInterval(() => emit({ duration: capture.elapsedMs() }), 1000);
-    } catch (error) { fail(error); }
+    } catch (error) { stream?.getTracks().forEach((track) => track.stop()); fail(error); }
   };
   const recover = async (retry = false) => {
     if (!allowed()) return;
@@ -131,16 +149,22 @@ function session(pageId: string, block: Block, notify: (view: View) => void, all
 }
 
 export default function MeetingBlock({ block, pageId, readOnly = false }: { block: Block; pageId: string; readOnly?: boolean }) {
+  const navigate = useNavigate();
+  const launcher = !!block.meeting?.launcher;
+  const [launchState, setLaunchState] = useState({ busy: false, error: "" });
+  const mounted = useRef(false), launching = useRef(false), blocked = useRef(readOnly);
   const userId = useStore((s) => s.syncUserId), workspaceId = useStore((s) => s.syncWorkspaceId);
   const page = useStore((s) => s.pages[pageId]);
   const [identity] = useState({ userId, workspaceId });
   const topLevel = !!page?.blocks.some((entry) => entry.id === block.id);
   const disabled = readOnly || !!page?.locked || !!page?.isDeleted || !topLevel || identity.userId !== userId || identity.workspaceId !== workspaceId;
   const [view, setView] = useState<View>({ status: block.meeting?.status ?? "idle", duration: block.meeting?.durationMs ?? 0, pending: 0, level: 0, minute: 0, recovered: 0, busy: false, error: "" });
+  useEffect(() => { blocked.current = disabled; }, [disabled]);
   const controller = useRef<ReturnType<typeof session> | null>(null);
   const requests = useAiRequests(pageId);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
-    if (disabled) return;
+    if (disabled || launcher) return;
     let active = true;
     const allowed = () => {
       const state = useStore.getState(), current = state.pages[pageId];
@@ -149,9 +173,10 @@ export default function MeetingBlock({ block, pageId, readOnly = false }: { bloc
     const latest = useStore.getState().pages[pageId]?.blocks.find((entry) => entry.id === block.id);
     if (!latest) return;
     const current = session(pageId, latest, setView, allowed); controller.current = current;
-    void current.recover();
+    const stream = takeTransfer(block.id, userId, workspaceId);
+    if (stream) void current.start(stream); else void current.recover();
     return () => { active = false; controller.current = null; current.dispose(); };
-  }, [pageId, block.id, disabled, userId, workspaceId]);
+  }, [pageId, block.id, disabled, launcher, userId, workspaceId]);
   useEffect(() => {
     const request = requests.find((entry) => entry.kind === "meeting" && entry.request.block_id === block.id && (!view.requestId || entry.id === view.requestId));
     if (request) controller.current?.reconcile(request);
@@ -161,11 +186,44 @@ export default function MeetingBlock({ block, pageId, readOnly = false }: { bloc
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
     window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn);
   }, [disabled, view.pending]);
+  const launch = async () => {
+    if (disabled || launching.current) return;
+    launching.current = true; setLaunchState({ busy: true, error: "" });
+    let stream: MediaStream | undefined, meetingId: string | undefined;
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("unsupported");
+      try { stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }); }
+      catch { throw new Error("mic_denied"); }
+      const state = useStore.getState(), current = state.pages[pageId];
+      if (!mounted.current || blocked.current || state.syncUserId !== userId || state.syncWorkspaceId !== workspaceId || !current || current.locked || current.isDeleted || !current.blocks.some((entry) => entry.id === block.id)) return;
+      meetingId = newId();
+      const now = new Date(), date = now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+      const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      const childId = state.createPage(pageId, { title: `Meeting · ${date} ${time}`, icon: "🎙️", blocks: meetingBlockSet(meetingId) });
+      if (!childId) throw new Error("meeting_page_unavailable");
+      const id = meetingId;
+      transfers.set(id, { stream, userId, workspaceId, timer: setTimeout(() => releaseTransfer(id), 30000) });
+      stream = undefined;
+      await navigate(pageUrl(childId));
+    } catch (error) {
+      if (meetingId) releaseTransfer(meetingId);
+      if (mounted.current) setLaunchState({ busy: false, error: error instanceof Error && ["mic_denied", "unsupported"].includes(error.message) ? failureText(error) : "The meeting could not open. Please try again." });
+    } finally {
+      stream?.getTracks().forEach((track) => track.stop());
+      launching.current = false;
+      if (mounted.current) setLaunchState((state) => ({ ...state, busy: false }));
+    }
+  };
   const summary = () => {
     const heading = useStore.getState().pages[pageId]?.blocks.find((entry) => entry.key === `meeting:summary:${block.id}`);
     if (heading) { if (!disabled && heading.collapsed) useStore.getState().updateBlock(pageId, heading.id, { collapsed: false }); document.querySelector(`[data-block-id="${CSS.escape(heading.id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }); }
   };
   if (disabled) return <div className="rounded border border-border p-3 text-sm">{!topLevel ? "Move this meeting to the page to record." : `Meeting: ${block.meeting?.status ?? "idle"} · ${clock(block.meeting?.durationMs ?? 0)}`}</div>;
+  if (launcher) return <div className="space-y-2 rounded border border-border p-3 text-sm">
+    <p className="text-xs text-text-secondary">Tell the participants you are recording. Audio is transcribed by Meta and never stored.</p>
+    <button type="button" aria-label="Start recording" disabled={launchState.busy} className="rounded border border-border px-3 py-1 text-sm hover:bg-bg-secondary disabled:opacity-50" onClick={() => void launch()}>{launchState.busy ? "Preparing microphone..." : "Start recording"}</button>
+    {launchState.error && <p role="alert">{launchState.error}</p>}
+  </div>;
   return <div className="space-y-2 rounded border border-border p-3 text-sm">
     <p className="text-xs text-text-secondary">Tell the participants you are recording. Audio is transcribed by Meta and never stored.</p>
     {view.recovered > 0 && <p role="status">Recording was interrupted. {view.recovered} minutes recovered.</p>}

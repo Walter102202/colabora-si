@@ -1,3 +1,4 @@
+import { buildMeetingsPage } from "@/lib/agentMeetingsStarter";
 import { AGENT_TASKS_TEMPLATE } from "@/lib/agentTasksTemplate";
 import { tramaCoverUrl } from "@/lib/cover";
 import { createBlock, createPage, newId } from "@/lib/factories";
@@ -93,11 +94,13 @@ export function seedWorkspace(): { pages: Record<string, Page>; rootOrder: strin
     ]),
   });
   const agentTasks = createPageFromTemplate(AGENT_TASKS_TEMPLATE.build());
+  const meetings = buildMeetingsPage();
   return {
     pages: {
       [welcome.id]: welcome, [working.id]: working, [connections.id]: connections, ...agentTasks.pages,
       [agentTasks.page.id]: { ...agentTasks.page, cover: tramaCoverUrl("detective") },
+      [meetings.id]: meetings,
     },
-    rootOrder: [welcome.id, working.id, connections.id, agentTasks.page.id],
+    rootOrder: [welcome.id, working.id, connections.id, agentTasks.page.id, meetings.id],
   };
 }
