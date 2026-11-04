@@ -143,8 +143,13 @@ function session(pageId: string, block: Block, notify: (view: View) => void, all
   };
   return { start, stop, recover, reconcile(request: { id: string; state: string }) {
     if (!allowed() || view.status !== "summarizing" || (requestId && request.id !== requestId)) return;
-    if (request.state === "done") { persist({ status: "ready" }); emit({ busy: false }); }
-    else if (["failed", "cancelled"].includes(request.state)) fail(new Error("summary_failed"));
+    // Completion persists ready on the server with the summary. A notification must
+    // not queue a local edit/version snapshot against the pre-summary page.
+    if (request.state === "done") { meta = { ...meta, status: "ready" }; emit({ status: "ready", busy: false }); }
+    else if (["failed", "cancelled"].includes(request.state)) {
+      failed = true; finishing = false; meta = { ...meta, status: "failed" };
+      emit({ status: "failed", error: failureText(new Error("summary_failed")), busy: false });
+    }
   }, dispose() { if (timer) clearInterval(timer); void recorder?.stop().catch(() => {}); } };
 }
 

@@ -61,8 +61,9 @@ it("starts with consent, drains two segments before summary, and follows complet
   expect(mock.summary).toHaveBeenCalledWith("p", "m", expect.any(String));
   expect(mock.summary.mock.invocationCallOrder[0]).toBeGreaterThan(mock.append.mock.invocationCallOrder[1]);
   expect(host.textContent).toContain("Trama is summarizing");
+  mock.update.mockClear();
   mock.requests = [{ id: "request", kind: "meeting", state: "done", request: { block_id: "m" } }]; await render();
-  expect(block.meeting?.status).toBe("ready"); expect(host.textContent).toContain("Summary");
+  expect(mock.update).not.toHaveBeenCalled(); expect(host.textContent).toContain("Meeting ready");
 });
 it("recovers persisted transcription without uploading it again", async () => {
   durable = [{ ...segment(0), status: "transcribed", turns: [{ startMs: 0, endMs: 1000, text: "Saved" }] }];
@@ -94,10 +95,11 @@ it("stops on unmount and ignores callbacks after identity changes", async () => 
   expect(mock.append).not.toHaveBeenCalled(); expect(mock.update).not.toHaveBeenCalled();
   await act(async () => root.unmount()); expect(stop).toHaveBeenCalled(); root = createRoot(host);
 });
-it("reconciles a completed summary on reload without requesting it again", async () => {
+it.each(["done", "failed", "cancelled"])("reconciles a %s summary on reload without creating local document edits", async (state) => {
   block.meeting = { id: "m", status: "summarizing", durationMs: 60000 };
-  mock.requests = [{ id: "previous", kind: "meeting", state: "done", request: { block_id: "m" } }]; await render();
-  expect(block.meeting.status).toBe("ready"); expect(mock.summary).not.toHaveBeenCalled();
+  mock.requests = [{ id: "previous", kind: "meeting", state, request: { block_id: "m" } }]; await render();
+  expect(host.textContent).toContain(state === "done" ? "Meeting ready" : "The meeting summary failed");
+  expect(mock.update).not.toHaveBeenCalled(); expect(mock.summary).not.toHaveBeenCalled();
 });
 
 it("retains unload protection on quota failure and removes it after recovery", async () => {
@@ -136,7 +138,7 @@ it("attaches to an existing request after an ambiguous summary retry", async () 
   mock.summary.mockRejectedValueOnce(new Error("request_in_progress"));
   mock.requests = [{ id: "already", kind: "meeting", state: "working", request: { block_id: "m" } }];
   await render(); await click("Retry"); expect(block.meeting.status).toBe("summarizing");
-  mock.requests = [{ ...mock.requests[0], state: "done" }]; await render(); expect(block.meeting.status).toBe("ready");
+  mock.requests = [{ ...mock.requests[0], state: "done" }]; await render(); expect(host.textContent).toContain("Meeting ready");
 });
 
 it.each([false, true])("launches into a new meeting page and retains launcher state (capture failure=%s)", async (captureFailure) => {
