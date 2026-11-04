@@ -299,3 +299,155 @@ begin
 end $$;
 revoke all on function private.handle_person_message(public.agent_messages, jsonb, text) from public, anon, authenticated;
 
+
+-- Bounded personal context; failure must never prevent an ordinary answer.
+create or replace function private.person_memory_context(p_ws uuid,p_user uuid,p_query text)
+returns jsonb language plpgsql stable security definer set search_path='' as $$
+declare v_m record; v_result jsonb:='[]'; v_size int:=0;
+begin
+  if not private.person_memory_enabled(p_ws,p_user) then return '[]'; end if;
+  for v_m in select m.*, (select left(old.body,120) from public.person_memories old where old.superseded_by=m.id
+      and old.workspace_id=p_ws and old.user_id=p_user order by old.created_at desc limit 1) as previously
+    from public.person_memories m where m.workspace_id=p_ws and m.user_id=p_user and m.status='active'
+      and (m.expires_at is null or m.expires_at>now())
+    order by coalesce(m.search_tsv @@ websearch_to_tsquery('simple',extensions.unaccent('extensions.unaccent'::regdictionary,p_query)),false) desc,
+      (m.kind='commitment') desc,m.last_used_at desc nulls last,m.created_at desc,m.id
+  loop
+    if v_size+length(v_m.body)>1500 then continue; end if;
+    v_result:=v_result||jsonb_build_array(jsonb_strip_nulls(jsonb_build_object('id',v_m.id,'kind',v_m.kind,'text',v_m.body,'previously',v_m.previously)));
+    v_size:=v_size+length(v_m.body);
+  end loop;
+  return v_result;
+exception when others then return '[]';
+end $$;
+revoke all on function private.person_memory_context(uuid,uuid,text) from public,anon,authenticated;
+
+create or replace function private.person_accepted_lessons(p_ws uuid,p_user uuid,p_page_id text)
+returns jsonb language plpgsql stable security definer set search_path='' as $$
+declare v_result jsonb;
+begin
+  if not private.is_workspace_member_user(p_ws,p_user) then return '[]'; end if;
+  select coalesce(jsonb_agg(jsonb_build_object('text',x.body)),'[]') into v_result from (
+    select l.body from public.lessons l where l.workspace_id=p_ws and l.status='accepted'
+      and (l.scope='workspace' or (l.scope='page' and private.person_reads_page(p_page_id,p_ws,p_user)
+        and l.scope_page_id=any(private.page_chain(p_page_id)) and private.person_reads_page(l.scope_page_id,p_ws,p_user)))
+    order by l.decided_at desc nulls last,l.id limit 5) x;
+  return v_result;
+exception when others then return '[]';
+end $$;
+revoke all on function private.person_accepted_lessons(uuid,uuid,text) from public,anon,authenticated;
+
+alter table public.agent_messages add column search_tsv tsvector;
+create or replace function private.maintain_message_search()
+returns trigger language plpgsql security definer set search_path='' as $$
+begin
+  new.search_tsv:=to_tsvector('simple',extensions.unaccent('extensions.unaccent'::regdictionary,new.body));
+  return new;
+end $$;
+revoke all on function private.maintain_message_search() from public,anon,authenticated;
+create trigger agent_message_search before insert or update of body on public.agent_messages
+  for each row execute function private.maintain_message_search();
+update public.agent_messages set search_tsv=to_tsvector('simple',extensions.unaccent('extensions.unaccent'::regdictionary,body));
+create index agent_messages_search_idx on public.agent_messages using gin(search_tsv) where kind<>'system';
+
+create or replace function public.recall_person_messages(p_run_id uuid,p_query text,p_limit int default 8)
+returns jsonb language plpgsql stable security definer set search_path='' as $$
+declare v_t public.agent_tasks; v_messages jsonb; v_notes jsonb; v_q tsquery;
+begin
+  select t.* into v_t from public.agent_tasks t join public.agent_runs r on r.id=t.active_run_id
+    join public.agents a on a.id=r.agent_id
+    where r.id=p_run_id and r.agent_id=private.current_agent_id() and t.delegate_agent_id=r.agent_id and a.is_platform
+      and t.request_kind='assist' and r.status in ('running','waiting') and r.stop_requested_at is null
+      and private.is_workspace_member_user(t.workspace_id,t.owner_user_id) and private.jwt_client_id() is null;
+  if not found then raise exception using errcode='PT422',message='not_a_request_run'; end if;
+  if not private.person_memory_enabled(v_t.workspace_id,v_t.owner_user_id) then return '{"messages":[],"notes":[]}'; end if;
+  v_q:=websearch_to_tsquery('simple',extensions.unaccent('extensions.unaccent'::regdictionary,left(p_query,500)));
+  select coalesce(jsonb_agg(x.item order by x.seq desc),'[]') into v_messages from (
+    select m.seq,jsonb_build_object('id',m.id,'from',case when m.direction='in' then 'person' else 'agent' end,
+      'forwarded',m.forwarded,'pasted',m.pasted,'text',left(m.body,500),'at',m.created_at) as item
+    from public.agent_messages m where m.workspace_id=v_t.workspace_id and m.user_id=v_t.owner_user_id
+      and m.kind<>'system' and m.search_tsv @@ v_q
+      and not exists(select 1 from private.memory_forgotten_messages f where f.message_id=m.id)
+    order by m.seq desc limit greatest(0,least(coalesce(p_limit,8),8))) x;
+  select coalesce(jsonb_agg(jsonb_build_object('snippet',left(x.body,500))),'[]') into v_notes from (
+    select regexp_replace(b->>'html','<[^>]*>','','g') as body from public.note_pages n
+      join public.pages p on p.id=n.page_id cross join lateral jsonb_array_elements(coalesce(p.data->'blocks','[]')) b
+    where n.workspace_id=v_t.workspace_id and n.user_id=v_t.owner_user_id and p.deleted_at is null
+      and private.person_reads_page(p.id,v_t.workspace_id,v_t.owner_user_id)
+      and to_tsvector('simple',extensions.unaccent('extensions.unaccent'::regdictionary,regexp_replace(b->>'html','<[^>]*>','','g'))) @@ v_q
+    limit 3) x;
+  return jsonb_build_object('messages',v_messages,'notes',v_notes);
+end $$;
+revoke all on function public.recall_person_messages(uuid,text,int) from public,anon;
+grant execute on function public.recall_person_messages(uuid,text,int) to authenticated;
+
+create or replace function public.assist_request_context(p_task_id uuid)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare v_agent uuid := private.current_agent_id(); v_t public.agent_tasks%rowtype; v_items jsonb; v_through bigint; v_last public.agent_messages%rowtype; v_page jsonb; v_selection text; v_waiting jsonb; v_start bigint; v_agents jsonb; v_boards jsonb; v_active jsonb;
+begin
+  if private.jwt_client_id() is not null then raise exception using errcode = 'PT403', message = 'direct_session_required'; end if;
+  select * into v_t from public.agent_tasks
+   where id = p_task_id and request_kind = 'assist' and delegate_agent_id = v_agent and active_run_id is not null;
+  if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+  v_start := private.thread_start(v_t.workspace_id, v_t.owner_user_id);
+  select max(seq) into v_through from public.agent_messages
+   where workspace_id = v_t.workspace_id and user_id = v_t.owner_user_id and direction = 'in' and needs_reply;
+  select coalesce(jsonb_agg(x.m order by x.seq), '[]'::jsonb), max(x.seq) filter (where (x.m->>'waiting')::boolean)
+    into v_items, v_through from (
+    select a.seq, jsonb_build_object('id', a.id, 'from', case when a.direction = 'in' then 'person' else 'agent' end, 'voice', a.kind = 'voice',
+             'forwarded', a.forwarded, 'pasted', a.pasted, 'text', left(a.body, 4000), 'at', a.created_at, 'waiting', a.needs_reply)
+           || case when a.needs_reply and a.intent->>'kind' = 'save' and not exists (select 1 from public.saved_notes n where n.message_id = a.id)
+                then jsonb_build_object('asked_to_save', true, 'save', jsonb_strip_nulls(jsonb_build_object(
+                  'preview', left(a.intent#>>'{resolved,text}', 500),
+                  'source', a.intent#>>'{resolved,source,kind}',
+                  'problem', a.intent#>>'{resolved,problem}',
+                  'needs_text', case when a.intent->'resolved' ? 'compose' then true end)))
+                else '{}'::jsonb end as m
+      from public.agent_messages a
+     where a.workspace_id = v_t.workspace_id and a.user_id = v_t.owner_user_id and a.kind <> 'system'
+       and (a.needs_reply or not exists(select 1 from private.memory_forgotten_messages f where f.message_id=a.id))
+       and (a.seq >= v_start or a.needs_reply)
+       and (a.created_at > now() - interval '1 day' or a.needs_reply)
+     order by a.needs_reply desc, case when a.needs_reply then a.seq end asc, a.seq desc limit 20) x(seq, m);
+  select * into v_last from public.agent_messages where workspace_id = v_t.workspace_id
+    and user_id = v_t.owner_user_id and direction = 'in' and needs_reply and seq <= v_through order by seq desc limit 1;
+  if private.person_reads_page(v_last.context->>'page_id', v_t.workspace_id, v_t.owner_user_id) then
+    select jsonb_build_object('id', p.id, 'title', p.data->>'title', 'text', left(private.page_text(p.data), 6000))
+      into v_page from public.pages p where p.id = v_last.context->>'page_id';
+  end if;
+  if private.person_reads_page(v_last.context#>>'{selection,page_id}', v_t.workspace_id, v_t.owner_user_id) then
+    v_selection := left(v_last.context#>>'{selection,text}', 2000);
+  end if;
+  select coalesce(jsonb_agg(x.title), '[]'::jsonb) into v_waiting from (
+    select t.title from public.agent_tasks t where t.workspace_id = v_t.workspace_id and t.owner_user_id = v_t.owner_user_id
+      and t.state = 'input_required' and (t.waiting_on = 'human' or t.waiting_on is null)
+      and private.person_reads_page(t.row_page_id, v_t.workspace_id, v_t.owner_user_id)
+      order by t.updated_at desc limit 10) x;
+  select coalesce(jsonb_agg(x),'[]') into v_agents from (
+    select a.id,a.name,a.role,a.connection->>'harness' as harness from public.agents a
+      where a.workspace_id=v_t.workspace_id and private.agent_assignable(a.id)
+      order by a.name,a.id limit 20) x;
+  select coalesce(jsonb_agg(x),'[]') into v_boards from (
+    select p.id,p.title from public.pages p where p.workspace_id=v_t.workspace_id and private.person_job_board(p.id,v_t.workspace_id,v_t.owner_user_id)
+      order by (p.id=v_last.context->>'page_id') desc nulls last,p.title,p.id limit 10) x;
+  select coalesce(jsonb_agg(x),'[]') into v_active from (
+    select t.id as task_id,t.title,jsonb_build_object('id',a.id,'name',a.name) as agent,t.state,
+      t.parent_task_id, t.context_id as job_task_id,
+      (coalesce(a.role = 'lead', false) or exists (select 1 from public.agent_tasks c where c.parent_task_id = t.id)) as is_lead,
+      case when private.person_reads_page(parent.row_page_id,v_t.workspace_id,v_t.owner_user_id) then parent.title end as parent_title
+    from public.agent_tasks t left join public.agents a on a.id=t.delegate_agent_id left join public.agent_tasks parent on parent.id=t.parent_task_id
+    where t.workspace_id=v_t.workspace_id and t.request_kind is null and t.state not in ('done','failed','cancelled')
+      and private.person_reads_page(t.row_page_id,v_t.workspace_id,v_t.owner_user_id)
+    order by t.updated_at desc,t.id limit 15) x;
+  return jsonb_build_object('memory',case when private.person_memory_enabled(v_t.workspace_id,v_t.owner_user_id) then private.person_memory_context(v_t.workspace_id,v_t.owner_user_id,v_last.body) end,
+    'lessons',private.person_accepted_lessons(v_t.workspace_id,v_t.owner_user_id,v_last.context->>'page_id'),'jobs', private.person_jobs(v_t.workspace_id, v_t.owner_user_id, v_last.context->>'page_id'),
+    'last_answer_at', (select max(m.created_at) from public.agent_messages m where m.workspace_id = v_t.workspace_id
+      and m.user_id = v_t.owner_user_id and m.agent_id = v_agent and m.direction = 'out' and m.kind <> 'system' and m.seq >= v_start),
+    'active_tasks',v_active,'agents',v_agents,'boards',v_boards,'to_review', private.person_to_review(v_t.workspace_id, v_t.owner_user_id), 'running_work', private.person_running_work(v_t.workspace_id, v_t.owner_user_id), 'page', v_page, 'selection', v_selection, 'waiting_on_you', v_waiting,
+    'agent_proposal_message_id', case when v_last.channel='surface' and not v_last.pasted and not v_last.forwarded then v_last.id end,
+    'proposal_message_id', case when v_last.channel='surface' and (v_page is not null or jsonb_array_length(v_boards)>0 or jsonb_array_length(v_active)>0) and not v_last.pasted and not v_last.forwarded then v_last.id end,
+    'kind', 'assist', 'task_id', v_t.id, 'messages', v_items, 'through_seq', v_through);
+end $$;
+revoke all on function public.assist_request_context(uuid) from public, anon;
+grant execute on function public.assist_request_context(uuid) to authenticated;
+

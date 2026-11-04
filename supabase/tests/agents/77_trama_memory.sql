@@ -65,12 +65,51 @@ values (:'ws',:'owner','fact','I live in Bogota','extracted',:'old_source','Bogo
 insert into public.person_memories(workspace_id,user_id,kind,body,origin,source_message_id,source_quote)
 values (:'ws',:'owner','fact','I live in Lima','extracted',:'source','Lima') returning id as current \gset
 update public.person_memories set status='superseded',superseded_by=:'current' where id=:'old';
+select is((select x->>'previously' from jsonb_array_elements(private.person_memory_context(:'ws',:'owner','Lima')) x where x->>'id'=:'current'),'I live in Bogota','replacement carries prior text');
+select ok(not exists(select 1 from jsonb_array_elements(private.person_memory_context(:'ws',:'owner','Bogota')) x where x->>'id'=:'old'),'superseded fact is not active context');
 select tests.set_human(:'owner');
 select public.forget_person_memory(:'current');
 select is((select count(*) from public.person_memories where id in (:'old',:'current')),0::bigint,'forget deletes the replacement chain');
 select tests.reset_role();
 select ok(exists(select 1 from private.memory_forgotten_messages where message_id=:'source'),'source is blocked from extraction');
 select ok(exists(select 1 from private.memory_forgotten_messages where message_id=:'old_source'),'superseded source is blocked too');
+-- Context is bounded, private and independent of conversation resets.
+select is(jsonb_array_length(private.person_memory_context(:'ws',:'owner','Lima')),2,'only this person memories');
+insert into public.person_memories(workspace_id,user_id,kind,body,origin,source_message_id,source_quote,expires_at)
+select workspace_id,user_id,kind,'Expired destination','explicit',source_message_id,source_quote,now()-interval '1 day'
+from public.person_memories where user_id=:'owner' limit 1;
+select ok(private.person_memory_context(:'ws',:'owner','Expired')::text not like '%Expired destination%','expired memory excluded');
+insert into public.person_memories(workspace_id,user_id,kind,body,origin,source_message_id,source_quote)
+select m.workspace_id,m.user_id,m.kind,repeat('word ',90)||n,'explicit',m.source_message_id,m.source_quote
+from (select * from public.person_memories where user_id=:'owner' limit 1) m cross join generate_series(1,5) n;
+select ok((select sum(length(x->>'text'))<=1500 from jsonb_array_elements(private.person_memory_context(:'ws',:'owner','word')) x),'context respects 1500 character budget');
+insert into public.lessons(workspace_id,status,body,scope,source_kind,proposed_by_type,proposed_by)
+values(:'ws','proposed','Not accepted','workspace','person','human',:'owner'),(:'ws','accepted','Accepted rule','workspace','person','human',:'owner');
+select is(private.person_accepted_lessons(:'ws',:'owner',null),'[{"text":"Accepted rule"}]'::jsonb,'only accepted lessons');
+select tests.make_page(:'ws','memory-private',null);
+insert into public.private_pages(page_id,workspace_id,owner_user_id,root_page_id) values('memory-private',:'ws',:'viewer','memory-private');
+insert into public.lessons(workspace_id,status,body,scope,scope_page_id,source_kind,proposed_by_type,proposed_by)
+values(:'ws','accepted','Private rule','page','memory-private','person','human',:'viewer');
+select is(private.person_accepted_lessons(:'ws',:'owner','memory-private'),'[{"text":"Accepted rule"}]'::jsonb,'unreadable page lesson excluded');
+select tests.set_human(:'owner');
+select public.start_new_conversation(:'ws');
+select public.post_agent_message(:'ws','What was my destination?',gen_random_uuid());
+select tests.reset_role();
+select id as req from public.agent_tasks where request_kind='assist' and owner_user_id=:'owner' and state='queued' limit 1 \gset
+select tests.set_agent(:'pu',:'pa');
+select public.claim_task(:'req','memory-test')->>'run_id' as run \gset
+select ok(public.assist_request_context(:'req')->'memory' is not null,'assist includes memory');
+select ok(public.recall_person_messages(:'run','Lima')::text like '%Lima%','recall reaches earlier conversation');
+select ok(public.recall_person_messages(:'run','Bogota')::text not like '%Bogota%','forgotten source excluded from recall');
+select ok(public.assist_request_context(:'req')->'messages' @> '[]','assist remains available');
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid,(:'f'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.recall_person_messages(%L,%L)',:'run','Lima')),'not_a_request_run','another agent cannot recall');
+select tests.set_human(:'owner');
+select public.set_person_memory_enabled(:'ws',false);
+select tests.set_agent(:'pu',:'pa');
+select is(public.assist_request_context(:'req')->'memory','null'::jsonb,'paused context is null');
+select is(public.recall_person_messages(:'run','Lima'),' {"messages":[],"notes":[]}'::jsonb,'paused recall empty');
+select tests.reset_role();
 delete from public.workspace_members where workspace_id=:'ws' and user_id=:'owner';
 insert into public.workspace_members(workspace_id,user_id,role) values(:'ws',:'owner','owner');
 select is((select count(*) from public.person_memories where workspace_id=:'ws' and user_id=:'owner'),0::bigint,'leaving deletes memories');
