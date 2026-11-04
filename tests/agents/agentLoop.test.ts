@@ -38,7 +38,7 @@ describe("reference agent loop", () => {
     const context = JSON.parse(message.slice(message.indexOf("{"), message.lastIndexOf("}") + 1));
     expect(context.environment).toEqual(environment);
   });
-  it.each(["get_ai_request", "fill_ai_cells", "complete_ai_request", "apply_ai_rewrite", "save_file_text"])("rejects a model attempt to call hidden request tool %s", async (name) => {
+  it.each(["get_ai_request", "fill_ai_cells", "complete_ai_request", "complete_meeting_summary", "apply_ai_rewrite", "save_file_text"])("rejects a model attempt to call hidden request tool %s", async (name) => {
     const mcp = createStubMcp({ tasks: queued, handlers: { [name]: () => ({ ok: true }) } });
     const list = mcp.listTools;
     mcp.listTools = async () => [...await list(), { name, inputSchema: { type: "object", properties: { run_id: { type: "string" } } } }];

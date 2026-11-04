@@ -6,11 +6,11 @@ import InlineToolbar from "@/components/InlineToolbar";
 import { AiRewritePanel } from "@/components/agents/AiRewritePanel";
 import { AiRequestToasts } from "@/components/agents/AiRequestToasts";
 
-const mocked = vi.hoisted(() => ({ backend: true, client: null as unknown, rewrite: vi.fn(), revert: vi.fn(), cancel: vi.fn(), requests: [] as Record<string, unknown>[] }));
+const mocked = vi.hoisted(() => ({ backend: true, client: null as unknown, rewrite: vi.fn(), revert: vi.fn(), cancel: vi.fn(), diff: vi.fn(), requests: [] as Record<string, unknown>[] }));
 vi.mock("@/lib/supabase", () => ({ getSupabase: () => mocked.backend ? mocked.client ?? {} : null }));
 vi.mock("@/lib/agentAiRequests", async (original) => ({ ...(await original<typeof import("@/lib/agentAiRequests")>()),
   requestAiRewrite: mocked.rewrite, useAiRequests: () => mocked.requests }));
-vi.mock("@/lib/agentActions", () => ({ revertRun: mocked.revert, sendMessage: mocked.cancel }));
+vi.mock("@/lib/agentActions", () => ({ revertRun: mocked.revert, loadTaskDiff: mocked.diff, sendMessage: mocked.cancel }));
 let container: HTMLDivElement, root: Root;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -65,8 +65,8 @@ it("errors are readable", async () => {
   await act(async () => [...container.querySelectorAll("button")].find((b) => b.textContent === "Shorter")!.click());
   expect(container.textContent).toContain("This block has mentions or equations, which AI rewrite keeps out of reach.");
 });
-it("loads a recently failed request even when end_run left closed_at null", async () => {
-  const row: Record<string, unknown> = { id: "failed", request_kind: "rewrite", state: "failed", request: { block_id: "b" }, closed_at: null, active_run_id: null, updated_at: new Date().toISOString() };
+it.each(["rewrite", "meeting"])("loads a recently failed %s request even when end_run left closed_at null", async (kind) => {
+  const row: Record<string, unknown> = { id: "failed", request_kind: kind, state: "failed", request: { block_id: "b" }, closed_at: null, active_run_id: null, updated_at: new Date(Date.now() - (kind === "meeting" ? 3_600_000 : 0)).toISOString() };
   const channel = { on: () => channel, subscribe: () => channel };
   mocked.client = {
     channel: () => channel, removeChannel: async () => {},
@@ -85,4 +85,16 @@ it("loads a recently failed request even when end_run left closed_at null", asyn
   function Probe() { return <span>{actual.useAiRequests("p").map((r) => r.state).join(",")}</span>; }
   await act(async () => { root.render(<Probe />); await new Promise((resolve) => setTimeout(resolve, 0)); });
   expect(container.textContent).toBe("failed");
+});
+
+it("meeting toast undoes only blocks added by the summary run", async () => {
+  mocked.requests = [{ id: "t", kind: "meeting", state: "working", request: { block_id: "recorder" } }];
+  act(() => root.render(<AiRequestToasts pageId="p" />));
+  expect(container.textContent).toContain("Trama is summarizing the meeting…");
+  mocked.requests = [{ ...mocked.requests[0], state: "done", runId: "r" }];
+  mocked.diff.mockResolvedValue({ runs: [{ run_id: "other", items: [{ key: "block:p:other", page_id: "p", kind: "block", change: "added" }] }, { run_id: "r", items: [{ key: "block:p:new", page_id: "p", kind: "block", change: "added" }, { key: "block:p:recorder", page_id: "p", kind: "block", change: "changed" }] }] });
+  act(() => root.render(<AiRequestToasts pageId="p" />));
+  expect(container.textContent).toContain("Meeting summary ready");
+  await act(async () => [...container.querySelectorAll("button")].find(b => b.textContent === "Undo")!.click());
+  expect(mocked.revert).toHaveBeenCalledWith("t", "r", ["block:p:new"]);
 });

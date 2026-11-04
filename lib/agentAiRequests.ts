@@ -8,7 +8,7 @@ import { useAgentsStore } from "@/lib/agentsStore";
 
 export interface AiRequest {
   id: string;
-  kind: "fill" | "rewrite";
+  kind: "fill" | "rewrite" | "meeting";
   state: string;
   request: { property_id?: string; row_ids?: string[]; block_id?: string; [key: string]: unknown };
   closedAt?: string;
@@ -32,13 +32,14 @@ function retain(pageId: string) {
       do {
         again = false;
         const columns = "id,request_kind,state,request,closed_at,updated_at,active_run_id";
-        const base = () => client.from("agent_tasks").select(columns).eq("row_page_id", pageId).in("request_kind", ["fill", "rewrite"]);
-        const [open, recent] = await Promise.all([
+        const base = () => client.from("agent_tasks").select(columns).eq("row_page_id", pageId).in("request_kind", ["fill", "rewrite", "meeting"]);
+        const [open, recent, meetings] = await Promise.all([
           base().in("state", ["queued", "working", "input_required", "ready_for_review"]),
           base().in("state", CLOSED).gte("updated_at", new Date(Date.now() - 600_000).toISOString()).order("updated_at", { ascending: false }).limit(50),
+          base().eq("request_kind", "meeting").in("state", CLOSED).order("updated_at", { ascending: false }).limit(50),
         ]);
-        if (open.error || recent.error) return;
-        const rows = [...(open.data ?? []), ...(recent.data ?? [])];
+        if (open.error || recent.error || meetings.error) return;
+        const rows = [...new Map([...(open.data ?? []), ...(recent.data ?? []), ...(meetings.data ?? [])].map(r => [r.id, r])).values()];
         const closedIds = rows.filter((r) => !r.active_run_id).map((r) => r.id);
         const latest = new Map<string, string>();
         if (closedIds.length) {
@@ -122,6 +123,16 @@ export async function requestAiRewrite(pageId: string, blockId: string, instruct
   await syncBeforeRequest();
   const { data, error } = await client.rpc("request_ai_rewrite", { p_page_id: pageId, p_block_id: blockId,
     p_instruction: instruction, ...(selection ? { p_selection: selection } : {}) });
+  if (error) throw new Error(error.message);
+  await subscriptions.get(pageId)?.refresh();
+  return { taskId: data.task_id };
+}
+
+export async function requestMeetingSummary(pageId: string, blockId: string, lang = "en"): Promise<{ taskId: string }> {
+  const client = getSupabase();
+  if (!client) throw new Error("Sign in to summarize a meeting.");
+  await syncBeforeRequest();
+  const { data, error } = await client.rpc("request_meeting_summary", { p_page_id: pageId, p_block_id: blockId, p_lang: lang });
   if (error) throw new Error(error.message);
   await subscriptions.get(pageId)?.refresh();
   return { taskId: data.task_id };

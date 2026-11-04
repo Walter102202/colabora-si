@@ -11,6 +11,7 @@ import { writeTools } from '../_shared/tools/write.ts';
 import { lessonTools } from '../_shared/tools/lessons.ts';
 import { sourceTools } from '../_shared/tools/sources.ts';
 import { contextTools } from '../_shared/tools/context.ts';
+import { meetingTools } from '../_shared/tools/meeting.ts';
 import { aiTools } from '../_shared/tools/ai.ts';
 import { personTools } from '../_shared/tools/person.ts';
 
@@ -20,7 +21,7 @@ export function buildServer(): McpServer {
     title: 'colabora.si workspace',
     version: '1.0.0',
     instructions: INSTRUCTIONS,
-    tools: [...readTools, ...writeTools, ...taskTools, ...handoverTools, ...waitTools, ...leadTools, ...cardTools, ...aiTools, ...personTools, ...lessonTools, ...contextTools, ...sourceTools],
+    tools: [...readTools, ...writeTools, ...taskTools, ...handoverTools, ...waitTools, ...leadTools, ...cardTools, ...aiTools, ...meetingTools, ...personTools, ...lessonTools, ...contextTools, ...sourceTools],
     prompts: PROMPTS,
     resources: withTaskCard(RESOURCES),
   };

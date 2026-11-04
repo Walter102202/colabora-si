@@ -279,3 +279,33 @@ it("keeps an ambiguous two-job request as a question without a proposal", async 
   expect(mcp.calls.find((c) => c.name === "reply_person_message")!.args).toMatchObject({ text: "Which job: Launch or Offsite?" });
   expect(mcp.calls.find((c) => c.name === "reply_person_message")!.args.message).toBeUndefined();
 });
+
+function meetingHarness(transcript = [{ block_id: "turn", t_ms: 12000, speaker: "A", text: "Ana will send the draft Friday." }], answers?: object[]) {
+  const answer = { summary: "Draft discussion", key_points: ["Draft"], decisions: [{ text: "Agreed", evidence: [12000] }, { text: "Invented", evidence: [13000] }], action_items: [{ text: "Send draft", owner: "Ana", due: "Friday", evidence: [12000] }, { text: "Bad evidence", evidence: ["12000"] }], open_questions: ["Review?"] };
+  const request = { kind: "meeting", page_id: "p", block_id: "m", lang: "en", notes_markdown: "Use the draft", summary_after_block_id: "summary", transcript };
+  const mcp = createStubMcp({ handlers: { get_ai_request: () => request, append_blocks: () => ({ block_ids: ["new"] }), complete_meeting_summary: () => ({ task_state: "done" }) } });
+  const model = createStubModel((answers ?? [answer]).map(a => ({ content: JSON.stringify(a), usage: { prompt_tokens: 10, completion_tokens: 5 } })), { name: "muse-wonder-1.0" });
+  return { mcp, model, opts: { call: mcp.callTool, model, task: { task_id: "t", request_kind: "meeting" }, runId: "r", log: () => {}, efforts: { plan: "medium" }, prices: { input: 4, output: 20 } } };
+}
+it("writes a cited meeting summary after its heading and accounts for usage", async () => {
+  const h = meetingHarness();
+  expect((await runRequest(h.opts)).status).toBe("completed");
+  const write = h.mcp.calls.find(c => c.name === "append_blocks")!;
+  expect(write.args).toMatchObject({ page_id: "p", after_block_id: "summary", idempotency_key: "meeting:t:r" });
+  expect(write.args.markdown).toContain("- Agreed [00:12]");
+  expect(write.args.markdown).toContain("- [ ] Send draft (Ana) · Friday [00:12]");
+  expect(write.args.markdown).not.toMatch(/Invented|Bad evidence/);
+  expect(h.model.requests[0]).toMatchObject({ reasoningEffort: "medium" });
+  expect(h.mcp.calls.at(-1)).toMatchObject({ name: "complete_meeting_summary", args: { usage: { input_tokens: 10, output_tokens: 5, cost_usd: 0.00014, model: "muse-wonder-1.0" } } });
+});
+it("maps long meetings in bounded chunks and bills every map/reduce call", async () => {
+  const turns = Array.from({ length: 5 }, (_, i) => ({ block_id: String(i), t_ms: i * 1000, speaker: "A", text: "x".repeat(15001) }));
+  const answer = { summary: "Summary", key_points: [], decisions: [], action_items: [], open_questions: [] };
+  const h = meetingHarness(turns, Array.from({ length: 20 }, () => answer));
+  expect((await runRequest(h.opts)).status).toBe("completed");
+  expect(h.model.requests.length).toBeGreaterThan(2);
+  const payloads = h.model.requests.map(r => JSON.parse(r.messages[1].content));
+  for (const payload of payloads.slice(0, -1)) expect(payload.transcript.reduce((n: number, t: { text: string }) => n + t.text.length, 0)).toBeLessThanOrEqual(15000);
+  expect(payloads.at(-1).sections).toBeDefined();
+  expect(h.mcp.calls.at(-1)?.args.usage.input_tokens).toBe(h.model.requests.length * 10);
+});
