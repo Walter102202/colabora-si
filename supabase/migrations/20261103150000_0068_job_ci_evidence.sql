@@ -14,6 +14,19 @@ returns jsonb language sql stable security definer set search_path = '' as $$
 $$;
 revoke all on function private.task_ci_requirements(public.agent_tasks) from public, anon, authenticated;
 
+-- Human criteria are settled once by the job Accept; agent closure never settles them.
+create or replace function private.job_pending_human(p_job public.agent_tasks)
+returns jsonb language sql stable security definer set search_path = '' as $$
+  select coalesce(jsonb_agg(jsonb_build_object('criterion_id',c->>'id','text',c->>'text','task_id',t.id)
+                            order by t.created_at,t.id,c->>'id'),'[]'::jsonb)
+  from public.agent_tasks t join public.task_briefs b on b.task_id=t.id and b.version=t.brief_version,
+       jsonb_array_elements(b.done_when) c
+  where t.parent_task_id=p_job.id and t.workspace_id=p_job.workspace_id and t.request_kind is null
+    and t.state<>'cancelled' and t.closed_by is null and c->>'check'='human'
+    and not (p_job.state='done' and p_job.acceptance='accepted');
+$$;
+revoke all on function private.job_pending_human(public.agent_tasks) from public,anon,authenticated;
+
 create or replace function private.job_ci_checks(p_job public.agent_tasks)
 returns jsonb language plpgsql stable security definer set search_path = '' as $$
 declare v_repo text; v_sha text; v_connected boolean; v_c jsonb; v_state text; v_checks jsonb := '[]';
@@ -50,7 +63,7 @@ begin
       and r.completed_at>v_completed and r.head_sha<>v_sha
     order by r.completed_at desc,r.check_run_id desc limit 1;
   return jsonb_build_object('state',coalesce(v_state,'none'),'repo',v_repo,'sha',v_sha,'checks',v_checks,
-                           'connected',v_connected,'newer_commit',v_newer);
+                           'connected',v_connected,'newer_commit',v_newer,'pending_human',private.job_pending_human(p_job));
 end $$;
 revoke all on function private.job_ci_checks(public.agent_tasks) from public, anon, authenticated;
 
@@ -143,12 +156,12 @@ create or replace function private.lead_may_close(p_task_id uuid, p_parent_id uu
 returns boolean language sql stable security definer set search_path = '' as $$
   select private.task_autonomy_level(p_parent_id)='autonomous'
     and not exists (select 1 from public.agent_tasks t join public.task_briefs b on b.task_id=t.id and b.version=t.brief_version,
-                     jsonb_array_elements(b.done_when) c where t.id=p_task_id and c->>'check' in ('human','deterministic'))
+                     jsonb_array_elements(b.done_when) c where t.id=p_task_id and c->>'check' = 'deterministic')
     and private.subtask_review_current(p_task_id);
 $$;
 create or replace function public.close_subtask(p_task_id uuid, p_verdict text default 'accepted', p_evidence jsonb default '[]'::jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
-declare v_agent uuid; v_t public.agent_tasks%rowtype; v_parent public.agent_tasks%rowtype; v_policies jsonb; v_ok boolean; v_review_run uuid; v_ci jsonb; v_deferred boolean := false; v_extra jsonb := '{}';
+declare v_agent uuid; v_t public.agent_tasks%rowtype; v_parent public.agent_tasks%rowtype; v_policies jsonb; v_ok boolean; v_review_run uuid; v_ci jsonb; v_human jsonb; v_deferred boolean := false; v_extra jsonb := '{}';
 begin
   v_agent := private.current_agent_id();
   if v_agent is null then raise exception using errcode = 'PT403', message = 'agent_disabled'; end if;
@@ -183,6 +196,13 @@ begin
     v_ok := coalesce(v_policies->>'subtask_close','')='lead' or private.deterministic_checks_pass(v_t.id,true)
       or private.lead_may_close(v_t.id,v_parent.id);
   end if;
+  select coalesce(jsonb_agg(jsonb_build_object('criterion_id',c->>'id','text',c->>'text','task_id',v_t.id)),'[]'::jsonb)
+    into v_human from public.task_briefs b,jsonb_array_elements(b.done_when) c
+    where b.task_id=v_t.id and b.version=v_t.brief_version and c->>'check'='human';
+  if jsonb_array_length(v_human)>0 then
+    v_ok := v_ok and private.subtask_review_current(v_t.id);
+    v_extra := v_extra || jsonb_build_object('human_deferred',v_human);
+  end if;
   if not v_ok then raise exception using errcode = 'PT422', message = 'policy_denied'; end if;
 
   update public.agent_tasks set state = 'done', acceptance = 'accepted', closed_at = now(), closed_by = null, active_run_id = null,
@@ -190,8 +210,8 @@ begin
    where id = v_t.id;
   insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, author_type, author_id)
   values (v_t.workspace_id, v_t.id, null, private.next_seq(v_t.id), 'response',
-          jsonb_build_object('text', case when v_deferred then 'Closed by the lead. ' || (select string_agg('CI check "' || (c->>'check') || '" on ' || coalesce(left(c->>'sha',7),'unknown') || ' is proved on the job''s final commit.', ' ') from jsonb_array_elements(v_ci) c) when v_review_run is not null then 'Closed by the reviewer.' else 'Closed by the lead.' end, 'verdict', p_verdict, 'evidence', coalesce(p_evidence, '[]'::jsonb),
-                             'rule', case when v_deferred then 'ci_deferred' when coalesce(v_policies->>'subtask_close', '') = 'lead' then 'policy'
+          jsonb_build_object('text', case when v_deferred then 'Closed by the lead. ' || (select string_agg('CI check "' || (c->>'check') || '" on ' || coalesce(left(c->>'sha',7),'unknown') || ' is proved on the job''s final commit.', ' ') from jsonb_array_elements(v_ci) c) when jsonb_array_length(v_human)>0 then 'Closed by the lead. Human criteria are settled with the job Accept.' when v_review_run is not null then 'Closed by the reviewer.' else 'Closed by the lead.' end, 'verdict', p_verdict, 'evidence', coalesce(p_evidence, '[]'::jsonb),
+                             'rule', case when v_deferred then 'ci_deferred' when jsonb_array_length(v_human)>0 then 'human_deferred' when coalesce(v_policies->>'subtask_close', '') = 'lead' then 'policy'
                                      when private.deterministic_checks_pass(v_t.id, true) then 'deterministic' else 'lead_review' end) || v_extra,
           'agent', v_agent);
   insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
@@ -201,7 +221,8 @@ begin
    where v_parent.delegate_agent_id is not null;
   perform private.release_dependents(v_t.id);
   perform private.audit(v_t.workspace_id, 'task.close_subtask', jsonb_build_object('task_id', v_t.id));
-  return jsonb_build_object('task_state', 'done') || case when v_deferred then jsonb_build_object('ci','deferred_to_job','deferred_checks',v_ci) else '{}'::jsonb end;
+  return jsonb_build_object('task_state', 'done') || case when v_deferred then jsonb_build_object('ci','deferred_to_job','deferred_checks',v_ci) else '{}'::jsonb end
+    || case when jsonb_array_length(v_human)>0 then jsonb_build_object('human','deferred_to_job','deferred_human',v_human) else '{}'::jsonb end;
 end $$;
 
 
@@ -366,7 +387,7 @@ begin
   elsif private.task_autonomy_level(p_job.id)<>'autonomous' then reason := 'autonomy';
   elsif exists(select 1 from public.agent_tasks s where s.parent_task_id=p_job.id and s.request_kind is null
                 and (s.state not in ('done','cancelled') or (s.state='done' and s.acceptance<>'accepted'))) then reason := 'subtasks_open';
-  elsif exists(select 1 from public.task_briefs b,jsonb_array_elements(b.done_when) c
+  elsif jsonb_array_length(private.job_pending_human(p_job))>0 or exists(select 1 from public.task_briefs b,jsonb_array_elements(b.done_when) c
                 where b.task_id=p_job.id and b.version=p_job.brief_version and c->>'check'='human') then reason := 'human_criteria';
   else
     v_ci := private.job_ci_checks(p_job);

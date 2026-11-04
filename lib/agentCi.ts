@@ -58,6 +58,7 @@ export interface JobCiStatus {
   repo?: string;
   sha?: string;
   connected: boolean;
+  pending_human?: { criterion_id: string; text: string; task_id: string }[];
   newer_commit?: string | null;
   checks: { check: string; state: CiState; url?: string; sources: string[] }[];
 }

@@ -155,3 +155,11 @@ it("MCP card passes final-commit CI through to Accept", () => {
   expect(button("Accept")!.disabled).toBe(true);
   expect(container.textContent).toContain("Waiting for CI on aaaaaaa: test");
 });
+it("job Accept lists the deferred human criteria", () => {
+  const base = props("ready_for_review");
+  act(() => root.render(createElement(TaskView, { ...base, jobCi: { state: "none", connected: false, checks: [],
+    pending_human: [{ criterion_id: "h1", task_id: "s1", text: "Approve the design" }] } })));
+  expect(container.textContent).toContain("You are the check for:");
+  expect(container.textContent).toContain("Approve the design");
+  expect(button("Accept")!.disabled).toBe(false);
+});

@@ -313,14 +313,14 @@ const closeSubtask: ToolDef = {
   name: 'close_subtask',
   title: 'Close a reviewed subtask',
   description:
-    'Lead with an active parent run. A reviewer records review_task and ends its turn; the Lead or a person closes the delivery. Closes a subtask in ready_for_review when, at Autonomous autonomy, an agent other than its author approved it and no criterion is human or deterministic; or when the parent brief allows it (policies.subtask_close = lead) or ' +
-    'every deterministic criterion is verified with evidence; A pending or unconnected CI check is deferred to the job final commit, with a current approved independent review. A known failure blocks closure (policy_denied, reason ci_failed). Otherwise policy_denied and a person decides.',
+    'Lead with an active parent run. A reviewer records review_task and ends its turn; the Lead or a person closes the delivery. Closes a subtask in ready_for_review when, at Autonomous autonomy, an agent other than its author approved it and no criterion is deterministic; or when the parent brief allows it (policies.subtask_close = lead) or ' +
+    'every deterministic criterion is verified with evidence; Human criteria are deferred to one person Accept on the job and never permit automatic job closure. A pending or unconnected CI check is deferred to the job final commit, with a current approved independent review. A known failure blocks closure (policy_denied, reason ci_failed). Otherwise policy_denied and a person decides.',
   inputSchema: object({
     task_id: { type: 'string', minLength: 1 },
     verdict: { type: 'string', enum: ['accepted'], default: 'accepted' },
     evidence: { type: 'array', items: { type: 'object' } },
   }, ['task_id']),
-  outputSchema: output({ task_state: { type: 'string' }, ci: { type: 'string' }, deferred_checks: { type: 'array', items: { type: 'object' } } }),
+  outputSchema: output({ task_state: { type: 'string' }, human: { type: 'string' }, deferred_human: { type: 'array', items: { type: 'object' } }, ci: { type: 'string' }, deferred_checks: { type: 'array', items: { type: 'object' } } }),
   annotations: WRITE,
   async handler(args, ctx) {
     const data = await must(ctx.db.rpc<Row>('close_subtask', {
@@ -329,7 +329,8 @@ const closeSubtask: ToolDef = {
       p_evidence: args.evidence ?? [],
     })) ?? {};
     return { text: `Subtask ${String(args.task_id)} closed (${String(data.task_state)}).` +
-      (data.ci === 'deferred_to_job' ? ` CI deferred: ${(data.deferred_checks as Row[]).map((c) => `${String(c.check)} on ${String(c.sha ?? '').slice(0, 7)}`).join(', ')} is proved on the job final commit.` : ''), structured: data };
+      (data.ci === 'deferred_to_job' ? ` CI deferred: ${(data.deferred_checks as Row[]).map((c) => `${String(c.check)} on ${String(c.sha ?? '').slice(0, 7)}`).join(', ')} is proved on the job final commit.` : '') +
+      (data.human === 'deferred_to_job' ? ' Human criteria are deferred to the person Accept on the job.' : ''), structured: data };
   },
 };
 

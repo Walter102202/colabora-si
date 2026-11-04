@@ -211,5 +211,32 @@ select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select is(public.job_ci_status(:'job'::uuid)->>'newer_commit','ddddddd','branch movement is visible without changing final-commit evidence');
 select is(public.job_ci_status(:'job'::uuid)->>'state','passed','new branch head does not replace the named final commit');
 select tests.reset_role();
+
+-- Step 9: the person settles human criteria once on the job, never through CI.
+select tests.make_page((:'f'::jsonb->>'ws')::uuid,p,'page_A') from unnest(array['page_HJ','page_HS']) p;
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.create_agent_task('page_HJ','{"objective":"Human acceptance"}',(:'lead'::jsonb->>'agent')::uuid)->>'task_id' as hj \gset
+select public.create_agent_task('page_HS','{"objective":"Design","done_when":[{"id":"h1","text":"Approve the design","check":"human"}]}',(:'f'::jsonb->>'agent')::uuid,:'hj'::uuid)->>'task_id' as hs \gset
+select tests.reset_role();
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid,(:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'hs'::uuid,'custom')->>'run_id' as hr \gset
+select public.add_artifact(:'hr'::uuid,'page','page_HS','Design',array['h1'])->>'artifact_id' as ha \gset
+select public.submit_for_review(:'hr'::uuid,'Design delivered',array[:'ha'::uuid]);
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select public.claim_task(:'hj'::uuid,'custom')->>'run_id' as hlr \gset
+select public.review_task(:'hs'::uuid,'approved','[{"criterion_id":"h1","status":"unverified"}]','[]',null,:'hlr'::uuid);
+select public.close_subtask(:'hs'::uuid) as human_close \gset
+select is(:'human_close'::jsonb->>'human','deferred_to_job','human criterion is explicitly deferred');
+select is(:'human_close'::jsonb->'deferred_human',jsonb_build_array(jsonb_build_object('criterion_id','h1','text','Approve the design','task_id',:'hs')),'human deferral identifies the criterion and subtask');
+select is(public.job_ci_status(:'hj'::uuid)->'pending_human',:'human_close'::jsonb->'deferred_human','job exposes pending human checks even without CI');
+select public.add_artifact(:'hlr'::uuid,'page','page_HJ','Final design',array[]::text[])->>'artifact_id' as hja \gset
+select public.submit_for_review(:'hlr'::uuid,'Ready',array[:'hja'::uuid]);
+select is(tests.detail_of(format('select public.close_job(%L::uuid)',:'hj'))::jsonb->>'reason','human_criteria','agent never settles the person criterion');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(public.close_task(:'hj'::uuid,'accepted')->>'task_state','done','one human Accept settles the job');
+select is(public.job_ci_status(:'hj'::uuid)->'pending_human','[]'::jsonb,'accepted job has no pending human criteria');
+select tests.reset_role();
 select * from finish();
 rollback;
