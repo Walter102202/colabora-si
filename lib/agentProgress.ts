@@ -2,10 +2,24 @@ import { isTerminal, waitsForAcceptance } from "@/lib/agentState";
 import type { ApprovalRow, RunRow, TaskRow } from "@/lib/agentTasks";
 import type { AutonomyLevel } from "@/lib/agentAutonomy";
 import type { JobCiState } from "@/lib/agentCi";
+import type { AgentRow } from "@/lib/agentsStore";
+import { connectAgentLogoForName } from "@/lib/agentConnectCatalog";
+import { isTrama, TRAMA } from "@/lib/tramaIdentity";
 import type { DbRow } from "@/lib/types";
 
 export type ProgressTone = "neutral" | "active" | "attention" | "success" | "error";
 export interface ProgressState { label: string; detail: string; tone: ProgressTone; needsYou: boolean; }
+export interface ProgressAgent { id: string; name: string; role: "Lead" | "Worker"; logo: string | null; }
+
+export function progressAgentLogo(agent: Pick<AgentRow, "name" | "connection" | "is_platform"> | undefined): string | null {
+  if (!agent) return null;
+  if (isTrama(agent)) return TRAMA.src;
+  const harness = typeof agent.connection?.harness === "string" ? agent.connection.harness.trim().toLowerCase().replaceAll("_", "-") : "";
+  const id = harness === "claude-ai" ? "claude" : harness === "claude-code-workspace" ? "claude-code" : harness;
+  // A saved harness takes precedence over a person's custom agent name.
+  return connectAgentLogoForName(id || agent.name);
+}
+
 // Read-only presentation facts, not a prediction of whether the server will close a task.
 export interface ProgressReviewContext {
   autonomy: AutonomyLevel | null;

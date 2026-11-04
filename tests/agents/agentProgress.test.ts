@@ -3,13 +3,29 @@ import { mockCard } from "@/components/agents/card/mock";
 import type { TaskCardData } from "@/lib/agentCard";
 import type { ApprovalRow, RunRow, TaskRow } from "@/lib/agentTasks";
 import type { DbRow } from "@/lib/types";
-import { parseProgressReadMarkers, progressActivityAt, progressReadKey, progressRows, taskProgressState, updatedSinceRead, type ProgressReviewContext } from "@/lib/agentProgress";
+import { parseProgressReadMarkers, progressActivityAt, progressAgentLogo, progressReadKey, progressRows, taskProgressState, updatedSinceRead, type ProgressReviewContext } from "@/lib/agentProgress";
 import { progressTramaTask } from "@/lib/agentTramaContext";
+import { TRAMA } from "@/lib/tramaIdentity";
 
 const base = (mockCard("1") as TaskCardData).task;
 const task = (patch: Partial<TaskRow> = {}): TaskRow => ({ ...base, id: "task", workspace_id: "workspace", db_page_id: "database", row_page_id: "page", owner_user_id: "person", state: "working", review_state: "none", acceptance: "pending", brief_stale: false, ...patch });
 const row = (id: string, parentRowId?: string): DbRow => ({ id, pageId: `page-${id}`, cells: { title: id }, ...(parentRowId ? { parentRowId } : {}) });
 const manual: ProgressReviewContext = { autonomy: "ask", personCriteria: false, ciState: "none" };
+
+it("identifies logos from the saved harness, keeping custom names, platform identity and unknown providers distinct", () => {
+  const logo = (name: string, harness?: unknown, platform = false) => progressAgentLogo({ name, connection: { harness }, is_platform: platform });
+  expect(logo("Project lead", "claude_code")).toBe("/brand/agents/claude-code.svg");
+  expect(logo("Codex worker", "codex")).toBe("/brand/agents/codex.svg");
+  expect(logo("Claude Code", "muse_code")).toBe("/brand/agents/muse-code.svg");
+  expect(logo("Reviewer", "claude-ai")).toBe("/brand/agents/claude.svg");
+  expect(logo("Pages agent", "claude-code-workspace")).toBe("/brand/agents/claude-code.svg");
+  expect(logo("Muse Code")).toBe("/brand/agents/muse-code.svg");
+  expect(logo("Muse")).toBe("/brand/agents/muse.jpg");
+  expect(logo("Trama", "agent", true)).toBe(TRAMA.src);
+  for (const harness of ["custom-provider", "your-agent", "agent", "https://example.test/logo.svg"]) expect(logo("Claude Code", harness)).toBeNull();
+  expect(logo("Custom helper")).toBeNull();
+  expect(progressAgentLogo(undefined)).toBeNull();
+});
 
 describe("progress row inventory", () => {
   it("retains matching old and taskless rows, adds only their ancestors, and never mutates the source", () => {
