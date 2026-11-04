@@ -56,6 +56,7 @@ export interface TaskViewProps {
   agent: AgentOption | null;
   run: RunRow | null;
   runs?: RunsCardRun[];
+  runDetails?: ReactNode;
   approval: ApprovalRow | null;
   actionApprovals?: ApprovalRow[];
   onDecideApproval?: (id: string, decision: ApprovalDecision, response: Record<string, unknown> | null) => Promise<void>;
@@ -154,7 +155,7 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ agentAvatar = null, lessons = null, task, agent, run, runs, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, environment = [], activities, conversation, agentNames = {}, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ agentAvatar = null, lessons = null, task, agent, run, runs, runDetails, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, environment = [], activities, conversation, agentNames = {}, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -231,7 +232,7 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
         {agentAvatar}
         <StatusBadge task={task} run={run} agentName={agent?.name ?? null} />
         <span className="text-xs text-text-secondary">{agent ? agent.name : "No agent assigned"}{agent?.role === "lead" ? " · Lead" : ""}</span>
-        {run && <span className="text-xs text-text-tertiary">Run {RUN_STATUS_LABEL[run.status].toLowerCase()} · {formatRelative(Date.parse(run.last_signal_at))}</span>}
+        {run && <span className="text-xs text-text-tertiary">Run {RUN_STATUS_LABEL[run.status].toLowerCase()} · {formatRelative(Date.parse(run.last_signal_at))}{runDetails && <> · {runDetails}</>}</span>}
         <span className="text-xs text-text-tertiary">Brief v{task.brief_version}{task.brief_stale ? " · pending re-run" : ""}</span>
         {continuity && !terminal && <span className="text-xs text-text-tertiary">{continuityText(continuity)}</span>}
         {task.cost_usd > 0 && <span className="text-xs text-text-tertiary">${task.cost_usd.toFixed(4)}</span>}

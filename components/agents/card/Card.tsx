@@ -4,6 +4,8 @@ import { approvalLink, cardDataFrom, openQuestionsFor, pageLink, taskLink, toolF
 import type { ToolResult } from "@/lib/agentCardHost";
 import { TaskView, type SubtaskItem } from "@/components/agents/panel";
 import { WaitingList } from "@/components/agents/card/WaitingList";
+import { modelInfo } from "@/lib/agentModelLabel";
+import { formatTokens } from "@/lib/agentFormat";
 
 // The task card: the pure panel views driven by the data the host passed in,
 // with every action mapped to a tools/call through the host. Mount it with a
@@ -159,6 +161,8 @@ function TaskCard({
       task={task}
       agent={agent}
       run={data.run}
+      runDetails={data.run ? <><span title={data.run.model ?? undefined}>{modelInfo(data.run.model).label}</span>
+        {" · "}{formatTokens(Number(data.run.input_tokens))} in / {formatTokens(Number(data.run.output_tokens))} out</> : undefined}
       approval={approval}
       actionApprovals={data.approvals_pending?.filter((a) => a.kind === "action")}
       onDecideApproval={async (id, decision, response) => {

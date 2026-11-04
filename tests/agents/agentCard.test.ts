@@ -4,6 +4,20 @@ import { approvalIdFromHash, approvalLink, cardDataFrom, pageLink, taskIdFrom, t
 import { windowPort } from "@/lib/agentCardHost";
 import { applyHostContext, applySystemTheme } from "@/components/agents/card/theme";
 import { mockCard } from "@/components/agents/card/mock";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { Card } from "@/components/agents/card/Card";
+import type { TaskCardData } from "@/lib/agentCard";
+
+it.each([["muse-wonder-1.0", "Muse Wonder 1.0"], [null, "Unknown model"]])("shows model %s and tokens on the card's run line", (model, label) => {
+  const data = mockCard("1") as TaskCardData;
+  const initial = { ...data, run: { ...data.run!, model, status: "running" as const,
+    last_signal_at: "2026-11-03T00:00:00Z", input_tokens: 12500, output_tokens: 750 } };
+  const html = renderToStaticMarkup(createElement(Card, { initial, actions: { callTool: async () => ({}), openLink: () => {} } }));
+  expect(html).toContain(label);
+  expect(new DOMParser().parseFromString(html, "text/html").body.textContent).toContain("12.5k in / 750 out");
+  if (model) expect(html).toContain(`title="${model}"`);
+});
 
 describe("card data contract", () => {
   it("recognizes the task and waiting shapes and nothing else", () => {
