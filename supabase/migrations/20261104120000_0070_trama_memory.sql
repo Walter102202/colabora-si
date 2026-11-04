@@ -83,7 +83,8 @@ begin
     or not exists(select 1 from public.agent_messages m where m.id=new.source_message_id
       and m.workspace_id=new.workspace_id and m.user_id=new.user_id and m.direction='in'
       and m.kind<>'system' and not m.forwarded and not m.pasted and strpos(m.body,new.source_quote)>0
-      and not exists(select 1 from private.memory_forgotten_messages f where f.message_id=m.id)) then
+      and ((tg_op='UPDATE' and new.source_message_id=old.source_message_id)
+        or not exists(select 1 from private.memory_forgotten_messages f where f.message_id=m.id))) then
     raise exception using errcode='PT400',message='invalid_memory';
   end if;
   if new.superseded_by is not null and not exists(select 1 from public.person_memories m

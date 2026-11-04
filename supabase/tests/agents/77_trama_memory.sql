@@ -224,5 +224,19 @@ insert into public.workspace_members(workspace_id,user_id,role) values(:'ws',:'o
 select is((select count(*) from public.person_memories where workspace_id=:'ws' and user_id=:'owner'),0::bigint,'leaving deletes memories');
 select is((select count(*) from public.person_memory_settings where workspace_id=:'ws' and user_id=:'owner'),0::bigint,'leaving deletes settings');
 select is((select count(*) from private.memory_forgotten_messages f join public.agent_messages m on m.id=f.message_id where m.workspace_id=:'ws' and m.user_id=:'owner'),0::bigint,'leaving deletes forgotten marks');
+select tests.set_human(:'owner');
+select public.post_agent_message(:'ws','remember that I live in Lima and teach design',gen_random_uuid()) as saved \gset
+select tests.reset_role();
+insert into public.person_memories(workspace_id,user_id,kind,body,origin,source_message_id,source_quote)
+values(:'ws',:'owner','fact','I teach design','extracted',(:'saved'::jsonb->>'message_id')::uuid,'teach design') returning id as retained \gset
+select tests.set_human(:'owner');
+select public.forget_person_memory((:'saved'::jsonb#>>'{outcome,memory_id}')::uuid);
+select public.post_agent_message(:'ws','What do I teach?',gen_random_uuid());
+select tests.reset_role();
+select id as req from public.agent_tasks where workspace_id=:'ws' and owner_user_id=:'owner' and request_kind='assist' and state='queued' \gset
+select max(seq) as through_seq from public.agent_messages where workspace_id=:'ws' and needs_reply \gset
+select tests.set_agent(:'pu',:'pa');
+select public.claim_task(:'req','memory-regression')->>'run_id' as run \gset
+select lives_ok(format('select public.reply_person_message(%L,%L,%s,null,null,null,null,array[%L::uuid])',:'run','Design',:'through_seq',:'retained'),'forgetting one fact does not break replies using another fact from the same source');
 select * from finish();
 rollback;
