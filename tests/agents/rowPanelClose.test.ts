@@ -148,3 +148,10 @@ it("subtask Accept does not show its parent's CI", () => {
     jobCi: { state: "pending", connected: true, checks: [] } })));
   expect(container.textContent).not.toContain("Waiting for CI on");
 });
+import { Card } from "@/components/agents/card/Card";
+import { mockActions } from "@/components/agents/card/mock";
+it("MCP card passes final-commit CI through to Accept", () => {
+  act(() => root.render(createElement(Card, { initial: mockCard("job-ci-pending"), actions: mockActions("job-ci-pending") })));
+  expect(button("Accept")!.disabled).toBe(true);
+  expect(container.textContent).toContain("Waiting for CI on aaaaaaa: test");
+});
