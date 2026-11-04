@@ -337,6 +337,8 @@ async function insertPage(sb: SupabaseClient, page: Page): Promise<void> {
     known.add(page.id); engine!.receive(row, true); return;
   }
   known.add(page.id); queue!.ack(page.id, count); queue!.setRevision(page.id, data.revision); advance("pages", data.updated_at);
+  // A replacement queued while the insert was in flight knew no server revision; it is built on the inserted content.
+  queue!.advanceReplacements(page.id, 0, data.revision);
   engine!.receive(data as PageRow, true);
 }
 async function tombstonePage(sb: SupabaseClient, id: string): Promise<void> {

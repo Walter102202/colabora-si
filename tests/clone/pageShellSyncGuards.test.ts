@@ -112,7 +112,7 @@ it("does not write a shell to localStorage recovery", () => {
   expect(write).not.toHaveBeenCalled(); expect(useBlockConflicts.getState().pageReloads.p).toBeDefined();
 });
 
-function backend(rows: PageRow[]) {
+function backend(rows: PageRow[], duringInsert?: () => void) {
   const sent: PageOp[][] = [], sentIds: string[] = [], inserted: Page[] = [];
   const workspace = { id: "ws", owner_id: "owner", name: "Workspace", root_order: ["p"], synced_blocks: {}, settings: {}, revision: 1, updated_at: new Date(T).toISOString() };
   const from = (table: string) => {
@@ -123,7 +123,7 @@ function backend(rows: PageRow[]) {
       if (key === "single" || key === "maybeSingle") return async () => ({ data: data()[0] ?? null, error: null });
       if (key === "eq") return (column: string, value: string) => { if (column === "id") id = value; return builder; };
       if (key === "insert") return (value: { id: string; data: Page }) => {
-        if (table === "pages") { inserted.push(value.data); const row = { id: value.id, data: value.data, revision: 1, deleted_at: null, updated_at: new Date(T).toISOString() }; rows.push(row); created = row; }
+        if (table === "pages") { duringInsert?.(); inserted.push(value.data); const row = { id: value.id, data: value.data, revision: 1, deleted_at: null, updated_at: new Date(T).toISOString() }; rows.push(row); created = row; }
         return builder;
       };
       return () => builder;
@@ -132,7 +132,7 @@ function backend(rows: PageRow[]) {
   const channel = { on: () => channel, subscribe: () => channel };
   h.client = { from, channel: () => channel, removeChannel: async () => {}, getChannels: () => [], rpc: async (name: string, args: { p_page_id: string; p_ops: PageOp[]; p_client?: string }) => {
     if (name === "read_workspace_synced_blocks") return { data: {}, error: null };
-    if (name === "apply_page_ops") { sent.push(args.p_ops); sentIds.push(args.p_page_id); const row = rows.find((r) => r.id === args.p_page_id)!; const applied = pageOps.applyOps(row.data ?? page({ id: row.id, blocks: [] }), args.p_ops, { by: "human", id: "owner", at: T }); row.data = { ...applied.page, _client: args.p_client }; row.revision++; return { data: { revision: row.revision, results: applied.results }, error: null }; }
+    if (name === "apply_page_ops") { sent.push(args.p_ops); sentIds.push(args.p_page_id); const row = rows.find((r) => r.id === args.p_page_id)!; if (row.data && args.p_ops.some((op) => op.op === "replace_page" && op.revision !== row.revision)) return { data: null, error: { code: "PT409", message: "page_conflict" } }; const applied = pageOps.applyOps(row.data ?? page({ id: row.id, blocks: [] }), args.p_ops, { by: "human", id: "owner", at: T }); row.data = { ...applied.page, _client: args.p_client }; row.revision++; return { data: { revision: row.revision, results: applied.results }, error: null }; }
     return { data: { revision: 1, results: [] }, error: null };
   } };
   return { sent, sentIds, inserted };
@@ -187,6 +187,28 @@ it("queues tree changes and imports, but never queues an external body load", as
   applyingExternal(() => useStore.setState({ pages: { p: shellOf(full()) } }));
   useStore.setState({ pages: { p: { ...full(), title: "Imported" } } });
   expect(enqueue).toHaveBeenCalledWith("p", [{ op: "replace_page", page: expect.objectContaining({ title: "Imported", blocks: [expect.objectContaining({ html: "Keep this body" })] }), revision: 4 }]);
+});
+it("a replacement built from undo history carries the revision this client already acknowledged", async () => {
+  await diskPage(); const rows = [serverRow()]; backend(rows); await initSync({ id: "owner" } as User);
+  applyingExternal(() => useStore.setState({ pages: { p: full(), destination: page({ id: "destination" }) } }));
+  initHistory(); clearHistory();
+  useStore.getState().updatePage("p", { title: "Edited here" }); await flush();
+  useStore.getState().movePage("p", "destination"); await flush();
+  expect(rows[0]).toMatchObject({ revision: 6, data: expect.objectContaining({ parentId: "destination" }) });
+  // The undo snapshot predates this client's own acknowledged writes; the server only has those.
+  undo(); await flush();
+  expect(rows[0]).toMatchObject({ revision: 7, data: expect.objectContaining({ parentId: null }) });
+  expect(pageRecoveryCopies("owner", "p") ?? []).toEqual([]);
+});
+it("a replacement queued while the page insert is in flight carries the inserted revision", async () => {
+  await diskPage(); const rows = [serverRow()];
+  const cloud = backend(rows, () => useStore.getState().movePage("fresh", "p"));
+  await initSync({ id: "owner" } as User);
+  applyingExternal(() => useStore.setState({ pages: { p: full(), fresh: { ...page({ id: "fresh", blocks: [b("paragraph", { id: "fb", html: "Fresh", rev: 1 })] }), revision: undefined } } }));
+  await flush();
+  expect(cloud.inserted.map((p) => p.id)).toEqual(["fresh"]);
+  expect(rows.find((r) => r.id === "fresh")).toMatchObject({ revision: 2, data: expect.objectContaining({ parentId: "p" }) });
+  expect(pageRecoveryCopies("owner", "fresh") ?? []).toEqual([]);
 });
 it("loads the stored body when merging a newer local page over a server tombstone", async () => {
   await diskPage(); applyingExternal(() => useStore.setState({ pages: { p: { ...shellOf(full()), updatedAt: T + 10 } } }));
