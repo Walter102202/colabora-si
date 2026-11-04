@@ -1,3 +1,4 @@
+import MeetingBlock from "@/components/agents/meeting/MeetingBlock";
 import { Input } from "@/components/FormControls";
 import { lazy, Suspense } from "react";
 import { memo, useCallback, useState, type DragEvent } from "react";
@@ -35,7 +36,8 @@ function BlockItem({ block, ops, ordinal, spellCheck, selected, pages, insertBlo
   const startDrag = (event: DragEvent<HTMLElement>) => { event.stopPropagation(); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", block.id); const ghost = document.createElement("div"); ghost.className = "drag-ghost"; ghost.textContent = (block.type === "page" ? pages[block.pageId ?? ""]?.title ?? "" : block.type === "code" ? block.html : stripHtml(block.html)).slice(0, 60) || BLOCK_LABELS[block.type]; document.body.appendChild(ghost); event.dataTransfer.setDragImage(ghost, 0, 0); setTimeout(() => ghost.remove(), 0); ops.onDragStart(block.id); };
   const cancelDrag = () => ops.onDragCancel?.();
   let body: React.ReactNode;
-  if (block.type === "button") body = <ButtonBlock block={block} ops={ops} pages={pages} onInsert={(blocks) => insertBlocks(block.id, blocks)} />;
+  if (block.type === "meeting") body = <MeetingBlock block={block} pageId={ops.pageId} readOnly={ops.locked} />;
+  else if (block.type === "button") body = <ButtonBlock block={block} ops={ops} pages={pages} onInsert={(blocks) => insertBlocks(block.id, blocks)} />;
   else if (block.type === "columns") body = <ColumnsBlock block={block} ops={ops} />;
   else if (block.type === "table") body = <TableBlock block={block} ops={ops} />;
   else if (block.type === "equation") body = <Suspense fallback={null}><EquationBlock block={block} ops={ops} /></Suspense>;

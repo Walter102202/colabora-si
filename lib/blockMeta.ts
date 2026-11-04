@@ -16,11 +16,11 @@ export const LIST_TYPES: BlockType[] = ["todo", "bulleted", "numbered", "toggle"
 export const NON_TEXT: BlockType[] = [
   "divider", "image", "video", "audio", "file", "embed", "code", "page",
   "bookmark", "table", "equation", "columns", "toc", "breadcrumb", "button",
-  "database", "synced",
+  "database", "synced", "meeting",
 ];
 
 export const BLOCK_LABELS: Record<BlockType, string> = {
-  paragraph: "Text", heading1: "Heading 1", heading2: "Heading 2",
+  meeting: "Meeting", paragraph: "Text", heading1: "Heading 1", heading2: "Heading 2",
   heading3: "Heading 3", todo: "To-do list", bulleted: "Bulleted list",
   numbered: "Numbered list", toggle: "Toggle list", quote: "Quote",
   callout: "Callout", code: "Code", divider: "Divider", image: "Image",
@@ -59,6 +59,7 @@ export const SLASH_ITEMS: SlashItem[] = [
   {"type":"embed","title":"Loom","description":"Embed a Loom screen recording.","keywords":["loom","recording","screencast","video","embed"],"group":"Media","icon":"📹","provider":"loom"},
   {"type":"embed","title":"Miro","description":"Embed a Miro whiteboard.","keywords":["miro","board","whiteboard","canvas","embed"],"group":"Media","icon":"🧩","provider":"miro"},
   {"type":"bookmark","title":"Web bookmark","description":"Save a link as a visual bookmark.","keywords":["bookmark","link","url","web"],"group":"Media","icon":"🔖"},
+  { type: "meeting", title: "Meeting", description: "Record, transcribe and summarize a meeting", keywords: ["meeting", "record", "transcribe", "notes"], group: "Advanced", icon: "🎙️" },
   {"type":"page","title":"Page","description":"Embed a sub-page inside this page.","keywords":["page","subpage","document"],"group":"Advanced","icon":"📄"},
   {"type":"table","title":"Table","description":"Add a simple table.","keywords":["table","grid","rows","columns","cells"],"group":"Advanced","icon":"▦"},
   {"type":"columns","title":"Columns","description":"Lay blocks out in side-by-side columns.","keywords":["columns","layout","side","grid","two","three"],"group":"Advanced","icon":"▥"},

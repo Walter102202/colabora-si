@@ -198,6 +198,8 @@ function renderNode(node: BlockNode, ctx: HtmlContext, depth: number): string {
   const children = node.children.length ? renderNodes(node.children, ctx, depth) : '';
   const nested = children ? `\n<div class="indent">\n${children}\n</div>` : '';
   switch (b.type) {
+    case "meeting":
+      return `<p class="meeting">${escapeHtml(meetingLabel(b))}</p>${nested}`;
     case 'heading1':
       return `<h2>${text}</h2>${nested}`;
     case 'heading2':
@@ -378,4 +380,10 @@ export function renderPublicPage(page: Page, opts: PublicPageOptions): string {
     '</html>',
     '',
   ].join('\n');
+}
+
+function meetingLabel(block: Block): string {
+  const ms = block.meeting?.durationMs ?? 0;
+  const seconds = Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 1000)) : 0;
+  return `Meeting · ${block.meeting?.status ?? "idle"} · ${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }

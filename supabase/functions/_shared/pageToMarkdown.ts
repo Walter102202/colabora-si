@@ -175,6 +175,8 @@ function renderBlock(b: Block, ctx: RenderContext, depth = 0, counters: number[]
   const unknown: string[] = UNREPRESENTABLE_TYPES.has(b.type) ? [b.id] : [];
   const done = (markdown: string): Rendered => ({ markdown: markdown.replace(/<!--[\s\S]*?-->/g, ''), unknown });
   switch (b.type) {
+    case "meeting":
+      return done(`${pad}> ${meetingLabel(b)}`);
     case 'paragraph':
       return done(`${pad}${text}`);
     case 'heading1':
@@ -334,4 +336,10 @@ export function blocksWithText(page: Page): { block: Block; text: string }[] {
   };
   walk(page.blocks ?? []);
   return out;
+}
+
+function meetingLabel(block: Block): string {
+  const ms = block.meeting?.durationMs ?? 0;
+  const seconds = Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 1000)) : 0;
+  return `Meeting · ${block.meeting?.status ?? "idle"} · ${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }

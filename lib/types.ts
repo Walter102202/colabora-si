@@ -43,6 +43,7 @@ export type BlockType =
   | "divider"     // horizontal rule, no text
   | "image"       // image by url or fileId
   | "video"       // video (file, YouTube or Vimeo)
+  | "meeting"     // meeting recorder
   | "audio"       // audio
   | "file"        // downloadable file
   | "embed"       // sandboxed generic iframe, or a named provider (embedProvider)
@@ -91,6 +92,16 @@ export interface Block {
   type: BlockType;
   html: string;               // rich text as sanitized HTML; "" if empty
   indent: number;             // visual nesting level, 0..n; 0 by default
+  meeting?: {
+    id: string;
+    status: "idle" | "recording" | "transcribing" | "summarizing" | "ready" | "failed";
+    startedAt?: number;
+    endedAt?: number;
+    durationMs?: number;
+    lang?: string;
+    launcher?: boolean;
+  };
+  turn?: { meetingId: string; tMs: number; speaker?: string };
   key?: string;               // stable key for keyed sections (e.g. "brief:goal"); empty for ordinary blocks
   rev?: number;               // server-assigned revision of this block; absent until the server has seen it
   attr?: BlockAttr;           // who made the last edit (UI courtesy data)

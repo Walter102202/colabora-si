@@ -203,3 +203,41 @@ it("shift-selects a page link without opening it and drags the selection togethe
   drag(handle(link.id), "dragstart"); drag(item(last.id), "dragover"); drag(item(last.id), "drop");
   expect((change.mock.calls[0][0] as Block[]).map((block) => block.id)).toEqual([last.id, first.id, link.id]);
 });
+
+
+it("/meet inserts an independent meeting and its keyed sections", () => {
+  const first = b("paragraph"), second = b("heading2");
+  const change = mount([first, second]);
+  for (const current of [first, second]) {
+    const editable = item(current.id).querySelector<HTMLElement>('[contenteditable="true"]')!;
+    act(() => {
+      editable.focus(); editable.textContent = "/meet";
+      const range = document.createRange(), selection = window.getSelection()!;
+      range.selectNodeContents(editable); range.collapse(false);
+      selection.removeAllRanges(); selection.addRange(range);
+      editable.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const choice = host.querySelector<HTMLButtonElement>('[role="option"]');
+    expect(choice?.textContent).toContain("Meeting");
+    act(() => choice!.click());
+    const blocks = change.mock.calls.at(-1)![0] as Block[];
+    act(() => root.render(createElement(MemoryRouter, {}, createElement(EditorSurface, { pageId: "owner", blocks, onChange: change, pages: {} }), createElement(Location))));
+    const index = blocks.findIndex((entry) => entry.id === current.id);
+    expect(blocks.slice(index, index + 5)).toMatchObject([
+      { id: current.id, type: "meeting", html: "", meeting: { id: current.id, status: "idle" } },
+      { type: "heading2", html: "Notes", key: `meeting:notes:${current.id}` },
+      { type: "paragraph", html: "" },
+      { type: "heading2", html: "Summary", key: `meeting:summary:${current.id}`, toggleable: true },
+      { type: "heading2", html: "Transcript", key: `meeting:transcript:${current.id}`, toggleable: true, collapsed: true },
+    ]);
+  }
+  expect(new Set((change.mock.calls.at(-1)![0] as Block[]).filter((entry) => entry.key).map((entry) => entry.key)).size).toBe(6);
+  window.getSelection()?.removeAllRanges();
+});
+
+it("exports meeting status and duration in Markdown and HTML", async () => {
+  const { blocksToMarkdown, pageToHtml } = await import("@/lib/export");
+  const meeting = b("meeting", { meeting: { id: "m", status: "ready", durationMs: 192500 } });
+  expect(blocksToMarkdown([meeting])).toBe("> Meeting · ready · 03:12");
+  expect(await pageToHtml(page({ blocks: [meeting] }), {})).toContain('<p class="meeting">Meeting · ready · 03:12</p>');
+});

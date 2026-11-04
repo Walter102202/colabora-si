@@ -99,3 +99,10 @@ Deno.test('mentions and inline equations', () => {
     '[Spec](/p/x) by @Ana $a^2$',
   );
 });
+
+Deno.test("meeting renders status and duration in server Markdown and HTML", async () => {
+  const { pageToHtml } = await import("./pageToHtml.ts");
+  const p = page("p", "Meeting", [block("m", "meeting", "", { meeting: { id: "m", status: "ready", durationMs: 192500 } })]);
+  assert.equal(pageToMarkdown(p, ctx).blocks[0].markdown, "> Meeting · ready · 03:12 <!-- block:m -->");
+  assert.ok(pageToHtml(p, { pages: {}, syncedBlocks: {}, pageUrl: (id) => `/p/${id}` }).includes('<p class="meeting">Meeting · ready · 03:12</p>'));
+});
