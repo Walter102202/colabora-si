@@ -64,7 +64,7 @@ export interface AssistantThreadViewProps {
   agentProposalError?: boolean;
   proposing?: { id: string; action: "start" | "decline" | "agent" | "message" } | null;
   onDraft: (text: string) => void;
-  onPaste: (e: ClipboardEvent<HTMLTextAreaElement>) => void;
+  onPaste?: (e: ClipboardEvent<HTMLTextAreaElement>) => void;
   onSend: () => void;
   onRetrySend: (() => void) | null;
   onUndo: (noteId: string) => void;

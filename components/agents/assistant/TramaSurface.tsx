@@ -14,7 +14,7 @@ import { ApprovalCard } from "@/components/agents/panel/ApprovalCard";
 import { proposedLessons, useAgentLessons } from "@/lib/agentLessons";
 import { openDiscrepancies, useAgentSources } from "@/lib/agentSources";
 import { useAuthStore } from "@/lib/auth";
-import { type ClipboardEvent, type FocusEvent, type PointerEvent, useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
+import { type FocusEvent, type PointerEvent, useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { AssistantThreadView } from "@/components/agents/assistant/AssistantThreadView";
 import { VoiceButton } from "@/components/agents/assistant/VoiceButton";
@@ -133,7 +133,6 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const voiceBusy = ["asking", "recording", "sending", "transcribing"].includes(voice.phase);
   const wav = useRef<ArrayBuffer | null>(null);
   const clip = useRef<string | null>(null);
-  const pasted = useRef(false);
   const selection = useRef<string>("");
   const selectionPage = useRef<string | undefined>(undefined);
   const ref = useRef<HTMLDivElement>(null);
@@ -281,7 +280,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
       if (captureBusy.current) { setContextNotice("Finish your voice message before starting a new draft."); return; }
       if (draft.trim()) { setContextNotice("Your unsent draft is kept. Send or clear it before starting another."); return; }
       selection.current = ""; selectionPage.current = detail.pageId;
-      pasted.current = false; clip.current = null;
+      clip.current = null;
       setDraftPageId(detail.pageId); setDraft(detail.prompt); setContextNotice(null);
     };
     window.addEventListener(TRAMA_TASK_DRAFT_EVENT, openTaskDraft);
@@ -331,7 +330,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
       wav.current = null;
       if (!out.transcript) return dispatch({ type: "fail", reason: "no_speech", canRetry: false });
       clip.current = out.clip_id;
-      setDraft(out.transcript); setDraftPageId(recordingPage.current); pasted.current = false;
+      setDraft(out.transcript); setDraftPageId(recordingPage.current);
       dispatch({ type: "heard", clipId: out.clip_id, transcript: out.transcript });
     } catch (error) {
       if (version === captureVersion.current) dispatch({ type: "fail", ...voiceFailure(error instanceof Error ? error.message : "voice_failed") });
@@ -386,11 +385,6 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
     void upload();
   }
 
-  // Only a paste at the start of an empty box makes the message someone else's text. "guarda en notas: " plus a paste remains a person request; Trama must still call the server-verified skill.
-  function onPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
-    if (e.currentTarget.selectionStart === 0 && !draft) pasted.current = true;
-  }
-
   async function submit(from?: Draft) {
     if (captureBusy.current) return;
     const body = (from?.body ?? draft).trim();
@@ -399,14 +393,13 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
     const out: Draft = from ?? {
       clientId: crypto.randomUUID(), body,
       context: {
-        pasted: pasted.current, tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
         ...(messagePageId ? { page_id: messagePageId } : {}), ...(messagePageId && selectionPage.current === messagePageId && selection.current ? { selection: { page_id: messagePageId, text: selection.current } } : {}),
       },
       ...(clip.current ? { clipId: clip.current } : {}),
     };
     if (!from) {
       setDraft(""); setDraftPageId(undefined); setContextNotice(null);
-      pasted.current = false;
       selection.current = "";
       clip.current = null;
       dispatch({ type: "reset" });
@@ -460,8 +453,8 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
             </span>
           </span>}
           onRetrySend={failed ? () => void submit(failed) : null}
-          onDraft={(text) => { if (!draft) setDraftPageId(pageId ?? null); setDraft(text); if (!text) { setDraftPageId(undefined); setContextNotice(null); pasted.current = false; clip.current = null; if (voice.phase === "review") dispatch({ type: "reset" }); } }}
-          onPaste={onPaste} onSend={() => void submit()} onUndo={(id) => void undo(id)}
+          onDraft={(text) => { if (!draft) setDraftPageId(pageId ?? null); setDraft(text); if (!text) { setDraftPageId(undefined); setContextNotice(null); clip.current = null; if (voice.phase === "review") dispatch({ type: "reset" }); } }}
+          onSend={() => void submit()} onUndo={(id) => void undo(id)}
           onPropose={(message) => void propose(message)} onDeclineWork={(message) => void declineWork(message)} onSendMessage={(message, addRequirement) => void sendMessageProposal(message, addRequirement)} proposing={proposing}
           onSettleAgent={(message, accept) => void settleAgent(message, accept)} hasTaskDatabase={Boolean(taskDatabase)} agentProposalError={proposalError?.startsWith("We couldn’t create this agent.")}
           onOpenNotes={() => { void openNotes().then((id) => { if (id) { close(); void navigate(pageUrl(id)); } }); }}

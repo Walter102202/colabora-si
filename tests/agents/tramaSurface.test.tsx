@@ -40,6 +40,21 @@ const mount = () => act(() => root.render(<MemoryRouter initialEntries={["/p/pag
 const button = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
 const originalCreateAgent = useAgentsStore.getState().createAgent;
 
+it("sends pasted composer text as a direct person request", async () => {
+  mount(); act(() => button("Talk to Trama").click());
+  const textarea = document.querySelector("textarea")!;
+  act(() => textarea.dispatchEvent(new Event("paste", { bubbles: true })));
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "Create a job for this page");
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => button("Send").click());
+  const send = vi.mocked(useAgentConversation.getState().send);
+  expect(send).toHaveBeenCalledOnce();
+  expect(send.mock.calls[0][0].body).toBe("Create a job for this page");
+  expect(send.mock.calls[0][0].context?.pasted).toBeFalsy();
+});
+
 it.each([
   [1, 0, "1 lesson to review"], [2, 0, "2 lessons to review"],
   [0, 1, "1 difference to settle"], [2, 1, "2 lessons and 1 difference to review"],
