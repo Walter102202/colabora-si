@@ -51,13 +51,35 @@ export function taskProgressState(task: TaskRow, run: RunRow | null, approvals: 
   return { label: task.delegate_agent_id ? "Queued" : "Needs an agent", detail: task.delegate_agent_id ? "Waiting for the assigned agent to take the task." : "Open the page to choose an agent.", tone: "neutral", needsYou: yours && !task.delegate_agent_id };
 }
 
-export interface ProgressRow { row: DbRow; depth: number; ancestors: string[]; contextOnly: boolean; }
+export function progressActivityAt(task: TaskRow | null | undefined): number | undefined {
+  for (const value of [task?.last_activity_at, task?.updated_at, task?.created_at]) {
+    const at = value ? Date.parse(value) : NaN;
+    if (Number.isFinite(at)) return at;
+  }
+  return undefined;
+}
+
+export interface ProgressRow { row: DbRow; depth: number; ancestors: string[]; contextOnly: boolean; activityAt?: number; }
 
 // Filtered children retain their parent as context. Every matching row stays accessible,
 // even when its task is old, not yet loaded, or its parent is missing.
-export function progressRows(rows: DbRow[], allRows: DbRow[]): ProgressRow[] {
+export function progressRows(rows: DbRow[], allRows: DbRow[], activityByRow?: ReadonlyMap<string, number | undefined>): ProgressRow[] {
   const byId = new Map(allRows.map((row) => [row.id, row]));
   for (const row of rows) byId.set(row.id, row);
+  // A Worker's activity belongs to the whole job. Sort groups and siblings by
+  // that same date without changing the database's saved order or hierarchy.
+  const recent = new Map<string, number>();
+  if (activityByRow) for (const row of byId.values()) {
+    const at = activityByRow.get(row.id);
+    if (at === undefined || !Number.isFinite(at)) continue;
+    const seen = new Set<string>();
+    let id: string | undefined = row.id;
+    while (id && byId.has(id) && !seen.has(id)) {
+      seen.add(id);
+      if (!recent.has(id) || at > recent.get(id)!) recent.set(id, at);
+      id = byId.get(id)?.parentRowId ?? undefined;
+    }
+  }
   const matching = new Set(rows.map((row) => row.id));
   const included = new Set(matching);
   for (const row of rows) {
@@ -68,6 +90,13 @@ export function progressRows(rows: DbRow[], allRows: DbRow[]): ProgressRow[] {
     }
   }
   const ordered = [...rows, ...allRows.filter((row) => !matching.has(row.id))].filter((row) => included.has(row.id));
+  if (activityByRow) ordered.sort((a, b) => {
+    const left = recent.get(a.id), right = recent.get(b.id);
+    if (left === right) return 0;
+    if (left === undefined) return 1;
+    if (right === undefined) return -1;
+    return right - left;
+  });
   const children = new Map<string, DbRow[]>();
   for (const row of ordered) {
     if (!row.parentRowId || !included.has(row.parentRowId) || row.parentRowId === row.id) continue;
@@ -77,7 +106,7 @@ export function progressRows(rows: DbRow[], allRows: DbRow[]): ProgressRow[] {
   const visit = (row: DbRow, ancestors: string[]) => {
     if (visited.has(row.id)) return;
     visited.add(row.id);
-    result.push({ row, depth: ancestors.length, ancestors, contextOnly: !matching.has(row.id) });
+    result.push({ row, depth: ancestors.length, ancestors, contextOnly: !matching.has(row.id), activityAt: recent.get(row.id) });
     for (const child of children.get(row.id) ?? []) visit(child, [...ancestors, row.id]);
   };
   for (const row of ordered) if (!row.parentRowId || !included.has(row.parentRowId)) visit(row, []);
