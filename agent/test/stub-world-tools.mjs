@@ -195,6 +195,11 @@ export const WORLD_TOOLS = [
           "type": "string",
           "minLength": 1
         },
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Meeting summaries only: explicitly binds the append to its active meeting run. Other run kinds are rejected."
+        },
         "markdown": {
           "type": "string",
           "minLength": 1,
