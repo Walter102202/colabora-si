@@ -52,6 +52,7 @@ export function CiConnections({ workspaceId }: { workspaceId: string | null }) {
   const command = created ? ghWebhookCommand(created.repo, created.webhook_url, created.secret) : "";
   return <section className="space-y-3 border-t border-border pt-4" aria-labelledby={`${id}-title`}>
     <h3 id={`${id}-title`} className="font-medium">Continuous integration</h3>
+    <p className="text-sm text-text-secondary">Optional. Lets GitHub confirm checks; without it the Lead verifies CI and cites the run.</p>
     <form onSubmit={(event) => void connect(event)} className="flex flex-wrap items-end gap-2">
       <label className="text-sm" htmlFor={`${id}-repo`}>Repository
         <input id={`${id}-repo`} className="mt-1 block rounded border border-border bg-bg px-2 py-1" placeholder="owner/name" required value={repo} onChange={(event) => setRepo(event.target.value)} disabled={busy} />

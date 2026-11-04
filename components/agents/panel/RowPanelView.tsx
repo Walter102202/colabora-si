@@ -22,6 +22,7 @@ import { deliverySummary } from "@/lib/agentTaskText";
 import { buildProgressMilestones } from "@/lib/agentProgressActivity";
 import { TaskMilestones } from "@/components/agents/panel/TaskMilestones";
 import { TaskPlanDetails } from "@/components/agents/panel/TaskPlanDetails";
+import type { ParentAcceptance } from "@/lib/agentCriterionReview";
 import { FeedbackComposer } from "@/components/agents/panel/FeedbackComposer";
 import { MetricsList } from "@/components/agents/panel/MetricsList";
 import type { Metric } from "@/lib/agentMetrics";
@@ -56,6 +57,8 @@ export interface TaskViewProps {
   lessons?: ReactNode;
   agentAvatar?: ReactNode;
   task: TaskRow;
+  // Known parent acceptance can settle a Lead-closed subtask's deferred human checks.
+  parentAcceptance?: ParentAcceptance;
   agent: AgentOption | null;
   run: RunRow | null;
   runs?: RunsCardRun[];
@@ -168,7 +171,7 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
 const TASK_TABS = ["Work", "Plan", "Activity"] as const;
 type TaskTab = typeof TASK_TABS[number];
 
-export function TaskView({ agentAvatar = null, lessons = null, task, agent, run, runs, runDetails, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, jobCi, environment = [], activities, conversation, agentNames = {}, currentUserId, onLoadOlderActivity, hasOlderActivity = false, activityLoading = false, activityError = null, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ agentAvatar = null, lessons = null, task, parentAcceptance = "unknown", agent, run, runs, runDetails, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, jobCi, environment = [], activities, conversation, agentNames = {}, currentUserId, onLoadOlderActivity, hasOlderActivity = false, activityLoading = false, activityError = null, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [tab, setTab] = useState<TaskTab>("Work");
   const tabButtons = useRef<Partial<Record<TaskTab, HTMLButtonElement | null>>>({});
@@ -286,7 +289,9 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
         summary={deliverySummary(activities)}
         ciLine={ci?.text}
         ciBlocks={ci?.blocks}
-        pendingHuman={task.parent_task_id ? undefined : jobCi?.pending_human}
+        pendingHuman={[...(task.parent_task_id ? [] : jobCi?.pending_human ?? []),
+          ...(brief?.done_when ?? []).filter((c) => c.check === "human" && c.by === "person")
+            .map((c) => ({ criterion_id: c.id, text: c.text, task_id: task.id }))]}
         deliveredSubtasks={task.parent_task_id ? 0 : subtasks.filter((s) => s.task.state === "ready_for_review").length}
         disabled={busy !== null}
         onAccept={() => void act("close", () => onClose("accepted", null))} />}
@@ -336,7 +341,7 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
 
         <section aria-label="Verification" className="space-y-3 rounded-lg border border-border p-4">
           <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Verification</h4>
-          <LeadReviewCard key={decisionIdentity} task={task} review={review} brief={brief} ciChecks={ciChecks} artifact={artifact} reviewerName={reviewerName} onReview={onReview} />
+          <LeadReviewCard key={decisionIdentity} task={task} parentAcceptance={parentAcceptance} review={review} brief={brief} ciChecks={ciChecks} artifact={artifact} reviewerName={reviewerName} onReview={onReview} />
         </section>
 
         {task.state === "done" && task.acceptance === "accepted" && <p className="rounded-md bg-bg-secondary p-3 text-xs leading-relaxed text-text-secondary">

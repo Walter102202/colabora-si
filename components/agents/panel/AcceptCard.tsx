@@ -14,7 +14,7 @@ export function AcceptCard({ summary, deliveredSubtasks, disabled, ciLine, ciBlo
       <p className="whitespace-pre-wrap text-sm">{summary}</p>
       {ciLine && <p role="status" className="text-xs text-text-secondary">{ciLine}</p>}
       {pendingHuman.length > 0 && <div className="text-xs text-text-secondary">
-        <p>You are the check for:</p>
+        <p>Waiting for you</p>
         <ul className="list-disc pl-4">{pendingHuman.map((c) => <li key={`${c.task_id}:${c.criterion_id}`}>{c.text}</li>)}</ul>
       </div>}
       {deliveredSubtasks > 0 && (

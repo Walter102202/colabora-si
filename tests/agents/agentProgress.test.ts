@@ -3,12 +3,13 @@ import { mockCard } from "@/components/agents/card/mock";
 import type { TaskCardData } from "@/lib/agentCard";
 import type { ApprovalRow, RunRow, TaskRow } from "@/lib/agentTasks";
 import type { DbRow } from "@/lib/types";
-import { parseProgressReadMarkers, progressReadKey, progressRows, taskProgressState, updatedSinceRead } from "@/lib/agentProgress";
+import { parseProgressReadMarkers, progressReadKey, progressRows, taskProgressState, updatedSinceRead, type ProgressReviewContext } from "@/lib/agentProgress";
 import { progressTramaTask } from "@/lib/agentTramaContext";
 
 const base = (mockCard("1") as TaskCardData).task;
 const task = (patch: Partial<TaskRow> = {}): TaskRow => ({ ...base, id: "task", workspace_id: "workspace", db_page_id: "database", row_page_id: "page", owner_user_id: "person", state: "working", review_state: "none", acceptance: "pending", brief_stale: false, ...patch });
 const row = (id: string, parentRowId?: string): DbRow => ({ id, pageId: `page-${id}`, cells: { title: id }, ...(parentRowId ? { parentRowId } : {}) });
+const manual: ProgressReviewContext = { autonomy: "ask", personCriteria: false, ciState: "none" };
 
 describe("progress row inventory", () => {
   it("retains matching old and taskless rows, adds only their ancestors, and never mutates the source", () => {
@@ -50,10 +51,38 @@ describe("truthful task progress states", () => {
   });
 
   it("distinguishes the owner's review from Lead review and another person's decision", () => {
-    expect(taskProgressState(task({ state: "ready_for_review" }), null, [], "person")).toMatchObject({ label: "Needs your review", needsYou: true });
-    expect(taskProgressState(task({ state: "ready_for_review" }), null, [], "other")).toMatchObject({ label: "Ready for review", needsYou: false });
-    expect(taskProgressState(task({ parent_task_id: "parent", state: "ready_for_review", review_state: "pending" }), null, [], "person")).toMatchObject({ label: "Lead reviewing", needsYou: false });
-    expect(taskProgressState(task({ parent_task_id: "parent", state: "ready_for_review", review_state: "approved" }), null, [], "person")).toMatchObject({ label: "Needs your review", needsYou: true });
+    expect(taskProgressState(task({ state: "ready_for_review" }), null, [], "person", manual)).toMatchObject({ label: "Needs your review", needsYou: true });
+    expect(taskProgressState(task({ state: "ready_for_review" }), null, [], "other", manual)).toMatchObject({ label: "Ready for review", needsYou: false });
+    expect(taskProgressState(task({ parent_task_id: "parent", state: "ready_for_review", review_state: "pending" }), null, [], "person", manual)).toMatchObject({ label: "Waiting on Lead", needsYou: false });
+    expect(taskProgressState(task({ parent_task_id: "parent", state: "ready_for_review", review_state: "approved" }), null, [], "person", manual)).toMatchObject({ label: "Waiting on Lead", needsYou: false });
+  });
+
+  it.each([
+    ["pending", "Waiting for CI"], ["failed", "CI failed"], ["passed", "Waiting on Lead"],
+    ["none", "Waiting on Lead"], ["no_commit", "Waiting on Lead"], ["not_connected", "Waiting on Lead"],
+  ] as const)("does not turn autonomous %s work into a human decision or promise closure", (ciState, label) => {
+    const result = taskProgressState(task({ state: "ready_for_review" }), null, [], "person", { autonomy: "autonomous", personCriteria: false, ciState });
+    expect(result).toMatchObject({ label, needsYou: false });
+    expect(result.detail).not.toMatch(/automatically|will close|accepted|running/i);
+  });
+
+  it("keeps a person's criteria visible while CI blocks acceptance and when autonomy is unknown", () => {
+    for (const autonomy of ["autonomous", "ask", null] as const) {
+      expect(taskProgressState(task({ state: "ready_for_review" }), null, [], "person", { autonomy, personCriteria: true, ciState: "pending" }))
+        .toMatchObject({ label: "Needs your review", needsYou: true, detail: expect.stringContaining("waiting for CI") });
+    }
+    expect(taskProgressState(task({ state: "ready_for_review", review_state: "outdated" }), null, [], "person", { autonomy: "autonomous", personCriteria: true, ciState: "pending" }))
+      .toMatchObject({ label: "Review outdated", needsYou: true });
+  });
+
+  it("does not invent a human requirement or hide an explicit approval when metadata is unknown", () => {
+    for (const review of [undefined, { autonomy: null, personCriteria: null, ciState: null }, { autonomy: "autonomous", personCriteria: null, ciState: "pending" }] as (ProgressReviewContext | undefined)[]) {
+      expect(taskProgressState(task({ state: "ready_for_review" }), null, [], "person", review)).toMatchObject({ label: "Ready for review", needsYou: false });
+      const approval = { task_id: "task", status: "pending", expires_at: new Date(Date.now() + 60_000).toISOString() } as ApprovalRow;
+      expect(taskProgressState(task({ state: "ready_for_review" }), null, [approval], "person", review)).toMatchObject({ label: "Needs you", needsYou: true });
+    }
+    expect(taskProgressState(task({ state: "ready_for_review", review_state: "outdated" }), null, [], "person", { autonomy: "autonomous", personCriteria: false, ciState: "pending" }))
+      .toMatchObject({ label: "Review outdated", needsYou: false });
   });
 
   it("makes current-version review requirements visible without claiming an old approval is current", () => {
@@ -71,6 +100,7 @@ describe("truthful task progress states", () => {
 
   it("separates human input, agent input and a stale run", () => {
     expect(taskProgressState(task({ state: "input_required", waiting_on: "human" }), null, [], "person")).toMatchObject({ label: "Needs you", needsYou: true });
+    expect(taskProgressState(task({ state: "input_required", waiting_on: "human", brief_stale: true, review_state: "outdated" }), null, [], "person")).toMatchObject({ label: "Needs you", needsYou: true });
     expect(taskProgressState(task({ state: "input_required", waiting_on: "lead" }), null, [], "person")).toMatchObject({ label: "Waiting on Lead", needsYou: false });
     expect(taskProgressState(task(), { stale_at: "2026-11-04T10:00:00Z" } as RunRow, [], "person")).toMatchObject({ label: "No recent signal", needsYou: false });
   });

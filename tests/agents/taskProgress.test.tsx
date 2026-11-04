@@ -10,6 +10,11 @@ import type { TaskCardData } from "@/lib/agentCard";
 import { useStore } from "@/lib/store";
 import { useAuthStore } from "@/lib/auth";
 import { useAgentTasks, type ApprovalRow, type TaskRow } from "@/lib/agentTasks";
+import type { BriefRow } from "@/lib/agentTasks";
+import type { JobCiStatus } from "@/lib/agentCi";
+import type { AutonomyLevel, TaskAutonomy } from "@/lib/agentAutonomy";
+import { getAgentClient } from "@/lib/agentClient";
+import { getTaskAutonomy, setWorkspaceAutonomy } from "@/lib/agentActions";
 import { useAgentsStore, type AgentRow } from "@/lib/agentsStore";
 import { createPage } from "@/lib/factories";
 import { progressReadKey } from "@/lib/agentProgress";
@@ -23,6 +28,8 @@ vi.mock("@/components/agents/RowPanel", () => ({
     return <div aria-label="Existing task controls" data-page={props.pageId}>Saved task controls<textarea aria-label={`Feedback for ${props.pageId}`} defaultValue="" /></div>;
   },
 }));
+vi.mock("@/lib/agentActions", async (original) => ({ ...await original<typeof import("@/lib/agentActions")>(), getTaskAutonomy: vi.fn() }));
+vi.mock("@/lib/agentClient", async (original) => ({ ...await original<typeof import("@/lib/agentClient")>(), getAgentClient: vi.fn() }));
 
 const baseTask = (mockCard("1") as TaskCardData).task;
 const task = (id: string, patch: Partial<TaskRow> = {}): TaskRow => ({ ...baseTask, id: `task-${id}`, workspace_id: "workspace", db_page_id: "database", row_page_id: id, title: `Task ${id}`, owner_user_id: "person", state: "working", review_state: "none", acceptance: "pending", brief_stale: false, last_activity_at: "2026-11-04T10:00:00Z", updated_at: "2026-11-04T10:00:00Z", ...patch });
@@ -30,12 +37,35 @@ const row = (id: string, patch: Partial<DbRow> = {}): DbRow => ({ id: `row-${id}
 let root: Root, host: HTMLDivElement;
 const lookup = vi.fn<(pageId: string) => Promise<void>>();
 const subscribe = vi.fn(() => () => {});
+const reviewBrief = vi.fn<(taskId: string, version: number, signal: AbortSignal) => Promise<{ data: Pick<BriefRow, "done_when"> | null; error: unknown }>>();
+const reviewCi = vi.fn<(taskId: string, signal: AbortSignal) => Promise<{ data: JobCiStatus | null; error: unknown }>>();
+const policy = (level: AutonomyLevel = "ask"): TaskAutonomy => ({ level, requested: null, source: "workspace", workspace_level: level, auto_approved: [], require_approval: [] });
+const ciStatus = (patch: Partial<JobCiStatus> = {}): JobCiStatus => ({ state: "none", connected: false, pending_human: [], checks: [], ...patch });
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   localStorage.clear(); seen.panel.mockClear(); lookup.mockReset().mockResolvedValue(); subscribe.mockClear();
   useAuthStore.setState({ user: { id: "person" } as User });
-  useAgentTasks.setState({ workspaceId: "workspace", status: "ready", error: null, tasks: {}, runs: {}, approvals: {}, activities: {}, reviews: {}, subscribe, loadTaskForPage: lookup, load: vi.fn(async () => {}) });
+  useAgentTasks.setState({ workspaceId: "workspace", status: "ready", error: null, tasks: {}, runs: {}, approvals: {}, activities: {}, reviews: {}, briefs: {}, jobCi: {}, subscribe, loadTaskForPage: lookup, load: vi.fn(async () => {}) });
   useAgentsStore.setState({ workspaceId: "workspace", status: "ready", agents: [{ id: "trama", workspace_id: "workspace", is_platform: true, revoked_at: null, status: "enabled" } as AgentRow], load: vi.fn(async () => {}) });
+  vi.mocked(getTaskAutonomy).mockReset().mockResolvedValue(policy());
+  reviewBrief.mockReset().mockResolvedValue({ data: { done_when: [] }, error: null });
+  reviewCi.mockReset().mockResolvedValue({ data: ciStatus(), error: null });
+  vi.mocked(getAgentClient).mockReturnValue({
+    from: () => {
+      const filters: Record<string, string | number> = {};
+      let signal: AbortSignal;
+      const query = {
+        select: () => query,
+        eq: (key: string, value: string | number) => { filters[key] = value; return query; },
+        maybeSingle: () => reviewBrief(String(filters.task_id), Number(filters.version), signal),
+        abortSignal: (value: AbortSignal) => { signal = value; return query; },
+      };
+      return query;
+    },
+    rpc: (name: string, args: Record<string, string>) => name === "set_workspace_autonomy"
+      ? Promise.resolve({ data: { level: args.p_level, previous: "ask" }, error: null })
+      : { abortSignal: (signal: AbortSignal) => reviewCi(args.p_task_id, signal) },
+  } as unknown as NonNullable<ReturnType<typeof getAgentClient>>);
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -55,6 +85,7 @@ async function mount(rows: DbRow[], allRows = rows, path = "/p/database", active
 const textButton = (label: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === label)!;
 const selectedControls = () => host.querySelector('[data-progress-panel]:not([hidden]) [aria-label="Existing task controls"]')?.getAttribute("data-page");
 const route = () => host.querySelector('[aria-label="Current route"]')!.textContent!;
+const needsYouCount = () => host.querySelectorAll(".task-progress-filter")[1]?.textContent;
 const selectTask = async (title: string) => {
   const button = [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Tasks and subtasks"] .task-progress-task')].find((item) => item.firstElementChild?.textContent === title)!;
   expect(button).toBeDefined();
@@ -186,6 +217,152 @@ it("counts a parent acceptance once while keeping a child's independent pending 
   expect(host.querySelectorAll('[aria-label="Tasks and subtasks"] .task-progress-task')).toHaveLength(2);
   await selectTask("Task child");
   expect(selectedControls()).toBe("child");
+});
+
+it("keeps autonomous jobs waiting for CI out of Needs you while explicit approvals still count", async () => {
+  const rows = [row("ready")], ready = task("ready", { state: "ready_for_review" }); setup(rows, [ready]);
+  vi.mocked(getTaskAutonomy).mockResolvedValue(policy("autonomous"));
+  reviewCi.mockResolvedValue({ data: ciStatus({ state: "pending" }), error: null });
+  await mount(rows);
+  expect(needsYouCount()).toBe("Needs you 0");
+  expect(host.querySelector(".task-progress-badge")?.textContent).toBe("Waiting for CI");
+  const controls = host.querySelector('[aria-label="Existing task controls"]');
+  await act(async () => { useAgentTasks.setState({ approvals: { action: { task_id: ready.id, status: "pending", expires_at: new Date(Date.now() + 60_000).toISOString() } as ApprovalRow } }); });
+  expect(needsYouCount()).toBe("Needs you 1");
+  expect(host.querySelector(".task-progress-badge")?.textContent).toBe("Needs you");
+  expect(host.querySelector('[aria-label="Existing task controls"]')).toBe(controls);
+  expect(getTaskAutonomy).toHaveBeenCalledOnce();
+});
+
+it("keeps a known person criterion visible while review metadata loads or fails", async () => {
+  const rows = [row("ready")], ready = task("ready", { state: "ready_for_review" }); setup(rows, [ready]);
+  const brief = { task_id: ready.id, version: ready.brief_version, done_when: [{ id: "human", text: "I approve the result", check: "human", by: "person" }] } as BriefRow;
+  useAgentTasks.setState({ briefs: { [`${ready.id}:${ready.brief_version}`]: brief } });
+  let fail!: (reason: Error) => void;
+  vi.mocked(getTaskAutonomy).mockImplementation(() => new Promise((_, reject) => { fail = reject; }));
+  reviewCi.mockResolvedValue({ data: ciStatus({ state: "pending" }), error: null });
+  await mount(rows);
+  expect(needsYouCount()).toBe("Needs you 1");
+  expect(reviewBrief).not.toHaveBeenCalled();
+  await act(async () => { fail(new Error("network unavailable")); });
+  expect(needsYouCount()).toBe("Needs you 1");
+  expect(host.textContent).toContain("Acceptance is waiting for CI results");
+  expect(textButton("Retry review status")).toBeDefined();
+});
+
+it("leaves failed reads neutral, retains saved controls and retries without duplicating unchanged reads", async () => {
+  const rows = [row("ready")]; setup(rows, [task("ready", { state: "ready_for_review" })]);
+  vi.mocked(getTaskAutonomy).mockRejectedValueOnce(new Error("offline"));
+  await mount(rows);
+  expect(needsYouCount()).toBe("Needs you 0");
+  expect(host.querySelector(".task-progress-badge")?.textContent).toBe("Ready for review");
+  const controls = host.querySelector('[aria-label="Existing task controls"]');
+  await act(async () => { textButton("Retry review status").click(); });
+  expect(needsYouCount()).toBe("Needs you 1");
+  expect(textButton("Retry review status")).toBeUndefined();
+  expect(getTaskAutonomy).toHaveBeenCalledTimes(2);
+  await act(async () => { useAgentTasks.setState({ activities: {} }); });
+  await mount(rows);
+  expect(getTaskAutonomy).toHaveBeenCalledTimes(2);
+  expect(host.querySelector('[aria-label="Existing task controls"]')).toBe(controls);
+});
+
+it("keeps missing criterion authorship unknown instead of assuming the agent can settle it", async () => {
+  const rows = [row("ready")]; setup(rows, [task("ready", { state: "ready_for_review" })]);
+  vi.mocked(getTaskAutonomy).mockResolvedValue(policy("autonomous"));
+  reviewBrief.mockResolvedValue({ data: { done_when: [{ id: "historical", text: "Review result", check: "human" }] }, error: null });
+  await mount(rows);
+  expect(host.querySelector(".task-progress-badge")?.textContent).toBe("Ready for review");
+  expect(textButton("Retry review status")).toBeDefined();
+  await act(async () => { host.querySelectorAll<HTMLButtonElement>(".task-progress-filter")[1].click(); });
+  expect(host.textContent).toContain("Review requirements are not fully available yet");
+});
+
+it("keeps a child's person requirement reachable when its parent's review requirements are unknown", async () => {
+  const rows = [row("parent"), row("child", { parentRowId: "row-parent" })];
+  setup(rows, [task("parent", { state: "ready_for_review" }), task("child", { parent_task_id: "task-parent", state: "ready_for_review", review_state: "approved" })]);
+  vi.mocked(getTaskAutonomy).mockResolvedValue(policy("autonomous"));
+  reviewCi.mockResolvedValue({ data: null, error: new Error("offline") });
+  reviewBrief.mockImplementation(async (id) => ({ data: { done_when: id === "task-child" ? [{ id: "visual", text: "Approve layout", check: "human", by: "person" }] : [] }, error: null }));
+  await mount(rows);
+  expect(needsYouCount()).toBe("Needs you 1");
+  expect(vi.mocked(getTaskAutonomy).mock.calls.every(([id]) => id === "task-parent")).toBe(true);
+  await act(async () => { host.querySelectorAll<HTMLButtonElement>(".task-progress-filter")[1].click(); });
+  expect(host.querySelectorAll('[aria-label="Tasks and subtasks"] .task-progress-task')).toHaveLength(2);
+  await selectTask("Task child");
+  expect(selectedControls()).toBe("child");
+});
+
+it("ignores an old revision's late policy and refreshes when the workspace policy changes", async () => {
+  const rows = [row("ready")], ready = task("ready", { state: "ready_for_review" }); setup(rows, [ready]);
+  let finishOld!: (result: TaskAutonomy) => void;
+  vi.mocked(getTaskAutonomy).mockImplementationOnce(() => new Promise((resolve) => { finishOld = resolve; })).mockResolvedValue(policy("autonomous"));
+  reviewCi.mockResolvedValue({ data: ciStatus({ state: "pending" }), error: null });
+  await mount(rows);
+  await act(async () => { useAgentTasks.setState({ tasks: { [ready.id]: { ...ready, brief_version: ready.brief_version + 1 } } }); });
+  expect(host.querySelector(".task-progress-badge")?.textContent).toBe("Waiting for CI");
+  await act(async () => { finishOld(policy("ask")); });
+  expect(needsYouCount()).toBe("Needs you 0");
+  vi.mocked(getTaskAutonomy).mockResolvedValue(policy("ask"));
+  await act(async () => { await setWorkspaceAutonomy("workspace", "ask"); });
+  expect(needsYouCount()).toBe("Needs you 1");
+  expect(getTaskAutonomy).toHaveBeenCalledTimes(3);
+});
+
+it.each(["person", "workspace"] as const)("ignores late review metadata after the %s changes", async (scope) => {
+  const rows = [row("ready")], ready = task("ready", { state: "ready_for_review" }); setup(rows, [ready]);
+  let finishOld!: (result: TaskAutonomy) => void;
+  vi.mocked(getTaskAutonomy).mockImplementationOnce(() => new Promise((resolve) => { finishOld = resolve; })).mockResolvedValue(policy("autonomous"));
+  reviewCi.mockResolvedValue({ data: ciStatus({ state: "pending" }), error: null });
+  await mount(rows);
+  await act(async () => {
+    if (scope === "person") {
+      useAuthStore.setState({ user: { id: "another-person" } as User });
+      useAgentTasks.setState({ tasks: { [ready.id]: { ...ready, owner_user_id: "another-person" } } });
+    } else {
+      useStore.setState({ syncWorkspaceId: "another-workspace" });
+      useAgentTasks.setState({ workspaceId: "another-workspace", tasks: { [ready.id]: { ...ready, workspace_id: "another-workspace" } } });
+    }
+  });
+  await act(async () => { finishOld(policy("ask")); });
+  expect(needsYouCount()).toBe("Needs you 0");
+  expect(host.querySelector(".task-progress-badge")?.textContent).toBe("Waiting for CI");
+});
+
+it("limits pending reads to three and pauses queued work behind Table without losing drafts", async () => {
+  const rows = Array.from({ length: 5 }, (_, index) => row(String(index)));
+  setup(rows, rows.map((item) => task(item.pageId, { state: "ready_for_review" })));
+  const finish: ((value: TaskAutonomy) => void)[] = [];
+  vi.mocked(getTaskAutonomy).mockImplementation(() => new Promise((resolve) => { finish.push(resolve); }));
+  await mount(rows);
+  expect(getTaskAutonomy).toHaveBeenCalledTimes(3);
+  const feedback = host.querySelector<HTMLTextAreaElement>('[aria-label="Feedback for 0"]')!;
+  feedback.value = "Keep this draft";
+  await mount(rows, rows, "/p/database", false);
+  expect(reviewCi.mock.calls.every(([, signal]) => signal.aborted)).toBe(true);
+  expect(vi.mocked(getTaskAutonomy).mock.calls.every(([, signal]) => signal?.aborted)).toBe(true);
+  await act(async () => { finish.forEach((resolve) => resolve(policy("ask"))); });
+  expect(getTaskAutonomy).toHaveBeenCalledTimes(3);
+  expect(needsYouCount()).toBe("Needs you 0");
+  vi.mocked(getTaskAutonomy).mockResolvedValue(policy("autonomous"));
+  await mount(rows);
+  expect(getTaskAutonomy).toHaveBeenCalledTimes(8);
+  expect(needsYouCount()).toBe("Needs you 0");
+  expect(host.querySelector('[aria-label="Feedback for 0"]')).toBe(feedback);
+  expect(feedback.value).toBe("Keep this draft");
+});
+
+it("revalidates a completed policy read when returning from Table without a window focus event", async () => {
+  const rows = [row("ready")]; setup(rows, [task("ready", { state: "ready_for_review" })]);
+  await mount(rows);
+  expect(needsYouCount()).toBe("Needs you 1");
+  await mount(rows, rows, "/p/database", false);
+  vi.mocked(getTaskAutonomy).mockResolvedValue(policy("autonomous"));
+  reviewCi.mockResolvedValue({ data: ciStatus({ state: "pending" }), error: null });
+  await mount(rows);
+  expect(needsYouCount()).toBe("Needs you 0");
+  expect(host.querySelector(".task-progress-badge")?.textContent).toBe("Waiting for CI");
+  expect(getTaskAutonomy).toHaveBeenCalledTimes(2);
 });
 
 it("opens a Trama draft for the selected task only after a click without changing tasks or pages", async () => {

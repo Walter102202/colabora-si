@@ -7,7 +7,7 @@ import { RowPanel } from "@/components/agents/RowPanel";
 import { mockCard } from "@/components/agents/card/mock";
 import type { TaskCardData } from "@/lib/agentCard";
 import type { TaskAutonomy } from "@/lib/agentAutonomy";
-import { setWorkspaceAutonomy } from "@/lib/agentActions";
+import { setTaskAutonomy, setWorkspaceAutonomy, subscribeWorkspaceAutonomy, workspaceAutonomyVersion } from "@/lib/agentActions";
 import { useAgentTasks } from "@/lib/agentTasks";
 import { useAgentsStore } from "@/lib/agentsStore";
 
@@ -53,6 +53,21 @@ const choose = (value: string) => act(async () => {
 });
 
 describe("autonomy in the row panel", () => {
+  it("notifies mounted policy readers only after a task-level change succeeds", async () => {
+    const changed = vi.fn();
+    const unsubscribe = subscribeWorkspaceAutonomy(changed);
+    const revision = workspaceAutonomyVersion();
+    try {
+      await setTaskAutonomy(task.id, "autonomous");
+      expect(changed).toHaveBeenCalledTimes(1);
+      expect(workspaceAutonomyVersion()).toBe(revision + 1);
+      rpc.mockResolvedValueOnce({ data: null, error: { message: "forbidden" } });
+      await expect(setTaskAutonomy(task.id, "ask")).rejects.toThrow("You are not allowed");
+      expect(changed).toHaveBeenCalledTimes(1);
+      expect(workspaceAutonomyVersion()).toBe(revision + 1);
+    } finally { unsubscribe(); }
+  });
+
   it("reads the line again after the workspace level changes from this browser", async () => {
     await mount();
     await answer(0, balanced);

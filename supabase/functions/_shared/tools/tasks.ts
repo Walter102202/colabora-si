@@ -481,11 +481,11 @@ const finishExternalOp: ToolDef = {
 const submitForReview: ToolDef = {
   name: 'submit_for_review',
   title: 'Submit the task for review',
-  description: "On a job with inherited CI checks, deliver a diff artifact naming the final commit (owner/repo@sha). At Autonomous autonomy the job can close when GitHub passes all checks and no human criteria remain. " +
+  description: "On a job with inherited CI checks, deliver a diff artifact naming the final commit (owner/repo@sha). At Autonomous the Lead calls close_job after all subtasks are accepted and no person-authored human criteria remain; GitHub is optional, but known failed or pending checks block job closure. " +
     'Delivers the run: summary is two or three plain sentences a person reads before accepting. Needs at least one artifact and an artifact for every "done when" criterion that is not checked by a person. ' +
     'Ends the run and cancels your questions still open. While a request still blocks (after await_questions, every open question ' +
     'does) it fails with waiting_on_human and the ids of those requests: wait for their answers first. ' +
-    'A policy reviewer, person or Lead reviews; you never mark the task done.',
+    'A policy reviewer, person or Lead reviews; an Autonomous Lead finishes eligible jobs with close_job.',
   inputSchema: object({
     run_id: { type: 'string', minLength: 1 },
     summary: { type: 'string', minLength: 1, maxLength: 10_000 },

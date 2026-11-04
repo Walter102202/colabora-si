@@ -14,7 +14,7 @@ import { pendingApprovalFor, taskForPage, useAgentTasks, type TaskRow } from "@/
 export interface BriefInput {
   objective: string;
   constraints?: string;
-  done_when?: { id: string; text: string; check: "human" | "deterministic" | "lead" | "ci"; command?: string }[];
+  done_when?: { id: string; text: string; check: "human" | "deterministic" | "lead" | "ci"; by?: "person" | "agent"; command?: string }[];
   decisions?: { at: string; by: string; text: string }[];
   sources?: { kind: "page" | "url" | "artifact"; ref: string; trust: "internal" | "external" }[];
   open_questions?: string[];
@@ -23,10 +23,11 @@ export interface BriefInput {
 }
 
 // `messages` gives an error code a text specific to this action instead of the generic one.
-async function rpc<T>(name: string, args: Record<string, unknown>, messages: Record<string, string> = {}): Promise<T> {
+async function rpc<T>(name: string, args: Record<string, unknown>, messages: Record<string, string> = {}, signal?: AbortSignal): Promise<T> {
   const client = getAgentClient();
   if (!client) throw new Error("No connection. Agents need you to sign in.");
-  const { data, error } = await client.rpc(name, args);
+  const request = client.rpc(name, args);
+  const { data, error } = await (signal ? request.abortSignal(signal) : request);
   if (error) throw new Error(Object.hasOwn(messages, error.message) ? messages[error.message] : agentErrorMessage(error));
   return data as T;
 }
@@ -117,8 +118,8 @@ export async function decideApproval(
 
 export async function closeTask(taskId: string, acceptance: "accepted" | "rejected", note: string | null = null): Promise<void> {
   await rpc("close_task", { p_task_id: taskId, p_acceptance: acceptance, p_note: note }, {
-    ci_pending: "CI has not finished on the final commit. Accept opens when it passes.",
-    ci_failed: "CI failed on the final commit. Ask for a fix or close without accepting.",
+    ci_pending: "CI is pending on the delivered commit. An eligible Autonomous job closes automatically when it passes.",
+    ci_failed: "CI failed on the delivered commit. Fix the failed check before accepting.",
   });
   await refresh(taskId);
 }
@@ -172,20 +173,22 @@ export async function setMergeRule(task: TaskRow, conditions: MergeCondition[] |
   return autonomy;
 }
 
-export function getTaskAutonomy(taskId: string): Promise<TaskAutonomy> {
-  return rpc<TaskAutonomy>("task_autonomy", { p_task_id: taskId });
+export function getTaskAutonomy(taskId: string, signal?: AbortSignal): Promise<TaskAutonomy> {
+  return rpc<TaskAutonomy>("task_autonomy", { p_task_id: taskId }, {}, signal);
 }
 
-export function setTaskAutonomy(taskId: string, level: AutonomyLevel | null): Promise<TaskAutonomy> {
-  return rpc<TaskAutonomy>("set_task_autonomy", { p_task_id: taskId, p_level: level });
+export async function setTaskAutonomy(taskId: string, level: AutonomyLevel | null): Promise<TaskAutonomy> {
+  const result = await rpc<TaskAutonomy>("set_task_autonomy", { p_task_id: taskId, p_level: level });
+  notifyAutonomyChanged();
+  return result;
 }
 
 export function getAutonomyPolicy(workspaceId: string): Promise<AutonomyPolicy> {
   return rpc<AutonomyPolicy>("get_autonomy_policy", { p_workspace_id: workspaceId });
 }
 
-// Bumped after this browser changes the workspace level, so an open task panel reads its autonomy again
-// (useSyncExternalStore). Settings opens over the page, which stays mounted.
+// Bumped after this browser changes a workspace or task level, so mounted
+// panels and Progress refresh their policy even when task.updated_at is unchanged.
 let workspaceAutonomyRevision = 0;
 const workspaceAutonomyListeners = new Set<() => void>();
 
@@ -198,10 +201,14 @@ export function subscribeWorkspaceAutonomy(listener: () => void): () => void {
   return () => { workspaceAutonomyListeners.delete(listener); };
 }
 
-export async function setWorkspaceAutonomy(workspaceId: string, level: AutonomyLevel): Promise<{ level: AutonomyLevel; previous: AutonomyLevel }> {
-  const result = await rpc<{ level: AutonomyLevel; previous: AutonomyLevel }>("set_workspace_autonomy", { p_workspace_id: workspaceId, p_level: level });
+function notifyAutonomyChanged(): void {
   workspaceAutonomyRevision++;
   for (const listener of workspaceAutonomyListeners) listener();
+}
+
+export async function setWorkspaceAutonomy(workspaceId: string, level: AutonomyLevel): Promise<{ level: AutonomyLevel; previous: AutonomyLevel }> {
+  const result = await rpc<{ level: AutonomyLevel; previous: AutonomyLevel }>("set_workspace_autonomy", { p_workspace_id: workspaceId, p_level: level });
+  notifyAutonomyChanged();
   return result;
 }
 
@@ -252,7 +259,7 @@ export function briefFromRow(pageId: string): BriefInput {
   return {
     objective: sections.goal?.join("\n") || page.title.trim() || "Untitled task",
     constraints: (sections.constraints ?? []).join("\n").slice(0, 4000),
-    done_when: criteria.map((text, i) => ({ id: `c${i + 1}`, text, check: "human" as const })),
+    done_when: criteria.map((text, i) => ({ id: `c${i + 1}`, text, check: "human" as const, by: "person" as const })),
     sources,
   };
 }

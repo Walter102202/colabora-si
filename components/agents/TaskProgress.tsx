@@ -10,6 +10,7 @@ import { taskForPage, useAgentTasks, type TaskRow } from "@/lib/agentTasks";
 import { parseProgressReadMarkers, progressReadKey, progressRows, taskProgressState, updatedSinceRead, type ProgressReadMarkers, type ProgressTone } from "@/lib/agentProgress";
 import { openTramaTaskDraft, useAgentProgressContext } from "@/lib/agentTramaContext";
 import { buildProgressMilestones } from "@/lib/agentProgressActivity";
+import { useProgressReviewContext } from "@/lib/agentProgressReview";
 import { usePageBodies } from "@/lib/usePageBodies";
 import { pageUrl, taskUrl, withQuery } from "@/lib/routes";
 import { formatRelative } from "@/lib/utils";
@@ -78,6 +79,12 @@ function ProgressWorkspace({ pageId, rows, allRows, onOpenRow, active = true, wo
   const byPage = useMemo(() => new Map(allRows.map((row) => [row.pageId, taskForPage({ tasks: activeTasks }, row.pageId)])), [allRows, activeTasks]);
   const pending = useMemo(() => Object.values(approvals), [approvals]);
   const entries = useMemo(() => progressRows(rows, allRows), [rows, allRows]);
+  const entryTasks = entries.flatMap(({ row }) => { const task = byPage.get(row.pageId); return task ? [task] : []; });
+  const requestedTask = requestedPage ? byPage.get(requestedPage) : null;
+  const reviewStatus = useProgressReviewContext({
+    tasks: requestedTask ? [...entryTasks, requestedTask] : entryTasks,
+    allTasks: activeTasks, agents, workspaceId, userId, active,
+  });
   const latestMilestones = useMemo(() => {
     const agentNames = Object.fromEntries(agents.map((agent) => [agent.id, agent.name]));
     const records = Object.values(activeTasks);
@@ -91,7 +98,7 @@ function ProgressWorkspace({ pageId, rows, allRows, onOpenRow, active = true, wo
       return [[task.id, milestones.at(-1)] as const];
     }));
   }, [entries, byPage, activeTasks, activities, reviews, agents, userId]);
-  const stateOf = (task: TaskRow) => taskProgressState(task, task.active_run_id ? runs[task.active_run_id] ?? null : null, pending, userId);
+  const stateOf = (task: TaskRow) => taskProgressState(task, task.active_run_id ? runs[task.active_run_id] ?? null : null, pending, userId, reviewStatus.contexts[task.id]);
   const needsYou = new Set(entries.filter(({ row }) => {
     const task = byPage.get(row.pageId);
     if (!task || !stateOf(task).needsYou) return false;
@@ -99,7 +106,8 @@ function ProgressWorkspace({ pageId, rows, allRows, onOpenRow, active = true, wo
     // Accepting the parent settles its delivered children. Independent pending
     // questions/actions still count and remain reachable on their own task.
     const ownDecision = pending.some((approval) => approval.task_id === task.id && approval.status === "pending" && Date.parse(approval.expires_at) > Date.now());
-    return !(parent?.state === "ready_for_review" && task.state === "ready_for_review" && !ownDecision);
+    return !(parent?.state === "ready_for_review" && stateOf(parent).needsYou && entryTasks.some((entry) => entry.id === parent.id)
+      && task.state === "ready_for_review" && !ownDecision);
   }).map(({ row }) => row.id));
   const shownEntries = onlyNeedsYou ? entries.filter((entry) => needsYou.has(entry.row.id) || entries.some((child) => needsYou.has(child.row.id) && child.ancestors.includes(entry.row.id))) : entries;
   const selectedRow = requestedPage ? allRows.find((row) => row.pageId === requestedPage) ?? null : shownEntries[0]?.row ?? null;
@@ -171,6 +179,8 @@ function ProgressWorkspace({ pageId, rows, allRows, onOpenRow, active = true, wo
     </div>
     {taskStatus === "error" && <p role="alert" className="mb-3 rounded-lg border border-border p-3 text-sm">{taskError || "Could not refresh tasks."} Your pages are kept. <button type="button" className="text-accent underline" onClick={() => void load(workspaceId)}>Try again</button></p>}
     {taskStatus === "loading" && selectedTask && <p role="status" className="mb-3 text-xs text-text-secondary">Refreshing progress. You can keep reviewing the saved work.</p>}
+    {reviewStatus.loading && <p role="status" className="mb-3 text-xs text-text-secondary">Checking who needs to review the delivered work.</p>}
+    {reviewStatus.error && <p role="status" className="mb-3 text-xs text-text-secondary">Could not confirm every review requirement. <button type="button" className="text-accent underline" onClick={reviewStatus.retry}>Retry review status</button></p>}
     <div className="task-progress-mobile-select">
       <label htmlFor={`progress-select-${pageId}`} className="mb-1 block text-xs text-text-secondary">Task</label>
       <select id={`progress-select-${pageId}`} className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm" value={selectedRow?.pageId ?? ""} onChange={(event) => selectPage(event.target.value)}>
@@ -182,7 +192,9 @@ function ProgressWorkspace({ pageId, rows, allRows, onOpenRow, active = true, wo
     <div className="task-progress-layout">
       <nav className="task-progress-list" aria-label="Tasks and subtasks">
         <p className="mb-3 flex items-center justify-between px-2 text-xs text-text-tertiary"><span>WORK</span><span>{rows.length} {rows.length === 1 ? "item" : "items"}</span></p>
-        {!shownEntries.length && <p className="px-2 py-5 text-sm text-text-secondary">{onlyNeedsYou ? "No loaded task is waiting on you in this view." : "No tasks match this view."}</p>}
+        {!shownEntries.length && <p className="px-2 py-5 text-sm text-text-secondary">{onlyNeedsYou ? reviewStatus.loading || reviewStatus.error
+          ? "Review requirements are not fully available yet. Use All work to inspect saved tasks."
+          : "No loaded task is waiting on you in this view." : "No tasks match this view."}</p>}
         {shownEntries.filter(({ ancestors, row }) => row.id === selectedRow?.id || onlyNeedsYou || ancestors.every((parent) => expanded.has(parent) || selectedEntry?.ancestors.includes(parent))).map(({ row, depth, contextOnly }) => {
           const task = byPage.get(row.pageId), state = task ? stateOf(task) : null;
           const children = entries.some((entry) => entry.row.parentRowId === row.id);
