@@ -356,3 +356,137 @@ begin
   end if;
   return jsonb_build_object('task_state','ready_for_review','review_task_id',v_review);
 end $$;
+-- Both outputs are explicit: Postgres cannot declare OUT text with RETURNS boolean.
+create or replace function private.job_may_close(p_job public.agent_tasks, out allowed boolean, out reason text)
+returns record language plpgsql stable security definer set search_path = '' as $$
+declare v_ci jsonb;
+begin
+  allowed := false;
+  if p_job.parent_task_id is not null or p_job.request_kind is not null or p_job.state<>'ready_for_review' then reason := 'not_delivered';
+  elsif private.task_autonomy_level(p_job.id)<>'autonomous' then reason := 'autonomy';
+  elsif exists(select 1 from public.agent_tasks s where s.parent_task_id=p_job.id and s.request_kind is null
+                and (s.state not in ('done','cancelled') or (s.state='done' and s.acceptance<>'accepted'))) then reason := 'subtasks_open';
+  elsif exists(select 1 from public.task_briefs b,jsonb_array_elements(b.done_when) c
+                where b.task_id=p_job.id and b.version=p_job.brief_version and c->>'check'='human') then reason := 'human_criteria';
+  else
+    v_ci := private.job_ci_checks(p_job);
+    if v_ci->>'state'='passed' then allowed := true;
+    else reason := 'ci_' || (v_ci->>'state'); end if;
+  end if;
+end $$;
+revoke all on function private.job_may_close(public.agent_tasks) from public,anon,authenticated;
+
+create or replace function private.close_job_accepted(p_job public.agent_tasks,p_by text)
+returns void language plpgsql security definer set search_path = '' as $$
+declare v_t public.agent_tasks%rowtype; v_ci jsonb; v_author uuid;
+begin
+  select * into v_t from public.agent_tasks where id=p_job.id for update;
+  if not (select allowed from private.job_may_close(v_t)) then return; end if;
+  v_ci := private.job_ci_checks(v_t);
+  if p_by='lead' then v_author := v_t.delegate_agent_id;
+  else select created_by into v_author from public.ci_connections where workspace_id=v_t.workspace_id
+         and repo=v_ci->>'repo' and revoked_at is null; end if;
+  update public.agent_tasks set state='done',acceptance='accepted',closed_at=now(),closed_by=null,
+    active_run_id=null,waiting_on=null,updated_at=now() where id=v_t.id;
+  update public.agent_approvals set status='cancelled' where task_id=v_t.id and status='pending';
+  insert into public.agent_activities(workspace_id,task_id,seq,type,body,author_type,author_id)
+    values(v_t.workspace_id,v_t.id,private.next_seq(v_t.id),'response',jsonb_build_object(
+      'text','Closed: CI passed on ' || left(v_ci->>'sha',7) || ' and every subtask was reviewed.',
+      'rule','ci_job','sha',v_ci->>'sha','checks',v_ci->'checks'),case when p_by='lead' then 'agent' else 'system' end,v_author);
+  perform private.release_dependents(v_t.id);
+  perform private.audit(v_t.workspace_id,'task.close_job',jsonb_build_object('task_id',v_t.id,'by',p_by,'sha',v_ci->>'sha'));
+  insert into public.agent_events(workspace_id,task_id,agent_id,type,payload,seq)
+    select v_t.workspace_id,v_t.id,v_t.delegate_agent_id,'task.updated',jsonb_build_object('job_state','done','ci',v_ci),private.next_event_seq(v_t.id)
+    where v_t.delegate_agent_id is not null;
+end $$;
+revoke all on function private.close_job_accepted(public.agent_tasks,text) from public,anon,authenticated;
+
+create or replace function public.close_job(p_task_id uuid)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_agent uuid := private.current_agent_id(); v_t public.agent_tasks%rowtype; v_allowed boolean; v_reason text;
+begin
+  if v_agent is null then raise exception using errcode='PT403',message='lead_only'; end if;
+  perform private.check_rate(v_agent);
+  select * into v_t from public.agent_tasks where id=p_task_id and parent_task_id is null for update;
+  if not found then raise exception using errcode='PT404',message='not_found'; end if;
+  if v_t.delegate_agent_id is distinct from v_agent or not exists(select 1 from public.agents where id=v_agent and role='lead') then
+    raise exception using errcode='PT403',message='lead_only';
+  end if;
+  if not private.can_write_page(v_t.row_page_id,v_t.workspace_id) then raise exception using errcode='PT403',message='forbidden'; end if;
+  select allowed,reason into v_allowed,v_reason from private.job_may_close(v_t);
+  if not v_allowed then raise exception using errcode='PT422',message='policy_denied',
+    detail=jsonb_build_object('reason',v_reason,'ci',private.job_ci_checks(v_t))::text; end if;
+  perform private.close_job_accepted(v_t,'lead');
+  return '{"task_state":"done"}'::jsonb;
+end $$;
+revoke all on function public.close_job(uuid) from public,anon;
+grant execute on function public.close_job(uuid) to authenticated;
+
+create or replace function public.record_ci_check(p_connection_id uuid, p_repo text, p_run jsonb)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_c public.ci_connections%rowtype; v_sha text; v_name text; v_conclusion text; v_url text; v_rows int;
+        v_t public.agent_tasks%rowtype; v_ci jsonb; v_passed boolean; v_tasks int := 0; v_job public.agent_tasks%rowtype; v_jobs uuid[] := array[]::uuid[];
+begin
+  select * into v_c from public.ci_connections where id = p_connection_id;
+  if not found then raise exception using errcode = 'PT404', message = 'not_found'; end if;
+  if v_c.revoked_at is not null then raise exception using errcode = 'PT410', message = 'connection_revoked'; end if;
+  if lower(coalesce(p_repo, '')) <> v_c.repo then raise exception using errcode = 'PT403', message = 'repo_mismatch'; end if;
+  update public.ci_connections set last_delivery_at = now() where id = v_c.id;
+  if p_run is null then return jsonb_build_object('recorded', false); end if;
+
+  v_sha := lower(coalesce(p_run->>'head_sha', ''));
+  v_name := p_run->>'name';
+  v_conclusion := p_run->>'conclusion';
+  v_url := p_run->>'html_url';
+  begin
+    insert into public.ci_check_runs (connection_id, check_run_id, workspace_id, repo, head_sha, head_branch, name, conclusion,
+                                      html_url, app_slug, started_at, completed_at)
+    values (v_c.id, (p_run->>'id')::bigint, v_c.workspace_id, v_c.repo, v_sha, p_run->>'head_branch', v_name, v_conclusion,
+            v_url, p_run->>'app_slug', (p_run->>'started_at')::timestamptz, (p_run->>'completed_at')::timestamptz)
+    on conflict (connection_id, check_run_id) do nothing;
+  exception when check_violation or not_null_violation or invalid_text_representation or invalid_datetime_format then
+    raise exception using errcode = 'PT400', message = 'invalid_input';
+  end;
+  get diagnostics v_rows = row_count;
+  if v_rows = 0 then return jsonb_build_object('recorded', false); end if;
+
+  v_passed := v_conclusion = 'success';
+  v_ci := jsonb_build_object('check', v_name, 'conclusion', v_conclusion, 'sha', v_sha, 'url', v_url);
+  for v_t in
+    select t.* from public.agent_tasks t
+     where t.workspace_id = v_c.workspace_id and t.state in ('working','input_required','ready_for_review')
+       and t.created_at <= (p_run->>'completed_at')::timestamptz
+       and exists (select 1 from public.agent_artifacts a
+                    where a.workspace_id = v_c.workspace_id and a.task_id = t.id and a.kind = 'diff' and a.superseded_by is null
+                      and lower(a.ref) in (v_c.repo || '@' || v_sha, 'https://github.com/' || v_c.repo || '/commit/' || v_sha))
+       and exists (select 1 from jsonb_array_elements(private.task_ci_requirements(t)) c where c->>'check'=v_name)
+     order by t.id for update of t
+  loop
+    v_tasks := v_tasks + 1;
+    v_jobs := array_append(v_jobs,coalesce(v_t.parent_task_id,v_t.id));
+    insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, author_type, author_id)
+    values (v_t.workspace_id, v_t.id, v_t.active_run_id, private.next_seq(v_t.id), 'response',
+            jsonb_build_object('text', 'CI: ' || v_name || case when v_passed then ' passed on ' else ' did not pass on ' end || left(v_sha, 7) || '.', 'ci', v_ci),
+            'system', v_c.created_by);
+    -- The Lead decides on the subtask either way; the worker only needs to hear about a failure.
+    insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
+    select p.workspace_id, p.id, p.active_run_id, p.delegate_agent_id, 'task.updated',
+           jsonb_build_object('subtask_id', v_t.id, 'ci', v_ci), private.next_event_seq(p.id)
+      from public.agent_tasks p
+     where p.id = v_t.parent_task_id and p.delegate_agent_id is not null;
+    if not v_passed and v_t.delegate_agent_id is not null then
+      insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
+      values (v_t.workspace_id, v_t.id, v_t.active_run_id, v_t.delegate_agent_id, 'task.updated',
+              jsonb_build_object('ci', v_ci), private.next_event_seq(v_t.id));
+    end if;
+  end loop;
+  for v_job in select * from public.agent_tasks where id=any(v_jobs) and parent_task_id is null order by id for update loop
+    if (select allowed from private.job_may_close(v_job)) then perform private.close_job_accepted(v_job,'ci'); end if;
+  end loop;
+  return jsonb_build_object('recorded', true, 'tasks', v_tasks);
+end $$;
+revoke all on function public.record_ci_check(uuid, text, jsonb) from public, anon, authenticated;
+grant execute on function public.record_ci_check(uuid, text, jsonb) to service_role;
+
+
+-- Replaces 0018: parent policy cannot override the two keys for CI evidence.
