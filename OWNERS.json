@@ -71,6 +71,7 @@
       "supabase/migrations/*_0068_*",
       "supabase/migrations/*_0069_*",
       "supabase/migrations/*_0070_*",
+      "supabase/migrations/*_0071_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -123,6 +124,11 @@
     ]
   },
   "branchExceptions": {
+    "a/meetings": ["OWNERS.json", "README.md", "public/llms.txt", "lib/types.ts", "lib/blockMeta.ts", "lib/seed.ts", "components/BlockEditor.tsx", "components/blocks/BlockItem.tsx", "supabase/functions/_shared/pageToMarkdown.ts", "supabase/functions/_shared/pageToHtml.ts", "lib/export.ts", "tests/clone/store.test.ts", "tests/clone/blockEditor.test.ts"],
+    "a/meetings-task1": ["OWNERS.json", "README.md", "public/llms.txt", "lib/types.ts", "lib/blockMeta.ts", "lib/seed.ts", "components/BlockEditor.tsx", "components/blocks/BlockItem.tsx", "supabase/functions/_shared/pageToMarkdown.ts", "supabase/functions/_shared/pageToHtml.ts", "lib/export.ts", "tests/clone/store.test.ts", "tests/clone/blockEditor.test.ts"],
+    "a/meetings-task2": ["OWNERS.json", "README.md", "public/llms.txt", "lib/types.ts", "lib/blockMeta.ts", "lib/seed.ts", "components/BlockEditor.tsx", "components/blocks/BlockItem.tsx", "supabase/functions/_shared/pageToMarkdown.ts", "supabase/functions/_shared/pageToHtml.ts", "lib/export.ts", "tests/clone/store.test.ts", "tests/clone/blockEditor.test.ts"],
+    "a/meetings-task3": ["OWNERS.json", "README.md", "public/llms.txt", "lib/types.ts", "lib/blockMeta.ts", "lib/seed.ts", "components/BlockEditor.tsx", "components/blocks/BlockItem.tsx", "supabase/functions/_shared/pageToMarkdown.ts", "supabase/functions/_shared/pageToHtml.ts", "lib/export.ts", "tests/clone/store.test.ts", "tests/clone/blockEditor.test.ts"],
+    "a/meetings-task4": ["OWNERS.json", "README.md", "public/llms.txt", "lib/types.ts", "lib/blockMeta.ts", "lib/seed.ts", "components/BlockEditor.tsx", "components/blocks/BlockItem.tsx", "supabase/functions/_shared/pageToMarkdown.ts", "supabase/functions/_shared/pageToHtml.ts", "lib/export.ts", "tests/clone/store.test.ts", "tests/clone/blockEditor.test.ts"],
     "a/autonomy-closes": ["OWNERS.json", "README.md", "public/llms.txt"],
     "a/trama-memory": ["OWNERS.json", "README.md", "public/llms.txt", "lib/routes.ts", "components/SettingsModal.tsx"],
     "a/job-close-evidence": ["OWNERS.json", "README.md", "public/llms.txt"],
