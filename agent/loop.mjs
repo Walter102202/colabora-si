@@ -190,7 +190,7 @@ export async function runAgent(opts) {
     try {
       for (let turn = 0; turn < maxTurns; turn++) {
         if (signal?.aborted) return null;
-        const reply = await model.chat({ messages, tools: noticeTools, reasoningEffort: efforts.step, promptCacheKey: cacheKey });
+        const reply = await model.chat({ messages, signal, tools: noticeTools, reasoningEffort: efforts.step, promptCacheKey: cacheKey });
         if (!modelDelivered) {
           modelDelivered = true;
           deliveredNotices.add(task.notice.event_id);
@@ -546,8 +546,12 @@ export async function runAgent(opts) {
       /** @type {import("./model.mjs").ChatResult} */
       let reply;
       try {
-        reply = await model.chat({ messages, tools, reasoningEffort, promptCacheKey: cacheKey });
+        reply = await model.chat({ messages, tools, signal, reasoningEffort, promptCacheKey: cacheKey });
       } catch (e) {
+        if (signal?.aborted) {
+          await handOverOrEnd("agent process stopped");
+          return done("aborted");
+        }
         const text = e instanceof Error ? e.message : String(e);
         await endRun("error", text.slice(0, 500));
         await notify({ kind: "error", task_id: taskId, text: `Model error on "${label}": ${text.slice(0, 200)}`, link });

@@ -846,3 +846,40 @@ it("waits for every subtask created by import_plan before ending the run", async
   expect(model.requests[2].messages.at(-1).content).toMatch(/task-a.*done.*"all_subtasks_closed":false/);
   expect(model.requests[3].messages.at(-1).content).toMatch(/task-b.*done.*"all_subtasks_closed":true/);
 });
+
+const abortError = () => new DOMException("The operation was aborted.", "AbortError");
+/** A model that answers only when the request's signal aborts. */
+function hangingModel() {
+  const requests: object[] = [];
+  return { name: "hang", requests, chat: (req: { signal?: AbortSignal }) => new Promise<never>((_, reject) => {
+    requests.push(req);
+    if (req.signal?.aborted) return reject(abortError());
+    req.signal?.addEventListener("abort", () => reject(abortError()), { once: true });
+  }) };
+}
+const handOverTool = { name: "hand_over", description: "Hand the run over", inputSchema: { type: "object", properties: { run_id: { type: "string" }, idempotency_key: { type: "string" }, checkpoint: { type: "object" } }, required: ["run_id", "checkpoint"] } };
+
+it("a) hands the task over at once when the process aborts during a model call", async () => {
+  const abort = new AbortController();
+  const mcp = createStubMcp({ tasks: queued, waits: [seed()], tools: [handOverTool], handlers: { hand_over: () => ({ ok: true }) } });
+  const model = hangingModel();
+  setTimeout(() => abort.abort(), 20);
+  const started = Date.now();
+  const { tasks } = await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, signal: abort.signal });
+  expect(Date.now() - started).toBeLessThan(1000);
+  expect(tasks[0].outcome).toBe("aborted");
+  expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "hand_over"]);
+  expect(mcp.calls.some((c) => c.name === "end_run")).toBe(false);
+});
+
+it("b) leaves a Lead notice undelivered when the process aborts during its model call", async () => {
+  const abort = new AbortController();
+  const notice = { task_id: "parent", state: "done", reason: "updated", notice: { event_id: "n1", ack_cursor: "ack:n1", type: "task.updated", payload: { subtask_id: "s1", environment_release: [] } } };
+  const mcp = createStubMcp({ handlers: { wait_for_my_tasks: () => ({ tasks: [notice], next_cursor: "scan" }) } });
+  let saved = { delivered: {} as Record<string, string> };
+  const noticeState = { load: () => saved, save: (v: typeof saved) => { saved = structuredClone(v); } };
+  setTimeout(() => abort.abort(), 20);
+  await runAgent({ mcp, model: hangingModel(), noticeState, clock: fakeClock(), maxTasks: 1, signal: abort.signal });
+  expect(saved.delivered).toEqual({});
+  expect(mcp.calls.filter((c) => c.name === "wait_for_my_tasks" && String(c.args.after).startsWith("ack:"))).toHaveLength(0);
+});
