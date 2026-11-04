@@ -64,7 +64,7 @@ muse --trust-workspace -c max_consecutive_stop_hook_continuations=30
 Hooks load only at session start and only with `--trust-workspace`. Muse stops continuing after 8 consecutive hook continuations by default; the recommended 30 covers a working day. Measured on Muse Code 1.4.14 (Windows, 2026-11-03).
 
 - The hook waits outside the model for up to `HOOK_WAIT_MIN` (25 minutes by default). Keep this below the hook's 1800-second timeout.
-- Feedback, queued work, a brief change or a handover continues the session with `{"decision":"block","reason":"…"}` and the shared task instructions. Lead notices use the same delivery and acknowledgement handling as Codex.
+- Feedback, queued work, a brief change or a handover continues the session with `{"decision":"block","reason":"â€¦"}` and the shared task instructions. Lead notices use the same delivery and acknowledgement handling as Codex.
 - It keeps waiting after a task closes. It never continues because of the clock; no new work means exit 0 without output.
 - In a continuation (`stop_hook_active`), it ignores old feedback and brief changes while preserving queued work and handovers.
 - Session state lives in `~/.config/muse/colabora-hook-<session_id>.json` (the id is sanitized and limited to 80 characters), or `WORKSPACE_HOOK_STATE`. Without a session id or override, state remains in memory. A plain queued task does not create a state file.

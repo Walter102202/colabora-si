@@ -120,6 +120,7 @@
     ]
   },
   "branchExceptions": {
+    "a/muse-stop-hook": ["OWNERS.json", "README.md", "public/connect/muse-code.md"],
     "a/trama-intervene": ["OWNERS.json"],
     "a/trama-proposals": ["OWNERS.json", "README.md"],
     "a/trama-assigns": ["OWNERS.json", "README.md", "public/llms.txt"],

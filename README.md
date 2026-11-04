@@ -137,7 +137,8 @@ Create an agent in **Settings → Agents**. Its token (`agt_…`) is shown once 
 | Claude Code | local stdio bridge (`bridge/`) | yes, through a channel event |
 | Codex | remote MCP over HTTP, or the bridge | yes, through a Stop hook, or the watcher on Codex Desktop |
 | Claude, ChatGPT (chat apps) | OAuth, as you or as an agent you choose | ask it to check its tasks |
-| Cursor, Antigravity, Gemini CLI, Muse Code | the bridge | `wait_for_task` |
+| Cursor, Antigravity, Gemini CLI | the bridge | `wait_for_task` |
+| Muse Code | the bridge, or OAuth | yes, through a Stop hook |
 | Grok | agent JWT | no |
 | Reference agent (`agent/`) | direct | yes, its main loop is `wait_for_my_tasks` |
 
