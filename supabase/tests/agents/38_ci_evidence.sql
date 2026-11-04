@@ -76,14 +76,14 @@ select public.set_agent_autonomy((:'lead'::jsonb->>'agent')::uuid,'autonomous');
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
 select public.claim_task(:'parent'::uuid, 'claude_code') ->> 'run_id' as lr \gset
-select public.review_task(:'sub'::uuid, 'approved', '[{"criterion_id":"c1","status":"verified","note":"looks right"}]'::jsonb,
+select public.review_task(:'sub'::uuid, 'approved', '[{"criterion_id":"c1","status":"verified","evidence_ref":"https://github.com/acme/app/runs/2","note":"looks right"}]'::jsonb,
                           '[]'::jsonb, :'art'::uuid, :'lr'::uuid);
-select is(tests.error_of(format('do $b$ declare r jsonb; begin r := public.close_subtask(%L::uuid); raise exception using message = r->>''ci''; end $b$', :'sub')), 'deferred_to_job', 'an approved review defers a pending CI check');
+select is(tests.error_of(format('do $b$ declare r jsonb; begin r := public.close_subtask(%L::uuid); raise exception using message = r->>''task_state''; end $b$', :'sub')), 'done', 'an evidenced review closes despite a pending CI check');
 select tests.reset_role();
 update public.task_briefs set policies = '{"subtask_close":"lead"}' where task_id = :'parent'::uuid;
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
-select is(tests.error_of(format('do $b$ declare r jsonb; begin r := public.close_subtask(%L::uuid); raise exception using message = r->>''ci''; end $b$', :'sub')),
-          'deferred_to_job', 'lead policy defers CI with an approved current review');
+select is(tests.error_of(format('do $b$ declare r jsonb; begin r := public.close_subtask(%L::uuid); raise exception using message = r->>''task_state''; end $b$', :'sub')),
+          'done', 'Autonomous closure requires evidence even with a lead policy');
 select tests.reset_role();
 update public.task_briefs set policies = '{}' where task_id = :'parent'::uuid;
 
@@ -115,7 +115,7 @@ select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent
 select is(public.task_ci_status(:'sub'::uuid)->0->>'sha', repeat('c', 40), 'CI evaluates the newest delivered commit');
 select is(tests.error_of(format('do $b$ begin perform public.close_subtask(%L::uuid); raise exception ''unexpected_success''; end $b$', :'sub')),
           'policy_denied', 'a verified review of the old commit cannot close a newer passing commit');
-select public.review_task(:'sub'::uuid, 'approved', '[{"criterion_id":"c1","status":"verified"}]'::jsonb, '[]'::jsonb, :'newer_art'::uuid, :'lr'::uuid);
+select public.review_task(:'sub'::uuid, 'approved', '[{"criterion_id":"c1","status":"verified","evidence_ref":"https://github.com/acme/app/runs/2"}]'::jsonb, '[]'::jsonb, :'newer_art'::uuid, :'lr'::uuid);
 select is((public.close_subtask(:'sub'::uuid))->>'task_state', 'done', 'the reviewer''s finding plus the passing run close it');
 select tests.reset_role();
 
@@ -189,7 +189,7 @@ select public.record_ci_check(:'conn2'::uuid, 'acme/other', jsonb_build_object('
   'conclusion', 'success', 'html_url', 'https://github.com/acme/other/runs/10', 'completed_at', now()));
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
-select is(tests.error_of(format('select public.review_task(%L::uuid,%L,%L::jsonb,%L::jsonb,%L::uuid,%L::uuid)',:'self_task','approved','[{"criterion_id":"c1","status":"verified"}]','[]',:'self_art',:'lr')),'self_review','the artifact author is rejected before recording a review');
+select is(tests.error_of(format('select public.review_task(%L::uuid,%L,%L::jsonb,%L::jsonb,%L::uuid,%L::uuid)',:'self_task','approved','[{"criterion_id":"c1","status":"verified","evidence_ref":"https://github.com/acme/app/runs/2"}]','[]',:'self_art',:'lr')),'self_review','the artifact author is rejected before recording a review');
 select is(tests.error_of(format('do $b$ begin perform public.close_subtask(%L::uuid); raise exception ''unexpected_success''; end $b$', :'self_task')),
           'policy_denied', 'the artifact author cannot supply the CI review key as Lead');
 select public.create_subtask(:'parent'::uuid, 'page_ci_worker',
@@ -204,7 +204,7 @@ select public.claim_task(:'worker_self_task'::uuid, 'worker')->>'run_id' as work
 select public.add_artifact(:'worker_self_run'::uuid, 'diff', 'acme/other@dddddddddddddddddddddddddddddddddddddddd', 'Worker commit', array['c1'])->>'artifact_id' as worker_self_art \gset
 select public.submit_for_review(:'worker_self_run'::uuid, 'done', array[:'worker_self_art'::uuid]);
 select public.claim_task(:'self_review_task'::uuid, 'reviewer')->>'run_id' as self_review_run \gset
-select is(tests.error_of(format('select public.review_task(%L::uuid,%L,%L::jsonb,%L::jsonb,%L::uuid,%L::uuid)',:'worker_self_task','approved','[{"criterion_id":"c1","status":"verified"}]','[]',:'worker_self_art',:'self_review_run')),'self_review','the artifact author is rejected before recording a review');
+select is(tests.error_of(format('select public.review_task(%L::uuid,%L,%L::jsonb,%L::jsonb,%L::uuid,%L::uuid)',:'worker_self_task','approved','[{"criterion_id":"c1","status":"verified","evidence_ref":"https://github.com/acme/app/runs/2"}]','[]',:'worker_self_art',:'self_review_run')),'self_review','the artifact author is rejected before recording a review');
 select is(tests.error_of(format('do $b$ begin perform public.close_subtask(%L::uuid); raise exception ''unexpected_success''; end $b$', :'worker_self_task')),
           'policy_denied', 'a review task cannot let the artifact author supply the CI review key');
 select tests.reset_role();

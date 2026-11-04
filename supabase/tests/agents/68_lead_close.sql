@@ -33,13 +33,13 @@ select public.submit_for_review(x.run, 'Done', array[(public.add_artifact(x.run,
 select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
 select public.claim_task(:'job'::uuid, 'claude_code') ->> 'run_id' as lr \gset
-select public.review_task(t, 'approved', '[{"criterion_id":"c1","status":"verified"}]'::jsonb, '[]'::jsonb, null, :'lr'::uuid)
+select public.review_task(t, 'approved', '[{"criterion_id":"c1","status":"verified","evidence_ref":"page:delivery"}]'::jsonb, '[]'::jsonb, null, :'lr'::uuid)
   from unnest(array[:'closes'::uuid, :'needs_person'::uuid, :'own_work'::uuid, :'lower_level'::uuid]) t;
 
 select is(tests.error_of(format('select public.close_subtask(%L::uuid)', :'closes')), '', 'the Lead closes an approved subtask of a job without a closure policy');
 -- Probe deferral without consuming the delivery used by the rejection regression below.
 select is(tests.error_of(format('do $b$ declare r jsonb; begin r:=public.close_subtask(%L::uuid); raise exception using message=r->>''human''; end $b$',:'needs_person')),
-          'deferred_to_job','a human criterion waits for the job Accept after independent review');
+          'policy_denied','a human criterion waits for the job Accept after independent review');
 select is(tests.error_of(format('select public.close_subtask(%L::uuid)', :'unreviewed')), 'policy_denied', 'a delivery nobody approved stays open');
 
 -- Whoever authored the delivery cannot be the one whose approval closes it.
