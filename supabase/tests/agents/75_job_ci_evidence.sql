@@ -177,7 +177,7 @@ select tests.reset_role();
 update public.task_briefs set done_when='[]' where task_id=:'job'::uuid;
 update public.agent_tasks set state='cancelled' where parent_task_id=:'job'::uuid;
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
-select is(tests.detail_of(format('select public.close_job(%L::uuid)',:'job'))::jsonb->>'reason','subtasks_open','cancelled subtasks are not accepted deliveries');
+select is(tests.error_of(format('do $b$ begin perform public.close_job(%L::uuid); raise exception ''closed''; end $b$',:'job')),'closed','cancelled subtasks are settled and do not block closure');
 select tests.reset_role();
 update public.agent_tasks set state='done' where parent_task_id=:'job'::uuid;
 update public.agent_artifacts set ref='acme/app@eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' where id=:'final'::uuid;
