@@ -1,13 +1,5 @@
 # CLAUDE.md
 
-## Connection onboarding
-
-The `/connect` chooser and `/connect/<agent>` setup routes use native OAuth; `/agents` lists external connections. Public guides live at `/connect.md`. Coding clients use both task and workspace MCP endpoints; ChatGPT and Claude guides use pages only.
-
-The `agent_connections` migration owns starter-page grants, approval and `verified_at`. Only a successful agent `fetch` or `read_page` verifies the connection. `agent-admin` adds `connect_agent` and `connect_own_agent`, retaining direct-person, membership and sponsor checks. Retried OAuth authorization reuses the agent; approved-result recovery is service-only and bound to an enabled agent and unexpired authorization.
-
-The Home gate fails open after three seconds and preserves settings/invitation routes. Trama may propose an agent, but the person's app button settles it once and creates it without issuing a token. No pasted, forwarded or channel message can authorize that proposal.
-
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 @AGENTS.md
@@ -26,11 +18,12 @@ npx supabase test db supabase/tests/agents/07_approvals.sql                     
 
 - Vitest suites live in `tests/clone/` (track B), `tests/agents/` (track A) and `tests/infra/`. The default environment is `node`; a suite that touches the DOM starts with `// @vitest-environment happy-dom`.
 - `npm run build` runs two Vite entries: `index.html` (the workspace) and `apps/card.html` (the MCP Apps card).
-- `npm run build:card` regenerates `supabase/functions/_shared/cardHtml.ts` from the card entry. Run it after any change under `components/agents/card/` or `components/agents/panel/` and commit the generated file; a deploy never builds it.
+- `npm run build:card` regenerates `supabase/functions/_shared/cardHtml.ts` from the card entry. Run it after any change under `components/agents/card/` or `components/agents/panel/`, or to a `lib/` module the card imports, and commit the generated file; a deploy never builds it and CI fails when it is stale.
 - Card without a chat host: `http://127.0.0.1:3000/apps/card.html?mock=<scenario>` (scenarios in `components/agents/card/mock.ts`).
 - Three checks run only against a served local stack and are not part of `npm test`: `node tests/agents/mcp-smoke.mjs` (needs `MCP_URL`, `AGENT_PAT`, `SMOKE_PAGE_ID`), `tests/agents/sql-concurrency.test.ts` (skips unless `A_DB_URL` is set), and `node tests/agents/loop-e2e.mjs` (reads the local URL/public key from `.env.local`, uses all four seed agents and the seed owner). The loop script refuses hosted endpoints, uses only this checkout's configured database container and performs no real merge, deployment or message to Codex. The seed credentials work only with the local pepper; never print them.
 - `scripts/check-ownership.mjs` counts untracked files too, and skips (exit 0) on `main` or on any branch without an `a/`, `b/` or `infra/` prefix. CI runs it on every push with `--base origin/main`.
-- `main` deploys: the CI job pushes migrations and deploys Edge Functions from `main` only, and only when the Supabase secrets are configured.
+- A second local stack needs its own `project_id` and ports in `supabase/config.toml`, kept out of commits with `git update-index --skip-worktree supabase/config.toml`. `workspace-mcp-smoke.mjs` refuses to run unless that file names `colabora-si-p14` and port 60990.
+- Pushing to `main` deploys. Vercel ships the frontend and the `trama` daemon right away; only `main` builds. `deploy-backend` waits for approval in the `production` environment and skips without the Supabase secrets, so a frontend that needs a new migration goes live first unless the backend ships before the push.
 
 ## Architecture
 
@@ -43,7 +36,7 @@ A correction (review, feedback, rejected close) opens a `lesson` request for the
 - **Browser.** The Zustand store (`lib/store.ts`) is an in-memory replica. Its local copy lives in the `colabora-local` IndexedDB database, managed by `lib/localPersistence.ts`, with separate metadata, bodies, search records and small workspace settings. Every mutation remains a synchronous store action returning new objects, built on `lib/pageMutations.ts` and `lib/dbMutations.ts`. Startup reads metadata; an unloaded page is a symbol-marked shell whose empty arrays are placeholders, not content. Load required bodies with `ensurePageBodies` in `lib/pageBodies.ts` or `usePageBodies` in `lib/usePageBodies.ts`. Hydration runs inside `applyingExternal`: loading is not editing and creates no operations, history or versions. Remote downloads are cached explicitly. Without `VITE_SUPABASE_URL`, IndexedDB is the durable copy and `getSupabase()` returns `null`; unavailable storage leaves all bodies in memory with a warning.
 - **Logging out.** `signOut` first sends pending edits and asks before losing any that cannot be sent. `discardLocalCopy` stops sync, clears history and the store, and calls `clearLocalPages`: an on-disk epoch rejects old writers, a persistent clear marker recovers interrupted wipes, and other tabs reload. Cached files have their own interrupted-clear barrier. Account switching uses the same cleanup before loading the new account. Recovery copies in `localStorage` and account-scoped pending shared-page operations in `colabora-sync` deliberately remain (`clearStoredOps(true)`), preserving work that has not reached the server. `SyncConflictModal` is only for pages written before signing in.
 - **Undo.** Import, reset, permanent deletion and empty-trash UI actions use the loaded helpers in `lib/pageBodies.ts` to retain original bodies before changing history. Their synchronous store actions reject unloaded originals and use `historyAction` to capture a separate snapshot. Missing bodies prevent these destructive actions; account cleanup deliberately clears history instead.
-- **Supabase.** With a backend, Postgres is the source of truth and the store is a replica kept live by Realtime. Edge Functions run in Deno and can only import what lives under `supabase/functions/`, so the pure modules they share with the app (`types`, `agentInput`, `dbCompute`, `dbFilter`) are byte-for-byte copies in `supabase/functions/_shared/lib/` with imports rewritten to relative paths. `tests/agents/functionsSharedSync.test.ts` fails when a copy drifts: change the source in `lib/`, then recopy. The sources belong to track B and the copies to track A.
+- **Supabase.** With a backend, Postgres is the source of truth and the store is a replica kept live by Realtime. Edge Functions run in Deno and can only import what lives under `supabase/functions/`, so the pure modules they share with the app (the `SHARED` list in `tests/agents/functionsSharedSync.test.ts`) are byte-for-byte copies in `supabase/functions/_shared/lib/` with imports rewritten to relative paths. `tests/agents/functionsSharedSync.test.ts` fails when a copy drifts: change the source in `lib/`, then recopy. The sources belong to track B and the copies to track A.
 
 ### The write path: page operations
 
@@ -56,7 +49,7 @@ A correction (review, feedback, rejected close) opens a `lesson` request for the
 
 - No API routes, no middleware, no secrets in the browser. Row Level Security plus `SECURITY DEFINER` RPCs with an empty `search_path` are the boundary; each RPC repeats its own access check and has a negative pgTAP test in `supabase/tests/`.
 - People and agents are both auth users. An agent is an `agents` row plus an auth user whose password is derived from `AGENT_LOGIN_PEPPER`; its personal access token (`agt_…`) is exchanged at `agent-token` for a one-hour JWT. Agent OAuth reads/decisions run in `agent-admin` as that same agent Auth user, after direct-person, sponsor/owner and current-membership checks. `_shared/jwt.ts` preserves the signed principal; the 0029 hook validates an explicit live client link and adds only `via_user`. It never substitutes identity, and missing/orphaned/former-member links fail closed. `current_agent_id()` checks the same link for Storage and Realtime RLS, without an OAuth lookup for direct tokens. SQL `jwt_client_id()` and the shared Edge `oauthClientId()` preserve OAuth origin through the `oauth_provider/authorization_code` AMR method when MFA omits client_id; unresolved OAuth tokens are denied, including through human membership/editor/share RLS. Auth sees the native agent subject. A trigger freezes agent password, email and phone (including pending changes); Rotate login prepares a service-only, encrypted, one-use password ticket with a 30-second deadline before the Auth update. The ticket cannot authorize a chat-chosen password. Separate insert triggers reject agent MFA factors, WebAuthn credentials and provider identities without exceptions. As-you consent accepts only the single `TRUSTED_HUMAN_HOSTS` HTTPS policy; its token is a full human session. All chat tokens are rejected by `agent-admin` and PAT issuance. The metadata RPCs read Auth OAuth tables without binding a pending authorization, so remembered consent can be linked safely before returning its code. TOTP enrollment and verification are enabled locally and covered by the real smoke.
-- The `mcp` function builds a supabase-js client with the caller's own token (`callerClient`), so RLS decides every read and write. The service role appears in `agent-admin` (after the caller's RLS check), `trama-runtime` (after its own secret), `agent-dispatch`, the `send-*` functions, `voice-transcribe` (only to record what the provider answered, after `voice_reserve` runs as the caller), `github-webhook` after checking the signature over the raw GitHub delivery, `waitlist`, whose public caller reaches only the service-only waitlist RPCs, and `waitlist-invites`, which answers only to the dispatch secret and uses Auth only to issue an invitation link.
+- The `mcp` function builds a supabase-js client with the caller's own token (`callerClient`), so RLS decides every read and write. The service role appears in `agent-admin` (after the caller's RLS check), `trama-runtime` (after its own secret), `agent-dispatch`, the `send-*` functions, `voice-transcribe` (only to record what the provider answered, after `voice_reserve` runs as the caller), `github-webhook` after checking the signature over the raw GitHub delivery, `waitlist`, whose public caller reaches only the service-only waitlist RPCs, and `waitlist-invites`, which answers only to the dispatch secret and uses Auth only to issue an invitation link. It also appears in `agent-token` (PAT exchange), `account-link` (service-only RPCs, after its generic answer), `channel-notify` (after the dispatch secret) and `telegram-webhook` (after the secret token).
 - `decide_approval`, `close_task` (which carries the acceptance) and `revoke_agent` are `humans_only`; an agent calling them gets that error.
 
 ### The task model
@@ -66,10 +59,18 @@ A correction (review, feedback, rejected close) opens a `lesson` request for the
 - The brief is the row's page: sections keyed by `Block.key` (`brief:goal`, `brief:done_when`, `brief:constraints`, `brief:sources`). `task_briefs` stores derived versions. `briefFromRow` in `lib/agentActions.ts` reads those keys and `briefBlocks` in `_shared/tools/lead.ts` writes them, so the keys in `lib/agentTasksTemplate.ts` (the "Agent Tasks" database template) are a contract between the two.
 - The Lead role (0009) is a role any agent can hold: `create_task`, `create_subtask`, `review_task`, `close_subtask`. `close_subtask` succeeds by brief policy, a verified deterministic check, or (0062) at Autonomous autonomy when an agent other than the author approved it and no criterion is human, deterministic or CI. A person's Accept on a job also closes its delivered subtasks. An agent's review counts from any session, so a Lead connected by OAuth can close; a person's chat review does not, and conditional approvals keep requiring a direct session; CI criteria additionally require a current verified review and a passing GitHub check (0030), even under a Lead closure policy. Everything else is closed by a person.
 - Write and task tools take an idempotency key. Every agent RPC calls `private.check_rate` first (per-agent rate limit); the monthly budget is checked when a task is created or delegated (`budget_exceeded`) and rolled up hourly (migration 0010).
+- Conditional rules are edited in the direct app session; payment is never conditionally approved.
+
+### Jobs, roles and autonomy
+
+- A job is a top-level row of an "Agent Tasks" database; its subtasks nest under it through `agent_tasks.parent_task_id`. `lib/agentJobs.ts` derives the board states. A subtask row written by a person stays a page until the Lead adopts it (`get_pending_job_rows`, 0059).
+- The row decides a session's role, not the chat. `join_job` finds the job by name, answers `joined`, `other_lead`, `no_lead`, `ambiguous`, `not_found` or `not_assigned`, and never grants access. `assign_job` grants it on the whole database, so a chosen agent sees every job there. Claiming a subtask also counts as joining (0063).
+- `set_agent_role` and `set_agent_autonomy` are for the owner, from a direct session. In `private.own_autonomy_level`, a workspace on Ask first returns `ask` for everyone, and `agents.autonomy` is a ceiling (null inherits the workspace).
+- Platform agents default to one work run and three request runs (`max_active_*`, 0064). Null means unlimited, as for external agents.
 
 ### The MCP server
 
-- `supabase/functions/_shared/mcp.ts` is a hand-written Streamable HTTP server: one POST endpoint, JSON responses only, no SSE, no session state, both protocol eras (2025 and 2026). `supabase/functions/mcp/server.ts` assembles the server from `_shared/tools/{read,write,tasks,handover,wait,lead,lessons,sources,context,ai,card}.ts` plus the prompts, resources and instructions in `_shared/tools/prompts.ts`.
+- `supabase/functions/_shared/mcp.ts` is a hand-written Streamable HTTP server: one POST endpoint, JSON responses only, no SSE, no session state, both protocol eras (2025 and 2026). `supabase/functions/mcp/server.ts` assembles the server from `_shared/tools/{read,write,tasks,handover,wait,lead,lessons,sources,context,ai,card,person}.ts` plus the prompts, resources and instructions in `_shared/tools/prompts.ts`; `workspace-mcp/server.ts` uses `{read,write,workspace}`.
 - A tool is a `ToolDef` (name, input and output JSON schema, annotations, handler). Handlers validate, call RPCs through the narrow `Db` interface in `_shared/db.ts`, and return `{text, structured}`. Tests replace `Db` with an in-memory fake, so tool tests run without a database (see `tools/*.test.ts`).
 - Wait tools (`wait_for_task`, `wait_for_my_tasks`) hold a call for up to 120 s under RLS. An empty iteration costs one select on `agent_events` (backoff from 1.5 s to 10 s); a full snapshot runs on a fresh event, at least every 10 s and at the deadline. They return a cursor that is evaluated before sleeping, so nothing is lost between calls.
 - `agent-webhook` runs the same `ToolDef`s for push agents, so validation and errors match the MCP path.
@@ -78,12 +79,16 @@ A correction (review, feedback, rejected close) opens a `lesson` request for the
 ### How harnesses learn that a task changed
 
 - Every change lands in the `agent_events` outbox (0008). From there: Realtime channel `agent-<agent_id>` (the bridge listens), a pgmq queue drained by `agent-dispatch` into signed CloudEvents for webhook agents, or simply marked delivered by the next `wait_for_my_tasks` or `list_my_tasks` call of a pull agent.
-- `bridge/` is a stdio MCP proxy for local harnesses: it exchanges the PAT for a JWT, retries once on 401, forwards every request, and emits `claude/channel` notifications that wake an idle Claude Code session. `connect/codex/on-stop.mjs` is a Codex Stop hook that waits outside the model (through `bridge/remote.mjs`) and continues the session with `{"decision":"block"}`. `agent/loop.mjs` drives the runtime tools itself (`RUNTIME_TOOLS` are hidden from the model) and exposes the rest as OpenAI-style tools.
+- `bridge/` is a stdio MCP proxy for local harnesses: it exchanges the PAT for a JWT, retries once on 401, forwards every request, and emits `claude/channel` notifications that wake an idle Claude Code session. `connect/codex/on-stop.mjs` is a Codex Stop hook that waits outside the model (through `bridge/remote.mjs`) and continues the session with `{"decision":"block"}`. For Codex Desktop, `node connect/codex/watch.mjs` replaces the hook and forwards task changes to that session through `codex queue`; run one or the other, and test only with a newly-created disposable chat. `agent/loop.mjs` drives the runtime tools itself (`RUNTIME_TOOLS` are hidden from the model) and exposes the rest as OpenAI-style tools.
 - `bridge/`, `agent/` and `connect/` are plain Node 22 `.mjs` with `.d.mts` typings, excluded from `tsc` and ESLint, and tested from Vitest in `tests/agents/` (`bridge.test.ts`, `agentLoop.test.ts` against `agent/test/stub-model.mjs` and `stub-mcp.mjs`, `connect-codex-hook.test.ts`).
 
 ### Managed Trama
 
 `agent/fleet.mjs` is one always-on process with one `runAgent` listening per workspace. `trama-runtime` answers only to `TRAMA_RUNTIME_SECRET`: it lists the Tramas to serve, creates the one a workspace lacks and signs an agent in, so no PAT exists. Without that secret the function answers 404 and the process refuses to start, so a fork has no managed Trama and keeps Enable Trama. A workspace whose owner revoked Trama keeps that row and is not given another. On Vercel it runs as the `trama` daemon in `vercel.json`; it reads `VITE_SUPABASE_URL`, `VITE_APP_URL`, `META_MODEL_API_KEY` and `TRAMA_RUNTIME_SECRET` from the project, and `agent/` must stay self-contained because it is the build context.
+
+The model defaults to `muse-wonder-1.0`. `agent/mcpCompose.mjs` joins the task and workspace endpoints into one client; the task endpoint wins a name collision.
+
+Trama proposes and a person confirms. `start_proposed_work` approves exactly the summary shown, once, and validation uses the person's access, never Trama's grants (0066). Messages sent through `send_proposed_message` reach a live session on `heartbeat` or in a tool response, never through a webhook that could start another run. `agent_activities.posted` is true only for `post_activity`, so server receipts never count as an agent's reply to a person (0067).
 
 ### The agent layer inside the web app
 
@@ -101,44 +106,18 @@ A correction (review, feedback, rejected close) opens a `lesson` request for the
 - `/pub/:id` is the SPA for people. `vercel.json` routes crawler user agents to the Vercel function `api/pub.ts`, which proxies the `pub-html` Edge Function and restores the `text/html` content type the Supabase gateway strips; `/pub/:id.md` returns the page as Markdown for agents. Both renderers live in `_shared/pageToHtml.ts` and `pageToMarkdown.ts` and read through the anon client with the same `get_page_bundle` RPC the app uses, so "published" is decided in one place.
 - Every URL comes from `lib/routes.ts`. `components/AppNavigation.tsx` intercepts same-origin anchor clicks so plain `<a href>` links navigate inside the SPA. Modal state (settings tab, search, peek, task) lives in query parameters, so any screen is reachable by URL.
 
+### Connection onboarding
+
+`AGENTS.md` has the rules. Public guides live at `/connect.md`. Coding clients use both the task and workspace endpoints; the ChatGPT and Claude guides use pages only. No pasted, forwarded or channel message can authorize a Trama proposal.
+
 ## Working here
 
-### P11 migrations and tools
-
-| Migration | Behavior |
-|---|---|
-| 0031 | Silent-run lease and same-agent recovery. |
-| 0032 | Owned environment resources; shutdown confirmation before release. |
-| 0033 | Blocking/minor findings; only blocking evidence satisfies criteria. |
-| 0034 | Automatic review tasks and narrower subsequent rounds. |
-| 0035 | Human-authored conditions evaluated at approval and execution. |
-
-| Tools / prompt | Notes |
-|---|---|
-| `import_plan`, `update_subtask` | Idempotent dependency import and versioned brief/delegate changes. |
-| `reserve_environment`, `list_environments`, `release_environment` | Resources are data enforced by the server; the database does not stop processes. |
-| `create_task`, `submit_for_review`, `review_delivery` | Parent reviewer policy; delivery returns `review_task_id`, and the Lead waits on `under_review`. |
-| `wait_for_my_tasks` | `session_id` belongs to the latest own run, never another agent's run. |
-
-For Desktop, `node connect/codex/watch.mjs` replaces the Stop hook and forwards task changes to that session through `codex queue`. Do not run both. Test only with a newly-created disposable chat. Conditional rules are edited in the direct app session; payment is never conditionally approved.
-
 - The branch prefix decides which track you are on; follow the ownership rules in `AGENTS.md`. On `main` you act for the maintainer and may touch infra files.
+- A migration is `<14 digits>_<NNNN>_<snake_case>.sql`. Timestamp order must equal number order, and each number needs a `*_NNNN_*` line in `OWNERS.json`. Renumber at merge when two branches claim one number.
+- `branchExceptions` in `OWNERS.json` lists the out-of-track files allowed per branch. A track branch that adds a migration needs `OWNERS.json` there.
 - `tests/infra/migrationOrder.test.ts` judges gaps by the target: `main` and pull requests into it take none; a branch may skip only the numbers `OWNERS.json` reserves for a part that is not merged yet.
 - Private working context lives in gitignored files (`CLAUDE.local.md`, `CONTEXTO.md`). Nothing from them goes into versioned files, commits or the README.
-
-- P12b Telegram decisions enter through a verified secret-token webhook and service-role RPCs, never through agent credentials. `channel-notify` uses the dispatch secret and stored approval rows. Payment, edit and close_task stay in the app. Text answers require a verified confirmation callback; no model interprets consent.
-
-## Workspace connection (P14)
-
-`/functions/v1/workspace-mcp` is the compact, 23-tool connection for direct page and database work without tasks. `/functions/v1/mcp` retains its tool list for tasks, reviews and handovers. Connect both when needed. The same bearer verification, OAuth session links, caller client, RLS and write core apply.
-
-Create a database in one call with `create_database`: parent, title, properties, views and up to 100 initial rows. Properties/options/views accept names or ids. `query_database` with `limit: 0` returns properties, options and views. Writes require `idempotency_key` on the workspace endpoint. Archive/restore retain data; moving returns the previous parent. Agents need write access on a parent; only human sessions create at the root. Private pages stay inaccessible to other identities through workspace tools, including when published.
-
-Set the Edge Function secret `MCP_WORKSPACE_RESOURCE_URL` to the external workspace endpoint URL. Metadata lives at `<workspace endpoint>/.well-known/oauth-protected-resource`; keep `MCP_RESOURCE_URL` for tasks and `MCP_AUTH_SERVER_URL` for the shared issuer. The existing bridge accepts either `WORKSPACE_MCP_URL`; use `--no-channel` for workspace-only work.
-
-Migrations 0047-0048 and pgTAP 57-58 implement these operations. Calculated properties (`formula`, `relation`, `rollup`, `ai`, agent properties) are not created here. A hosted OAuth conversation is verified after deployment.
-
-Local checks: `node tests/agents/workspace-mcp-smoke.mjs` exercises the served P14 runtime. `node tests/agents/workspace-agent-check.mjs` sends fictitious local tasks to Muse using the authorized credential file, without printing it. Use the isolated `colabora-si-p14` stack on 60990-60999.
+- Telegram decisions enter through a verified secret-token webhook and service-role RPCs, never through agent credentials. `channel-notify` uses the dispatch secret and stored approval rows. Payment, edit and close_task stay in the app. Text answers require a verified confirmation callback; no model interprets consent.
 
 ### Account email checks
 
