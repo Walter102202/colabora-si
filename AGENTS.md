@@ -66,6 +66,7 @@ A task is done when its suites pass, lint, types and build are clean, and the ow
 
 ## Conventions
 
+- Anything visual follows `docs/design-system.md`: identity, colors, type, Trama's image rules and logos.
 - English everywhere: code, comments, docs, commit messages and all user-facing text, including Trama's fixed strings. Conventional commits with a scope: `feat(editor): …`, `fix(agents): …`, `chore(agents): …`, `infra(docs): …`. One commit per finished task; never skip hooks.
 - LF line endings (`.gitattributes` enforces them). Two spaces, double quotes, semicolons, `@/` import alias.
 - No new dependencies unless the report states why. Markdown, LaTeX, code highlighting, emoji, ZIP, sanitization and Web Push are written in-house. `package.json` is infra.
