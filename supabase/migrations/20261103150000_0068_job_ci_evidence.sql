@@ -204,3 +204,155 @@ begin
   return jsonb_build_object('task_state', 'done') || case when v_deferred then jsonb_build_object('ci','deferred_to_job','deferred_checks',v_ci) else '{}'::jsonb end;
 end $$;
 
+
+create or replace function public.close_task(p_task_id uuid, p_acceptance text, p_note text default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_ci jsonb; v_t public.agent_tasks%rowtype; v_sub public.agent_tasks%rowtype; v_run public.agent_runs%rowtype; v_uid uuid := (select auth.uid());
+begin
+  if private.principal_type() <> 'human' then raise exception using errcode='PT403', message='humans_only'; end if;
+  if p_acceptance is null or p_acceptance not in ('accepted','rejected') then
+    raise exception using errcode='PT400', message='invalid_input';
+  end if;
+  select * into v_t from public.agent_tasks where id = p_task_id for update;
+  if not found then raise exception using errcode='PT404', message='not_found'; end if;
+  if not private.can_write_page(v_t.row_page_id, v_t.workspace_id) then raise exception using errcode='PT403', message='forbidden'; end if;
+  -- Closing without a delivery requires 'rejected'; an escalated task with a delivery may be accepted (D10).
+  if v_t.state not in ('ready_for_review','input_required')
+     or (v_t.state = 'input_required' and p_acceptance <> 'rejected'
+         and not exists (select 1 from public.agent_artifacts a where a.task_id = v_t.id and a.superseded_by is null)) then
+    raise exception using errcode='PT422', message='invalid_state';
+  end if;
+
+  if v_t.parent_task_id is null and v_t.request_kind is null and p_acceptance='accepted' then
+    v_ci := private.job_ci_checks(v_t);
+    if v_ci->>'state' in ('pending','failed') then
+      raise exception using errcode='PT422',message='ci_' || (v_ci->>'state'),detail=v_ci::text;
+    end if;
+  end if;
+  if v_t.active_run_id is not null then
+    update public.agent_runs set stop_requested_at = coalesce(stop_requested_at, now()) where id = v_t.active_run_id
+      returning * into v_run;
+    insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
+    values (v_t.workspace_id, v_t.id, v_run.id, v_run.agent_id, 'task.stop', jsonb_build_object('reason', 'closed'),
+            private.next_event_seq(v_t.id));
+  end if;
+  update public.agent_approvals set status = 'cancelled' where task_id = v_t.id and status = 'pending';
+  update public.agent_tasks set state='done', acceptance=p_acceptance, closed_at=now(), closed_by=v_uid, active_run_id=null,
+         waiting_on=null, updated_at=now()
+   where id=v_t.id;
+
+  insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, author_type, author_id)
+  values (v_t.workspace_id, v_t.id, null, private.next_seq(v_t.id), 'prompt',
+          jsonb_build_object('text', coalesce(p_note, ''), 'signal', 'feedback', 'source', 'row_panel', 'close', p_acceptance),
+          'human', v_uid);
+  if v_t.parent_task_id is not null then
+    insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, author_type, author_id)
+    values (v_t.workspace_id, v_t.parent_task_id, null, private.next_seq(v_t.parent_task_id), 'prompt',
+            jsonb_build_object('text', 'Subtask "' || v_t.title || '" closed by a person: ' || p_acceptance
+                                       || coalesce('. ' || p_note, ''),
+                               'signal', 'feedback', 'source', 'row_panel', 'subtask_id', v_t.id),
+            'human', v_uid);
+  end if;
+  insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
+  select p.workspace_id, p.id, p.active_run_id, p.delegate_agent_id, 'task.updated',
+         jsonb_build_object('subtask_id', v_t.id, 'subtask_state', 'done', 'acceptance', p_acceptance, 'closed_by', 'human'),
+         private.next_event_seq(p.id)
+    from public.agent_tasks p
+   where p.id = v_t.parent_task_id and p.delegate_agent_id is not null;
+  -- One Accept settles a job and its deliveries. Rejecting a job leaves them for the person to read.
+  if p_acceptance = 'accepted' and v_t.parent_task_id is null then
+    for v_sub in select * from public.agent_tasks s
+                  where s.parent_task_id = v_t.id and s.request_kind is null and s.state = 'ready_for_review'
+                    and private.can_write_page(s.row_page_id, s.workspace_id)
+                  order by s.created_at, s.id for update loop
+      update public.agent_approvals set status = 'cancelled' where task_id = v_sub.id and status = 'pending';
+      update public.agent_tasks set state='done', acceptance='accepted', closed_at=now(), closed_by=v_uid, active_run_id=null,
+             waiting_on=null, updated_at=now()
+       where id=v_sub.id;
+      insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, author_type, author_id)
+      values (v_sub.workspace_id, v_sub.id, null, private.next_seq(v_sub.id), 'prompt',
+              jsonb_build_object('text', 'Accepted with its job.', 'signal', 'feedback', 'source', 'row_panel', 'close', 'accepted'),
+              'human', v_uid);
+      perform private.release_dependents(v_sub.id);
+      perform private.audit(v_sub.workspace_id, 'task.close', jsonb_build_object('task_id', v_sub.id, 'acceptance', 'accepted', 'with_job', v_t.id));
+    end loop;
+  end if;
+  perform private.release_dependents(v_t.id);
+  perform private.audit(v_t.workspace_id, 'task.close', jsonb_build_object('task_id', v_t.id, 'acceptance', p_acceptance));
+  return jsonb_build_object('task_state', 'done', 'acceptance', p_acceptance);
+end $$;
+
+create or replace function public.submit_for_review(p_run_id uuid, p_summary text, p_artifact_ids uuid[])
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_r public.agent_runs%rowtype; v_t public.agent_tasks%rowtype; v_uncovered text[]; v_lead uuid; v_actor uuid; v_review uuid;
+begin
+  v_actor := private.task_actor_agent_id();
+  if v_actor is null then raise exception using errcode='PT403', message='agent_disabled'; end if;
+  perform private.check_rate(v_actor);
+  select * into v_r from public.agent_runs where id = p_run_id and agent_id = v_actor for update;
+  if not found then raise exception using errcode='PT403', message='forbidden'; end if;
+  if v_r.status not in ('running','waiting') then raise exception using errcode='PT422', message='run_not_active'; end if;
+  select * into v_t from public.agent_tasks where id = v_r.task_id for update;
+  if v_t.state = 'input_required' and v_t.active_run_id = v_r.id and private.task_waits_on_human(v_t.id) then
+    raise exception using errcode = 'PT409', message = 'waiting_on_human',
+      detail = jsonb_build_object('approval_ids', (select coalesce(jsonb_agg(a.id order by a.created_at), '[]'::jsonb)
+                                                     from public.agent_approvals a
+                                                    where a.task_id = v_t.id and a.status = 'pending' and a.blocking))::text;
+  end if;
+  if v_t.state <> 'working' or v_t.active_run_id is distinct from v_r.id then
+    raise exception using errcode='PT422', message='invalid_state', detail='submit from the active run of a working task';
+  end if;
+  if coalesce(array_length(p_artifact_ids,1),0) = 0 then raise exception using errcode='PT422', message='artifact_required'; end if;
+  if exists (select 1 from unnest(p_artifact_ids) x where not exists (
+       select 1 from public.agent_artifacts a where a.id = x and a.task_id = v_t.id)) then
+    raise exception using errcode='PT404', message='artifact_not_found';
+  end if;
+
+  select array_agg(c->>'id') into v_uncovered
+    from public.task_briefs b, jsonb_array_elements(b.done_when) c
+   where b.task_id = v_t.id and b.version = v_r.brief_version and c->>'check' <> 'human'
+     and not exists (select 1 from public.agent_artifacts a where a.id = any(p_artifact_ids) and (c->>'id') = any(a.satisfies));
+  if v_uncovered is not null then
+    raise exception using errcode='PT422', message='criteria_uncovered', detail=to_jsonb(v_uncovered)::text;
+  end if;
+
+  -- A ci criterion is proved on a commit, so the delivery has to name one.
+  select array_agg(c->>'id') into v_uncovered
+    from public.task_briefs b, jsonb_array_elements(b.done_when) c
+   where b.task_id = v_t.id and b.version = v_r.brief_version and c->>'check' = 'ci'
+     and not exists (select 1 from public.agent_artifacts a, private.ci_commit(a.ref) k
+                      where a.id = any(p_artifact_ids) and a.kind = 'diff' and (c->>'id') = any(a.satisfies));
+  if v_uncovered is not null then
+    raise exception using errcode='PT422', message='ci_commit_required', detail=to_jsonb(v_uncovered)::text;
+  end if;
+
+  if v_t.parent_task_id is null and v_t.request_kind is null
+     and jsonb_array_length(private.task_ci_requirements(v_t))>0
+     and not exists(select 1 from public.agent_artifacts a,private.ci_commit(a.ref) k
+                     where a.id=any(p_artifact_ids) and a.task_id=v_t.id and a.kind='diff' and a.superseded_by is null) then
+    raise exception using errcode='PT422',message='ci_commit_required',detail=jsonb_build_object(
+      'checks',(select jsonb_agg(c->>'check') from jsonb_array_elements(private.task_ci_requirements(v_t)) c),
+      'hint','add_artifact kind diff ref owner/repo@<sha> with the final commit of the job branch')::text;
+  end if;
+
+  insert into public.agent_activities (workspace_id, task_id, run_id, seq, type, body, author_type, author_id)
+  values (v_t.workspace_id, v_t.id, v_r.id, private.next_seq(v_t.id), 'response',
+          jsonb_build_object('text',p_summary,'artifact_ids',to_jsonb(p_artifact_ids),'submit',true), 'agent', v_r.agent_id);
+  update public.agent_runs  set status='completed', ended_at=now() where id = v_r.id;
+  update public.agent_approvals set status = 'cancelled' where run_id = v_r.id and status = 'pending';
+  update public.agent_tasks set state='ready_for_review', review_state='pending', active_run_id=null, waiting_on=null where id = v_t.id;
+  v_review := private.open_review_task(v_t, v_r.agent_id);
+
+  select p.delegate_agent_id into v_lead from public.agent_tasks p join public.agents a on a.id=p.delegate_agent_id
+   where p.id = v_t.parent_task_id and a.role='lead';
+  if v_lead is not null then
+    insert into public.agent_events (workspace_id, task_id, run_id, agent_id, type, payload, seq)
+    values (v_t.workspace_id, v_t.parent_task_id, null, v_lead, 'task.continue',
+            jsonb_build_object('review_of', v_t.id, 'artifact_ids', to_jsonb(p_artifact_ids), 'review_task_id', v_review), private.next_event_seq(v_t.parent_task_id));
+  else
+    insert into public.notifications (workspace_id, user_id, kind, page_id, task_id, actor_id, payload)
+    values (v_t.workspace_id, v_t.owner_user_id, 'ready_for_review', v_t.row_page_id, v_t.id, v_r.agent_id,
+            jsonb_build_object('summary', left(p_summary, 280)));
+  end if;
+  return jsonb_build_object('task_state','ready_for_review','review_task_id',v_review);
+end $$;

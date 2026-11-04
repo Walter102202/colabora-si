@@ -107,5 +107,42 @@ select public.review_task(:'s2'::uuid,'approved','[{"criterion_id":"c1","status"
 select is(tests.error_of(format('select public.update_brief(%L::uuid,%L::jsonb)',:'s2','{"done_when":[{"id":"d1","text":"Local test","check":"deterministic","command":"npm test"}]}')),'ci_criteria_locked','Lead still cannot remove inherited CI requirements');
 select is(public.close_subtask(:'s2'::uuid)->>'ci','deferred_to_job','verified deterministic evidence permits deferral at Balanced');
 select tests.reset_role();
+
+-- Step 3: one final delivery proves the inherited checks; human rejection remains available.
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select public.add_artifact(:'lr'::uuid,'page','page_J','Summary',array[]::text[])->>'artifact_id' as summary \gset
+select is(tests.error_of(format('select public.submit_for_review(%L::uuid,%L,array[%L::uuid])',:'lr','Done',:'summary')),'ci_commit_required','job delivery must name the final commit');
+select ok(tests.detail_of(format('select public.submit_for_review(%L::uuid,%L,array[%L::uuid])',:'lr','Done',:'summary'))::jsonb->'checks' @> '["build","test"]','missing final commit explains inherited requirements');
+select is(public.submit_for_review(:'lr'::uuid,'Done',array[:'final'::uuid])->>'task_state','ready_for_review','final diff permits delivery');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('select public.close_task(%L::uuid,%L)',:'job','accepted')),'ci_pending','Accept waits for final checks');
+select is(public.job_ci_status(:'job'::uuid)->>'state','pending','passing subtask commit does not prove final commit');
+select is(tests.error_of(format('do $b$ begin perform public.close_task(%L::uuid,%L); raise exception ''rejection_allowed''; end $b$',:'job','rejected')),'rejection_allowed','rejection is never held by CI');
+select tests.reset_role();
+select tests.set_service();
+select public.record_ci_check(:'conn'::uuid,'acme/app',jsonb_build_object('id',201,'name','test','head_sha',repeat('f',40),'conclusion','success','html_url','https://github.com/acme/app/runs/201','completed_at',now()));
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('select public.close_task(%L::uuid,%L)',:'job','accepted')),'ci_pending','every final check must arrive');
+select tests.reset_role();
+select tests.set_service();
+select public.record_ci_check(:'conn'::uuid,'acme/app',jsonb_build_object('id',202,'name','build','head_sha',repeat('f',40),'conclusion','failure','html_url','https://github.com/acme/app/runs/202','completed_at',now()));
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('select public.close_task(%L::uuid,%L)',:'job','accepted')),'ci_failed','failed final check blocks Accept');
+select tests.reset_role();
+update public.ci_connections set revoked_at=now() where id=:'conn'::uuid;
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is(tests.error_of(format('do $b$ begin perform public.close_task(%L::uuid,%L); raise exception ''accept_allowed''; end $b$',:'job','accepted')),'accept_allowed','without live CI a person can accept');
+select tests.reset_role();
+update public.ci_connections set revoked_at=null where id=:'conn'::uuid;
+select tests.set_service();
+select public.record_ci_check(:'conn'::uuid,'acme/app',jsonb_build_object('id',203,'name','build','head_sha',repeat('f',40),'conclusion','success','html_url','https://github.com/acme/app/runs/203','completed_at',now()+interval '1 second'));
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select is((select state from public.agent_tasks where id=:'job'::uuid),'ready_for_review','Balanced still needs a person after green CI');
+select is(tests.error_of(format('do $b$ begin perform public.close_task(%L::uuid,%L); raise exception ''accept_allowed''; end $b$',:'job','accepted')),'accept_allowed','final CI green enables Accept');
+select tests.reset_role();
 select * from finish();
 rollback;
