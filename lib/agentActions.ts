@@ -117,8 +117,8 @@ export async function decideApproval(
 
 export async function closeTask(taskId: string, acceptance: "accepted" | "rejected", note: string | null = null): Promise<void> {
   await rpc("close_task", { p_task_id: taskId, p_acceptance: acceptance, p_note: note }, {
-    ci_pending: "CI has not finished on the final commit. Accept opens when it passes.",
-    ci_failed: "CI failed on the final commit. Ask for a fix or close without accepting.",
+    ci_pending: "CI is pending on the delivered commit. An eligible Autonomous job closes automatically when it passes.",
+    ci_failed: "CI failed on the delivered commit. Fix the failed check before accepting.",
   });
   await refresh(taskId);
 }

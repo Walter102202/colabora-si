@@ -46,8 +46,8 @@ it("connects through agent-admin, lists only active workspace connections and re
 });
 import { jobCiLine, type JobCiStatus } from "@/lib/agentCi";
 it.each([
-  ["none", null, false], ["no_commit", "CI not checked: no final commit was named", false],
-  ["not_connected", "No CI connected: a person must accept", false],
+  ["none", "Not connected: the Lead verifies CI itself", false], ["no_commit", "CI not checked: no final commit was named", false],
+  ["not_connected", "Not connected: the Lead verifies CI itself", false],
   ["pending", "Waiting for CI on aaaaaaa: build, test", true],
   ["failed", "CI failed on aaaaaaa: build, test", true], ["passed", "CI passed on aaaaaaa", false],
 ] as const)("summarizes job CI %s", (state, text, blocks) => {
