@@ -72,4 +72,4 @@ export const SLASH_ITEMS: SlashItem[] = [
   {"type":"synced","title":"Synced block","description":"A block whose content stays in sync everywhere it appears.","keywords":["synced","sync","mirror","shared","reuse"],"group":"Advanced","icon":"🔄"},
   {"type":"synced","title":"Synced block — paste copy","description":"Insert a synced copy of the block you last copied.","keywords":["synced","copy","paste","mirror","reference"],"group":"Advanced","icon":"📍","variant":"syncedCopy"},
 ];
-export const filterSlashItems = (query: string, nested = false) => SLASH_ITEMS.filter((item) => (!nested || !["columns", "database"].includes(item.type)) && (!query.trim() || item.title.toLowerCase().includes(query.toLowerCase().trim()) || item.keywords.some((key) => key.includes(query.toLowerCase().trim()))));
+export const filterSlashItems = (query: string, nested = false) => SLASH_ITEMS.filter((item) => (!nested || !["columns", "database", "meeting"].includes(item.type)) && (!query.trim() || item.title.toLowerCase().includes(query.toLowerCase().trim()) || item.keywords.some((key) => key.includes(query.toLowerCase().trim()))));

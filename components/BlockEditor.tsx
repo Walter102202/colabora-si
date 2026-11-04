@@ -165,7 +165,7 @@ function EditorSurfaceContent({ pageId, blocks, onChange, emptyHint, locked = fa
       blocks.splice(index + 1, 0, next); commit(blocks, { id: next.id });
     };
     const convert = (id: string, type: BlockType, cleanHtml?: string, item?: SlashItem) => {
-      if (nested && ["columns", "database"].includes(type)) return;
+      if (nested && ["columns", "database", "meeting"].includes(type)) return;
       const current = list().map((b) => b.id === id && cleanHtml !== undefined ? { ...b, html: cleanHtml } : b);
       const next = applyType(current, id, type), index = next.findIndex((b) => b.id === id);
       if (index < 0) return;

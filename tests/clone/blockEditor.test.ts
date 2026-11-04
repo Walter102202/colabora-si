@@ -241,3 +241,24 @@ it("exports meeting status and duration in Markdown and HTML", async () => {
   expect(blocksToMarkdown([meeting])).toBe("> Meeting · ready · 03:12");
   expect(await pageToHtml(page({ blocks: [meeting] }), {})).toContain('<p class="meeting">Meeting · ready · 03:12</p>');
 });
+it.each(["slash", "convert"])("does not create an unsupported meeting inside a column via %s", (method) => {
+  const paragraph = b("paragraph"), change = mount([b("columns", { columns: [column([paragraph])] })]);
+  if (method === "slash") {
+    const editable = item(paragraph.id).querySelector<HTMLElement>('[contenteditable="true"]')!;
+    act(() => {
+      editable.focus(); editable.textContent = "/meet";
+      const range = document.createRange(), selection = window.getSelection()!;
+      range.selectNodeContents(editable); range.collapse(false);
+      selection.removeAllRanges(); selection.addRange(range);
+      editable.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(host.querySelector('[role="option"]')).toBeNull();
+    window.getSelection()?.removeAllRanges();
+  } else {
+    act(() => item(paragraph.id).querySelector<HTMLButtonElement>('[aria-label="Move or open block menu"]')!.click());
+    const menuButton = (text: string) => [...host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((button) => button.textContent === text)!;
+    act(() => menuButton("Turn into").click());
+    act(() => menuButton("Meeting").click());
+    expect(change).not.toHaveBeenCalled();
+  }
+});
