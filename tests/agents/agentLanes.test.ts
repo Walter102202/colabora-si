@@ -31,7 +31,7 @@ it("LN-1 answers a request while a work run waits for a person", async () => {
   const model = routedModel({ work: askThenSubmit, request: [{ content: '{"values":[{"row_id":"r1","text":"Short"}]}' }] });
   const run = runAgent({ mcp, model, clock: yieldingClock(), maxTasks: 2 });
   await until(() => mcp.calls.some((c) => c.name === "complete_ai_request"));
-  expect(mcp.calls.some((c) => c.name === "submit_for_review")).toBe(false);   // el trabajo sigue esperando
+  expect(mcp.calls.some((c) => c.name === "submit_for_review")).toBe(false);   // The work run is still waiting.
   release();
   const { tasks } = await run;
   expect(tasks.map((t) => [t.task_id, t.outcome]).sort()).toEqual([["q1", "submitted"], ["w1", "submitted"]]);
@@ -40,7 +40,7 @@ it("LN-2 a second work task waits in the backlog and starts when the first ends"
   const mcp = createStubMcp({ tasks: [work("w1"), work("w2")], waits: [seed(), seed()] });
   const model = createStubModel([{ tool_calls: [toolCall("submit_for_review", { summary: "1", artifact_ids: [] })] }, { tool_calls: [toolCall("submit_for_review", { summary: "2", artifact_ids: [] })] }]);
   const { tasks } = await runAgent({ mcp, model, clock: yieldingClock(), maxTasks: 2 });
-  const at = (pred: (c: { name: string; args: Record<string, any> }) => boolean) => mcp.calls.findIndex(pred);
+  const at = (pred: (c: { name: string; args: Record<string, unknown> }) => boolean) => mcp.calls.findIndex(pred);
   expect(at((c) => c.name === "claim_task" && c.args.task_id === "w2")).toBeGreaterThan(at((c) => c.name === "submit_for_review" && c.args.run_id === "run-w1"));
   expect(tasks.map((t) => t.task_id)).toEqual(["w1", "w2"]);
 });
@@ -122,4 +122,19 @@ it("retains feedback delivered while the previous run is still notifying", async
     } } });
     expect(result.tasks.map(t => t.outcome)).toEqual(["submitted", "submitted"]);
   } finally { clearTimeout(timer); abort.abort(); }
+});
+
+it("keeps polling bounded while an active claim can return agent_busy", async () => {
+  const abort = new AbortController();
+  let polls = 0;
+  const mcp = createStubMcp({ handlers: {
+    wait_for_my_tasks: () => {
+      if (++polls === 1) return { tasks: [work("w1")], next_cursor: "initial" };
+      abort.abort();
+      return { tasks: [], next_cursor: "next" };
+    },
+    claim_task: () => ({ isError: true, data: { code: "agent_busy" } }),
+  } });
+  await runAgent({ mcp, model: createStubModel([]), clock: yieldingClock(), signal: abort.signal });
+  expect(mcp.calls.filter(c => c.name === "wait_for_my_tasks").map(c => c.args.timeout_s)).toEqual([120, 5]);
 });

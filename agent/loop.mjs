@@ -185,7 +185,8 @@ export async function runAgent(opts) {
       else await clock.sleep(1000);
       continue;
     }
-    const timeout_s = backlog.size ? Math.min(5, waitTimeoutS) : waitTimeoutS;
+    // An in-flight claim can enqueue an agent_busy retry after this poll starts.
+    const timeout_s = backlog.size || active.size ? Math.min(5, waitTimeoutS) : waitTimeoutS;
     const waited = await call("wait_for_my_tasks", cursor ? { after: cursor, timeout_s } : { timeout_s }, { signal });
     if (waited.isError) {
       if (signal?.aborted) break;
