@@ -878,8 +878,11 @@ it("b) leaves a Lead notice undelivered when the process aborts during its model
   const mcp = createStubMcp({ handlers: { wait_for_my_tasks: () => ({ tasks: [notice], next_cursor: "scan" }) } });
   let saved = { delivered: {} as Record<string, string> };
   const noticeState = { load: () => saved, save: (v: typeof saved) => { saved = structuredClone(v); } };
+  const clock = fakeClock();
+  const sleep = vi.spyOn(clock, "sleep");
   setTimeout(() => abort.abort(), 20);
-  await runAgent({ mcp, model: hangingModel(), noticeState, clock: fakeClock(), maxTasks: 1, signal: abort.signal });
+  await runAgent({ mcp, model: hangingModel(), noticeState, clock, maxTasks: 1, signal: abort.signal });
+  expect(sleep).not.toHaveBeenCalled();
   expect(saved.delivered).toEqual({});
   expect(mcp.calls.filter((c) => c.name === "wait_for_my_tasks" && String(c.args.after).startsWith("ack:"))).toHaveLength(0);
 });

@@ -179,7 +179,7 @@ export async function runAgent(opts) {
       else if (isLeadNotice(task)) { delivered = false; retryNotices.push(task); }
     }
     if (delivered) cursor = waited.data.next_cursor ?? cursor;
-    else await clock.sleep(5000);
+    else if (!signal?.aborted) await clock.sleep(5000);
   }
   return { tasks: handled };
 
