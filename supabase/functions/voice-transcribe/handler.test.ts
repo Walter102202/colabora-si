@@ -19,7 +19,7 @@ function deps(over: Partial<VoiceDeps> = {}) {
   const log: string[] = [];
   const d: VoiceDeps = {
     reserve: (_t, a) => { log.push(`reserve:${a.duration_ms}:${a.channel}:${a.forwarded}`); return Promise.resolve({ clip_id: 'clip' }); },
-    transcribe: () => { log.push('model'); return Promise.resolve({ transcript: 'hola', audioMs: 1000 }); },
+    transcribe: () => { log.push('model'); return Promise.resolve({ transcript: 'hola', audioMs: 1000, turns: [] }); },
     complete: (id, ms) => { log.push(`complete:${id}:${ms}`); return Promise.resolve(); },
     fail: (id, code) => { log.push(`fail:${id}:${code}`); return Promise.resolve(); },
     ...over,
@@ -132,7 +132,7 @@ Deno.test('a network failure ends the reservation too', async () => {
 });
 
 Deno.test('an empty transcript is an answer, and it is paid', async () => {
-  const { d, log } = deps({ transcribe: () => Promise.resolve({ transcript: '', audioMs: 1000 }) });
+  const { d, log } = deps({ transcribe: () => Promise.resolve({ transcript: '', audioMs: 1000, turns: [] }) });
   const res = await handleVoiceTranscribe(post(), d);
   assert.deepEqual((await res.json()).transcript, '');
   assert(log.includes('complete:clip:1000'));
@@ -143,4 +143,33 @@ Deno.test('a preflight answers without a token', async () => {
   const res = await handleVoiceTranscribe(new Request('http://x/', { method: 'OPTIONS' }), d);
   assert.deepEqual(res.headers.get('Access-Control-Allow-Methods'), 'POST, OPTIONS');
   assert.deepEqual(log, []);
+});
+
+Deno.test('meetings pass validated mode and session and return turns', async () => {
+  for (const mode of ['diarization', 'endpointing']) {
+    const turns = [{ startMs: 0, endMs: 900, text: 'hello', speaker: 'A' }];
+    const { d } = deps({
+      transcribe: (_wav, _signal, opts) => {
+        assert.deepEqual(opts, { mode: mode.toUpperCase(), sessionId: 'meeting_id-1' });
+        return Promise.resolve({ transcript: 'hello', audioMs: 1000, turns });
+      },
+    });
+    const res = await handleVoiceTranscribe(post(wav(), `workspace_id=${WS}&channel=meeting&mode=${mode}&session_id=meeting_id-1`), d);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { clip_id: 'clip', transcript: 'hello', duration_ms: 1000, turns });
+  }
+});
+
+Deno.test('invalid meeting parameters stop before reservation or provider calls', async () => {
+  for (const query of [
+    `workspace_id=${WS}&mode=diarization`, 'channel=telegram&session_id=abc',
+    `workspace_id=${WS}&channel=meeting&mode=unknown`, `workspace_id=${WS}&channel=meeting&mode=`,
+    `workspace_id=${WS}&channel=meeting&session_id=`, `workspace_id=${WS}&channel=meeting&session_id=a%26b`,
+    `workspace_id=${WS}&channel=meeting&session_id=${'a'.repeat(129)}`, 'channel=meeting&mode=diarization',
+  ]) {
+    const { d, log } = deps();
+    const res = await handleVoiceTranscribe(post(wav(), query), d);
+    assert.deepEqual([res.status, (await res.json()).error], [400, 'invalid_request'], query);
+    assert.deepEqual(log, []);
+  }
 });

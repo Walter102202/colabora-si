@@ -23,10 +23,10 @@ Deno.serve(async (req) => {
       async fail(clipId, code) {
         await serviceClient(env).rpc('voice_fail', { p_clip_id: clipId, p_code: code });
       },
-      transcribe(wav, signal) {
+      transcribe(wav, signal, opts) {
         if (!env.META_MODEL_API_KEY) throw new MisconfiguredError('META_MODEL_API_KEY');
         return transcribeWav(wav, signal, {
-          apiKey: env.META_MODEL_API_KEY, baseUrl: env.META_API_BASE,
+          ...opts, apiKey: env.META_MODEL_API_KEY, baseUrl: env.META_API_BASE,
           languageBias: listSetting(env.VOICE_LANGUAGE_BIAS), keywords: listSetting(env.VOICE_KEYWORDS),
         });
       },
