@@ -17,6 +17,7 @@ import { useAgentsStore } from "@/lib/agentsStore";
 import { databaseTaskValues, subtaskProgress, waitingOnYouCount, waitingOnYouRows } from "@/lib/databaseTaskValues";
 import { JobAccessNote } from "@/components/agents/AgentPropertyCell";
 import { JobsBoard } from "@/components/agents/panel/JobsBoard";
+import { useDatabaseRowTasks } from "@/lib/useDatabaseRowTasks";
 import { jobState, jobWait } from "@/lib/agentJobs";
 import { connectedRows } from "@/lib/agentConnect";
 import { databaseDeps } from "@/lib/pageBodies";
@@ -37,8 +38,13 @@ export default function DatabaseView({ pageId, locked = false, linkedPageId, lin
   }, [pageId, locked, linkedPageId, linkedBlockId]);
   const database = page?.database ? ops.database : undefined;
   const tasks = useAgentTasks((s) => s.tasks), briefs = useAgentTasks((s) => s.briefs), agents = useAgentsStore((s) => s.agents);
-  const queryDatabase = useMemo(() => bodies === "ready" && database ? databaseTaskValues(database, tasks, agents, briefs) : undefined, [bodies, database, tasks, agents, briefs]);
   const agentTable = database?.properties.some((property) => property.type === "agentStatus");
+  const { resolved, error: taskError, retry } = useDatabaseRowTasks(agentTable && bodies === "ready" ? database?.rows : undefined);
+  const queryDatabase = useMemo(() => {
+    if (bodies !== "ready" || !database) return undefined;
+    const source = resolved ? { ...database, rows: database.rows.filter((row) => resolved.has(row.pageId)) } : database;
+    return databaseTaskValues(source, tasks, agents, briefs);
+  }, [bodies, database, resolved, tasks, agents, briefs]);
   const view = database?.views[active] ?? database?.views[0];
   const rows = useMemo(() => {
     if (!queryDatabase || !view) return [];
@@ -53,7 +59,7 @@ export default function DatabaseView({ pageId, locked = false, linkedPageId, lin
     }
     return sortRows(filterRows(source, waiting || working ? { ...view, filters: [] } : view, queryDatabase, pages).filter((row) => !search.trim() || rowSearchText(row, queryDatabase, pages).includes(search.trim().toLowerCase())), view, queryDatabase, pages);
   }, [queryDatabase, view, pages, search, agentTable, database]);
-  if (bodies === "loading") return <div className="database-view" aria-busy="true"><div className="database-skeleton" /></div>;
+  if (bodies === "loading" || (resolved?.size === 0 && !taskError)) return <div className="database-view" aria-busy="true"><div className="database-skeleton" /></div>;
   if (bodies === "unavailable") return <div className="empty-block">This database isn&apos;t on this device yet. Connect to the internet to open it.</div>;
   if (!database || !view) return null;
   // Presentation only: keep every saved view, filter, row and page preference intact.
@@ -83,6 +89,7 @@ export default function DatabaseView({ pageId, locked = false, linkedPageId, lin
     return { id: row.id, title: String(row.cells.title || pages[row.pageId]?.title || "Untitled"), lead: knownAgents.find((agent) => agent.id === task?.delegate_agent_id) ?? null, state: jobState(task, children), progress: progress[row.id], waiting: jobWait(task, children) };
   });
   return <div className="database-view" data-task-layout={canShowProgress ? showProgress ? "progress" : "table" : undefined}>{database.properties.some((property) => property.type === "agentStatus") && <JobAccessNote dbPageId={pageId} />}<div className="database-tabs">{database.views.map((v, i) => <button key={v.id} aria-pressed={v.id === view.id} onClick={() => { setActive(i); setSearch(""); setPanel(""); }} onDoubleClick={() => { if (!ops.locked && !ops.readOnly) { setActive(i); setPanel("view"); } }}>{VIEW_ICONS[v.type]} {v.name}{agentTable && v.name === "Waiting on you" && waitingCount > 0 ? ` ${waitingCount}` : ""}</button>)}{!ops.locked && !ops.readOnly ? <button aria-label="New view" onClick={() => setPanel(panel === "add" ? "" : "add")}>+</button> : <Lock size={14} className="m-2 text-text-tertiary" aria-label="Database locked — structure edits are disabled" />}</div>
+    {taskError && <div role="alert">{taskError} <button onClick={retry}>Retry loading tasks</button></div>}
     {canShowProgress && <div className="task-layout-switch" role="group" aria-label="Task view">
       <button type="button" aria-label="Show task progress" aria-pressed={showProgress} onClick={() => setTaskLayout("progress")}><LayoutPanelLeft size={15} aria-hidden="true" />Progress</button>
       <button type="button" aria-label="Show task table" aria-pressed={!showProgress} onClick={() => setTaskLayout("table")}><Table2 size={15} aria-hidden="true" />Table</button>

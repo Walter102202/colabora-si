@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { createClient } from "@supabase/supabase-js";
+import * as agentClient from "@/lib/agentClient";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, useLocation, useNavigate } from "react-router";
@@ -169,4 +171,33 @@ it("keeps the existing board and returns to Progress when a table view is select
   expect(host.querySelector('[aria-label="Needs a Lead"]')).not.toBeNull();
   await act(async () => { (host.querySelector(".database-tabs button") as HTMLButtonElement).click(); });
   expect(byLabel("Show task progress")?.getAttribute("aria-pressed")).toBe("true");
+});
+
+it("groups an older completed subtask on the board and counts only the genuinely unassigned job", async () => {
+  const source = fixture();
+  source.database!.views = [view({ type: "board" }), view({ name: "Waiting on you" })];
+  useStore.setState({ syncWorkspaceId: "workspace" });
+  useAgentTasks.setState({ workspaceId: "workspace", subscribe: () => () => {} });
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => { finish = resolve; });
+  const lookup = vi.fn(async (request: RequestInfo | URL) => {
+    const url = new URL(String(request));
+    expect(url.searchParams.get("workspace_id")).toBe("eq.workspace");
+    expect(url.searchParams.get("row_page_id")).toBe("in.(first,second,third)");
+    await pending;
+    return new Response(JSON.stringify([
+      { id: "parent", row_page_id: "first", state: "done" },
+      { id: "child", row_page_id: "second", state: "done", parent_task_id: "parent" },
+    ]), { headers: { "Content-Type": "application/json" } });
+  });
+  const client = createClient("https://test.invalid", "anon", { global: { fetch: lookup } });
+  vi.spyOn(agentClient, "getAgentClient").mockReturnValue(client);
+  await mount(source);
+  expect(byLabel("Open Keep Beta")).toBeNull();
+  await act(async () => { finish(); });
+  expect(host.querySelector('[aria-label="Needs a Lead"]')?.textContent).not.toContain("Keep Beta");
+  expect(host.querySelector('[aria-label="1 of 1 subtasks done"]')).not.toBeNull();
+  expect(host.querySelector('[aria-label="Needs a Lead"]')?.textContent).toContain("Other");
+  expect(host.querySelector(".database-tabs")?.textContent).toContain("Waiting on you 1");
+  expect(lookup).toHaveBeenCalledTimes(1);
 });
