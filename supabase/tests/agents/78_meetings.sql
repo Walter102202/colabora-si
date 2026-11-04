@@ -1,6 +1,6 @@
 -- Meeting quotas and summary authority, including independent voice budgets.
 begin;
-select plan(34);
+select plan(37);
 select tests.fixture() as f \gset
 select (:'f'::jsonb->>'ws') as ws, (:'f'::jsonb->>'owner') as owner,
        (:'f'::jsonb->>'viewer') as viewer, (:'f'::jsonb->>'agent') as agent,
@@ -48,7 +48,7 @@ select tests.set_human(:'owner'::uuid);
 select public.create_agent_task('page_B','{"objective":"Concurrent work"}',:'pa')->>'task_id' as work \gset
 select tests.reset_role();
 select tests.set_human(:'owner');
-select public.apply_page_ops('page_B','[{"op":"insert_block","block":{"id":"summary","type":"heading2","key":"meeting:summary:meeting-block","html":"Summary"}}]');
+select public.apply_page_ops('page_B','[{"op":"insert_block","block":{"id":"meeting-block","type":"meeting","meeting":{"id":"meeting-block","status":"summarizing","durationMs":60000,"lang":"es"}}},{"op":"insert_block","block":{"id":"summary","type":"heading2","key":"meeting:summary:meeting-block","html":"Summary"}}]');
 select tests.reset_role();
 select tests.set_agent(:'pu',:'pa');
 select public.claim_task(:'work','custom')->>'run_id' as work_run \gset
@@ -84,6 +84,9 @@ select tests.reset_role();
 select tests.set_agent(:'pu',:'pa');
 select public.complete_meeting_summary(:'run','{"input_tokens":100,"output_tokens":40,"cost_usd":0.01}','finish') as result \gset
 select is(public.append_meeting_summary(:'run','page_B','[]','summary','append'), :'appended'::jsonb, 'own completed run can replay its append receipt');
+select is((select b#>>'{meeting,status}' from public.pages p, jsonb_array_elements(p.data->'blocks') b where p.id='page_B' and b->>'id'='meeting-block'), 'ready', 'completion persists recorder ready atomically');
+select is((select (b#>'{meeting}') - 'status' from public.pages p, jsonb_array_elements(p.data->'blocks') b where p.id='page_B' and b->>'id'='meeting-block'), '{"id":"meeting-block","durationMs":60000,"lang":"es"}'::jsonb, 'completion preserves recorder metadata');
+select ok(exists(select 1 from public.pages p, jsonb_array_elements(p.data->'blocks') b where p.id='page_B' and b->>'id'=(:'appended'::jsonb->'block_ids'->>0)), 'completion keeps appended summary blocks');
 select is((select state from public.agent_tasks where id=:'req'), 'done', 'summary closes task');
 select is((select acceptance from public.agent_tasks where id=:'req'), 'accepted', 'summary is accepted');
 select is((select status from public.agent_runs where id=:'run'), 'completed', 'run completes');

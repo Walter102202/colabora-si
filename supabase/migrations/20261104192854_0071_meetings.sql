@@ -111,7 +111,8 @@ end $$;
 create or replace function public.complete_meeting_summary(p_run_id uuid, p_usage jsonb, p_idempotency_key text)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare v_r public.agent_runs%rowtype; v_t public.agent_tasks%rowtype;
-        v_actor uuid := (select auth.uid()); v_receipt jsonb;
+        v_actor uuid := (select auth.uid()); v_receipt jsonb; v_page public.pages%rowtype; v_block jsonb; v_write jsonb;
+        v_previous_run text := current_setting('app.run_id', true);
 begin
   v_r := private.own_run(p_run_id);
   if v_r.stop_requested_at is not null then raise exception using errcode = 'PT409', message = 'stop_requested'; end if;
@@ -126,6 +127,21 @@ begin
   if v_t.request_kind is distinct from 'meeting' or v_t.active_run_id is distinct from v_r.id or v_t.state <> 'working' then
     raise exception using errcode = 'PT422', message = 'not_a_request_run';
   end if;
+  -- Persist ready in the same server transaction as task completion. A browser notification must not
+  -- write a stale full-page snapshot over the summary that was just appended.
+  perform 1 from public.pages where id = v_t.row_page_id for update;
+  v_page := private.pw_page(v_t.row_page_id);
+  select b into v_block from jsonb_array_elements(v_page.data->'blocks') b
+   where b->>'id' = v_t.request->>'block_id' and b->>'type' = 'meeting';
+  if v_block is null then raise exception using errcode = 'PT404', message = 'meeting_block_not_found'; end if;
+  perform set_config('app.run_id', v_r.id::text, true);
+  v_write := private.apply_page_ops_core(v_page.id, jsonb_build_array(jsonb_build_object('op', 'update_block',
+    'id', v_block->>'id', 'patch', jsonb_build_object('meeting', coalesce(v_block->'meeting', '{}'::jsonb)
+      || jsonb_build_object('status', 'ready')))), null);
+  perform set_config('app.run_id', coalesce(v_previous_run, ''), true);
+  perform private.pw_activity(v_r.id,
+    jsonb_build_object('op', 'update_block', 'page_id', v_page.id, 'block_ids', jsonb_build_array(v_block->>'id'),
+                      'revision', v_write->'revision', 'summary', 'Marked meeting ready'), v_write->'inverse');
   if p_usage is not null and (p_usage ? 'input_tokens' or p_usage ? 'output_tokens' or p_usage ? 'cost_usd') then
     perform private.record_cost_core(v_r.id, (p_usage->>'input_tokens')::bigint, (p_usage->>'output_tokens')::bigint,
                                     p_usage->>'model', (p_usage->>'cost_usd')::numeric);
