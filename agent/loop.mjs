@@ -66,6 +66,7 @@ function answerText(p) {
  * @param {{
  *   mcp: McpClient, model: Model, channel?: Channel, clock?: Clock,
  *   contextBudgetTokens?: number, contextKeepTurns?: number,
+ *   maxWorkRuns?: number, maxRequestRuns?: number,
  *   maxTurns?: number, maxTasks?: number, displayName?: string, harness?: string, reviewerAgentId?: string, resume?: boolean,
  *   prices?: {input: number, output: number}, appUrl?: string,
  *   signal?: AbortSignal, waitTimeoutS?: number, log?: (msg: string) => void, modelVision?: boolean, modelPdf?: boolean,
@@ -86,6 +87,8 @@ export async function runAgent(opts) {
     contextBudgetTokens = 100_000,
     contextKeepTurns = 6,
     maxTasks = Infinity,
+    maxWorkRuns = 1,
+    maxRequestRuns = 3,
     harness = "reference-agent",
     displayName = "",
     reviewerAgentId = "",
@@ -150,10 +153,38 @@ export async function runAgent(opts) {
       if (!result.isError) { noticeAcks.delete(id); persistNotices(); }
     }
   };
-  while (handled.length < maxTasks && !signal?.aborted) {
+  const laneOf = (task) => task.request_kind ? "requests" : "work";
+  const limits = { work: maxWorkRuns, requests: maxRequestRuns };
+  const active = new Map();
+  const backlog = new Map();
+  let firstError;
+  const slots = (lane) => limits[lane] - [...active.values()].filter((entry) => entry.lane === lane).length;
+  const hasCapacity = () => handled.length + active.size < maxTasks;
+  const start = (task) => {
+    const id = task.task_id;
+    const promise = runTask(task).then((outcome) => {
+      if (outcome) handled.push(outcome);
+    }, (error) => { firstError ??= error; }).finally(() => active.delete(id));
+    active.set(id, { lane: laneOf(task), promise });
+  };
+  while (handled.length < maxTasks && !signal?.aborted && !firstError) {
     if (channel?.reply) await flushPersonReplies({ call, reply: channel.reply, appUrl: channel.appUrl });
     await acknowledgeNotices();
-    const waited = await call("wait_for_my_tasks", cursor ? { after: cursor, timeout_s: waitTimeoutS } : { timeout_s: waitTimeoutS }, { signal });
+    for (const [id, entry] of backlog) {
+      if (!hasCapacity() || signal?.aborted) break;
+      if (entry.notBefore <= clock.now() && slots(laneOf(entry.task)) > 0 && !active.has(id)) {
+        backlog.delete(id);
+        start(entry.task);
+      }
+    }
+    const accepting = hasCapacity() && (slots("work") > 0 || slots("requests") > 0);
+    if (!accepting) {
+      if (active.size) await Promise.race([...active.values()].map((entry) => entry.promise));
+      else await clock.sleep(1000);
+      continue;
+    }
+    const timeout_s = backlog.size ? Math.min(5, waitTimeoutS) : waitTimeoutS;
+    const waited = await call("wait_for_my_tasks", cursor ? { after: cursor, timeout_s } : { timeout_s }, { signal });
     if (waited.isError) {
       if (signal?.aborted) break;
       log(`wait_for_my_tasks failed: ${waited.text}`);
@@ -165,7 +196,7 @@ export async function runAgent(opts) {
     retryNotices = [];
     const seenNotices = new Set();
     const candidates = incoming.filter(task => {
-      if (!isLeadNotice(task)) return true;
+      if (!isLeadNotice(task)) return !active.has(task.task_id);
       if (deliveredNotices.has(task.notice.event_id)) return false;
       if (seenNotices.has(task.notice.event_id)) return false;
       seenNotices.add(task.notice.event_id); return true;
@@ -173,14 +204,24 @@ export async function runAgent(opts) {
     if (!candidates.length && !waited.data.changed) await clock.sleep(1000);
     if (!candidates.length && noticeAcks.size) await clock.sleep(5000);
     for (const task of candidates) {
-      if (handled.length >= maxTasks || signal?.aborted) break;
-      const outcome = isLeadNotice(task) ? await runNotice(task) : await runTask(task);
-      if (outcome) handled.push(outcome);
-      else if (isLeadNotice(task)) { delivered = false; retryNotices.push(task); }
+      if (signal?.aborted || firstError) break;
+      if (isLeadNotice(task)) {
+        if (!hasCapacity()) { delivered = false; retryNotices.push(task); continue; }
+        const outcome = await runNotice(task);
+        if (outcome) handled.push(outcome);
+        else { delivered = false; retryNotices.push(task); }
+      } else if (!active.has(task.task_id)) {
+        if (hasCapacity() && slots(laneOf(task)) > 0) {
+          backlog.delete(task.task_id);
+          start(task);
+        } else backlog.set(task.task_id, { task, notBefore: 0 });
+      }
     }
     if (delivered) cursor = waited.data.next_cursor ?? cursor;
     else if (!signal?.aborted) await clock.sleep(5000);
   }
+  await Promise.all([...active.values()].map((entry) => entry.promise));
+  if (firstError) throw firstError;
   return { tasks: handled };
 
   /** A notice is coordination, not a new claim on a possibly closed task. */
