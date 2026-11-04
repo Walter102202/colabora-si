@@ -193,7 +193,10 @@ it("shows the assigned crew and reorders a job on Worker activity while preservi
   const codexLogo = header.querySelector<HTMLButtonElement>('[aria-label="Codex worker · Worker"]')!;
   await act(async () => { codexLogo.focus(); });
   expect(document.querySelector('[role="tooltip"]')?.textContent).toBe("Codex worker · Worker");
+  await act(async () => { codexLogo.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body })); });
+  expect(document.querySelector('[role="tooltip"]')?.textContent).toBe("Codex worker · Worker");
   await act(async () => { codexLogo.click(); codexLogo.blur(); });
+  expect(document.querySelector('[role="tooltip"]')).toBeNull();
   const feedback = host.querySelector<HTMLTextAreaElement>('[aria-label="Feedback for older"]')!;
   feedback.value = "Preserve this exact review draft";
   const snapshot = structuredClone(rows);

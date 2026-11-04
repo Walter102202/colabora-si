@@ -11,7 +11,9 @@ export function ProgressAgentLogos({ members, compact = false }: { members: Prog
       const logo = member.logo ? <img src={member.logo} alt="" width={20} height={20} draggable={false} /> : <Bot size={18} aria-hidden="true" />;
       return <Tooltip key={member.id} label={label} delay={200}>
         {compact ? <span role="img" aria-label={label} className={className}>{logo}</span>
-          : <button type="button" aria-label={label} className={className}>{logo}</button>}
+          : <button type="button" aria-label={label} className={className} onMouseLeave={(event) => {
+            if (event.currentTarget === document.activeElement) event.stopPropagation();
+          }}>{logo}</button>}
       </Tooltip>;
     })}
   </span>;
