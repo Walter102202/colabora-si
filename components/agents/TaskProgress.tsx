@@ -7,7 +7,8 @@ import { useStore } from "@/lib/store";
 import { useAuthStore } from "@/lib/auth";
 import { useAgentsStore } from "@/lib/agentsStore";
 import { taskForPage, useAgentTasks, type TaskRow } from "@/lib/agentTasks";
-import { parseProgressReadMarkers, progressReadKey, progressRows, taskProgressState, updatedSinceRead, type ProgressReadMarkers, type ProgressTone } from "@/lib/agentProgress";
+import { parseProgressReadMarkers, progressActivityAt, progressReadKey, progressRows, taskProgressState, updatedSinceRead, type ProgressReadMarkers, type ProgressTone } from "@/lib/agentProgress";
+import { jobWorkerIds } from "@/lib/agentJobs";
 import { openTramaTaskDraft, useAgentProgressContext } from "@/lib/agentTramaContext";
 import { buildProgressMilestones } from "@/lib/agentProgressActivity";
 import { useProgressReviewContext } from "@/lib/agentProgressReview";
@@ -52,6 +53,7 @@ function ProgressWorkspace({ pageId, rows, allRows, onOpenRow, active = true, wo
   const pages = useStore((state) => state.pages);
   const storeWorkspace = useAgentTasks((state) => state.workspaceId);
   const tasks = useAgentTasks((state) => state.tasks);
+  const rowPlans = useAgentTasks((state) => state.rowPlans);
   const runs = useAgentTasks((state) => state.runs);
   const approvals = useAgentTasks((state) => state.approvals);
   const activities = useAgentTasks((state) => state.activities);
@@ -78,7 +80,8 @@ function ProgressWorkspace({ pageId, rows, allRows, onOpenRow, active = true, wo
   const activeTasks = useMemo(() => Object.fromEntries(Object.entries(tasks).filter(([, task]) => storeWorkspace === workspaceId && task.workspace_id === workspaceId)), [tasks, storeWorkspace, workspaceId]);
   const byPage = useMemo(() => new Map(allRows.map((row) => [row.pageId, taskForPage({ tasks: activeTasks }, row.pageId)])), [allRows, activeTasks]);
   const pending = useMemo(() => Object.values(approvals), [approvals]);
-  const entries = useMemo(() => progressRows(rows, allRows), [rows, allRows]);
+  const entries = useMemo(() => progressRows(rows, allRows,
+    new Map(allRows.map((row) => [row.id, progressActivityAt(byPage.get(row.pageId))]))), [rows, allRows, byPage]);
   const entryTasks = entries.flatMap(({ row }) => { const task = byPage.get(row.pageId); return task ? [task] : []; });
   const requestedTask = requestedPage ? byPage.get(requestedPage) : null;
   const reviewStatus = useProgressReviewContext({
@@ -195,12 +198,20 @@ function ProgressWorkspace({ pageId, rows, allRows, onOpenRow, active = true, wo
         {!shownEntries.length && <p className="px-2 py-5 text-sm text-text-secondary">{onlyNeedsYou ? reviewStatus.loading || reviewStatus.error
           ? "Review requirements are not fully available yet. Use All work to inspect saved tasks."
           : "No loaded task is waiting on you in this view." : "No tasks match this view."}</p>}
-        {shownEntries.filter(({ ancestors, row }) => row.id === selectedRow?.id || onlyNeedsYou || ancestors.every((parent) => expanded.has(parent) || selectedEntry?.ancestors.includes(parent))).map(({ row, depth, contextOnly }) => {
+        {shownEntries.filter(({ ancestors, row }) => row.id === selectedRow?.id || onlyNeedsYou || ancestors.every((parent) => expanded.has(parent) || selectedEntry?.ancestors.includes(parent))).map(({ row, depth, contextOnly, activityAt }) => {
           const task = byPage.get(row.pageId), state = task ? stateOf(task) : null;
           const children = entries.some((entry) => entry.row.parentRowId === row.id);
           const isOpen = expanded.has(row.id) || !!selectedEntry?.ancestors.includes(row.id);
-          const agent = task?.delegate_agent_id ? agents.find((entry) => entry.id === task.delegate_agent_id) : null;
+          const agent = task?.delegate_agent_id ? agents.find((entry) => entry.id === task.delegate_agent_id && entry.workspace_id === workspaceId) : null;
           const family = task ? Object.values(activeTasks).filter((child) => child.id === task.id || child.parent_task_id === task.id) : [];
+          const subtasks = family.filter((child) => child.id !== task?.id && child.request_kind == null);
+          const planned = allRows.filter((child) => child.parentRowId === row.id && !byPage.get(child.pageId))
+            .map((child) => {
+              const plan = rowPlans[child.pageId];
+              return storeWorkspace === workspaceId && plan?.workspace_id === workspaceId ? plan.worker_agent_id : null;
+            });
+          const workerNames = task && !task.parent_task_id ? jobWorkerIds(task, subtasks, planned)
+            .map((id) => agents.find((entry) => entry.id === id && entry.workspace_id === workspaceId)?.name ?? "Unknown agent") : [];
           const updated = family.some((child) => updatedSinceRead(child, readMarkers));
           const milestone = task ? latestMilestones.get(task.id) : undefined;
           return <div key={row.id} className={`task-progress-list-item ${selectedRow?.id === row.id ? "is-selected" : ""}`} style={{ marginLeft: Math.min(depth, 3) * 12 }}>
@@ -208,8 +219,9 @@ function ProgressWorkspace({ pageId, rows, allRows, onOpenRow, active = true, wo
               <span className="mb-2 block break-words text-sm font-medium">{titleOf(row)}</span>
               <span className="flex flex-wrap items-center gap-1.5"><span className={`task-progress-badge ${TONE[state?.tone ?? "neutral"]}`}>{state?.label ?? "Open details"}</span>{updated && <span className="text-xs font-medium text-accent">Updated</span>}</span>
               <span className="mt-2 block truncate text-xs text-text-secondary">{agent ? `${task?.parent_task_id ? "Worker" : "Lead"}: ${agent.name}` : task ? "No agent assigned" : "Task details load when opened"}</span>
+              {workerNames.length > 0 && <span className="mt-1 block break-words text-xs leading-relaxed text-text-secondary">Workers: {workerNames.join(", ")}</span>}
               {milestone && <span className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-text-secondary" title={`${milestone.author}: ${milestone.label}\n${milestone.detail}`}>{milestone.author}: {milestone.label}</span>}
-              {task?.last_activity_at && <time className="mt-1 block text-[11px] text-text-tertiary" dateTime={task.last_activity_at} title={new Date(task.last_activity_at).toLocaleString()}>Last activity {formatRelative(Date.parse(task.last_activity_at))}</time>}
+              {activityAt !== undefined && <time className="mt-1 block text-[11px] text-text-tertiary" dateTime={new Date(activityAt).toISOString()} title={new Date(activityAt).toLocaleString()}>Last activity {formatRelative(activityAt)}</time>}
               {contextOnly && <span className="mt-1 block text-[11px] text-text-tertiary">Parent of a matching subtask</span>}
             </button>
             {children && <button type="button" className="task-progress-expand" aria-label={`${isOpen ? "Collapse" : "Expand"} subtasks of ${titleOf(row)}`} aria-expanded={isOpen} onClick={() => setExpanded((previous) => { const next = new Set(previous); if (next.has(row.id)) next.delete(row.id); else next.add(row.id); return next; })}>{isOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button>}

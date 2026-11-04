@@ -3,7 +3,7 @@ import { mockCard } from "@/components/agents/card/mock";
 import type { TaskCardData } from "@/lib/agentCard";
 import type { ApprovalRow, RunRow, TaskRow } from "@/lib/agentTasks";
 import type { DbRow } from "@/lib/types";
-import { parseProgressReadMarkers, progressReadKey, progressRows, taskProgressState, updatedSinceRead, type ProgressReviewContext } from "@/lib/agentProgress";
+import { parseProgressReadMarkers, progressActivityAt, progressReadKey, progressRows, taskProgressState, updatedSinceRead, type ProgressReviewContext } from "@/lib/agentProgress";
 import { progressTramaTask } from "@/lib/agentTramaContext";
 
 const base = (mockCard("1") as TaskCardData).task;
@@ -27,13 +27,34 @@ describe("progress row inventory", () => {
 
   it("keeps every matching row reachable despite cycles, self-parents, missing parents and nested ancestors", () => {
     const all = [row("a", "b"), row("b", "a"), row("self", "self"), row("orphan", "missing"), row("root"), row("middle", "root"), row("leaf", "middle")];
-    const result = progressRows(all, all), ids = result.map((entry) => entry.row.id);
+    const result = progressRows(all, all, new Map(all.map((item, index) => [item.id, index]))), ids = result.map((entry) => entry.row.id);
     expect(new Set(ids).size).toBe(all.length);
     expect([...ids].sort()).toEqual(all.map((entry) => entry.id).sort());
     expect(result.find((entry) => entry.row.id === "orphan")?.depth).toBe(0);
     expect(result.find((entry) => entry.row.id === "leaf")?.ancestors).toEqual(["root", "middle"]);
     expect(result.every((entry) => !entry.ancestors.includes(entry.row.id))).toBe(true);
     expect(progressRows([], all)).toEqual([]);
+  });
+
+  it("orders recent job activity first while keeping siblings, filtered parents and saved rows intact", () => {
+    const all = [row("older"), row("slow", "older"), row("fast", "older"), row("newer"), row("tie"), row("unknown")];
+    const snapshot = structuredClone(all);
+    const dates = new Map([["older", 1000], ["slow", 2000], ["fast", 9000], ["newer", 5000], ["tie", 5000], ["unknown", NaN]]);
+    const entries = progressRows(all, all, dates);
+    expect(entries.map((entry) => entry.row.id)).toEqual(["older", "fast", "slow", "newer", "tie", "unknown"]);
+    expect(entries[0]).toMatchObject({ activityAt: 9000, depth: 0 });
+    expect(entries[1]).toMatchObject({ activityAt: 9000, depth: 1, ancestors: ["older"] });
+    const filtered = progressRows([all[2], all[3]], all, dates);
+    expect(filtered.map((entry) => entry.row.id)).toEqual(["older", "fast", "newer"]);
+    expect(filtered[0]).toMatchObject({ contextOnly: true, activityAt: 9000 });
+    expect(all).toEqual(snapshot);
+  });
+
+  it("uses saved activity dates with update and creation fallbacks, leaving missing dates unknown", () => {
+    expect(progressActivityAt(task({ last_activity_at: "2026-11-04T10:00:00Z", updated_at: "2026-11-04T11:00:00Z" }))).toBe(Date.parse("2026-11-04T10:00:00Z"));
+    expect(progressActivityAt(task({ last_activity_at: "invalid", updated_at: "2026-11-04T11:00:00Z" }))).toBe(Date.parse("2026-11-04T11:00:00Z"));
+    expect(progressActivityAt(task({ last_activity_at: null, updated_at: "invalid", created_at: "2026-11-04T09:00:00Z" }))).toBe(Date.parse("2026-11-04T09:00:00Z"));
+    expect(progressActivityAt(undefined)).toBeUndefined();
   });
 });
 

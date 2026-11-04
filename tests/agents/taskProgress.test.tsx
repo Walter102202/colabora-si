@@ -45,7 +45,7 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   localStorage.clear(); seen.panel.mockClear(); lookup.mockReset().mockResolvedValue(); subscribe.mockClear();
   useAuthStore.setState({ user: { id: "person" } as User });
-  useAgentTasks.setState({ workspaceId: "workspace", status: "ready", error: null, tasks: {}, runs: {}, approvals: {}, activities: {}, reviews: {}, briefs: {}, jobCi: {}, subscribe, loadTaskForPage: lookup, load: vi.fn(async () => {}) });
+  useAgentTasks.setState({ workspaceId: "workspace", status: "ready", error: null, tasks: {}, rowPlans: {}, runs: {}, approvals: {}, activities: {}, reviews: {}, briefs: {}, jobCi: {}, subscribe, loadTaskForPage: lookup, load: vi.fn(async () => {}) });
   useAgentsStore.setState({ workspaceId: "workspace", status: "ready", agents: [{ id: "trama", workspace_id: "workspace", is_platform: true, revoked_at: null, status: "enabled" } as AgentRow], load: vi.fn(async () => {}) });
   vi.mocked(getTaskAutonomy).mockReset().mockResolvedValue(policy());
   reviewBrief.mockReset().mockResolvedValue({ data: { done_when: [] }, error: null });
@@ -131,7 +131,7 @@ it("discards a failed lookup after the person selects a different task", async (
   const rows = [row("old"), row("current")]; setup(rows, [task("current")]);
   let fail!: (reason: Error) => void;
   lookup.mockImplementation(() => new Promise<void>((_, reject) => { fail = reject; }));
-  await mount(rows);
+  await mount(rows, rows, "/p/database?progressRow=old");
   await selectTask("Task current");
   await act(async () => { fail(new Error("late failure")); });
   expect(selectedControls()).toBe("current");
@@ -165,6 +165,35 @@ it("preserves independent unsent drafts when switching tasks and hides inactive 
   expect(first.value).toBe("My first task feedback");
   await selectTask("Task second");
   expect(second.value).toBe("Different feedback for the second task");
+});
+
+it("shows the assigned crew and reorders a job on Worker activity while preserving the open draft and route", async () => {
+  const rows = [row("older"), row("child", { parentRowId: "row-older" }), row("planned", { parentRowId: "row-older" }), row("newer")];
+  const older = task("older", { delegate_agent_id: "lead", named_worker_ids: ["codex", "lead", "codex"] });
+  const child = task("child", { parent_task_id: older.id, delegate_agent_id: "muse" });
+  const newer = task("newer", { last_activity_at: "2026-11-04T11:00:00Z" });
+  setup(rows, [older, child, newer]);
+  useAgentTasks.setState({ rowPlans: { planned: { row_page_id: "planned", workspace_id: "workspace", worker_agent_id: "cursor", updated_by: "person", updated_at: "2026-11-04T10:00:00Z" } } });
+  useAgentsStore.setState({ agents: [["lead", "Claude Code"], ["codex", "Codex"], ["muse", "Muse Code"], ["cursor", "Cursor"]]
+    .map(([id, name]) => ({ id, name, workspace_id: "workspace", status: "enabled" } as AgentRow)) });
+  await mount(rows, rows, "/p/database?progressRow=older&marker=keep#block");
+  const cards = () => [...host.querySelectorAll<HTMLButtonElement>(".task-progress-task")];
+  const titles = () => cards().map((button) => button.firstElementChild?.textContent);
+  const olderCard = () => cards().find((button) => button.firstElementChild?.textContent === "Task older")!;
+  expect(titles()).toEqual(["Task newer", "Task older"]);
+  expect(olderCard().textContent).toContain("Lead: Claude CodeWorkers: Codex, Muse Code, Cursor");
+  const feedback = host.querySelector<HTMLTextAreaElement>('[aria-label="Feedback for older"]')!;
+  feedback.value = "Preserve this exact review draft";
+  const snapshot = structuredClone(rows);
+  await act(async () => useAgentTasks.setState((state) => ({ tasks: { ...state.tasks, [child.id]: { ...child, last_activity_at: "2026-11-04T12:00:00Z" } } })));
+  expect(titles()).toEqual(["Task older", "Task newer"]);
+  expect(olderCard().querySelector("time")?.dateTime).toBe("2026-11-04T12:00:00.000Z");
+  expect([...host.querySelectorAll("select option")].map((option) => option.getAttribute("value"))).toEqual(["", "older", "child", "planned", "newer"]);
+  expect(selectedControls()).toBe("older");
+  expect(host.querySelector('[aria-label="Feedback for older"]')).toBe(feedback);
+  expect(feedback.value).toBe("Preserve this exact review draft");
+  expect(route()).toBe("/p/database?progressRow=older&marker=keep#block");
+  expect(rows).toEqual(snapshot);
 });
 
 it("keeps a new row selected outside a saved filter without changing or dropping the other rows", async () => {
