@@ -22,6 +22,8 @@ export { ActivityTimeline } from "@/components/agents/panel/ActivityTimeline";
 export { FeedbackComposer } from "@/components/agents/panel/FeedbackComposer";
 export { MetricsList } from "@/components/agents/panel/MetricsList";
 export type { MetricsListProps } from "@/components/agents/panel/MetricsList";
+export { RunsCard } from "@/components/agents/panel/RunsCard";
+export type { RunsCardProps, RunsCardRun } from "@/components/agents/panel/RunsCard";
 export { taskSubtitle, expiresIn, activityLabel } from "@/lib/agentTaskText";
 export type { ActivityRow, ApprovalRow, ArtifactRow, BriefRow, ReviewRow, RunRow, TaskRow } from "@/lib/agentTasks";
 export type { ApprovalDecision, MessageSignal } from "@/lib/agentActions";

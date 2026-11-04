@@ -25,6 +25,7 @@ import type { Metric } from "@/lib/agentMetrics";
 import type { CiCheckRow } from "@/lib/agentCi";
 import type { EnvironmentResource } from "@/lib/agentTasks";
 import { EnvironmentCard } from "@/components/agents/panel/EnvironmentCard";
+import { RunsCard, type RunsCardRun } from "@/components/agents/panel/RunsCard";
 import { MergeRule } from "@/components/agents/panel/MergeRule";
 import { ApprovalGroupCard } from "@/components/agents/panel/ApprovalGroupCard";
 
@@ -54,6 +55,7 @@ export interface TaskViewProps {
   task: TaskRow;
   agent: AgentOption | null;
   run: RunRow | null;
+  runs?: RunsCardRun[];
   approval: ApprovalRow | null;
   actionApprovals?: ApprovalRow[];
   onDecideApproval?: (id: string, decision: ApprovalDecision, response: Record<string, unknown> | null) => Promise<void>;
@@ -152,7 +154,7 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ agentAvatar = null, lessons = null, task, agent, run, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, environment = [], activities, conversation, agentNames = {}, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ agentAvatar = null, lessons = null, task, agent, run, runs, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, environment = [], activities, conversation, agentNames = {}, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -245,6 +247,7 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
         onAccept={() => void act("close", () => onClose("accepted", null))} />}
 
       <EnvironmentCard environment={environment} />
+      {runs !== undefined && <RunsCard runs={runs} />}
       {!task.parent_task_id && !terminal && onSetMergeRule && <MergeRule
         enabled={autonomy?.merge_rule?.enabled === true}
         onChange={onSetMergeRule} />}

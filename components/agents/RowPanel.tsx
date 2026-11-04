@@ -174,6 +174,15 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
   const allReviews = useAgentTasks((s) => s.reviews);
   const tasks = useAgentTasks((s) => s.tasks);
   const runs = useAgentTasks((s) => s.runs);
+  const loadTask = useAgentTasks((s) => s.loadTask);
+  const taskRuns = useMemo(() => Object.values(runs)
+    .filter((item) => item.task_id === task.id)
+    .sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at) || a.id.localeCompare(b.id))
+    .map((item) => ({ id: item.id, agentName: agents.find((agent) => agent.id === item.agent_id)?.name ?? null,
+      harness: item.harness, model: item.model, status: item.status,
+      inputTokens: Number(item.input_tokens), outputTokens: Number(item.output_tokens), costUsd: Number(item.cost_usd),
+      costKind: item.cost_kind, startedAt: item.started_at, endedAt: item.ended_at, errorMessage: item.error_message })),
+  [runs, agents, task.id]);
   const loadTaskDetail = useAgentTasks((s) => s.loadTaskDetail);
   const loadActivities = useAgentTasks((s) => s.loadActivities);
   const loadTaskConversation = useAgentTasks((s) => s.loadTaskConversation);
@@ -204,8 +213,9 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
 
   // The workspace page holds the rows; briefs, artifacts and reviews load when the panel opens.
   useEffect(() => {
+    void loadTask(task.id);
     void loadTaskDetail(task.id);
-  }, [task.id, task.brief_version, loadTaskDetail]);
+  }, [task.id, task.brief_version, loadTask, loadTaskDetail]);
   useEffect(() => {
     void loadActivities(task.id);
   }, [task.id, task.last_activity_at, loadActivities]);
@@ -255,6 +265,7 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
       handOverAgents={agents.filter((a) => a.status === "enabled")}
       onHandOver={(to, note) => handOver(task.id, to, note).then(() => undefined)}
       run={run}
+      runs={taskRuns}
       approval={approval}
       actionApprovals={actionApprovals}
       onDecideApproval={(id, decision, response) => decideApproval(id, decision, response).then(() => undefined)}

@@ -61,8 +61,9 @@ describe("usage aggregation", () => {
 
   it("orders equal costs by name with unknown last and does not mark zero unmeasured cost estimated", () => {
     const result = aggregateUsage([run({ model: null, cost_usd: 0, cost_kind: "unknown" }),
-      run({ model: "z", cost_usd: 0 }), run({ model: "a", cost_usd: 0 })], [agent], []);
+      run({ model: "", cost_usd: 0 }), run({ model: "z", cost_usd: 0 }), run({ model: "a", cost_usd: 0 })], [agent], []);
     expect(result.models.map((m) => m.model)).toEqual(["a", "z", "unknown"]);
+    expect(result.models[2].runs).toBe(2);
     expect(result.agents[0].models).toEqual(["a", "z", "unknown"]);
     expect(result.agents[0].estimated).toBe(false);
     expect(aggregateUsage([], [], []).totals).toEqual({ runs: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 });

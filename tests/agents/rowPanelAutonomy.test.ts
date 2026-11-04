@@ -38,7 +38,7 @@ beforeEach(() => {
     return Promise.resolve({ data: null, error: null });
   });
   useAgentTasks.setState({ status: "ready", tasks: { [task.id]: task }, activities: { [task.id]: [] },
-    subscribe: () => () => {}, loadTaskDetail: async () => {}, loadActivities: async () => {}, loadTaskConversation: async () => {} });
+    subscribe: () => () => {}, loadTask: async () => {}, loadTaskDetail: async () => {}, loadActivities: async () => {}, loadTaskConversation: async () => {} });
   useAgentsStore.setState({ agents: [], load: async () => {} });
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); });

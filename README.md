@@ -49,6 +49,8 @@ Any model can take part, and Meta's Muse models run the agents that ship with th
 - **The reviewer** runs on Muse Spark Open, the open-weight model, served by Baseten. It checks deliverables against the brief.
 - **Muse Code** joins as a harness through the bridge.
 
+Usage: Settings → Usage shows, per agent and per model, which Meta model did the work, tokens and cost for the month, next to each agent's budget.
+
 Trama and the reviewer are instances of the reference agent; [`agent/README.md`](agent/README.md) has their setup.
 
 ## Trama, voice and personal notes

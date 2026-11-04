@@ -1,28 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-
-// Temporary shared view contracts until feat/usage-views is integrated.
-export type UsagePeriod = "month" | "30d";
-export interface UsageTotals {
-  runs: number;
-  inputTokens: number;
-  outputTokens: number;
-  costUsd: number;
-}
-export interface UsageAgentRow extends UsageTotals {
-  agentId: string;
-  name: string;
-  harness: string | null;
-  estimated: boolean;
-  monthlyBudgetUsd: number | null;
-  models: string[];
-  lastRunAt: string | null;
-}
-export interface UsageModelRow extends UsageTotals {
-  model: string;
-  inputUsdPerMtok: number | null;
-  outputUsdPerMtok: number | null;
-  usdPerMinute: number | null;
-}
+import type { UsagePeriod, UsageTotals, UsageAgentRow, UsageModelRow } from "@/components/agents/settings/UsagePanel";
 export interface UsageRun {
   id: string;
   agent_id: string;
@@ -82,10 +59,10 @@ export function aggregateUsage(
   for (const agent of agents) if (agent.enabled !== false) agentRow(agent.id);
   for (const run of runs) {
     const agent = agentRow(run.agent_id);
-    const model = run.model ?? "unknown";
+    const model = run.model || "unknown";
     let modelRow = modelRows.get(model);
     if (!modelRow) {
-      const price = run.model === null ? undefined : priceMap.get(model);
+      const price = run.model ? priceMap.get(model) : undefined;
       modelRow = { ...emptyTotals(), model,
         inputUsdPerMtok: price ? Number(price.input_usd_per_mtok) : null,
         outputUsdPerMtok: price ? Number(price.output_usd_per_mtok) : null,
