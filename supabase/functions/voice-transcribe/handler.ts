@@ -3,7 +3,7 @@
 // provider key and the service role are used only after that answer. A transcript is data: this function acts on nothing.
 import { jsonResponse, oauthError } from '../_shared/errors.ts';
 import { MisconfiguredError } from '../_shared/supabase.ts';
-import { ProviderError, type Transcription } from '../_shared/voice/meta.ts';
+import { ProviderError, type Transcription, type ProviderOptions } from '../_shared/voice/meta.ts';
 import { parseWav, WavError } from '../_shared/voice/wav.ts';
 
 export const CORS_HEADERS = {
@@ -32,7 +32,7 @@ export interface VoiceDeps {
   reserve(token: string, args: ReserveArgs): Promise<{ clip_id?: string; duplicate?: boolean }>;
   complete(clipId: string, audioMs: number | null): Promise<void>;
   fail(clipId: string, code: string): Promise<void>;
-  transcribe(wav: Uint8Array<ArrayBuffer>, signal: AbortSignal): Promise<Transcription>;
+  transcribe(wav: Uint8Array<ArrayBuffer>, signal: AbortSignal, opts: Pick<ProviderOptions, 'mode' | 'sessionId'>): Promise<Transcription>;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -104,7 +104,14 @@ async function handle(req: Request, deps: VoiceDeps): Promise<Response> {
   const channel = q.get('channel') ?? 'surface';
   const workspace = q.get('workspace_id');
   const message = q.get('message_id');
-  if ((workspace && !UUID.test(workspace)) || (channel === 'surface' && !workspace) || (message && !/^[0-9]{1,18}$/.test(message))) {
+  const mode = q.get('mode');
+  const sessionId = q.get('session_id');
+  if ((channel !== 'meeting' && (mode !== null || sessionId !== null)) ||
+    (mode !== null && mode !== 'diarization' && mode !== 'endpointing') ||
+    (sessionId !== null && !/^[A-Za-z0-9_-]{1,128}$/.test(sessionId))) {
+    return fail(400, 'invalid_request', 'Bad meeting parameters.');
+  }
+  if ((workspace && !UUID.test(workspace)) || ((channel === 'surface' || channel === 'meeting') && !workspace) || (message && !/^[0-9]{1,18}$/.test(message))) {
     return fail(400, 'invalid_request', 'Bad clip parameters.');
   }
 
@@ -134,7 +141,10 @@ async function handle(req: Request, deps: VoiceDeps): Promise<Response> {
 
   let result: Transcription;
   try {
-    result = await deps.transcribe(bytes, AbortSignal.timeout(PROVIDER_TIMEOUT_MS));
+    result = await deps.transcribe(bytes, AbortSignal.timeout(PROVIDER_TIMEOUT_MS), {
+      ...(mode ? { mode: mode === 'diarization' ? 'DIARIZATION' : 'ENDPOINTING' } : {}),
+      ...(sessionId ? { sessionId } : {}),
+    });
   } catch (err) {
     const status = err instanceof ProviderError ? err.status : 0;
     await deps.fail(clipId, status ? `provider_${status}` : 'provider_unreachable').catch(() => {});
@@ -147,5 +157,6 @@ async function handle(req: Request, deps: VoiceDeps): Promise<Response> {
   } catch {
     return fail(503, 'voice_failed', 'The transcription could not be recorded.');
   }
-  return jsonResponse(200, { clip_id: clipId, transcript: result.transcript.slice(0, MAX_TRANSCRIPT_CHARS), duration_ms: durationMs }, CORS_HEADERS);
+  return jsonResponse(200, { clip_id: clipId, transcript: result.transcript.slice(0, MAX_TRANSCRIPT_CHARS), duration_ms: durationMs,
+    ...(channel === 'meeting' ? { turns: result.turns } : {}) }, CORS_HEADERS);
 }

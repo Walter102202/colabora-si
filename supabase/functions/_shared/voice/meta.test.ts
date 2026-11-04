@@ -33,12 +33,12 @@ Deno.test('optional fields stay out, so the model detects the language', async (
 
 Deno.test('the answer is trimmed and the duration may come as a string', async () => {
   const out = await transcribeWav(new Uint8Array(1), never, { apiKey: 'k', fetchImpl: (() => Promise.resolve(ok({ transcript: ' hola ', audioDurationMs: '61900' }))) as typeof fetch });
-  assert.deepEqual(out, { transcript: 'hola', audioMs: 61900 });
+  assert.deepEqual(out, { transcript: 'hola', audioMs: 61900, turns: [] });
 });
 
 Deno.test('no duration leaves it to the caller', async () => {
   const out = await transcribeWav(new Uint8Array(1), never, { apiKey: 'k', fetchImpl: (() => Promise.resolve(ok({ transcript: '' }))) as typeof fetch });
-  assert.deepEqual(out, { transcript: '', audioMs: null });
+  assert.deepEqual(out, { transcript: '', audioMs: null, turns: [] });
 });
 
 for (const status of [400, 413, 429, 500]) {
@@ -57,4 +57,35 @@ Deno.test('a body without a transcript is a failure, not an empty note', async (
 Deno.test('listSetting', () => {
   assert.deepEqual(listSetting(' Spanish, English ,'), ['Spanish', 'English']);
   assert.deepEqual(listSetting(undefined), []);
+});
+
+Deno.test('meeting modes carry the session and map provider turns', async () => {
+  for (const mode of ['DIARIZATION', 'ENDPOINTING'] as const) {
+    let url = '', init: RequestInit = {};
+    const out = await transcribeWav(new Uint8Array(1), never, {
+      apiKey: 'k', baseUrl: 'http://stub/', mode, sessionId: 'meeting_id-1',
+      fetchImpl: ((u: string, i: RequestInit) => {
+        url = u; init = i;
+        return Promise.resolve(ok({ transcript: 'hello', turns: [
+          { turnId: '1', startMs: 0, endMs: 900, speaker: 'A', transcript: ' hello ' },
+          { startMs: 1000, endMs: 1500, transcript: 'world' },
+        ] }));
+      }) as typeof fetch,
+    });
+    assert.equal(url, 'http://stub/v1/asr/transcribe?sessionId=meeting_id-1');
+    assert.equal(JSON.parse((await sent(init).formData()).get('request') as string).mode, mode);
+    assert.deepEqual(out.turns, [
+      { startMs: 0, endMs: 900, speaker: 'A', text: 'hello' },
+      { startMs: 1000, endMs: 1500, text: 'world' },
+    ]);
+  }
+});
+
+Deno.test('malformed provider turns are rejected', async () => {
+  for (const turns of [{}, [null], [{ startMs: -1, endMs: 3, transcript: 'x' }],
+    [{ startMs: 3, endMs: 2, transcript: 'x' }], [{ startMs: 0, endMs: 2 }]]) {
+    await assert.rejects(() => transcribeWav(new Uint8Array(1), never, {
+      apiKey: 'k', fetchImpl: (() => Promise.resolve(ok({ transcript: 'x', turns }))) as typeof fetch,
+    }), ProviderError);
+  }
 });
