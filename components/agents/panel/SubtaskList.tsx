@@ -5,10 +5,11 @@ export interface SubtaskItem {
   task: TaskRow;
   run: RunRow | null;
   agentName: string | null;
+  agentLogo?: string | null;
 }
 
 // Subtasks a Lead opened under a task, with their state and worker. Pure:
-// the caller resolves runs and agent names and handles the navigation.
+// the caller resolves runs and agent identities and handles the navigation.
 export function SubtaskList({ subtasks, onOpenTask }: { subtasks: SubtaskItem[]; onOpenTask: (pageId: string, taskId: string) => void }) {
   if (subtasks.length === 0) return null;
   const counts = {
@@ -34,7 +35,7 @@ export function SubtaskList({ subtasks, onOpenTask }: { subtasks: SubtaskItem[];
       </h4>
       <p aria-label="Subtask progress" className="text-xs leading-relaxed text-text-secondary">{summary}</p>
       <ul className="divide-y divide-border rounded-md border border-border">
-        {subtasks.map(({ task, run, agentName }) => (
+        {subtasks.map(({ task, run, agentName, agentLogo }) => (
           <li key={task.id}>
             <button
               type="button"
@@ -42,7 +43,10 @@ export function SubtaskList({ subtasks, onOpenTask }: { subtasks: SubtaskItem[];
               onClick={() => onOpenTask(task.row_page_id, task.id)}
             >
               <span className="min-w-0 basis-full break-words sm:basis-0 sm:flex-1">{task.title || "Untitled subtask"}</span>
-              <span className="shrink-0 text-xs text-text-tertiary">{agentName ?? "unassigned"}</span>
+              <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 text-xs text-text-tertiary">
+                {agentLogo && <img src={agentLogo} alt="" width={16} height={16} className="size-4 shrink-0 object-contain" draggable={false} />}
+                <span className="min-w-0 break-words">{agentName ?? "unassigned"}</span>
+              </span>
               <StatusBadge task={task} run={run} agentName={agentName} compact />
             </button>
           </li>

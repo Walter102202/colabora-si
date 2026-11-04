@@ -10,6 +10,7 @@ import { useStore } from "@/lib/store";
 import { useAuthStore } from "@/lib/auth";
 import { isShell } from "@/lib/pageShell";
 import { isTerminal } from "@/lib/agentState";
+import { progressAgentLogo } from "@/lib/agentProgress";
 import { useAgentsStore } from "@/lib/agentsStore";
 import {
   activeRunFor,
@@ -251,8 +252,12 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
       Object.values(tasks)
         .filter((t) => t.parent_task_id === task.id)
         .sort((a, b) => a.created_at.localeCompare(b.created_at))
-        .map((t) => ({ task: t, run: t.active_run_id ? (runs[t.active_run_id] ?? null) : null, agentName: agents.find((a) => a.id === t.delegate_agent_id)?.name ?? null })),
-    [tasks, runs, agents, task.id],
+        .map((t) => {
+          const worker = agents.find((a) => a.id === t.delegate_agent_id && a.workspace_id === task.workspace_id);
+          return { task: t, run: t.active_run_id ? (runs[t.active_run_id] ?? null) : null,
+            agentName: worker?.name ?? null, agentLogo: progressAgentLogo(worker) };
+        }),
+    [tasks, runs, agents, task.id, task.workspace_id],
   );
 
   const conversationVersion = subtasks.map(({ task: child }) => `${child.id}:${child.last_activity_at}:${child.brief_version}`).join("|");
