@@ -238,5 +238,29 @@ select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select is(public.close_task(:'hj'::uuid,'accepted')->>'task_state','done','one human Accept settles the job');
 select is(public.job_ci_status(:'hj'::uuid)->'pending_human','[]'::jsonb,'accepted job has no pending human criteria');
 select tests.reset_role();
+
+-- CI can finish while the Lead is still working: delivery must recheck eligibility.
+select tests.make_page((:'f'::jsonb->>'ws')::uuid,'page_EarlyCI','page_A');
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.create_agent_task('page_EarlyCI','{"objective":"CI before delivery","done_when":[{"id":"c1","text":"Tests pass","check":"ci","command":"test"},{"id":"c2","text":"Build passes","check":"ci","command":"build"}]}',(:'lead'::jsonb->>'agent')::uuid)->>'task_id' as early_job \gset
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select public.claim_task(:'early_job'::uuid,'custom')->>'run_id' as early_run \gset
+select public.add_artifact(:'early_run'::uuid,'diff','acme/app@9999999999999999999999999999999999999999','Final commit',array['c1','c2'])->>'artifact_id' as early_diff \gset
+select tests.reset_role();
+select tests.set_service();
+select public.record_ci_check(:'conn'::uuid,'acme/app',jsonb_build_object('id',run_id,'name',check_name,'head_sha',repeat('9',40),'conclusion','success','html_url','https://github.com/acme/app/runs/' || run_id,'completed_at',now()))
+  from (values (401,'test'),(402,'build')) checks(run_id,check_name);
+select tests.reset_role();
+select is((select state from public.agent_tasks where id=:'early_job'::uuid),'working','early passing checks do not close an undelivered job');
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(public.job_ci_status(:'early_job'::uuid)->>'state','passed','both final checks are already green before submission');
+select is(public.submit_for_review(:'early_run'::uuid,'Ready',array[:'early_diff'::uuid])->>'task_state','done','submission closes a job whose final checks already passed');
+select tests.reset_role();
+select is((select state from public.agent_tasks where id=:'early_job'::uuid),'done','early CI closure is persisted');
+select is((select acceptance from public.agent_tasks where id=:'early_job'::uuid),'accepted','early CI delivery is accepted');
+select is((select count(*)::int from public.agent_activities where task_id=:'early_job'::uuid and body->>'rule'='ci_job'),1,'early CI creates exactly one closure activity');
+select is((select author_type from public.agent_activities where task_id=:'early_job'::uuid and body->>'rule'='ci_job'),'system','early CI closure is attributed to the system');
+select is((select count(*)::int from public.audit_events where action='task.close_job' and target->>'task_id'=:'early_job' and target->>'by'='ci'),1,'early CI closure is audited exactly once');
 select * from finish();
 rollback;

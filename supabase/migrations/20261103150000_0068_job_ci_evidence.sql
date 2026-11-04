@@ -375,6 +375,14 @@ begin
     values (v_t.workspace_id, v_t.owner_user_id, 'ready_for_review', v_t.row_page_id, v_t.id, v_r.agent_id,
             jsonb_build_object('summary', left(p_summary, 280)));
   end if;
+  -- GitHub may have completed the final checks before this delivery.
+  if v_t.parent_task_id is null and v_t.request_kind is null then
+    select * into v_t from public.agent_tasks where id = v_t.id;
+    if (select allowed from private.job_may_close(v_t)) then
+      perform private.close_job_accepted(v_t,'ci');
+      return jsonb_build_object('task_state','done','review_task_id',v_review);
+    end if;
+  end if;
   return jsonb_build_object('task_state','ready_for_review','review_task_id',v_review);
 end $$;
 -- Both outputs are explicit: Postgres cannot declare OUT text with RETURNS boolean.
@@ -508,6 +516,3 @@ begin
 end $$;
 revoke all on function public.record_ci_check(uuid, text, jsonb) from public, anon, authenticated;
 grant execute on function public.record_ci_check(uuid, text, jsonb) to service_role;
-
-
--- Replaces 0018: parent policy cannot override the two keys for CI evidence.
