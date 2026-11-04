@@ -69,9 +69,13 @@ const WORKLET = `class MeetingCapture extends AudioWorkletProcessor {
 } registerProcessor("meeting-capture", MeetingCapture);`;
 
 export async function startMeetingRecorder(opts: MeetingRecorderOptions): Promise<MeetingRecorder> {
-  if (!navigator.mediaDevices?.getUserMedia || typeof AudioWorkletNode === "undefined") throw new Error("unsupported");
+  const refuse = (reason: string): never => {
+    opts.stream?.getTracks().forEach((track) => track.stop());
+    throw new Error(reason);
+  };
+  if (!navigator.mediaDevices?.getUserMedia || typeof AudioWorkletNode === "undefined") refuse("unsupported");
   const maxMs = opts.maxMs ?? 3_600_000;
-  if (!Number.isFinite(maxMs) || maxMs <= 0 || maxMs > 3_600_000) throw new Error("invalid_duration");
+  if (!Number.isFinite(maxMs) || maxMs <= 0 || maxMs > 3_600_000) refuse("invalid_duration");
   // Never overwrite segments left by an interrupted session.
   let previous: Segment[];
   try { previous = await segments(opts.meetingId); }
@@ -90,6 +94,7 @@ export async function startMeetingRecorder(opts: MeetingRecorderOptions): Promis
   let frames: Float32Array[] = [], samples = 0, totalSamples = 0, silenceMs = 0;
   let windowSamples = 0, windowSquares = 0;
   let queue = Promise.resolve();
+  let cut = () => {};
   const deliveries: Promise<void>[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   const close = () => {
@@ -102,7 +107,7 @@ export async function startMeetingRecorder(opts: MeetingRecorderOptions): Promis
   const failed = (error: unknown) => {
     if (failure) return;
     failure = error;
-    if (!stopped) { stopped = true; close(); }
+    if (!stopped) { stopped = true; close(); cut(); }
     opts.onError?.(error);
   };
   try {
@@ -114,23 +119,24 @@ export async function startMeetingRecorder(opts: MeetingRecorderOptions): Promis
     source = context.createMediaStreamSource(stream);
     const rate = context.sampleRate, windowSize = Math.round(rate / 10);
     const elapsedMs = () => previousMs + totalSamples * 1000 / rate;
-    const cut = () => {
+    cut = () => {
       if (!samples) return;
       const captured = frames, count = samples, index = n++, startMs = elapsedMs() - count * 1000 / rate;
       frames = []; samples = 0; silenceMs = 0;
       queue = queue.then(async () => {
-        if (cancelled || failure) return;
+        if (cancelled) return;
         const wav = new Blob([encodeWav(await resample(joinChunks(captured), rate, 16000), 16000)], { type: "audio/wav" });
         const segment: Segment = { meetingId: opts.meetingId, n: index, startMs, durationMs: count * 1000 / rate, wav, status: "pending" };
         await transaction<void>("readwrite", (store) => { store.put(segment); });
         captured.length = 0;
-        if (!cancelled) deliveries.push(Promise.resolve().then(() => opts.onSegment(segment)).catch(failed));
+        if (!cancelled && !failure) deliveries.push(Promise.resolve().then(() => opts.onSegment(segment)).catch(failed));
       }).catch(failed);
     };
     const finish = (reason: "limit" | "stopped") => {
       if (stopTask) return stopTask;
       if (!stopped) { stopped = true; close(); cut(); }
-      stopTask = queue.then(() => Promise.all(deliveries)).then(() => { if (failure) throw failure; if (!cancelled) opts.onStop?.(reason); });
+      // A rejected upload can enqueue the final audio tail while deliveries settle.
+      stopTask = queue.then(() => Promise.all(deliveries)).then(() => queue).then(() => { if (failure) throw failure; if (!cancelled) opts.onStop?.(reason); });
       return stopTask;
     };
     node.port.onmessage = ({ data }: MessageEvent<Float32Array>) => {

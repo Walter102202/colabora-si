@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { Blob as NativeBlob } from "node:buffer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installFakeIndexedDb } from "../clone/fakeIndexedDb";
 import { createBlock, createPage } from "@/lib/factories";
@@ -62,7 +63,7 @@ function microphone() {
     for (let n = 0; n < Math.round(seconds * 10); n++) send?.({ data: new Float32Array(1600).fill(level) });
   } };
 }
-beforeEach(() => { disk(); });
+beforeEach(() => { vi.stubGlobal("Blob", NativeBlob); disk(); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 describe("durable segmented recording", () => {
@@ -109,6 +110,32 @@ describe("durable segmented recording", () => {
     const cancelled = await startMeetingRecorder({ meetingId: "cancelled", onLevel: vi.fn(), onSegment: vi.fn() });
     mic.frames(1); cancelled.cancel();
     expect(await listPendingSegments("cancelled")).toEqual([]);
+  });
+  it("retains the current audio tail when a segment upload fails", async () => {
+    const mic = microphone(), onError = vi.fn();
+    let rejectUpload!: (error: Error) => void;
+    const uploading = new Promise<void>((_resolve, reject) => { rejectUpload = reject; });
+    const onSegment = vi.fn(() => uploading);
+    const recorder = await startMeetingRecorder({ meetingId: "upload-failed", onLevel: vi.fn(), onSegment, onError });
+    mic.frames(120);
+    await vi.waitFor(() => expect(onSegment).toHaveBeenCalledOnce());
+    mic.frames(12);
+    rejectUpload(new Error("network"));
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce());
+    await expect(recorder.stop()).rejects.toThrow("network");
+    const saved = await listPendingSegments("upload-failed");
+    expect(saved.map((seg) => [seg.n, seg.startMs, seg.durationMs])).toEqual([[0, 0, 120000], [1, 120000, 12000]]);
+    expect(saved[1].wav.size).toBe(44 + 12000 * 32);
+    expect(onSegment).toHaveBeenCalledOnce();
+    expect(mic.stop).toHaveBeenCalledOnce();
+  });
+  it.each(["unsupported", "invalid_duration"])("releases a supplied stream on early %s rejection", async (reason) => {
+    const mic = microphone();
+    const stream = { getTracks: () => [{ stop: mic.stop }] } as unknown as MediaStream;
+    if (reason === "unsupported") vi.stubGlobal("AudioWorkletNode", undefined);
+    await expect(startMeetingRecorder({ meetingId: "invalid", stream, maxMs: reason === "invalid_duration" ? 0 : 1000,
+      onLevel: vi.fn(), onSegment: vi.fn() })).rejects.toThrow(reason);
+    expect(mic.stop).toHaveBeenCalledOnce();
   });
   it("stops at the duration cap and reports persistence failures without invoking upload", async () => {
     const mic = microphone(), onStop = vi.fn(), onSegment = vi.fn();
