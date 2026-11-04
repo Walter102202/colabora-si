@@ -160,9 +160,9 @@ it("starts a new account from the default pages, without offering another accoun
   expect(state.syncUserId).toBe("user-b");
   expect(h.fake.inserted.map((row) => row.id)).not.toContain(stale().id);
   const starters = h.fake.inserted.map((row) => row.data as Page);
-  expect(starters.map((p) => p.title).sort()).toEqual(["Agent Tasks", "Connect your agents", "Getting started", "Working with agents"]);
+  expect(starters.map((p) => p.title).sort()).toEqual(["Agent Tasks", "Connect your agents", "Getting started", "Meetings", "Working with agents"]);
   const savedCovers = starters.map((p) => safeCover(p.cover));
-  expect(new Set(savedCovers).size).toBe(4);
+  expect(new Set(savedCovers).size).toBe(5);
   for (const cover of savedCovers) expect(TRAMA_COVERS.some((preset) => preset.url === cover)).toBe(true);
   expect(h.fake.workspaces[0].root_order).not.toContain(stale().id);
   expect(h.fake.writes).toEqual([]);
