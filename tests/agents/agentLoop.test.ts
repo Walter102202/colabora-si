@@ -904,3 +904,18 @@ it("c) releases wait_for_task at once when the process aborts", async () => {
   expect(names(mcp.calls).at(-1)).toBe("hand_over");
   expect(sleep).not.toHaveBeenCalled();
 });
+
+it("CT-5 keeps each model request under the context budget on a long task", async () => {
+  const big = "# Row\n\n" + "lorem ipsum ".repeat(1000);          // ≈ 12 KB por lectura; 8 lecturas ≈ 24k tokens sin poda
+  const mcp = createStubMcp({ tasks: queued, waits: [seed()], handlers: { read_page: (a) => ({ page_id: a.page_id, title: "Row", revision: 1, markdown: big, blocks: [] }) } });
+  const script = [...Array.from({ length: 8 }, () => ({ tool_calls: [toolCall("read_page", { page_id: "row-task-1" })] })),
+    { tool_calls: [toolCall("submit_for_review", { summary: "Done", artifact_ids: [] })] }];
+  const model = createStubModel(script);
+  const { tasks } = await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, contextBudgetTokens: 12_000, contextKeepTurns: 2 });
+  expect(tasks[0].outcome).toBe("submitted");
+  const last = model.requests.at(-1)!.messages;
+  expect(Math.ceil(JSON.stringify(last).length / 4)).toBeLessThanOrEqual(12_000);
+  const tools = last.filter((m: { role: string }) => m.role === "tool");
+  expect(tools.slice(-2).every((m: { content: string }) => m.content.includes("lorem ipsum"))).toBe(true);
+  expect(tools.slice(0, -2).filter((m: { content: string }) => m.content.startsWith('{"elided":true')).length).toBeGreaterThanOrEqual(4);
+});

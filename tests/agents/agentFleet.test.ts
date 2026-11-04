@@ -155,3 +155,11 @@ describe("the managed runtime's workspace endpoint", () => {
     expect(single.instructions).toBe("https://x.supabase.co/functions/v1/mcp");
   });
 });
+
+it("reads the context token budget and its default", () => {
+  const env = { MODEL_BASE_URL: "http://model.test", MODEL_NAME: "other", WORKSPACE_MCP_URL: "http://app.test/mcp", WORKSPACE_AGENT_PAT: "test" };
+  expect(readConfig(env).contextBudgetTokens).toBe(100_000);
+  const managed = { VITE_SUPABASE_URL: "https://app.test", TRAMA_RUNTIME_SECRET: "test", META_MODEL_API_KEY: "test", AGENT_CONTEXT_BUDGET_TOKENS: "50000" };
+  expect(readFleetConfig(managed).config.contextBudgetTokens).toBe(50_000);
+  expect(readConfig({ ...env, AGENT_CONTEXT_BUDGET_TOKENS: "50000" }).contextBudgetTokens).toBe(50_000);
+});

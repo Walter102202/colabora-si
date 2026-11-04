@@ -2,6 +2,7 @@
 // report liveness and cost, pause on human decisions, and hand the result to a person.
 
 import { argsHash, buildCheckpoint, guardFor, guardsFromResume, isWriteTool, parseCheckpoint } from "./checkpoint.mjs";
+import { trimMessages } from "./context.mjs";
 import { effortFor } from "./effort.mjs";
 import { McpError, toOpenAiTools } from "./mcpClient.mjs";
 import { buildSystemPrompt, buildTaskMessage } from "./prompt.mjs";
@@ -64,6 +65,7 @@ function answerText(p) {
  * Runs the agent until `maxTasks` tasks were handled or `signal` aborts.
  * @param {{
  *   mcp: McpClient, model: Model, channel?: Channel, clock?: Clock,
+ *   contextBudgetTokens?: number, contextKeepTurns?: number,
  *   maxTurns?: number, maxTasks?: number, displayName?: string, harness?: string, reviewerAgentId?: string, resume?: boolean,
  *   prices?: {input: number, output: number}, appUrl?: string,
  *   signal?: AbortSignal, waitTimeoutS?: number, log?: (msg: string) => void, modelVision?: boolean, modelPdf?: boolean,
@@ -81,6 +83,8 @@ export async function runAgent(opts) {
     channel = { notify() {} },
     clock = realClock,
     maxTurns = 40,
+    contextBudgetTokens = 100_000,
+    contextKeepTurns = 6,
     maxTasks = Infinity,
     harness = "reference-agent",
     displayName = "",
@@ -549,6 +553,8 @@ export async function runAgent(opts) {
       /** @type {import("./model.mjs").ChatResult} */
       let reply;
       try {
+        const trimmed = trimMessages(messages, { budgetTokens: contextBudgetTokens, keepTurns: contextKeepTurns });
+        if (trimmed.elided) log(`Context trimmed: ${trimmed.elided} tool result(s) elided, ~${trimmed.tokens} tokens`);
         reply = await model.chat({ messages, tools, signal, reasoningEffort, promptCacheKey: cacheKey });
       } catch (e) {
         if (signal?.aborted) {
