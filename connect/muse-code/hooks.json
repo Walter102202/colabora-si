@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node <path-to-colabora>/connect/muse-code/on-stop.mjs --env <path-to-credentials-file>",
+            "timeout": 1800
+          }
+        ]
+      }
+    ]
+  }
+}

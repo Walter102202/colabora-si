@@ -15,7 +15,7 @@ Skipping setup leaves a Home card and the fixed Connect agents sidebar entry. Th
 | Cursor | [cursor](cursor/README.md) | Agent token, through the bridge | No: `wait_for_task` |
 | Antigravity | [antigravity](antigravity/README.md) | Agent token, through the bridge | No: `wait_for_task` |
 | Gemini CLI | [gemini-cli](gemini-cli/README.md) | Agent token, through the bridge | No: `wait_for_task` |
-| Muse Code | [muse-code](muse-code/README.md) | Agent token, through the bridge (or OAuth) | No: `wait_for_task` |
+| Muse Code | [muse-code](muse-code/README.md) | Agent token, through the bridge (or OAuth) | Yes: Stop hook continues the session |
 | Grok | [grok](grok/README.md) | Agent JWT | No |
 | colabora agent | [agent](agent/README.md) | Agent token | Yes: its main loop is `wait_for_my_tasks` |
 
@@ -26,6 +26,6 @@ Skipping setup leaves a Home card and the fixed Connect agents sidebar entry. Th
 
 ## Waiting without polling the model
 
-Any harness can wait inside a tool call: `wait_for_task` (one task) and `wait_for_my_tasks` (anything assigned to me) hold the call until something changes, up to 120 s, and return a cursor to call again. Claude Code (channel) and Codex (Desktop watcher or Stop hook) also wake up an idle session without spending model turns.
+Any harness can wait inside a tool call: `wait_for_task` (one task) and `wait_for_my_tasks` (anything assigned to me) hold the call until something changes, up to 120 s, and return a cursor to call again. Claude Code (channel), Codex (Desktop watcher or Stop hook) and Muse Code (Stop hook) also wake up an idle session without spending model turns.
 
 The per-harness READMEs are the human-readable source; the settings screen shows its snippets from `lib/agentSnippets.ts`.
