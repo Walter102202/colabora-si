@@ -9,7 +9,7 @@ import { extractPdfText } from '../pdfText.ts';
 import type { ToolDef } from '../mcp.ts';
 import { loadPage, num, object, output, READ, str, WRITE } from './common.ts';
 import type { Row } from './taskData.ts';
-import { assistRequest } from './person.ts';
+import { assistRequest, memoryRequest } from './person.ts';
 
 const usage = object({
   input_tokens: { type: 'integer', minimum: 0 }, output_tokens: { type: 'integer', minimum: 0 },
@@ -31,6 +31,7 @@ const getRequest: ToolDef = {
     if (!task) throw new ToolError('not_found', 'The request was not found.');
     if (task.request_kind === 'source_check') return sourceCheckRequest(String(task.id), ctx);
     if (task.request_kind === 'lesson') return lessonRequest(String(task.id), ctx);
+    if (task.request_kind === 'memory') return memoryRequest(String(task.id), ctx);
     if (task.request_kind === 'assist') return assistRequest(String(task.id), ctx);
     if (task.request_kind !== 'fill' && task.request_kind !== 'rewrite') throw new ToolError('not_a_request', 'This task is not an AI request.');
     const request = task.request as Row;

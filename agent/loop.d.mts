@@ -28,6 +28,8 @@ export function costUsd(usage: { input_tokens: number; output_tokens: number }, 
 export function runAgent(opts: {
   mcp: McpClient;
   model: Model;
+  memoryModel?: Model;
+  memoryPrices?: { input: number; output: number };
   channel?: Channel;
   clock?: Clock;
   maxTurns?: number;

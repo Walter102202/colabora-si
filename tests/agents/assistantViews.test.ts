@@ -47,6 +47,13 @@ const view = (over: Partial<AssistantThreadViewProps>) => renderToStaticMarkup(c
 }));
 
 describe("AssistantThreadView", () => {
+  it("shows used memories with a management link only when present", () => {
+    const html = view({ messages: [message({ direction: "out", outcome: { memory_used: [{ id: "m1", text: "Short answers" }] } })] });
+    expect(html).toContain("Used: ");
+    expect(html).toContain("Short answers");
+    expect(html).toContain("settings=memory");
+    expect(view({ messages: [message({ direction: "out" })] })).not.toContain("Used:");
+  });
   it.each(["sent", "received", "replied", "queued"])("shows the message delivery state: %s", (state) => {
     const outcome: NonNullable<PersonMessage["outcome"]> = { kind: "message_sent", agent_name: "Claude Code", task_title: "Launch", task_id: "task", page_id: "row", text: "Add Y",
       sent_at: new Date().toISOString(), delivery: state === "queued" ? "queued_for_next_session" : "queued_for_run",
