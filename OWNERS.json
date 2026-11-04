@@ -69,6 +69,8 @@
       "supabase/migrations/*_0066_*",
       "supabase/migrations/*_0067_*",
       "supabase/migrations/*_0068_*",
+      "supabase/migrations/*_0069_*",
+      "supabase/migrations/*_0070_*",
       "supabase/functions/",
       "supabase/seeds/02_agents.sql",
       "supabase/tests/agents/",
@@ -121,6 +123,7 @@
     ]
   },
   "branchExceptions": {
+    "a/trama-memory": ["OWNERS.json", "README.md", "public/llms.txt", "lib/routes.ts", "components/SettingsModal.tsx"],
     "a/job-close-evidence": ["OWNERS.json", "README.md", "public/llms.txt"],
     "a/muse-stop-hook": ["OWNERS.json", "README.md", "public/connect/muse-code.md"],
     "a/trama-intervene": ["OWNERS.json"],
