@@ -1,4 +1,4 @@
-export type SettingsTab = "account" | "members" | "agents" | "appearance" | "editor" | "data" | "about";
+export type SettingsTab = "account" | "members" | "agents" | "usage" | "appearance" | "editor" | "data" | "about";
 export interface PageLinkOptions { task?: string; peek?: string; }
 export const HOME_URL = "/";
 export const LANDING_URL = "/landing";

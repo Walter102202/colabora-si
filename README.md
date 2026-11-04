@@ -52,6 +52,8 @@ Any model can take part, and Meta's Muse models run the agents that ship with th
 - **Muse Code** connects over OAuth to both MCP endpoints and can work as Lead or Worker on a job.
 - **Muse (Meta)**, Meta's personal assistant, connects to pages as a custom connector.
 
+Usage: Settings → Usage shows, per agent and per model, which Meta model did the work, tokens and cost for the month, next to each agent's budget.
+
 Trama is an instance of the reference agent. The same agent can run a separate reviewer on any OpenAI-compatible endpoint, including the open-weight Muse Spark Open; [`agent/README.md`](agent/README.md) has the setup.
 
 ## Jobs

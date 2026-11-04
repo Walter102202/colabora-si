@@ -35,6 +35,24 @@ const type = (note: HTMLTextAreaElement, value: string) => {
   note.dispatchEvent(new Event("input", { bubbles: true }));
 };
 
+it("shows supplied runs and the empty state while keeping the MCP card unchanged", () => {
+  const input = props();
+  act(() => root.render(createElement(TaskView, input)));
+  expect(container.querySelector('[aria-label="Runs & cost"]')).toBeNull();
+  act(() => root.render(createElement(TaskView, { ...input, runs: [] })));
+  expect(container.textContent).toContain("No runs yet.");
+  act(() => root.render(createElement(TaskView, { ...input, runs: [{
+    id: "run", agentName: "Codex", harness: "codex", model: "muse-wonder-1.0", status: "completed",
+    inputTokens: 120, outputTokens: 30, costUsd: 0.25, costKind: "measured",
+    startedAt: "2026-11-03T00:00:00Z", endedAt: "2026-11-03T00:00:30Z", errorMessage: null,
+  }] })));
+  const card = container.querySelector('[aria-label="Runs & cost"]');
+  expect(card?.textContent).toContain("Muse Wonder 1.0");
+  expect(card?.textContent).toContain("Codex");
+  expect(card?.querySelector('tfoot [title="120"]')).not.toBeNull();
+  expect(card?.querySelector('tfoot [title="$0.25"]')).not.toBeNull();
+});
+
 describe("task handover", () => {
   it("the header shows the continuity line; a task waiting for review says why it cannot be handed over", () => {
     act(() => root.render(createElement(TaskView, props())));

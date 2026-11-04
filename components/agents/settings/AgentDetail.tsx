@@ -9,6 +9,11 @@ import { useAgentsStore, type AgentRow } from "@/lib/agentsStore";
 import { formatRelative } from "@/lib/utils";
 import { ConnectionSnippet } from "@/components/agents/settings/ConnectionSnippet";
 import { TokenReveal } from "@/components/agents/settings/TokenReveal";
+import { formatTokens, formatUsd } from "@/lib/agentFormat";
+import { modelInfo } from "@/lib/agentModelLabel";
+import { settingsUrl } from "@/lib/routes";
+
+export interface AgentUsageSummary { runs: number; inputTokens: number; outputTokens: number; costUsd: number; lastModel: string | null }
 
 const SCOPES = ["read", "write", "comment"] as const;
 
@@ -19,7 +24,7 @@ const WHAT = {
   revokeToken: "The harness stops authenticating. An already exchanged token stays valid for up to 1 hour.",
 };
 
-export function AgentDetail({ agent, onBack }: { agent: AgentRow; onBack: () => void }) {
+export function AgentDetail({ agent, onBack, usage }: { agent: AgentRow; onBack: () => void; usage?: AgentUsageSummary | null }) {
   const pages = useStore((s) => s.pages);
   // Select the raw arrays: a selector that filters returns a new array on every call and re-renders forever.
   const allGrants = useAgentsStore((s) => s.grants);
@@ -134,6 +139,19 @@ export function AgentDetail({ agent, onBack }: { agent: AgentRow; onBack: () => 
       </section>
 
       {results && <MetricsList title="Results (last 30 days)" metrics={results} />}
+
+      {usage && (
+        <section className="space-y-1">
+          <h4 className="font-medium">Usage this month</h4>
+          <p className="text-text-secondary">
+            {usage.runs} {usage.runs === 1 ? "run" : "runs"} · {formatTokens(usage.inputTokens)} in · {formatTokens(usage.outputTokens)} out · {formatUsd(usage.costUsd)}
+          </p>
+          <p className="text-text-secondary">
+            Last model: {usage.lastModel && usage.lastModel !== "unknown" ? <span title={modelInfo(usage.lastModel).id}>{modelInfo(usage.lastModel).label}</span> : <span className="text-text-tertiary">Not reported by harness</span>}
+          </p>
+          <a href={settingsUrl("usage")} className="inline-block text-xs text-accent hover:underline">See all usage</a>
+        </section>
+      )}
 
       <section className="space-y-2">
         <h4 className="font-medium">Controls</h4>

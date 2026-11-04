@@ -31,8 +31,8 @@ beforeEach(() => {
   container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
   actions.loadTaskDiff.mockReset(); actions.revertRun.mockReset();
   actions.fetchTaskMetrics.mockReset().mockResolvedValue({ tasks: 0, metrics: [] });
-  useAgentTasks.setState({ status: "ready", tasks: { [task.id]: task }, activities: { [task.id]: [] },
-    subscribe: () => () => {}, loadTaskDetail: async () => {}, loadActivities: async () => {}, loadTaskConversation: async () => {} });
+  useAgentTasks.setState({ status: "ready", tasks: { [task.id]: task }, runs: {}, activities: { [task.id]: [] },
+    subscribe: () => () => {}, loadTask: async () => {}, loadTaskDetail: async () => {}, loadActivities: async () => {}, loadTaskConversation: async () => {} });
   useAgentsStore.setState({ agents: [], load: async () => {} });
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); });
@@ -41,6 +41,26 @@ const boxes = () => [...container.querySelectorAll<HTMLInputElement>('input[type
 const mount = async () => {
   await act(async () => root.render(createElement(MemoryRouter, { initialEntries: [`/p/${task.row_page_id}`] }, createElement(RowPanel, { pageId: task.row_page_id }))));
 };
+
+it("loads all task runs and connects names and live totals in newest-first order", async () => {
+  actions.loadTaskDiff.mockResolvedValue(null);
+  const loadTask = vi.fn(async () => {});
+  const base = (mockCard("1") as TaskCardData).run!;
+  const older = { ...base, id: "older", task_id: task.id, agent_id: "a", harness: "codex", model: "muse-spark-1.3", started_at: "2026-11-01T00:00:00Z", input_tokens: 10, output_tokens: 2, cost_usd: 0.1 };
+  const newer = { ...older, id: "newer", model: "muse-wonder-1.0", started_at: "2026-11-02T00:00:00Z" };
+  useAgentTasks.setState({ loadTask, runs: { older, newer, other: { ...older, id: "other", task_id: "other-task", model: "hidden-model" } } });
+  useAgentsStore.setState({ agents: [{ id: "a", name: "Worker" } as AgentRow] });
+  await mount();
+  expect(loadTask).toHaveBeenCalledWith(task.id);
+  const card = container.querySelector('[aria-label="Runs & cost"]')!;
+  const rows = card.querySelectorAll("tbody tr");
+  expect(rows).toHaveLength(2);
+  expect(rows[0].textContent).toContain("Muse Wonder 1.0");
+  expect(rows[0].textContent).toContain("Worker");
+  expect(card.textContent).not.toContain("hidden-model");
+  await act(async () => useAgentTasks.setState({ runs: { older, newer: { ...newer, input_tokens: 30 } } }));
+  expect(card.querySelector('tfoot [title="40"]')).not.toBeNull();
+});
 
 describe("row panel diff", () => {
   it("a revert that fails reloads the diff, so the block a person edited loses its checkbox", async () => {

@@ -3,6 +3,7 @@ import { Input } from "@/components/FormControls";
 import type { SettingsTab } from "@/lib/routes";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
+import { UsageSettingsTab } from "@/components/agents/UsageSettingsTab";
 import { AgentsSettingsTab } from "@/components/agents/AgentsSettingsTab";
 import Modal from "@/components/Modal";
 import { useStore } from "@/lib/store";
@@ -42,9 +43,9 @@ export default function SettingsModal({ onClose, tab: selectedTab, onTabChange }
     return () => { active = false; };
   }, []);
   const update = useStore((s) => s.updateSettings), trash = Object.values(pages).filter((p) => p.isDeleted).length;
-  return <Modal title="Settings" onClose={onClose} wide><div className="settings-layout"><nav aria-label="Settings sections">{["Account", "Members", "Agents", "Appearance", "Editor", "Data", "About"].map((name) => <button className={tab === name ? "active" : ""} key={name} onClick={() => onTabChange(name.toLowerCase() as SettingsTab)}>{name}</button>)}</nav><div className="settings-content"><h3 className="mb-5 font-semibold">{tab}</h3>
+  return <div className={tab === "Usage" ? "[&_.modal-wide]:w-[min(1200px,96vw)]!" : undefined}><Modal title="Settings" onClose={onClose} wide><div className="settings-layout"><nav aria-label="Settings sections">{["Account", "Members", "Agents", "Usage", "Appearance", "Editor", "Data", "About"].map((name) => <button className={tab === name ? "active" : ""} key={name} onClick={() => onTabChange(name.toLowerCase() as SettingsTab)}>{name}</button>)}</nav><div className="settings-content">{tab !== "Usage" && <h3 className="mb-5 font-semibold">{tab}</h3>}
     {tab === "Account" && <div className="space-y-4"><p className="text-sm text-text-secondary">{!isSupabaseConfigured() ? "Sync isn't configured for this build. The app keeps working fully offline — everything is stored in your browser." : user ? user.email : "Log in to sync your workspace across devices."}</p><button className="action-button" onClick={() => window.dispatchEvent(new CustomEvent("colabora-modal", { detail: { kind: "auth" } }))}>{user ? "Manage account" : "Log in"}</button><PushSettings /></div>}
-    {tab === "Members" && <MembersSettings />}{tab === "Agents" && <AgentsSettingsTab />}
+    {tab === "Members" && <MembersSettings />}{tab === "Agents" && <AgentsSettingsTab />}{tab === "Usage" && <UsageSettingsTab />}
     {tab === "Appearance" && <><fieldset><legend>Theme</legend><p>How the app looks on this device.</p><div className="segmented">{(["light", "dark", "system"] as const).map((mode) => <button key={mode} aria-pressed={theme === mode} onClick={() => { applyThemeMode(mode); setTheme(mode); update({ theme: mode }); }}>{mode[0].toUpperCase() + mode.slice(1)}</button>)}</div></fieldset>
       <fieldset><legend>Default page font</legend><p>Applied to newly created pages.</p><div className="segmented">{(["default", "serif", "mono"] as const).map((font) => <button key={font} className={`font-page-${font}`} aria-pressed={settings.defaultFont === font} onClick={() => update({ defaultFont: font })}>{font[0].toUpperCase() + font.slice(1)}</button>)}</div></fieldset>
       <div className="setting-toggle">Small text by default<Input label="Small text by default" type="checkbox" checked={settings.smallTextDefault} onChange={(e) => update({ smallTextDefault: e.target.checked })} /></div><div className="setting-toggle">Full width by default<Input label="Full width by default" type="checkbox" checked={settings.fullWidthDefault} onChange={(e) => update({ fullWidthDefault: e.target.checked })} /></div></>}
@@ -65,7 +66,7 @@ export default function SettingsModal({ onClose, tab: selectedTab, onTabChange }
       } catch { setError("Could not parse that file as JSON."); }
     }} /></div></div>{error && <p role="alert" className="danger">{error}</p>}</fieldset><fieldset><legend>Trash</legend><p>{trash ? `${trash} pages in trash.` : "Trash is empty."}</p><button className="action-button" disabled={!trash} onClick={() => { if (confirm("Permanently delete all pages in Trash?")) void emptyTrashLoaded(); }}>Empty trash</button></fieldset><fieldset><legend>Danger zone</legend><p>Deletes every page and starts over with the sample workspace.</p><button className="action-button danger" onClick={() => { if (confirm("Reset the entire workspace? This deletes all your pages.")) { void resetWorkspaceLoaded().then((reset) => { if (reset) { onClose(); navigate("/"); } }); } }}>Reset workspace</button></fieldset></>}
     {tab === "About" && <div className="space-y-4 text-sm text-text-secondary"><p><strong>colabora.si</strong> · 0.1.0 — a local-first workspace for humans and AI agents. Everything you write is stored in your browser.</p><p>Built with Next.js, React, Tailwind and Zustand.</p><p>Tip: press Ctrl/⌘ / for keyboard shortcuts.</p></div>}
-  </div></div></Modal>;
+  </div></div></Modal></div>;
 }
 
 function SyncControls() {
