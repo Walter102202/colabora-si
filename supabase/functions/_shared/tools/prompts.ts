@@ -17,7 +17,7 @@ function userMessage(text: string) {
 
 function ciInstructions(brief: Row | null): string {
   return doneWhen(brief).filter((c) => c.check === 'ci').map((c) =>
-    `[${c.id}] Deliver a diff artifact with ref owner/repo@<full sha> that satisfies this criterion. GitHub reports the result; do not state it yourself.`
+    `[${c.id}] Deliver a diff artifact with ref owner/repo@<full sha> that satisfies this criterion. The GitHub connection is optional; verify CI and cite the run URL in review_task evidence_ref.`
   ).join('\n');
 }
 
@@ -62,7 +62,7 @@ const reviewAsLead: PromptDef = {
       'Evidence rule: judge only by what you can verify now in the deliverables (read_page, query_database, the artifact refs), ' +
       'not by what you remember from delegating. For each criterion record a finding with status verified, not_found, ' +
       'contradicted or unverified, a short note and an evidence_ref (a block anchor #b-<id>, a row or an activity).',
-      'Then call review_task with verdict approved, changes_requested or blocked. Never close the task yourself unless close_subtask allows it; a pending CI check is deferred to the job final commit.',
+      'Then call review_task with verdict approved, changes_requested or blocked. At Autonomous you finish the job: review each delivery yourself (another agent may do it), cite the evidence (CI run URL, command output, screenshot artifact) in review_task, close with close_subtask, deliver the job with the final commit, then close_job. Ask a person only for a criterion a person wrote, or with request_approval before an irreversible outside action. Never ask whether you may close.',
       'If this review was delegated to you as a review task (its brief policy review_of names the subtask), pass your run_id on that review task to review_task; recording the review closes your review task and its authority. End your turn; the Lead or a person closes the delivery. If the review asks for changes, wait for the next delivery and delegate a new review task: a review task is closed by its review.',
     ].join('\n\n');
     return { description: `Review ${String(t.task.title || t.task.id)}`, messages: [userMessage(text)] };

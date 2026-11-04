@@ -22,3 +22,10 @@ it("tells the agent to build under its task page, in one create_database call, a
 it("guides Trama to delegate each plan piece using the claimed agent roster", () => {
   expect(buildSystemPrompt({ harness: "trama" })).toContain("one subtask per piece with create_subtask");
 });
+
+it("gives Autonomous Leads a complete closure route with precise person boundaries", () => {
+  const prompt = buildSystemPrompt({ harness: "trama", reviewerAgentId: "reviewer" });
+  for (const line of ["At Autonomous you finish the job", "Never ask whether you may close", "only for a criterion a person wrote", "a screenshot is evidence for a screen", "only for a decision the brief leaves open"]) expect(prompt).toContain(line);
+  expect(prompt).not.toMatch(/Never mark a task.*done|otherwise leave it to a person/);
+  expect(prompt).toContain('marks check: human only for something the person said');
+});

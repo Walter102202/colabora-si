@@ -267,9 +267,9 @@ const reviewTask: ToolDef = {
   title: 'Review a subtask deliverable',
   description:
     'Review of a task in ready_for_review: as Lead from your own run on the parent task (run_id), or as a person ' +
-    '(no run_id). One finding per "done when" criterion, judged by evidence. changes_requested sends the findings to ' +
+    '(no run_id). One finding per "done when" criterion, judged by evidence; a verified finding needs a non-empty evidence_ref to count for closing. changes_requested sends the findings to ' +
     'the worker; past the round limit it escalates to a person. blocked means a person must decide: the task waits on ' +
-    'them and the worker resumes only after their answer. approved does not close the task: call close_subtask next. If it answers policy_denied, a person accepts it in the app.' +
+    'them and the worker resumes only after their answer. approved does not close the task: call close_subtask next. If it answers policy_denied, resolve the stated reason; never ask whether you may close.' +
     ' As the reviewer agent, call it from your run on the review task delegated to you (its brief policy review_of names task_id); recording the review closes your review task. ' +
     'Minor findings never send work back and do not count a round; the Lead hears about them.',
   inputSchema: object({
@@ -314,8 +314,8 @@ const closeSubtask: ToolDef = {
   name: 'close_subtask',
   title: 'Close a reviewed subtask',
   description:
-    'Lead with an active parent run. A reviewer records review_task and ends its turn; the Lead or a person closes the delivery. Closes a subtask in ready_for_review when, at Autonomous autonomy, an agent other than its author approved it and no criterion is deterministic; or when the parent brief allows it (policies.subtask_close = lead) or ' +
-    'every deterministic criterion is verified with evidence; Human criteria are deferred to one person Accept on the job and never permit automatic job closure. A pending or unconnected CI check is deferred to the job final commit, with a current approved independent review. A known failure blocks closure (policy_denied, reason ci_failed). Otherwise policy_denied and a person decides.',
+    'Lead with an active parent run: at Autonomous, close a delivered subtask after a current approved independent agent reviewer verifies every criterion with non-empty evidence_ref (deterministic evidence.ref must name its command), except check: human with by: person, which needs the person once through job Accept or close_task. ' +
+    'GitHub is optional and only known failed checks veto this close (policy_denied: ci_failed); below Autonomous the existing parent subtask_close policy and deterministic evidence route remain unchanged.',
   inputSchema: object({
     task_id: { type: 'string', minLength: 1 },
     verdict: { type: 'string', enum: ['accepted'], default: 'accepted' },
@@ -337,7 +337,7 @@ const closeSubtask: ToolDef = {
 
 const closeJob: ToolDef = {
   name: 'close_job', title: 'Close a delivered Autonomous job',
-  description: "Lead only, after submit_for_review. Closes without a person at Autonomous autonomy when every subtask is accepted, no human criteria remain and GitHub passed every required check on the job final diff commit. Otherwise policy_denied explains why (ci_pending, ci_not_connected, subtasks_open). When CI arrives later the server closes the job itself; you do not need to wait.",
+  description: "Lead at Autonomous: after delivery, close the job when every subtask is done and accepted and no check: human with by: person remains pending; GitHub is optional and none, no_commit and not_connected do not block. A live failed or pending final check refuses with policy_denied (ci_failed or ci_pending), and a later passing delivery closes the job automatically; other reasons are not_delivered, autonomy, subtasks_open and human_criteria.",
   inputSchema: object({ task_id: { type: 'string', minLength: 1 } }, ['task_id']),
   outputSchema: output({ task_state: { type: 'string' } }), annotations: WRITE,
   async handler(args, ctx) {
