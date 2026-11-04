@@ -32,9 +32,9 @@ export function taskSubtitle(task: TaskRow, run: RunRow | null, agentName: strin
       return task.waiting_on === "lead" ? "waiting on the Lead" : "waiting on you";
     case "ready_for_review":
       if (task.review_state === "outdated") return "review outdated";
-      // A Lead reviews a subtask (submit_for_review tells it); a top-level task waits on the person.
+      // A Lead reviews a subtask. A root delivery may also be awaiting autonomous closure.
       if (task.review_state === "pending") {
-        return task.parent_task_id ? `Lead reviewing · round ${task.review_rounds + 1} of ${task.max_review_rounds}` : "waiting for your review";
+        return task.parent_task_id ? `Lead reviewing · round ${task.review_rounds + 1} of ${task.max_review_rounds}` : "delivery ready for review";
       }
       return task.brief_stale ? "brief changed after this run" : "deliverable ready";
     case "done":

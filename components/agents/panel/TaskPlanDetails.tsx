@@ -1,6 +1,7 @@
 import type { BriefRow, TaskRow } from "@/lib/agentTasks";
 import { pageUrl } from "@/lib/routes";
 import { safeHref } from "@/lib/utils";
+import { criterionReviewMethod } from "@/lib/agentCriterionReview";
 
 export function TaskPlanDetails({ task, brief, onOpenPage }: {
   task: TaskRow;
@@ -23,11 +24,11 @@ export function TaskPlanDetails({ task, brief, onOpenPage }: {
         {brief.done_when.length ? <ol className="space-y-2">
           {brief.done_when.map((criterion) => <li key={criterion.id} className="rounded-md border border-border px-3 py-2">
             <p className="whitespace-pre-wrap break-words text-sm">{criterion.text}</p>
-            <p className="mt-1 text-xs text-text-tertiary">{criterion.id} · checked by {criterion.check === "ci" ? "CI" : criterion.check === "lead" ? "the Lead" : criterion.check === "human" ? "a person" : "a deterministic check"}</p>
+            <p className="mt-1 break-words text-xs text-text-tertiary">{criterion.id} · {criterionReviewMethod(criterion)}</p>
             {criterion.command && <code className="mt-1 block whitespace-pre-wrap break-all text-xs text-text-secondary">{criterion.command}</code>}
           </li>)}
         </ol> : <p className="text-xs text-text-tertiary">No acceptance criteria were written.</p>}
-        <p className="text-xs text-text-tertiary">These are the requirements. Their verification is in Work.</p>
+        <p className="text-xs text-text-tertiary">Review status and evidence are in Work.</p>
       </section>
       {brief.constraints && <section className="space-y-1">
         <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Constraints</h4>

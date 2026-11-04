@@ -140,7 +140,7 @@ it.each(["pending", "failed", "passed", "not_connected"] as const)("job Accept r
   act(() => root.render(createElement(TaskView, { ...base, task: { ...base.task, parent_task_id: null },
     jobCi: { state, sha: "a".repeat(40), connected: true, checks: [{ check: "test", state, sources: [] }] } })));
   expect(button("Accept")!.disabled).toBe(state === "pending" || state === "failed");
-  expect(container.textContent).toContain(state === "pending" ? "Waiting for CI on" : state === "failed" ? "CI failed on" : state === "passed" ? "CI passed on" : "No CI connected: a person must accept");
+  expect(container.textContent).toContain(state === "pending" ? "Waiting for CI on" : state === "failed" ? "CI failed on" : state === "passed" ? "CI passed on" : "Not connected: the Lead verifies CI itself");
 });
 it("subtask Accept does not show its parent's CI", () => {
   const base = props("ready_for_review");
@@ -159,7 +159,19 @@ it("job Accept lists the deferred human criteria", () => {
   const base = props("ready_for_review");
   act(() => root.render(createElement(TaskView, { ...base, jobCi: { state: "none", connected: false, checks: [],
     pending_human: [{ criterion_id: "h1", task_id: "s1", text: "Approve the design" }] } })));
-  expect(container.textContent).toContain("You are the check for:");
-  expect(container.textContent).toContain("Approve the design");
+  const acceptance = container.querySelector('[aria-label="Ready for you"]');
+  expect(acceptance?.textContent).toContain("Waiting for you");
+  expect(acceptance?.textContent).toContain("Approve the design");
   expect(button("Accept")!.disabled).toBe(false);
+});
+
+it.each(["agent", "person"] as const)("renders a %s-authored human criterion with its actual responsibility", (by) => {
+  const base = props("ready_for_review");
+  act(() => root.render(createElement(TaskView, { ...base,
+    brief: { ...base.brief!, done_when: [{ id: "h", text: "Look at this screen", check: "human", by }] } })));
+  const acceptance = container.querySelector('[aria-label="Ready for you"]');
+  const verification = container.querySelector('[aria-label="Verification"]');
+  expect(acceptance?.querySelector("ul")?.textContent ?? "").toBe(by === "person" ? "Look at this screen" : "");
+  expect(verification?.textContent).toContain(by === "person" ? "Waiting for you" : "The Lead suggested you look");
+  expect(verification?.textContent).not.toContain(by === "agent" ? "Waiting for you" : "The Lead suggested you look");
 });

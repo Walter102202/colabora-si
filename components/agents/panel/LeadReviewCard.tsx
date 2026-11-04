@@ -2,6 +2,8 @@ import { useId, useState } from "react";
 import type { ArtifactRow, BriefRow, ReviewRow, TaskRow } from "@/lib/agentTasks";
 import type { CiCheckRow } from "@/lib/agentCi";
 import { VerificationCard } from "@/components/agents/panel/VerificationCard";
+import type { ParentAcceptance } from "@/lib/agentCriterionReview";
+import { isTerminal } from "@/lib/agentState";
 
 export type FindingStatus = "verified" | "not_found" | "contradicted" | "unverified";
 export type ReviewVerdict = "approved" | "changes_requested" | "blocked";
@@ -22,6 +24,7 @@ const STATUSES: { value: FindingStatus; label: string }[] = [
 // Pure: `onReview` performs the review for this task and the deliverable shown.
 export function LeadReviewCard({
   task,
+  parentAcceptance = "unknown",
   review,
   brief,
   ciChecks,
@@ -30,6 +33,7 @@ export function LeadReviewCard({
   onReview,
 }: {
   task: TaskRow;
+  parentAcceptance?: ParentAcceptance;
   review: ReviewRow | null;
   brief: BriefRow | null;
   ciChecks?: CiCheckRow[];
@@ -46,14 +50,14 @@ export function LeadReviewCard({
 
   const canReview = task.state === "ready_for_review" && !!artifact;
   const byLead = review?.reviewer_type === "agent";
-  // review_state stays 'pending' after a close (close_task leaves it), so only a task in review is being reviewed:
-  // a subtask by the Lead of its parent, a top-level task by the person.
+  // A closed task can retain review_state='pending'. A top-level delivery may
+  // also be awaiting autonomous closure, so its label does not assign a person.
   const inReview = task.state === "ready_for_review" && task.review_state === "pending";
   const roundLine =
     inReview
-      ? task.parent_task_id ? `Lead reviewing · round ${task.review_rounds + 1} of ${task.max_review_rounds}` : "Waiting for your review"
+      ? `${task.parent_task_id ? "Lead reviewing" : "Ready for review"} · round ${task.review_rounds + 1} of ${task.max_review_rounds}`
       : task.review_rounds > 0
-        ? `Round ${task.review_rounds} of ${task.max_review_rounds}${task.review_rounds >= task.max_review_rounds ? " · escalated to you" : ""}`
+        ? `Round ${task.review_rounds} of ${task.max_review_rounds}${!isTerminal(task.state) && task.review_rounds >= task.max_review_rounds ? " · escalated to you" : ""}`
         : null;
 
   const submit = async (verdict: ReviewVerdict) => {
@@ -76,7 +80,7 @@ export function LeadReviewCard({
   return (
     <div className="space-y-2">
       {roundLine && <p className="text-xs text-text-secondary">{roundLine}</p>}
-      <VerificationCard review={review} brief={brief} ciChecks={ciChecks} reviewerName={reviewerName ?? (byLead ? "the Lead" : null)} />
+      <VerificationCard task={task} parentAcceptance={parentAcceptance} review={review} brief={brief} ciChecks={ciChecks} reviewerName={reviewerName ?? (byLead ? "the Lead" : null)} />
       {canReview && !taking && (
         <button type="button" className="rounded border border-border px-2 py-1 text-xs hover:bg-bg-secondary" onClick={() => setTaking(true)}>
           {review ? "Take the review" : "Review it yourself"}

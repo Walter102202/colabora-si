@@ -30,15 +30,52 @@ export function progressAuthor(type: ActivityRow["author_type"], id: string, nam
 
 const string = (value: unknown): string => typeof value === "string" ? value.trim() : "";
 const at = (value: string): number => Number.isFinite(Date.parse(value)) ? Date.parse(value) : 0;
+const recorded = (value: unknown): string => typeof value === "string" ? value : JSON.stringify(value) ?? String(value);
+const DETAIL_LABELS: Record<string, string> = {
+  check: "Check", state: "Result", url: "URL", sha: "Commit", sources: "Source tasks", kind: "Type", ref: "Reference",
+  hash: "Hash", criterion_id: "Criterion", task_id: "Task", text: "Requirement", repo: "Repository",
+};
+
+function recordedDetails(label: string, value: unknown): string[] {
+  if (!Array.isArray(value) || !value.length) return [];
+  return [`${label}:`, ...value.map((item: unknown) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return recorded(item);
+    return Object.entries(item).map(([key, field]) => `${DETAIL_LABELS[key] ?? key}: ${key === "state" ? recorded(field).replaceAll("_", " ") : recorded(field)}`).join(" · ") || recorded(item);
+  })];
+}
+
+function acceptedResponse(activity: ActivityRow, task: TaskRow): { label: string; detail: string } | null {
+  // Closure RPCs write persistent, runless responses. A run's free-form message
+  // may carry the same words or keys without being evidence of acceptance.
+  if (activity.run_id !== null || activity.ephemeral !== false || !["agent", "system"].includes(activity.author_type)) return null;
+  const body = activity.body, rule = string(body.rule);
+  const job = !task.parent_task_id && !task.request_kind && rule === "ci_job"
+    && Array.isArray(body.checks) && (body.sha === null || typeof body.sha === "string");
+  const subtask = !!task.parent_task_id && activity.author_type === "agent" && body.verdict === "accepted"
+    && ["policy", "deterministic", "lead_review", "ci_deferred", "human_deferred"].includes(rule) && Array.isArray(body.evidence);
+  if (!job && !subtask) return null;
+  if (rule === "ci_deferred" && (!Array.isArray(body.ci_deferred) || !body.ci_deferred.length)) return null;
+  if (rule === "human_deferred" && (!Array.isArray(body.human_deferred) || !body.human_deferred.length)) return null;
+  // ci_job also names a Lead closure without connected CI. Keep the recorded
+  // checks and deferrals; the rule alone never means that CI passed.
+  return { label: "Delivery accepted", detail: [
+    string(body.text) || "The delivery was accepted in the workspace.",
+    string(body.sha) && `Commit: ${string(body.sha)}`,
+    ...recordedDetails("CI checks recorded at closure", body.checks),
+    ...recordedDetails("Evidence", body.evidence),
+    ...recordedDetails("CI checks deferred to the job's final commit", body.ci_deferred),
+    ...recordedDetails("Human criteria deferred to the job's acceptance", body.human_deferred),
+  ].filter(Boolean).join("\n") };
+}
 
 // An allowlist of recorded milestones. Routine row/block operations remain in
 // the original activity, without becoming evidence of delivery or completion.
-function activityMilestone(activity: ActivityRow): { label: string; detail: string } | null {
+function activityMilestone(activity: ActivityRow, task: TaskRow): { label: string; detail: string } | null {
   const body = activity.body;
   const text = string(body.text);
   switch (activity.type) {
     case "response":
-      return body.submit === true ? { label: "Submitted for review", detail: text || "The agent submitted its work for review." } : null;
+      return body.submit === true ? { label: "Submitted for review", detail: text || "The agent submitted its work for review." } : acceptedResponse(activity, task);
     case "elicitation":
       return { label: string(body.action) ? "Approval requested" : "Input requested", detail: string(body.question) || activityLabel(activity) };
     case "error":
@@ -91,7 +128,7 @@ export function buildProgressMilestones({ task, subtasks, activities, reviews, a
     const row = tasks.get(activity.task_id);
     if (!row || reviewIds.has(string(activity.body.review_id))) continue;
     if (activity.type === "action" && activity.body.op === "submit_for_review" && activity.run_id && submissions.has(`${activity.task_id}:${activity.run_id}`)) continue;
-    const event = activityMilestone(activity);
+    const event = activityMilestone(activity, row);
     if (!event) continue;
     const id = `activity:${activity.id}`;
     milestones.set(id, {

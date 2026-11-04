@@ -9,6 +9,7 @@ import { pageUrl, taskUrl } from "@/lib/routes";
 import { useStore } from "@/lib/store";
 import { useAuthStore } from "@/lib/auth";
 import { isShell } from "@/lib/pageShell";
+import { isTerminal } from "@/lib/agentState";
 import { useAgentsStore } from "@/lib/agentsStore";
 import {
   activeRunFor,
@@ -179,6 +180,9 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
   const activities = allActivities[task.id];
   const allReviews = useAgentTasks((s) => s.reviews);
   const tasks = useAgentTasks((s) => s.tasks);
+  const parentTask = task.parent_task_id ? tasks[task.parent_task_id] : undefined;
+  const parentAcceptance = parentTask?.state === "done" && parentTask.acceptance === "accepted" ? "accepted"
+    : parentTask && !isTerminal(parentTask.state) ? "pending" : "unknown";
   const runs = useAgentTasks((s) => s.runs);
   const loadTask = useAgentTasks((s) => s.loadTask);
   const taskRuns = useMemo(() => Object.values(runs)
@@ -288,6 +292,7 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
       artifact={artifact}
       review={review}
       brief={brief}
+      parentAcceptance={parentAcceptance}
       ciChecks={ciChecks}
       jobCi={jobCi}
       environment={environment}

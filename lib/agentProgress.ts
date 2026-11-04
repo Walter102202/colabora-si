@@ -1,12 +1,20 @@
 import { isTerminal, waitsForAcceptance } from "@/lib/agentState";
 import type { ApprovalRow, RunRow, TaskRow } from "@/lib/agentTasks";
+import type { AutonomyLevel } from "@/lib/agentAutonomy";
+import type { JobCiState } from "@/lib/agentCi";
 import type { DbRow } from "@/lib/types";
 
 export type ProgressTone = "neutral" | "active" | "attention" | "success" | "error";
 export interface ProgressState { label: string; detail: string; tone: ProgressTone; needsYou: boolean; }
+// Read-only presentation facts, not a prediction of whether the server will close a task.
+export interface ProgressReviewContext {
+  autonomy: AutonomyLevel | null;
+  personCriteria: boolean | null;
+  ciState: JobCiState | null;
+}
 
 // These labels describe server state. An accepted delivery says nothing about publication.
-export function taskProgressState(task: TaskRow, run: RunRow | null, approvals: ApprovalRow[], userId: string | null): ProgressState {
+export function taskProgressState(task: TaskRow, run: RunRow | null, approvals: ApprovalRow[], userId: string | null, review?: ProgressReviewContext): ProgressState {
   const yours = !!userId && task.owner_user_id === userId;
   const pending = approvals.some((item) => item.task_id === task.id && item.status === "pending"
     && Date.parse(item.expires_at) > Date.now());
@@ -16,14 +24,27 @@ export function taskProgressState(task: TaskRow, run: RunRow | null, approvals: 
     : { label: "Closed", detail: "Closed without an accepted delivery.", tone: "neutral", needsYou: false };
   if (task.state === "failed") return { label: "Failed", detail: run?.error_message || "The task needs attention before it can continue.", tone: "error", needsYou: false };
   if (task.state === "cancelled") return { label: "Stopped", detail: "The task is stopped. Its history and deliverables are kept.", tone: "neutral", needsYou: false };
-  if (task.review_state === "outdated" || task.brief_stale) return { label: "Review outdated", detail: "The brief or delivery changed. Check the current version before deciding.", tone: "attention", needsYou: yours && waitsForAcceptance(task) };
+  const personReview = task.state === "ready_for_review" && (review?.personCriteria === true
+    || (!task.parent_task_id && waitsForAcceptance(task) && (review?.autonomy === "ask" || review?.autonomy === "balanced")));
   if (task.state === "input_required") {
     const human = task.waiting_on !== "lead" && task.waiting_on !== "agent";
     return { label: human ? yours ? "Needs you" : "Needs input" : task.waiting_on === "lead" ? "Waiting on Lead" : "Waiting on agent", detail: human ? "A person needs to answer before work can continue." : "The next step is with an agent.", tone: "attention", needsYou: yours && human };
   }
-  if (task.state === "ready_for_review") return waitsForAcceptance(task)
-    ? { label: yours ? "Needs your review" : "Ready for review", detail: "The delivery is ready to inspect and accept, or send back with feedback.", tone: "attention", needsYou: yours }
-    : { label: "Lead reviewing", detail: "The delivery is waiting for its review.", tone: "active", needsYou: false };
+  if (task.review_state === "outdated" || task.brief_stale) return { label: "Review outdated", detail: "The brief or delivery changed. Check the current version before deciding.", tone: "attention", needsYou: yours && personReview };
+  if (task.state === "ready_for_review") {
+    if (personReview) return { label: yours ? "Needs your review" : "Ready for review", detail: review?.ciState === "pending"
+      ? "Your review is needed. Acceptance is waiting for CI results."
+      : review?.ciState === "failed" ? "Your review is needed. CI must pass before acceptance."
+        : "A person's review is needed. Inspect the delivery and its current criteria before accepting.", tone: "attention", needsYou: yours };
+    if (review?.personCriteria === false && (review.autonomy === "autonomous" || (task.parent_task_id && review.autonomy !== null))) {
+      if (review.ciState === "pending") return { label: "Waiting for CI", detail: "CI has not confirmed a passing result for the delivered commit. The task remains open.", tone: "active", needsYou: false };
+      if (review.ciState === "failed") return { label: "CI failed", detail: "The delivered commit has failing CI checks. The task remains open for the team to resolve them.", tone: "error", needsYou: false };
+      return { label: "Waiting on Lead", detail: "The delivery is with the Lead for review or closure. Closure has not been confirmed.", tone: "active", needsYou: false };
+    }
+    return waitsForAcceptance(task)
+      ? { label: "Ready for review", detail: "The delivery is saved. Review requirements have not been confirmed yet.", tone: "neutral", needsYou: false }
+      : { label: "Lead reviewing", detail: "The delivery is waiting for its review.", tone: "active", needsYou: false };
+  }
   if (run?.stale_at) return { label: "No recent signal", detail: "The last run has not reported recently. Its saved work is still here.", tone: "attention", needsYou: false };
   if (task.review_state === "changes_requested") return { label: "Changes requested", detail: "Feedback is recorded. The next delivery still needs review.", tone: "active", needsYou: false };
   if (task.state === "working") return { label: "Working", detail: "An agent is working on this task.", tone: "active", needsYou: false };

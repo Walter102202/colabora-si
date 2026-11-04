@@ -1,8 +1,9 @@
 "use client";
 
-import type { BriefRow, ReviewRow } from "@/lib/agentTasks";
+import type { BriefRow, ReviewRow, TaskRow } from "@/lib/agentTasks";
 import { CI_LABEL, type CiCheckRow } from "@/lib/agentCi";
 import { safeHref } from "@/lib/utils";
+import { humanReviewResponsibility, type ParentAcceptance } from "@/lib/agentCriterionReview";
 
 const STATUS: Record<ReviewRow["findings"][number]["status"], { mark: string; label: string; cls: string }> = {
   verified: { mark: "✓", label: "verified", cls: "text-green-700 dark:text-green-400" },
@@ -13,68 +14,73 @@ const STATUS: Record<ReviewRow["findings"][number]["status"], { mark: string; la
 
 const VERDICT: Record<ReviewRow["verdict"], string> = { approved: "Approved", changes_requested: "Changes requested", blocked: "Blocked: needs a decision" };
 
-export interface VerificationCardProps { review: ReviewRow | null; brief: BriefRow | null; reviewerName?: string | null; ciChecks?: CiCheckRow[] }
+export interface VerificationCardProps {
+  review: ReviewRow | null;
+  brief: BriefRow | null;
+  reviewerName?: string | null;
+  ciChecks?: CiCheckRow[];
+  task?: TaskRow;
+  parentAcceptance?: ParentAcceptance;
+}
 
-function CiCriterion({ text, check, finding }: { text: string; check?: CiCheckRow; finding?: ReviewRow["findings"][number] }) {
+function CriterionResult({ criterion, check, finding, reviewed, responsibility }: {
+  criterion: BriefRow["done_when"][number];
+  check?: CiCheckRow;
+  finding?: ReviewRow["findings"][number];
+  reviewed: boolean;
+  responsibility: string | null;
+}) {
+  const ci = criterion.check === "ci";
   const state = check?.state ?? "pending";
-  const status = STATUS[state === "passed" ? "verified" : state === "failed" ? "contradicted" : "unverified"];
-  const url = check?.url ? safeHref(check.url) : null;
-  return <li className="flex flex-wrap gap-2">
-    <span className={status.cls}>{status.mark}</span><span className="min-w-0 flex-1">{text}</span>
-    {url ? <a href={url} target="_blank" rel="noopener noreferrer" className={status.cls}>{CI_LABEL[state]}</a> : <span className={status.cls}>{CI_LABEL[state]}</span>}
-    <span className="text-text-secondary">· Review: {STATUS[finding?.status ?? "unverified"].label}{finding?.note ? ` · ${finding.note}` : ""}</span>
+  const status = STATUS[ci ? state === "passed" ? "verified" : state === "failed" ? "contradicted" : "unverified" : finding?.status ?? "unverified"];
+  const url = ci && check?.url ? safeHref(check.url) : null;
+  const label = ci ? CI_LABEL[state] : reviewed ? status.label : "not verified yet";
+  return <li data-criterion-id={criterion.id} className="flex items-start gap-2">
+    <span aria-hidden="true" className={`shrink-0 ${status.cls}`}>{status.mark}</span>
+    <div className="min-w-0 flex-1 space-y-1">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="min-w-0 basis-40 flex-1 whitespace-pre-wrap break-words">{criterion.text}</span>
+        {url ? <a href={url} target="_blank" rel="noopener noreferrer" className={status.cls}>{label}</a> : <span className={status.cls}>{label}</span>}
+      </div>
+      {ci && <p className="text-text-secondary">Review: {STATUS[finding?.status ?? "unverified"].label}</p>}
+      {finding?.note && <p className="whitespace-pre-wrap break-words text-text-secondary">{finding.note}</p>}
+      {finding?.evidence_ref && <p className="break-all text-text-secondary">Evidence: {finding.evidence_ref}</p>}
+      {responsibility && <p className="whitespace-pre-wrap break-words text-text-secondary">{responsibility}</p>}
+    </div>
   </li>;
 }
 
-export function VerificationCard({ review, brief, reviewerName, ciChecks }: VerificationCardProps) {
+export function VerificationCard({ review, brief, reviewerName, ciChecks, task, parentAcceptance = "unknown" }: VerificationCardProps) {
   const criteria = brief?.done_when ?? [];
-  if (!review) {
-    if (criteria.length === 0) return <p className="text-xs text-text-tertiary">No acceptance criteria were written.</p>;
-    return (
-      <ul className="space-y-0.5 text-xs">
-        {criteria.map((c) => c.check === "ci" ? <CiCriterion key={c.id} text={c.text} check={ciChecks?.find((r) => r.criterion_id === c.id)} /> : (
-          <li key={c.id} className="flex gap-2"><span className="text-text-tertiary">–</span><span>{c.text}</span><span className="text-text-tertiary">· not verified yet</span></li>
-        ))}
-      </ul>
-    );
-  }
-  const blocking = review.findings.filter((f) => f.severity !== "minor");
-  const minors = review.findings.filter((f) => f.severity === "minor");
+  if (!review && criteria.length === 0) return <p className="text-xs text-text-tertiary">No acceptance criteria were written.</p>;
+  const blocking = review?.findings.filter((f) => f.severity !== "minor") ?? [];
+  const minors = review?.findings.filter((f) => f.severity === "minor") ?? [];
   const byId = new Map(blocking.filter((f) => f.criterion_id).map((f) => [f.criterion_id!, f]));
   return (
     <div className="space-y-1 text-xs">
-      <p>
+      {review && <p>
         <span className="font-medium">{VERDICT[review.verdict]}</span>
         <span className="text-text-secondary"> · by {reviewerName ?? (review.reviewer_type === "human" ? "a person" : "the Lead")} · deliverable v{review.artifact_version} · brief v{review.brief_version}</span>
-      </p>
-      {review.outdated_by && (
+      </p>}
+      {review?.outdated_by && (
         <p className="text-yellow-700 dark:text-yellow-400">
           Review outdated: {review.outdated_by === "artifact" ? "the deliverable changed after the review." : "the brief changed after the review."}
         </p>
       )}
-      <ul className="space-y-0.5">
-        {criteria.map((c) => {
-          const f = byId.get(c.id);
-          if (c.check === "ci") return <CiCriterion key={c.id} text={c.text} check={ciChecks?.find((r) => r.criterion_id === c.id)} finding={f} />;
-          const s = STATUS[f?.status ?? "unverified"];
-          return (
-            <li key={c.id} className="flex gap-2">
-              <span className={s.cls}>{s.mark}</span>
-              <span className="min-w-0 flex-1">{c.text}{f?.note ? <span className="text-text-secondary"> · {f.note}</span> : null}</span>
-              <span className={"shrink-0 " + s.cls}>{s.label}</span>
-            </li>
-          );
-        })}
+      <ul className="space-y-3">
+        {criteria.map((criterion) => <CriterionResult key={criterion.id} criterion={criterion} finding={byId.get(criterion.id)}
+          check={ciChecks?.find((row) => row.criterion_id === criterion.id)} reviewed={!!review}
+          responsibility={humanReviewResponsibility(criterion, task, parentAcceptance)} />)}
         {blocking.filter((f) => f.criterion_id && !criteria.some((c) => c.id === f.criterion_id)).map((f) => (
-          <li key={f.criterion_id} className="flex gap-2"><span className={STATUS[f.status].cls}>{STATUS[f.status].mark}</span><span>{f.criterion_id}{f.note ? ` · ${f.note}` : ""}</span></li>
+          <li key={f.criterion_id} className="flex items-start gap-2"><span className={STATUS[f.status].cls}>{STATUS[f.status].mark}</span><span className="min-w-0 break-words">{f.criterion_id}{f.note ? ` · ${f.note}` : ""}</span></li>
         ))}
       </ul>
       {minors.length > 0 && <section className="space-y-1 text-text-secondary" aria-label="Minor, for later">
         <h5 className="font-medium">Minor, for later</h5>
         <ul className="space-y-0.5">{minors.map((f, index) => <li key={index}>{f.note}{f.evidence_ref ? ` · ${f.evidence_ref}` : ""}</li>)}</ul>
       </section>}
-      {review.evidence.length > 0 && (
-        <p className="text-text-tertiary">Evidence: {review.evidence.map((e) => `${e.kind} ${e.ref}`).join(" · ")}</p>
+      {!!review?.evidence.length && (
+        <p className="break-words text-text-tertiary">Evidence: {review.evidence.map((e) => `${e.kind} ${e.ref}`).join(" · ")}</p>
       )}
     </div>
   );

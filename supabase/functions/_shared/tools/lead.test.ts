@@ -213,3 +213,11 @@ Deno.test('close_job forwards the job id and preserves refusal details', async (
   await assert.rejects(() => tool('close_job').handler({ task_id: 'j1' }, context(() => ({ data: null,
     error: { message: 'policy_denied', details: '{"reason":"ci_pending"}' } }))), (e: unknown) => e instanceof ToolError && e.code === 'policy_denied');
 });
+
+Deno.test('Autonomous closing describes evidence, person authorship and optional CI', () => {
+  assert.match(tool('review_task').description, /verified finding needs.*evidence_ref/);
+  assert.match(tool('close_subtask').description, /by: person/);
+  assert.match(tool('close_subtask').description, /evidence_ref/);
+  assert.match(tool('close_job').description, /optional/);
+  assert.doesNotMatch(tool('close_job').description, /ci_not_connected|ci_none/);
+});

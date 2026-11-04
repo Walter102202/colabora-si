@@ -122,7 +122,7 @@ export interface BriefRow {
   version: number;
   objective: string;
   constraints: string;
-  done_when: { id: string; text: string; check: "human" | "deterministic" | "lead" | "ci"; command?: string }[];
+  done_when: { id: string; text: string; check: "human" | "deterministic" | "lead" | "ci"; by?: "person" | "agent"; command?: string }[];
   decisions: { at: string; by: string; text: string }[];
   sources: { kind: "page" | "url" | "artifact"; ref: string; trust: "internal" | "external" }[];
   open_questions: string[];
