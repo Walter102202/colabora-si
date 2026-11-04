@@ -34,6 +34,6 @@ describe("texts for the errors of a person's agent actions", () => {
 it.each(["ci_pending", "ci_failed"])("closing explains %s", async (message) => {
   rpc.mockResolvedValue({ data: null, error: { message, code: "PT422" } });
   await expect(closeTask("t1", "accepted")).rejects.toThrow(message === "ci_pending"
-    ? "CI has not finished on the final commit. Accept opens when it passes."
-    : "CI failed on the final commit. Ask for a fix or close without accepting.");
+    ? "CI is pending on the delivered commit. An eligible Autonomous job closes automatically when it passes."
+    : "CI failed on the delivered commit. Fix the failed check before accepting.");
 });
