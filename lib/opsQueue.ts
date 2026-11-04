@@ -77,6 +77,7 @@ export class MemoryQueue implements OpsQueue {
   async settled(): Promise<void> {}
 }
 
+export type StorageState = { degraded: boolean; stalePages: string[] };
 export class IndexedDbQueue extends MemoryQueue {
   readonly ready: Promise<void>;
   private db: IDBDatabase | null = null;
@@ -84,8 +85,11 @@ export class IndexedDbQueue extends MemoryQueue {
   private release: (() => void) | null = null;
   private readonly prefix: string;
   private closed = false;
-  constructor(private scope: string, private owner: string) {
+  private readonly stale = new Set<string>();
+  private readonly retryDelaysMs: number[];
+  constructor(private scope: string, private owner: string, opts?: { retryDelaysMs?: number[] }) {
     super(); this.prefix = `${scope}|${owner}|`;
+    this.retryDelaysMs = opts?.retryDelaysMs ?? [0, 50, 200];
     this.ready = this.open();
   }
   private async open(): Promise<void> {
@@ -128,14 +132,29 @@ export class IndexedDbQueue extends MemoryQueue {
     });
   }
   protected changed(pageId: string): void {
-    const pending = this.pending.get(pageId), revision = this.revisions.get(pageId);
-    this.writes = this.writes.then(() => this.ready).then(() => new Promise<void>((resolve, reject) => {
-      const tx = this.db!.transaction(["ops", "revisions"], "readwrite"), key = this.prefix + pageId;
-      if (pending) tx.objectStore("ops").put(pending, key); else tx.objectStore("ops").delete(key);
-      if (revision !== undefined) tx.objectStore("revisions").put(revision, key); else tx.objectStore("revisions").delete(key);
-      tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error);
-    }));
-    void this.writes.catch(() => {});
+    this.writes = this.writes.then(() => this.ready).then(() => this.persist(pageId)).catch(() => {});
+  }
+  private async persist(pageId: string): Promise<void> {
+    for (let i = 0; i < this.retryDelaysMs.length; i++) {
+      if (this.retryDelaysMs[i] > 0) await new Promise<void>((resolve) => setTimeout(resolve, this.retryDelaysMs[i]));
+      try {
+        const pending = this.pending.get(pageId), revision = this.revisions.get(pageId);
+        await new Promise<void>((resolve, reject) => {
+          const tx = this.db!.transaction(["ops", "revisions"], "readwrite"), key = this.prefix + pageId;
+          if (pending) tx.objectStore("ops").put(pending, key); else tx.objectStore("ops").delete(key);
+          if (revision !== undefined) tx.objectStore("revisions").put(revision, key); else tx.objectStore("revisions").delete(key);
+          tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error);
+        });
+        if (this.stale.delete(pageId) && this.stale.size === 0) console.warn("Local ops queue storage recovered.");
+        return;
+      } catch { /* Retry the current in-memory state; disk failures must not block sync. */ }
+    }
+    const degraded = this.stale.size > 0;
+    this.stale.add(pageId);
+    if (!degraded) console.warn("Local ops queue storage is degraded; pending edits remain in memory.");
+  }
+  storageState(): StorageState {
+    return { degraded: this.stale.size > 0, stalePages: [...this.stale] };
   }
   async settled(): Promise<void> { await this.ready; await this.writes; }
   async close(): Promise<void> { this.closed = true; try { await this.settled(); } finally { this.release?.(); this.db?.close(); } }
