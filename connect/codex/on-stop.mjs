@@ -54,6 +54,7 @@ export function feedbackExcerpt(detail) {
  *   input: { stop_hook_active?: boolean, [key: string]: unknown },
  *   env: Record<string, string | undefined>,
  *   fetchImpl?: typeof fetch,
+ *   clientInfo?: { name: string, version: string },
  *   state?: { load: () => { delivered?: Record<string, string> }, save: (state: { delivered: Record<string, string> }) => void },
  *   now?: () => number,
  *   sleep?: (ms: number) => Promise<void>,
@@ -61,7 +62,7 @@ export function feedbackExcerpt(detail) {
  * }} options
  * @returns {Promise<{ exitCode: number, output?: string, acknowledge?: () => Promise<void> }>}
  */
-export async function runStopHook({ input, env, fetchImpl, state, now = Date.now, sleep, log = () => {} }) {
+export async function runStopHook({ input, env, fetchImpl, state, now = Date.now, sleep, log = () => {}, clientInfo = { name: "colabora-codex-stop-hook", version: "0.1.0" } }) {
   const pause = sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const mcpUrl = (env.WORKSPACE_MCP_URL ?? "").trim();
   const pat = (env.WORKSPACE_AGENT_PAT ?? "").trim();
@@ -78,7 +79,7 @@ export async function runStopHook({ input, env, fetchImpl, state, now = Date.now
     fetch: fetchImpl,
     now,
     log,
-    clientInfo: { name: "colabora-codex-stop-hook", version: "0.1.0" },
+    clientInfo,
   });
   let saved = {};
   try { saved = state?.load() ?? {}; } catch (error) { log(`state load failed: ${error.message}`); }
