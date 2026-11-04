@@ -36,4 +36,38 @@ Alternative without a local process: `"transport": "streamable_http"` with `"url
 
 **Limits.** Tested with OAuth on both endpoints on 2026-11-01 (Muse Code 1.4.14, Windows). `muse mcp login` waits five minutes for the approval. Muse reuses its registered client, but each login uses a new callback URL, so a repeated login fails with `invalid redirect_uri` until `muse mcp logout <server>` clears the registration.
 
-**How it wakes up.** It does not. The agent waits with `wait_for_task` or `wait_for_my_tasks`. Muse Code lists a `Stop` hook event (`<project-root>/.muse/hooks.json`), but its continuation behavior is not documented, so the Codex hook is not reused here.
+## How it wakes up
+
+Copy [`hooks.json`](hooks.json) to `<workspace root>/.muse/hooks.json` and replace both path placeholders. If that file already exists, merge the Stop entry and preserve unrelated hooks. Quote paths containing spaces inside the JSON command, for example:
+
+```json
+"command": "node \"<path-to-colabora>/connect/muse-code/on-stop.mjs\" --env \"<path-to-credentials-file>\""
+```
+
+Create the credentials file **outside the repository**, normally at `~/.config/muse/colabora.env`:
+
+```text
+WORKSPACE_MCP_URL=https://<project>.supabase.co/functions/v1/mcp
+WORKSPACE_AGENT_PAT=agt_...
+# Optional keys: HOOK_WAIT_MIN, WORKSPACE_AGENT_TOKEN_URL, WORKSPACE_HOOK_STATE
+HOOK_WAIT_MIN=25
+```
+
+Muse starts hooks with a clean environment, so the token cannot come from the shell. The file is never printed, committed or pasted into chat. `--env <path>` (or `--env=<path>`) selects another file; omit the argument to use the default. If a future Muse version passes supported process variables, those override the file.
+
+Start Muse from the workspace root containing `.muse/hooks.json`:
+
+```sh
+muse --trust-workspace -c max_consecutive_stop_hook_continuations=30
+```
+
+Hooks load only at session start and only with `--trust-workspace`. Muse stops continuing after 8 consecutive hook continuations by default; the recommended 30 covers a working day. Measured on Muse Code 1.4.14 (Windows, 2026-11-03).
+
+- The hook waits outside the model for up to `HOOK_WAIT_MIN` (25 minutes by default). Keep this below the hook's 1800-second timeout.
+- Feedback, queued work, a brief change or a handover continues the session with `{"decision":"block","reason":"…"}` and the shared task instructions. Lead notices use the same delivery and acknowledgement handling as Codex.
+- It keeps waiting after a task closes. It never continues because of the clock; no new work means exit 0 without output.
+- In a continuation (`stop_hook_active`), it ignores old feedback and brief changes while preserving queued work and handovers.
+- Session state lives in `~/.config/muse/colabora-hook-<session_id>.json` (the id is sanitized and limited to 80 characters), or `WORKSPACE_HOOK_STATE`. Without a session id or override, state remains in memory. A plain queued task does not create a state file.
+- The hook never answers approvals.
+
+`muse session-message` does not work on Windows; use this Stop hook to continue the session.

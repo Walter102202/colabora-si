@@ -14,6 +14,7 @@ export declare function runStopHook(options: {
   input: { stop_hook_active?: boolean; [key: string]: unknown };
   env: Record<string, string | undefined>;
   fetchImpl?: typeof fetch;
+  clientInfo?: { name: string; version: string };
   state?: { load(): { delivered?: Record<string,string> }; save(state: { delivered: Record<string,string> }): void };
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;

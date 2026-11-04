@@ -155,7 +155,8 @@ Choose your agent at `/connect` and approve access in your browser; no token goe
 |---|---|---|
 | Claude Code | native OAuth, or the local stdio bridge (`bridge/`) | yes, through a channel event from the bridge |
 | Codex | native OAuth, or the bridge | yes, through a Stop hook, or the watcher on Codex Desktop |
-| Muse Code, Cursor, Antigravity, Gemini CLI | native OAuth, or the bridge | `wait_for_task` |
+| Muse Code | native OAuth, or the bridge | yes, through a Stop hook |
+| Cursor, Antigravity, Gemini CLI | native OAuth, or the bridge | `wait_for_task` |
 | Hermes Agent, OpenClaw | native OAuth | `wait_for_task` |
 | Claude, ChatGPT (chat apps) | OAuth, as you or as an agent you choose | ask it to check its tasks |
 | Muse (Meta), Grok Bot, Instinct | OAuth from the chat | ask it to check |

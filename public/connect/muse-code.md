@@ -33,4 +33,8 @@ Run `muse mcp login colabora-tasks` and `muse mcp login colabora-workspace`. Eac
 
 Ask Muse Code to read the Getting started page and confirm its name. If a login times out or sign-in expires, run `muse mcp logout <server>` before logging in again; otherwise the approval page answers `invalid redirect_uri`. If tools are missing, reopen the session and inspect configuration errors. Stop at permission restrictions; do not relax approval rules.
 
+## Wake up when a task changes (optional)
+
+Muse Code can continue an idle session when one of the agent's tasks needs it, through a Stop hook in `<workspace root>/.muse/hooks.json`. This optional setup needs a repository checkout and a credentials file outside the repository. Follow [`connect/muse-code/README.md`](https://github.com/Walter102202/colabora-si/blob/main/connect/muse-code/README.md) in the repository for setup and startup instructions.
+
 [Muse Code MCP reference](https://dev.meta.ai/docs/muse-code/extending)

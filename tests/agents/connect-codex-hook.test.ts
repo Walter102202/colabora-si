@@ -1,52 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { MAX_REASON_CHARS, runStopHook } from "../../connect/codex/on-stop.mjs";
 
-const MCP_URL = "https://ws.test/functions/v1/mcp";
-const ENV = { WORKSPACE_MCP_URL: MCP_URL, WORKSPACE_AGENT_PAT: "agt_secret", HOOK_WAIT_MIN: "25" };
-const TASK = "22222222-2222-2222-2222-222222222222";
-
-type Tasks = { tasks: Record<string, unknown>[]; next_cursor: string };
-type ToolCall = { name: string; args: Record<string, unknown> };
-
-/** Fake remote: `waits` answers successive wait_for_my_tasks calls (the last one repeats). */
-function fakeRemote(waits: Tasks[], detail: unknown = { activities: [] }) {
-  const calls: ToolCall[] = [];
-  const delivered = new Set<string>();
-  let index = 0;
-  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    if (url.endsWith("/agent-token")) return Response.json({ access_token: "jwt-1", expires_in: 3600, agent_id: "agent-1" });
-    const body = JSON.parse(String(init?.body));
-    if (body.method === "initialize") return Response.json({ jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2025-06-18", capabilities: {} } });
-    if (body.method?.startsWith("notifications/")) return new Response(null, { status: 202 });
-    const { name, arguments: args } = body.params;
-    calls.push({ name, args });
-    if (name === "wait_for_my_tasks" && String(args.after).startsWith("ack:")) {
-      delivered.add(String(args.after).slice(4));
-      return Response.json({jsonrpc:"2.0",id:body.id,result:{structuredContent:{changed:false,tasks:[]}}});
-    }
-    let structuredContent: unknown = detail;
-    if (name === "wait_for_my_tasks") {
-      const response = waits[Math.min(index, waits.length - 1)];
-      structuredContent = { changed: response.tasks.length > 0, ...response,
-        tasks: response.tasks.filter(task => !delivered.has(String((task.notice as {event_id?: string} | undefined)?.event_id))) };
-      index++;
-    }
-    return Response.json({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "ok" }], structuredContent } });
-  }) as typeof fetch;
-  return { fetchImpl, calls };
-}
-
-/** A clock that advances `stepMs` on every read. */
-function clock(stepMs: number) {
-  let t = 1_000_000;
-  return () => (t += stepMs);
-}
-
-const sleep = async () => {};
-const none: Tasks = { tasks: [], next_cursor: "c-0" };
+import { ENV, TASK, fakeRemote, clock, sleep, none } from "./stopHookFake";
 
 describe("Codex stop hook", () => {
+  it("identifies itself with the default client name unless told otherwise", async () => {
+    for (const clientInfo of [undefined, { name: "custom", version: "9" }]) {
+      const { fetchImpl, inits } = fakeRemote([none]);
+      await runStopHook({ input: {}, env: ENV, fetchImpl, now: clock(60_000), sleep, clientInfo });
+      expect(inits[0].params.clientInfo).toEqual(clientInfo ?? { name: "colabora-codex-stop-hook", version: "0.1.0" });
+    }
+  });
   it.each(["human", "agent"])("preserves acknowledgement authority in long feedback (%s)", async (authorType) => {
     const { fetchImpl } = fakeRemote([{ tasks: [{ task_id: TASK, state: "working", reason: "feedback", active_run_id: "run" }], next_cursor: "c-1" }],
       { activities: [{ seq: 4, type: "prompt", author_type: authorType, body: { source: "trama", text: "Add Y ".repeat(1000) } }] });
