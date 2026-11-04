@@ -8,7 +8,7 @@ import type { ActivityRow, ApprovalRow, ArtifactRow, BriefRow, ReviewRow, RunRow
 import type { ApprovalDecision, MergeCondition, MessageSignal } from "@/lib/agentActions";
 import type { AgentRole } from "@/lib/agentsStore";
 import { RUN_STATUS_LABEL, acceptanceLabel, canAcceptAndClose, isTerminal, waitsForAcceptance, whatWillHappen } from "@/lib/agentState";
-import { formatRelative } from "@/lib/utils";
+import { formatRelative, safeHref } from "@/lib/utils";
 import { pageUrl } from "@/lib/routes";
 import { StatusBadge } from "@/components/agents/panel/StatusBadge";
 import { ApprovalCard } from "@/components/agents/panel/ApprovalCard";
@@ -18,7 +18,10 @@ import { SubtaskList, type SubtaskItem } from "@/components/agents/panel/Subtask
 import { TaskConversation, type ConversationData } from "@/components/agents/panel/TaskConversation";
 import { ActivityTimeline } from "@/components/agents/panel/ActivityTimeline";
 import { AcceptCard } from "@/components/agents/panel/AcceptCard";
-import { activityLabel, deliverySummary } from "@/lib/agentTaskText";
+import { deliverySummary } from "@/lib/agentTaskText";
+import { buildProgressMilestones } from "@/lib/agentProgressActivity";
+import { TaskMilestones } from "@/components/agents/panel/TaskMilestones";
+import { TaskPlanDetails } from "@/components/agents/panel/TaskPlanDetails";
 import { FeedbackComposer } from "@/components/agents/panel/FeedbackComposer";
 import { MetricsList } from "@/components/agents/panel/MetricsList";
 import type { Metric } from "@/lib/agentMetrics";
@@ -70,6 +73,12 @@ export interface TaskViewProps {
   activities: ActivityRow[];
   conversation?: ConversationData;
   agentNames?: Record<string, string>;
+  currentUserId?: string | null;
+  // Optional workspace pagination. The MCP card keeps the activity it received.
+  onLoadOlderActivity?: () => Promise<void>;
+  hasOlderActivity?: boolean;
+  activityLoading?: boolean;
+  activityError?: string | null;
   subtasks: SubtaskItem[];
   reviewerName: string | null;
   // Results of the task and its subtasks (task_metrics); the chat card leaves them out.
@@ -156,9 +165,16 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ agentAvatar = null, lessons = null, task, agent, run, runs, runDetails, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, jobCi, environment = [], activities, conversation, agentNames = {}, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+const TASK_TABS = ["Work", "Plan", "Activity"] as const;
+type TaskTab = typeof TASK_TABS[number];
+
+export function TaskView({ agentAvatar = null, lessons = null, task, agent, run, runs, runDetails, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, jobCi, environment = [], activities, conversation, agentNames = {}, currentUserId, onLoadOlderActivity, hasOlderActivity = false, activityLoading = false, activityError = null, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
+  const [tab, setTab] = useState<TaskTab>("Work");
+  const tabButtons = useRef<Partial<Record<TaskTab, HTMLButtonElement | null>>>({});
   const [showTimeline, setShowTimeline] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const decisionIdentity = JSON.stringify([task.id, task.state, task.brief_version, brief?.version, artifact?.id, artifact?.version]);
@@ -225,11 +241,24 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
   };
 
   const names = { ...Object.fromEntries(subtasks.filter((s) => s.task.delegate_agent_id && s.agentName).map((s) => [s.task.delegate_agent_id!, s.agentName!])), ...(agent ? { [agent.id]: agent.name } : {}), ...agentNames };
-  const recentActions = activities.filter((a) => a.type === "action").slice(-3);
+  const knownTaskIds = new Set([task.id, ...subtasks.map((item) => item.task.id)]);
+  const historyActivities = (conversation?.activities ?? activities).filter((activity) => knownTaskIds.has(activity.task_id));
+  const historyReviews = (conversation?.reviews ?? (review ? [review] : [])).filter((item) => knownTaskIds.has(item.task_id));
+  const milestones = buildProgressMilestones({ task, subtasks: subtasks.map((item) => item.task), activities: historyActivities, reviews: historyReviews, agentNames: names, userId: currentUserId });
+  const lastSubmission = [...activities].reverse().find((activity) => activity.type === "response" && activity.body.submit === true);
+  const deliveryReport = typeof lastSubmission?.body.text === "string" ? lastSubmission.body.text : "";
+  const artifactHref = artifact?.kind !== "page" && /^https?:\/\//.test(artifact?.ref ?? "") ? safeHref(artifact?.ref) : undefined;
+  const loadOlder = async () => {
+    if (!onLoadOlderActivity || loadingHistory || activityLoading) return;
+    setLoadingHistory(true); setHistoryError(null);
+    try { await onLoadOlderActivity(); }
+    catch (error) { setHistoryError(error instanceof Error ? error.message : "Could not load earlier activity."); }
+    finally { setLoadingHistory(false); }
+  };
   const nextText = whatWillHappen(task, agentLike, "continue", { artifactVersion: artifact?.version ?? null });
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1">
         {agentAvatar}
         <StatusBadge task={task} run={run} agentName={agent?.name ?? null} />
@@ -243,6 +272,16 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
 
       {error && <p role="alert" className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-700 dark:text-red-400">{error}</p>}
 
+      {actionApprovals && onDecideApproval
+        ? <ApprovalGroupCard approvals={actionApprovals} onDecide={onDecideApproval} focusApprovalId={focusApprovalId} />
+        : approval?.kind === "action" && <ApprovalCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />}
+      {approval && approval.kind !== "action" && <DecisionCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />}
+
+      {openQuestions.map((q) => (
+        <DecisionCard key={q.id} approval={q} nonBlocking={q.blocking === false} focus={focusApprovalId === q.id}
+          onDecide={(decision, response) => (onDecideQuestion ? onDecideQuestion(q.id, decision, response) : Promise.resolve())} />
+      ))}
+
       {accepting && <AcceptCard
         summary={deliverySummary(activities)}
         ciLine={ci?.text}
@@ -252,16 +291,153 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
         disabled={busy !== null}
         onAccept={() => void act("close", () => onClose("accepted", null))} />}
 
-      <EnvironmentCard environment={environment} />
-      {runs !== undefined && <RunsCard runs={runs} />}
-      {!task.parent_task_id && !terminal && onSetMergeRule && <MergeRule
-        enabled={autonomy?.merge_rule?.enabled === true}
-        onChange={onSetMergeRule} />}
+      <div role="tablist" aria-label="Task details" className="flex gap-1 border-b border-border">
+        {TASK_TABS.map((name) => <button key={name} ref={(element) => { tabButtons.current[name] = element; }}
+          id={`${id}-tab-${name}`} type="button" role="tab" aria-selected={tab === name} aria-controls={`${id}-panel-${name}`}
+          tabIndex={tab === name ? 0 : -1}
+          className={`rounded-t-md border-b-2 px-4 py-2 text-sm focus-visible:outline-2 focus-visible:outline-accent ${tab === name ? "border-accent font-medium text-accent" : "border-transparent text-text-secondary hover:bg-bg-secondary"}`}
+          onClick={() => setTab(name)} onKeyDown={(event) => {
+            const index = TASK_TABS.indexOf(name);
+            const next = event.key === "ArrowRight" ? TASK_TABS[(index + 1) % TASK_TABS.length]
+              : event.key === "ArrowLeft" ? TASK_TABS[(index + TASK_TABS.length - 1) % TASK_TABS.length]
+                : event.key === "Home" ? TASK_TABS[0] : event.key === "End" ? TASK_TABS[TASK_TABS.length - 1] : null;
+            if (next) { event.preventDefault(); setTab(next); tabButtons.current[next]?.focus(); }
+          }}>{name}</button>)}
+      </div>
 
-      <section className="space-y-1">
-        <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">What was asked and what changed</h4>
-        <p>{brief?.objective ?? task.title ?? "Loading brief…"}</p>
-        {brief?.next_step && <p className="text-xs text-text-secondary">Next step: {brief.next_step}</p>}
+      {/* Hidden panels stay mounted: switching tabs must not discard a draft, a review or a selection. */}
+      <div id={`${id}-panel-Work`} role="tabpanel" aria-labelledby={`${id}-tab-Work`} hidden={tab !== "Work"} className="min-w-0 space-y-4">
+        <section aria-label="Deliverable" className="space-y-3 rounded-lg border border-border bg-bg p-4">
+          <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Deliverable</h4>
+          {artifact ? (
+            <p className="break-words text-sm leading-relaxed">
+              v{artifact.version} · {artifact.kind}{" "}
+              {artifact.kind === "page" ? (
+                <a className="text-accent underline" href={pageUrl(artifact.ref)} onClick={(e) => { e.preventDefault(); onOpenPage(artifact.ref); }}>{artifact.title || "page"}</a>
+              ) : artifactHref ? (
+                <a className="text-accent underline" href={artifactHref} target="_blank" rel="noreferrer noopener">{artifact.title || artifact.ref}</a>
+              ) : (
+                <span>{artifact.title || artifact.ref}</span>
+              )}
+              {artifact.satisfies.length > 0 && <span className="text-text-tertiary"> · covers {artifact.satisfies.join(", ")}</span>}
+            </p>
+          ) : (
+            <p className="text-xs text-text-tertiary">No deliverable yet.</p>
+          )}
+          {!accepting && deliveryReport && <div className="space-y-1">
+            <h5 className="text-xs font-medium text-text-secondary">Last submission</h5>
+            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{deliverySummary(activities)}</p>
+          </div>}
+          {deliveryReport && <details className="rounded-md bg-bg-secondary p-3">
+            <summary className="cursor-pointer text-xs font-medium text-text-secondary">Read the last submission report</summary>
+            <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed">{deliveryReport}</p>
+          </details>}
+        </section>
+
+        <section aria-label="Verification" className="space-y-3 rounded-lg border border-border p-4">
+          <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Verification</h4>
+          <LeadReviewCard key={decisionIdentity} task={task} review={review} brief={brief} ciChecks={ciChecks} artifact={artifact} reviewerName={reviewerName} onReview={onReview} />
+        </section>
+
+        {task.state === "done" && task.acceptance === "accepted" && <p className="rounded-md bg-bg-secondary p-3 text-xs leading-relaxed text-text-secondary">
+          Acceptance records this delivery in the workspace. Check the linked source for publication or deployment status.
+        </p>}
+        {diff && (diff.hidden_items > 0 || diff.runs.some((r) => r.items.length > 0)) && <section className="space-y-1">
+          <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Changes</h4>
+          <RunDiffCard diff={diff} onRevert={onRevert} onRefresh={onRefreshDiff} />
+        </section>}
+
+        {lessons}
+
+        {!terminal && !approval && (
+          <section className="space-y-1">
+            <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">What will happen</h4>
+            <p className="text-xs text-text-secondary">{nextText}</p>
+          </section>
+        )}
+
+        <div ref={feedback}><FeedbackComposer
+          disabled={busy !== null}
+          placeholder={terminal ? "What should change? Sending reopens the task." : undefined}
+          onSend={(text) => act("send", () => onMessage(text, terminal ? "continue" : "feedback"))}
+        /></div>
+
+        <div className="flex flex-wrap gap-2">
+          {!terminal && onHandOver && (
+            <button
+              ref={handOverToggle}
+              type="button"
+              className="rounded border border-border px-3 py-1 text-xs disabled:opacity-50"
+              disabled={busy !== null || task.state === "ready_for_review"}
+              aria-expanded={handingOver}
+              aria-controls={`${id}-handover`}
+              title={task.state === "ready_for_review" ? "A task waiting for review cannot be handed over." : "Stops the current run, keeps pending approvals and lets the chosen agent continue from the last checkpoint."}
+              onClick={() => { setHandingOver((v) => !v); setHandoverError(null); }}
+            >
+              Hand over…
+            </button>
+          )}
+          {!terminal && task.state !== "ready_for_review" && (
+            <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" title={nextText} disabled={busy !== null} onClick={() => act("continue", () => onMessage("", "continue"))}>
+              Continue
+            </button>
+          )}
+          {!terminal && (
+            <button type="button" className="rounded border border-border px-3 py-1 text-xs hover:bg-bg-secondary disabled:opacity-50" title={whatWillHappen(task, agentLike, "stop")} disabled={busy !== null || !!run?.stop_requested_at} onClick={() => act("stop", () => onMessage("", "stop"))}>
+              {run?.stop_requested_at ? "Stopping…" : "Stop"}
+            </button>
+          )}
+          {(task.state === "ready_for_review" || task.state === "input_required") && !closing && (
+            <>
+              {!accepting && <button type="button" className="rounded border border-green-600/50 px-3 py-1 text-xs text-green-700 hover:bg-bg-secondary dark:text-green-400" disabled={busy !== null || !canAcceptAndClose(task.state, !!artifact)} onClick={() => setClosing("accepted")}>
+                Accept and close
+              </button>}
+              <button type="button" className="rounded border border-border px-3 py-1 text-xs text-text-secondary hover:bg-bg-secondary" disabled={busy !== null} onClick={() => setClosing("rejected")}>
+                Close without accepting
+              </button>
+            </>
+          )}
+          {terminal && (
+            <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" title={whatWillHappen(task, agentLike, "continue")} disabled={busy !== null} onClick={() => feedback.current?.querySelector("textarea")?.focus()}>
+              Reopen
+            </button>
+          )}
+        </div>
+
+        {handingOver && !terminal && task.state !== "ready_for_review" && onHandOver && (
+          <div id={`${id}-handover`} className="space-y-2 rounded-md border border-border p-2">
+            <label className="block text-xs" htmlFor={`${id}-handover-agent`}>Hand over to</label>
+            <select id={`${id}-handover-agent`} className="w-full rounded border border-border bg-bg px-2 py-1 text-sm" value={handoverTarget} onChange={(e) => setHandoverAgent(e.target.value)}>
+              {agent && <option value="">Same agent, new session</option>}
+              {handOverOthers.map((a) => <option key={a.id} value={a.id}>{a.name}{a.capabilities.resume ? " (resumes)" : ""}</option>)}
+            </select>
+            {!agent && handOverOthers.length === 0 && <p className="text-xs text-text-tertiary">No other agent is enabled in this workspace.</p>}
+            <label className="block text-xs" htmlFor={`${id}-handover-note`}>Note for the next agent</label>
+            <textarea id={`${id}-handover-note`} className="w-full rounded border border-border bg-bg px-2 py-1 text-sm" maxLength={4000} value={handoverNote} onChange={(e) => setHandoverNote(e.target.value)} />
+            {handoverError && <p role="alert" className="text-xs text-red-700 dark:text-red-400">{handoverError}</p>}
+            <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" disabled={busy !== null || (!agent && !handoverTarget)} onClick={() => void handOver()}>Hand over</button>
+          </div>
+        )}
+
+        {closing && (
+          <div className="space-y-1 rounded-md border border-border p-2">
+            <p className="text-xs">{closing === "accepted" ? "Accept the deliverable and close the task." : "Close the task without accepting the deliverable."} Nothing is reverted.</p>
+            <label htmlFor={`${id}-close-note`} className="sr-only">Closing note</label>
+            <input id={`${id}-close-note`} className="w-full rounded border border-border bg-bg px-2 py-1 text-xs" placeholder="Note (optional)" value={closeNote} onChange={(e) => setCloseNote(e.target.value)} />
+            <div className="flex gap-2">
+              <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" disabled={busy !== null} onClick={() => act("close", () => onClose(closing, closeNote.trim() || null).then(() => setClosing(null)))}>
+                Confirm
+              </button>
+              <button type="button" className="rounded px-3 py-1 text-xs text-text-secondary hover:bg-bg-secondary" onClick={() => setClosing(null)}>Keep open</button>
+            </div>
+          </div>
+        )}
+
+      </div>
+
+      <div id={`${id}-panel-Plan`} role="tabpanel" aria-labelledby={`${id}-tab-Plan`} hidden={tab !== "Plan"} className="min-w-0 space-y-4">
+        <TaskPlanDetails task={task} brief={brief} onOpenPage={onOpenPage} />
+        <SubtaskList subtasks={subtasks} onOpenTask={onOpenTask} />
         {autonomy && (
           <div className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
             <span>{autonomyLine(autonomy)}</span>
@@ -282,157 +458,45 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
             {autonomyChoice.error && <p role="alert" className="w-full text-red-700 dark:text-red-400">{autonomyChoice.error}</p>}
           </div>
         )}
-        {recentActions.length > 0 ? (
-          <ul className="text-xs text-text-secondary">
-            {recentActions.map((a) => (
-              <li key={a.id}>· {activityLabel(a)}</li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-xs text-text-tertiary">Nothing changed yet.</p>
-        )}
-      </section>
+        {!task.parent_task_id && !terminal && onSetMergeRule && <MergeRule
+          enabled={autonomy?.merge_rule?.enabled === true}
+          onChange={onSetMergeRule} />}
 
-      <section className="space-y-1">
-        <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Deliverable</h4>
-        {artifact ? (
-          <p className="text-xs">
-            v{artifact.version} · {artifact.kind}{" "}
-            {artifact.kind === "page" ? (
-              <a className="text-accent underline" href={pageUrl(artifact.ref)} onClick={(e) => { e.preventDefault(); onOpenPage(artifact.ref); }}>{artifact.title || "page"}</a>
-            ) : /^https?:\/\//.test(artifact.ref) ? (
-              <a className="text-accent underline" href={artifact.ref} target="_blank" rel="noreferrer noopener">{artifact.title || artifact.ref}</a>
-            ) : (
-              <span>{artifact.title || artifact.ref}</span>
-            )}
-            {artifact.satisfies.length > 0 && <span className="text-text-tertiary"> · covers {artifact.satisfies.join(", ")}</span>}
-          </p>
-        ) : (
-          <p className="text-xs text-text-tertiary">No deliverable yet.</p>
-        )}
-      </section>
-
-      {diff && (diff.hidden_items > 0 || diff.runs.some((r) => r.items.length > 0)) && <section className="space-y-1">
-        <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Changes</h4>
-        <RunDiffCard diff={diff} onRevert={onRevert} onRefresh={onRefreshDiff} />
-      </section>}
-
-      <section className="space-y-1">
-        <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Verification</h4>
-        <LeadReviewCard key={decisionIdentity} task={task} review={review} brief={brief} ciChecks={ciChecks} artifact={artifact} reviewerName={reviewerName} onReview={onReview} />
-      </section>
-
-      {lessons}
-
-      <SubtaskList subtasks={subtasks} onOpenTask={onOpenTask} />
-      {subtasks.length > 0 && <TaskConversation task={task} subtasks={subtasks.map((s) => s.task)} agentNames={names}
-        activities={conversation?.activities ?? activities} reviews={conversation?.reviews ?? (review ? [review] : [])} />}
-
-      {actionApprovals && onDecideApproval
-        ? <ApprovalGroupCard approvals={actionApprovals} onDecide={onDecideApproval} focusApprovalId={focusApprovalId} />
-        : approval?.kind === "action" && <ApprovalCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />}
-      {approval && approval.kind !== "action" && <DecisionCard key={approval.id} approval={approval} onDecide={onDecide} focus={focusApprovalId === approval.id} />}
-
-      {openQuestions.map((q) => (
-        <DecisionCard key={q.id} approval={q} nonBlocking={q.blocking === false} focus={focusApprovalId === q.id}
-          onDecide={(decision, response) => (onDecideQuestion ? onDecideQuestion(q.id, decision, response) : Promise.resolve())} />
-      ))}
-
-      {!terminal && !approval && (
-        <section className="space-y-1">
-          <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">What will happen</h4>
-          <p className="text-xs text-text-secondary">{nextText}</p>
-        </section>
-      )}
-
-      <div ref={feedback}><FeedbackComposer
-        disabled={busy !== null}
-        placeholder={terminal ? "What should change? Sending reopens the task." : undefined}
-        onSend={(text) => act("send", () => onMessage(text, terminal ? "continue" : "feedback"))}
-      /></div>
-
-      <div className="flex flex-wrap gap-2">
-        {!terminal && onHandOver && (
-          <button
-            ref={handOverToggle}
-            type="button"
-            className="rounded border border-border px-3 py-1 text-xs disabled:opacity-50"
-            disabled={busy !== null || task.state === "ready_for_review"}
-            aria-expanded={handingOver}
-            aria-controls={`${id}-handover`}
-            title={task.state === "ready_for_review" ? "A task waiting for review cannot be handed over." : "Stops the current run, keeps pending approvals and lets the chosen agent continue from the last checkpoint."}
-            onClick={() => { setHandingOver((v) => !v); setHandoverError(null); }}
-          >
-            Hand over…
-          </button>
-        )}
-        {!terminal && task.state !== "ready_for_review" && (
-          <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" title={nextText} disabled={busy !== null} onClick={() => act("continue", () => onMessage("", "continue"))}>
-            Continue
-          </button>
-        )}
-        {!terminal && (
-          <button type="button" className="rounded border border-border px-3 py-1 text-xs hover:bg-bg-secondary disabled:opacity-50" title={whatWillHappen(task, agentLike, "stop")} disabled={busy !== null || !!run?.stop_requested_at} onClick={() => act("stop", () => onMessage("", "stop"))}>
-            {run?.stop_requested_at ? "Stopping…" : "Stop"}
-          </button>
-        )}
-        {(task.state === "ready_for_review" || task.state === "input_required") && !closing && (
-          <>
-            {!accepting && <button type="button" className="rounded border border-green-600/50 px-3 py-1 text-xs text-green-700 hover:bg-bg-secondary dark:text-green-400" disabled={busy !== null || !canAcceptAndClose(task.state, !!artifact)} onClick={() => setClosing("accepted")}>
-              Accept and close
-            </button>}
-            <button type="button" className="rounded border border-border px-3 py-1 text-xs text-text-secondary hover:bg-bg-secondary" disabled={busy !== null} onClick={() => setClosing("rejected")}>
-              Close without accepting
-            </button>
-          </>
-        )}
-        {terminal && (
-          <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" title={whatWillHappen(task, agentLike, "continue")} disabled={busy !== null} onClick={() => feedback.current?.querySelector("textarea")?.focus()}>
-            Reopen
-          </button>
-        )}
-        <button type="button" className="ml-auto rounded px-2 py-1 text-xs text-text-secondary hover:bg-bg-secondary" aria-expanded={showTimeline} onClick={() => setShowTimeline((v) => !v)}>
-          {showTimeline ? "Hide timeline" : "Show timeline"}
-        </button>
       </div>
 
-      {handingOver && !terminal && task.state !== "ready_for_review" && onHandOver && (
-        <div id={`${id}-handover`} className="space-y-2 rounded-md border border-border p-2">
-          <label className="block text-xs" htmlFor={`${id}-handover-agent`}>Hand over to</label>
-          <select id={`${id}-handover-agent`} className="w-full rounded border border-border bg-bg px-2 py-1 text-sm" value={handoverTarget} onChange={(e) => setHandoverAgent(e.target.value)}>
-            {agent && <option value="">Same agent, new session</option>}
-            {handOverOthers.map((a) => <option key={a.id} value={a.id}>{a.name}{a.capabilities.resume ? " (resumes)" : ""}</option>)}
-          </select>
-          {!agent && handOverOthers.length === 0 && <p className="text-xs text-text-tertiary">No other agent is enabled in this workspace.</p>}
-          <label className="block text-xs" htmlFor={`${id}-handover-note`}>Note for the next agent</label>
-          <textarea id={`${id}-handover-note`} className="w-full rounded border border-border bg-bg px-2 py-1 text-sm" maxLength={4000} value={handoverNote} onChange={(e) => setHandoverNote(e.target.value)} />
-          {handoverError && <p role="alert" className="text-xs text-red-700 dark:text-red-400">{handoverError}</p>}
-          <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" disabled={busy !== null || (!agent && !handoverTarget)} onClick={() => void handOver()}>Hand over</button>
+      <div id={`${id}-panel-Activity`} role="tabpanel" aria-labelledby={`${id}-tab-Activity`} hidden={tab !== "Activity"} className="min-w-0 space-y-5">
+        <TaskMilestones milestones={milestones} taskId={task.id} onOpenTask={onOpenTask} />
+        <details className="rounded-lg border border-border p-3">
+          <summary className="cursor-pointer text-sm font-medium">Messages and review notes</summary>
+          <div className="mt-3"><TaskConversation task={task} subtasks={subtasks.map((item) => item.task)} agentNames={names} userId={currentUserId}
+            activities={historyActivities} reviews={historyReviews} /></div>
+        </details>
+        <div className="space-y-3">
+          <button type="button" className="rounded border border-border px-3 py-1.5 text-xs text-text-secondary hover:bg-bg-secondary" aria-expanded={showTimeline} aria-controls={`${id}-timeline`} onClick={() => setShowTimeline((value) => !value)}>
+            {showTimeline ? "Hide timeline" : "Show timeline"}
+          </button>
+          {showTimeline && <section id={`${id}-timeline`} className="min-w-0 space-y-2">
+            <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Timeline</h4>
+            <p className="text-xs text-text-secondary">All loaded events, including routine operations.</p>
+            <ActivityTimeline activities={historyActivities} agentNames={names} userId={currentUserId}
+              taskNames={Object.fromEntries([task, ...subtasks.map((item) => item.task)].map((item) => [item.id, item.title]))} />
+            <details className="rounded border border-border p-2 text-xs">
+              <summary className="cursor-pointer text-text-secondary">Original event data</summary>
+              <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify({ activities: historyActivities, reviews: historyReviews }, null, 2)}</pre>
+            </details>
+          </section>}
         </div>
-      )}
-
-      {closing && (
-        <div className="space-y-1 rounded-md border border-border p-2">
-          <p className="text-xs">{closing === "accepted" ? "Accept the deliverable and close the task." : "Close the task without accepting the deliverable."} Nothing is reverted.</p>
-          <label htmlFor={`${id}-close-note`} className="sr-only">Closing note</label>
-          <input id={`${id}-close-note`} className="w-full rounded border border-border bg-bg px-2 py-1 text-xs" placeholder="Note (optional)" value={closeNote} onChange={(e) => setCloseNote(e.target.value)} />
-          <div className="flex gap-2">
-            <button type="button" className="rounded bg-accent px-3 py-1 text-xs text-white disabled:opacity-50" disabled={busy !== null} onClick={() => act("close", () => onClose(closing, closeNote.trim() || null).then(() => setClosing(null)))}>
-              Confirm
-            </button>
-            <button type="button" className="rounded px-3 py-1 text-xs text-text-secondary hover:bg-bg-secondary" onClick={() => setClosing(null)}>Keep open</button>
-          </div>
-        </div>
-      )}
-
-      {metrics && metrics.length > 0 && <MetricsList title="Results" metrics={metrics} />}
-
-      {showTimeline && (
-        <section className="space-y-1">
-          <h4 className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Timeline</h4>
-          <ActivityTimeline activities={activities} agentNames={names} />
-        </section>
-      )}
+        {onLoadOlderActivity && (hasOlderActivity || activityError || historyError || loadingHistory) && <button type="button" className="rounded border border-border px-3 py-2 text-sm hover:bg-bg-secondary disabled:opacity-50" disabled={activityLoading || loadingHistory} onClick={() => void loadOlder()}>
+          {activityLoading || loadingHistory ? "Loading earlier activity…" : activityError || historyError ? "Retry activity" : "Load older activity"}
+        </button>}
+        {(activityError || historyError) && <p role="alert" className="text-xs text-red-700 dark:text-red-400">{activityError || historyError}</p>}
+        {runs !== undefined && <details className="rounded-lg border border-border p-3">
+          <summary className="cursor-pointer text-sm font-medium">Runs and cost</summary>
+          <div className="mt-3"><RunsCard runs={runs} /></div>
+        </details>}
+        <EnvironmentCard environment={environment} />
+        {metrics && metrics.length > 0 && <MetricsList title="Results" metrics={metrics} />}
+      </div>
     </div>
   );
 }

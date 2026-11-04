@@ -172,15 +172,20 @@ export interface AgentTasksState {
   jobCi: ById<JobCiStatus | null>;
   environments: ById<EnvironmentResource[]>;
   activities: ById<ActivityRow[]>; // by task id, ordered by seq (loaded on demand)
+  activityHasMore: ById<boolean>; // older records exist before the loaded activity window
+  activityLoading: ById<boolean>;
+  activityErrors: ById<string>;
   closedCursor: ClosedCursor | null; // keyset of the oldest closed task loaded
   closedExhausted: boolean;
   load: (workspaceId: string) => Promise<void>;
   loadMoreClosed: () => Promise<void>;
   loadTask: (taskId: string) => Promise<void>;
+  loadTaskForPage: (pageId: string) => Promise<void>;
   loadTaskDetail: (taskId: string) => Promise<void>;
   refreshCiChecks: (workspaceId?: string) => Promise<void>;
   subscribe: (workspaceId: string) => () => void;
   loadActivities: (taskId: string) => Promise<void>;
+  loadOlderActivities: (taskId: string) => Promise<void>;
   loadTaskConversation: (taskId: string) => Promise<void>;
   loadBriefs: (taskId: string) => Promise<void>;
 }
@@ -208,6 +213,14 @@ const REVIEWS_LIMIT = 20;
 let detailRequestSequence = 0;
 const detailRequests = new Map<string, number>();
 const taskRequests = new Map<string, number>();
+const pageTaskRequests = new Map<string, number>();
+type ActivityRequest = { generation: number; workspaceId: string | null; direction: "latest" | "older" };
+const activityRequests = new Map<number, ActivityRequest & { taskId: string }>();
+const olderActivityRequests = new Map<string, number>();
+const latestActivityRequests = new Map<string, number>();
+// Realtime can jump ahead of a pending read. Only fetched pages advance this
+// cursor, so the following refresh cannot skip records between those signals.
+const latestActivityCursors = new Map<string, number>();
 let workspaceGeneration = 0;
 let loadSequence = 0;
 let realtimeSequence = 0;
@@ -241,6 +254,14 @@ export function mergeActivities(current: ActivityRow[] | undefined, rows: Activi
   for (const a of current ?? []) byId.set(a.id, a);
   for (const a of rows) byId.set(a.id, a);
   return [...byId.values()].sort((a, b) => a.seq - b.seq);
+}
+
+// A history read can finish after a realtime event or another read. Keep those
+// newer objects while merging the page; nothing outside the page is removed.
+function mergeActivityPage(current: ActivityRow[] | undefined, before: ActivityRow[] | undefined, rows: ActivityRow[]): ActivityRow[] {
+  const old = new Map((before ?? []).map((row) => [row.id, row]));
+  const now = new Map((current ?? []).map((row) => [row.id, row]));
+  return mergeActivities(current, rows.filter((row) => !now.has(row.id) || now.get(row.id) === old.get(row.id)));
 }
 
 // Closed tasks, newest first, by (updated_at, id) so that a page boundary between two
@@ -285,6 +306,9 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
   ciChecks: {}, jobCi: {},
   environments: {},
   activities: {},
+  activityHasMore: {},
+  activityLoading: {},
+  activityErrors: {},
   closedCursor: null,
   closedExhausted: false,
 
@@ -296,12 +320,17 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
     if (get().workspaceId !== workspaceId) {
       workspaceGeneration += 1;
       realtimeChanges.clear();
+      activityRequests.clear();
+      olderActivityRequests.clear();
+      latestActivityRequests.clear();
+      latestActivityCursors.clear();
+      pageTaskRequests.clear();
     }
     const generation = workspaceGeneration;
     const request = ++loadSequence;
     const reset = get().workspaceId === workspaceId
       ? {}
-      : { tasks: {}, rowPlans: {}, runs: {}, approvals: {}, reviews: {}, artifacts: {}, briefs: {}, activities: {}, ciChecks: {}, jobCi: {}, environments: {}, closedCursor: null, closedExhausted: false };
+      : { tasks: {}, rowPlans: {}, runs: {}, approvals: {}, reviews: {}, artifacts: {}, briefs: {}, activities: {}, activityHasMore: {}, activityLoading: {}, activityErrors: {}, ciChecks: {}, jobCi: {}, environments: {}, closedCursor: null, closedExhausted: false };
     set({ status: "loading", error: null, workspaceId, ...reset });
     const before = get();
     const revision = realtimeSequence;
@@ -377,6 +406,34 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
     });
   },
 
+  // A visible database row may refer to a closed task outside the first page.
+  // Resolve its own tasks without loading or rewriting the rest of the database.
+  async loadTaskForPage(pageId) {
+    const client = getAgentClient();
+    const before = get();
+    if (!client || !before.workspaceId) throw new Error("Task details are unavailable. Reconnect to load this task.");
+    const workspaceId = before.workspaceId;
+    const generation = workspaceGeneration;
+    const revision = realtimeSequence;
+    const request = ++detailRequestSequence;
+    pageTaskRequests.set(pageId, request);
+    const current = () => generation === workspaceGeneration && get().workspaceId === workspaceId && pageTaskRequests.get(pageId) === request;
+    const query = () => client.from("agent_tasks").select("*").eq("workspace_id", workspaceId).eq("row_page_id", pageId).is("request_kind", null);
+    try {
+      const [open, closed] = await Promise.all([
+        query().in("state", OPEN).order("updated_at", { ascending: false }).order("id", { ascending: false }).limit(OPEN_LIMIT),
+        query().in("state", CLOSED).order("updated_at", { ascending: false }).order("id", { ascending: false }).limit(20),
+      ]);
+      if (!current()) return;
+      if (open.error || closed.error) throw new Error(agentErrorMessage(open.error || closed.error));
+      set({ tasks: mergeFetched("tasks", get().tasks, before.tasks, [...(open.data ?? []), ...(closed.data ?? [])] as TaskRow[], revision) });
+    } catch (error) {
+      if (current()) throw error;
+    } finally {
+      if (current()) pageTaskRequests.delete(pageId);
+    }
+  },
+
   // What the panel shows beyond the row: briefs, artifacts and the latest reviews.
   async loadTaskDetail(taskId) {
     const client = getAgentClient();
@@ -438,6 +495,8 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
           channel = null;
           channelWorkspace = null;
           workspaceGeneration += 1;
+          activityRequests.clear(); olderActivityRequests.clear(); latestActivityRequests.clear();
+          set({ activityLoading: {} });
         }
       };
     }
@@ -522,6 +581,8 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
         channel = null;
         channelWorkspace = null;
         workspaceGeneration += 1;
+        activityRequests.clear(); olderActivityRequests.clear(); latestActivityRequests.clear();
+        set({ activityLoading: {} });
         void client.removeChannel(ch);
       }
     };
@@ -543,21 +604,112 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
     }));
   },
 
-  // First call: the last ACTIVITIES_PAGE_SIZE activities of the task. Later calls: only
-  // what is newer than the list already held, so a refresh after an action is one short read.
+  // First call: the last ACTIVITIES_PAGE_SIZE activities, with a lookahead to
+  // advertise older history. Refreshes merge new records into that same window.
   async loadActivities(taskId) {
     const client = getAgentClient();
     if (!client) return;
     const workspaceId = get().workspaceId;
     const generation = workspaceGeneration;
-    const current = get().activities[taskId];
-    const base = client.from("agent_activities").select("*").eq("task_id", taskId);
-    const { data, error } = current
-      ? await base.gt("seq", current.reduce((max, a) => Math.max(max, a.seq), 0)).order("seq").limit(ACTIVITIES_PAGE_SIZE)
-      : await base.order("seq", { ascending: false }).limit(ACTIVITIES_PAGE_SIZE);
-    if (error || generation !== workspaceGeneration || get().workspaceId !== workspaceId) return;
-    const activities = get().activities;
-    set({ activities: { ...activities, [taskId]: mergeActivities(activities[taskId], (data ?? []) as ActivityRow[]) } });
+    const before = get().activities[taskId];
+    if (!before) latestActivityCursors.delete(taskId);
+    let cursor = latestActivityCursors.get(taskId) ?? (before ? before.reduce((max, row) => Math.max(max, row.seq), 0) : null);
+    let upperBound: number | null = null;
+    const request = ++detailRequestSequence;
+    activityRequests.set(request, { taskId, workspaceId, generation, direction: "latest" });
+    latestActivityRequests.set(taskId, request);
+    const current = () => generation === workspaceGeneration && get().workspaceId === workspaceId;
+    const errors = { ...get().activityErrors };
+    delete errors[taskId];
+    set({ activityLoading: { ...get().activityLoading, [taskId]: true }, activityErrors: errors });
+    try {
+      while (current()) {
+        let query = client.from("agent_activities").select("*").eq("task_id", taskId);
+        query = cursor === null ? query.order("seq", { ascending: false }) : query.gt("seq", cursor).order("seq");
+        if (upperBound !== null) query = query.lt("seq", upperBound + 1);
+        const { data, error } = await query.limit(ACTIVITIES_PAGE_SIZE + 1);
+        if (!current()) return;
+        // Two initial tail snapshots can cover disjoint ranges. Mixing a stale
+        // tail into the newer one would move the older cursor past an unseen gap.
+        if (!before && latestActivityRequests.get(taskId) !== request) return;
+        if (error) throw error;
+        const rows = (data ?? []) as ActivityRow[];
+        const initial = cursor === null;
+        const page = initial ? rows.slice(0, ACTIVITIES_PAGE_SIZE) : rows;
+        const s = get();
+        set({
+          activities: { ...s.activities, [taskId]: mergeActivityPage(s.activities[taskId], before, page) },
+          // A late initial request must not reopen already exhausted history.
+          ...(s.activityHasMore[taskId] === undefined ? { activityHasMore: { ...s.activityHasMore, [taskId]: initial ? rows.length > ACTIVITIES_PAGE_SIZE : !!before?.length } } : {}),
+        });
+        const nextCursor = page.reduce((max, row) => Math.max(max, row.seq), cursor ?? 0);
+        latestActivityCursors.set(taskId, Math.max(latestActivityCursors.get(taskId) ?? 0, nextCursor));
+        if (initial || rows.length <= ACTIVITIES_PAGE_SIZE || nextCursor === cursor || (upperBound !== null && nextCursor >= upperBound)) break;
+        cursor = nextCursor;
+        // Freeze the catch-up range once a full page reveals a gap. New events
+        // can arrive during this read without extending it indefinitely.
+        if (upperBound === null) {
+          const head = await client.from("agent_activities").select("*").eq("task_id", taskId).order("seq", { ascending: false }).limit(1);
+          if (!current()) return;
+          if (head.error) throw head.error;
+          upperBound = ((head.data ?? []) as ActivityRow[]).reduce((max, row) => Math.max(max, row.seq), cursor);
+          if (cursor >= upperBound) break;
+        }
+      }
+    } catch (error) {
+      if (current() && latestActivityRequests.get(taskId) === request) set({ activityErrors: { ...get().activityErrors, [taskId]: agentErrorMessage(error) } });
+    } finally {
+      activityRequests.delete(request);
+      if (latestActivityRequests.get(taskId) === request) latestActivityRequests.delete(taskId);
+      if (current()) set({ activityLoading: { ...get().activityLoading, [taskId]: [...activityRequests.values()].some((read) => read.taskId === taskId && read.generation === generation && read.workspaceId === workspaceId) } });
+    }
+  },
+
+  // Read backwards with a task-local sequence cursor. This never replaces the
+  // visible history and can safely overlap a latest read or realtime inserts.
+  async loadOlderActivities(taskId) {
+    const client = getAgentClient();
+    if (!client) return;
+    const workspaceId = get().workspaceId;
+    const generation = workspaceGeneration;
+    const existingRequest = olderActivityRequests.get(taskId);
+    const existing = existingRequest === undefined ? undefined : activityRequests.get(existingRequest);
+    if (existing?.generation === generation && existing.workspaceId === workspaceId) return;
+    const before = get().activities[taskId];
+    if (!before) return get().loadActivities(taskId);
+    if (get().activityHasMore[taskId] === false) return;
+    if (!before.length) {
+      set({ activityHasMore: { ...get().activityHasMore, [taskId]: false } });
+      return;
+    }
+    const cursor = before.reduce((min, row) => Math.min(min, row.seq), Infinity);
+    const request = ++detailRequestSequence;
+    activityRequests.set(request, { taskId, workspaceId, generation, direction: "older" });
+    olderActivityRequests.set(taskId, request);
+    const current = () => generation === workspaceGeneration && get().workspaceId === workspaceId && olderActivityRequests.get(taskId) === request;
+    const errors = { ...get().activityErrors };
+    delete errors[taskId];
+    set({ activityLoading: { ...get().activityLoading, [taskId]: true }, activityErrors: errors });
+    try {
+      const { data, error } = await client.from("agent_activities").select("*").eq("task_id", taskId)
+        .lt("seq", cursor).order("seq", { ascending: false }).limit(ACTIVITIES_PAGE_SIZE + 1);
+      if (!current()) return;
+      if (error) throw error;
+      const rows = (data ?? []) as ActivityRow[];
+      const s = get();
+      set({
+        activities: { ...s.activities, [taskId]: mergeActivityPage(s.activities[taskId], before, rows.slice(0, ACTIVITIES_PAGE_SIZE)) },
+        activityHasMore: { ...s.activityHasMore, [taskId]: rows.length > ACTIVITIES_PAGE_SIZE },
+      });
+    } catch (error) {
+      if (current()) set({ activityErrors: { ...get().activityErrors, [taskId]: agentErrorMessage(error) } });
+    } finally {
+      activityRequests.delete(request);
+      if (current()) {
+        olderActivityRequests.delete(taskId);
+        set({ activityLoading: { ...get().activityLoading, [taskId]: [...activityRequests.values()].some((read) => read.taskId === taskId && read.generation === generation && read.workspaceId === workspaceId) } });
+      }
+    }
   },
 
   async loadBriefs(taskId) {
