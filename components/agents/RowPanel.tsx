@@ -167,6 +167,7 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
   const artifact = useAgentTasks((s) => currentArtifactFor(s, task.id));
   const review = useAgentTasks((s) => latestReviewFor(s, task.id));
   const brief = useAgentTasks((s) => currentBriefFor(s, task));
+  const jobCi = useAgentTasks((s) => s.jobCi[task.id]);
   const ciChecks = useAgentTasks((s) => s.ciChecks[task.id]);
   const environment = useAgentTasks((s) => s.environments[task.id]);
   const allActivities = useAgentTasks((s) => s.activities);
@@ -267,6 +268,7 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
       review={review}
       brief={brief}
       ciChecks={ciChecks}
+      jobCi={jobCi}
       environment={environment}
       activities={activities ?? []}
       conversation={conversation}

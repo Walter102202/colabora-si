@@ -22,7 +22,7 @@ import { activityLabel, deliverySummary } from "@/lib/agentTaskText";
 import { FeedbackComposer } from "@/components/agents/panel/FeedbackComposer";
 import { MetricsList } from "@/components/agents/panel/MetricsList";
 import type { Metric } from "@/lib/agentMetrics";
-import type { CiCheckRow } from "@/lib/agentCi";
+import { jobCiLine, type CiCheckRow, type JobCiStatus } from "@/lib/agentCi";
 import type { EnvironmentResource } from "@/lib/agentTasks";
 import { EnvironmentCard } from "@/components/agents/panel/EnvironmentCard";
 import { MergeRule } from "@/components/agents/panel/MergeRule";
@@ -62,6 +62,7 @@ export interface TaskViewProps {
   review: ReviewRow | null;
   brief: BriefRow | null;
   ciChecks?: CiCheckRow[];
+  jobCi?: JobCiStatus | null;
   environment?: EnvironmentResource[];
   activities: ActivityRow[];
   conversation?: ConversationData;
@@ -152,7 +153,7 @@ export function AssignView({ agents, onAssign }: AssignViewProps) {
   );
 }
 
-export function TaskView({ agentAvatar = null, lessons = null, task, agent, run, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, environment = [], activities, conversation, agentNames = {}, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
+export function TaskView({ agentAvatar = null, lessons = null, task, agent, run, approval, actionApprovals, onDecideApproval, onSetMergeRule, artifact, review, brief, ciChecks, jobCi, environment = [], activities, conversation, agentNames = {}, subtasks, reviewerName, metrics = null, continuity = null, diff = null, onRevert, onRefreshDiff, handOverAgents = [], onHandOver, focusApprovalId = null, openQuestions = [], onDecideQuestion, autonomy = null, onSetAutonomy, onMessage, onClose, onDecide, onReview, onOpenTask, onOpenPage }: TaskViewProps) {
   const id = useId();
   const [showTimeline, setShowTimeline] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -175,6 +176,7 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
   const agentLike = agent ? { name: agent.name, capabilities: agent.capabilities } : null;
   const terminal = isTerminal(task.state);
   const accepting = waitsForAcceptance(task);
+  const ci = task.parent_task_id ? null : jobCiLine(jobCi);
   const handOverOthers = handOverAgents.filter((a) => a.id !== agent?.id);
   // Without a delegate there is no "same agent": the first other agent is preselected.
   const handoverTarget = handoverAgent || (agent ? "" : (handOverOthers[0]?.id ?? ""));
@@ -240,6 +242,8 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
 
       {accepting && <AcceptCard
         summary={deliverySummary(activities)}
+        ciLine={ci?.text}
+        ciBlocks={ci?.blocks}
         deliveredSubtasks={task.parent_task_id ? 0 : subtasks.filter((s) => s.task.state === "ready_for_review").length}
         disabled={busy !== null}
         onAccept={() => void act("close", () => onClose("accepted", null))} />}

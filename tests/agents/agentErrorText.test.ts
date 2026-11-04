@@ -31,3 +31,9 @@ describe("texts for the errors of a person's agent actions", () => {
     expect(rpc.mock.calls.map(([name]) => name)).toEqual(["release_for_handover", "close_task"]);
   });
 });
+it.each(["ci_pending", "ci_failed"])("closing explains %s", async (message) => {
+  rpc.mockResolvedValue({ data: null, error: { message, code: "PT422" } });
+  await expect(closeTask("t1", "accepted")).rejects.toThrow(message === "ci_pending"
+    ? "CI has not finished on the final commit. Accept opens when it passes."
+    : "CI failed on the final commit. Ask for a fix or close without accepting.");
+});
