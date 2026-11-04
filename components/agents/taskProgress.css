@@ -8,6 +8,14 @@
 .task-progress-list-item:hover { background: var(--bg-secondary); }
 .task-progress-list-item.is-selected { border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 5%, var(--bg)); }
 .task-progress-task { display: block; width: 100%; padding: 14px 30px 14px 12px; text-align: left; }
+.task-progress-agents { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.task-progress-agent { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 32px; height: 32px; border: 1px solid var(--border); border-radius: 50%; background: #fff; color: #737373; }
+.task-progress-agent.is-lead { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.task-progress-agent img { width: 20px; height: 20px; object-fit: contain; }
+.task-progress-agent:hover { border-color: var(--accent); box-shadow: 0 2px 6px #0000000a; }
+.task-progress-agents.is-compact { gap: 5px; margin: 0 0 9px; }
+.task-progress-agents.is-compact .task-progress-agent { width: 26px; height: 26px; }
+.task-progress-agents.is-compact .task-progress-agent img { width: 17px; height: 17px; }
 .task-progress-expand { position: absolute; top: 12px; right: 3px; min-width: 27px; min-height: 28px; display: grid; place-items: center; border-radius: 4px; color: var(--text-secondary); }
 .task-progress-expand:hover { background: var(--bg-secondary); }
 .task-progress-badge { display: inline-flex; padding: 3px 7px; border-radius: 5px; font-size: 11px; line-height: 16px; font-weight: 500; }

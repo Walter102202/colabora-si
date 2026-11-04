@@ -174,14 +174,26 @@ it("shows the assigned crew and reorders a job on Worker activity while preservi
   const newer = task("newer", { last_activity_at: "2026-11-04T11:00:00Z" });
   setup(rows, [older, child, newer]);
   useAgentTasks.setState({ rowPlans: { planned: { row_page_id: "planned", workspace_id: "workspace", worker_agent_id: "cursor", updated_by: "person", updated_at: "2026-11-04T10:00:00Z" } } });
-  useAgentsStore.setState({ agents: [["lead", "Claude Code"], ["codex", "Codex"], ["muse", "Muse Code"], ["cursor", "Cursor"]]
-    .map(([id, name]) => ({ id, name, workspace_id: "workspace", status: "enabled" } as AgentRow)) });
+  useAgentsStore.setState({ agents: [["lead", "Claude Code", "claude_code"], ["codex", "Codex worker", "codex"], ["muse", "Muse Code", "muse-code"], ["cursor", "Cursor", "cursor"]]
+    .map(([id, name, harness]): AgentRow => ({ id, name, workspace_id: "workspace", status: "enabled", role: "worker", connection: { harness },
+      auth_user_id: `auth-${id}`, kind: "mcp_client", delivery: "pull", autonomy: null, sponsor_user_id: "person", monthly_budget_usd: null,
+      capabilities: {}, rate_limit_per_min: 60, created_at: older.created_at, updated_at: older.updated_at, revoked_at: null, is_platform: false })) });
   await mount(rows, rows, "/p/database?progressRow=older&marker=keep#block");
   const cards = () => [...host.querySelectorAll<HTMLButtonElement>(".task-progress-task")];
   const titles = () => cards().map((button) => button.firstElementChild?.textContent);
   const olderCard = () => cards().find((button) => button.firstElementChild?.textContent === "Task older")!;
   expect(titles()).toEqual(["Task newer", "Task older"]);
-  expect(olderCard().textContent).toContain("Lead: Claude CodeWorkers: Codex, Muse Code, Cursor");
+  expect(olderCard().textContent).toContain("Lead: Claude CodeWorkers: Codex worker, Muse Code, Cursor");
+  const labels = (element: Element) => [...element.querySelectorAll(".task-progress-agent")].map((badge) => badge.getAttribute("aria-label"));
+  const header = host.querySelector(".task-progress-detail-heading")!;
+  expect(labels(olderCard())).toEqual(["Claude Code · Lead", "Codex worker · Worker", "Muse Code · Worker", "Cursor · Worker"]);
+  expect(labels(header)).toEqual(labels(olderCard()));
+  expect([...header.querySelectorAll("img")].map((img) => img.getAttribute("src"))).toEqual(["claude-code", "codex", "muse-code", "cursor"].map((id) => `/brand/agents/${id}.svg`));
+  expect(olderCard().querySelector("button, [tabindex]")).toBeNull();
+  const codexLogo = header.querySelector<HTMLButtonElement>('[aria-label="Codex worker · Worker"]')!;
+  await act(async () => { codexLogo.focus(); });
+  expect(document.querySelector('[role="tooltip"]')?.textContent).toBe("Codex worker · Worker");
+  await act(async () => { codexLogo.click(); codexLogo.blur(); });
   const feedback = host.querySelector<HTMLTextAreaElement>('[aria-label="Feedback for older"]')!;
   feedback.value = "Preserve this exact review draft";
   const snapshot = structuredClone(rows);
@@ -194,6 +206,9 @@ it("shows the assigned crew and reorders a job on Worker activity while preservi
   expect(feedback.value).toBe("Preserve this exact review draft");
   expect(route()).toBe("/p/database?progressRow=older&marker=keep#block");
   expect(rows).toEqual(snapshot);
+  await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="Expand subtasks of Task older"]')!.click(); });
+  await selectTask("Task child");
+  expect(labels(host.querySelector(".task-progress-detail-heading")!)).toEqual(["Muse Code · Worker"]);
 });
 
 it("keeps a new row selected outside a saved filter without changing or dropping the other rows", async () => {

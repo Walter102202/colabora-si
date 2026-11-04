@@ -7,7 +7,7 @@ import { useStore } from "@/lib/store";
 import { useAuthStore } from "@/lib/auth";
 import { useAgentsStore } from "@/lib/agentsStore";
 import { taskForPage, useAgentTasks, type TaskRow } from "@/lib/agentTasks";
-import { parseProgressReadMarkers, progressActivityAt, progressReadKey, progressRows, taskProgressState, updatedSinceRead, type ProgressReadMarkers, type ProgressTone } from "@/lib/agentProgress";
+import { parseProgressReadMarkers, progressActivityAt, progressAgentLogo, progressReadKey, progressRows, taskProgressState, updatedSinceRead, type ProgressAgent, type ProgressReadMarkers, type ProgressTone } from "@/lib/agentProgress";
 import { jobWorkerIds } from "@/lib/agentJobs";
 import { openTramaTaskDraft, useAgentProgressContext } from "@/lib/agentTramaContext";
 import { buildProgressMilestones } from "@/lib/agentProgressActivity";
@@ -19,6 +19,7 @@ import { isTrama } from "@/lib/tramaIdentity";
 import type { DbRow } from "@/lib/types";
 import { RowPanel } from "@/components/agents/RowPanel";
 import { TramaAvatar } from "@/components/agents/TramaAvatar";
+import { ProgressAgentLogos } from "@/components/agents/ProgressAgentLogos";
 import "@/components/agents/taskProgress.css";
 
 export interface TaskProgressProps {
@@ -79,6 +80,30 @@ function ProgressWorkspace({ pageId, rows, allRows, onOpenRow, active = true, wo
   const [lookupRetry, setLookupRetry] = useState(0);
   const activeTasks = useMemo(() => Object.fromEntries(Object.entries(tasks).filter(([, task]) => storeWorkspace === workspaceId && task.workspace_id === workspaceId)), [tasks, storeWorkspace, workspaceId]);
   const byPage = useMemo(() => new Map(allRows.map((row) => [row.pageId, taskForPage({ tasks: activeTasks }, row.pageId)])), [allRows, activeTasks]);
+  const teamsByPage = useMemo(() => {
+    const scopedAgents = new Map(agents.filter((agent) => agent.workspace_id === workspaceId).map((agent) => [agent.id, agent]));
+    const records = Object.values(activeTasks);
+    return new Map(allRows.map((row) => {
+      const task = byPage.get(row.pageId);
+      const members: ProgressAgent[] = [];
+      if (task) {
+        const add = (id: string, role: ProgressAgent["role"]) => {
+          const agent = scopedAgents.get(id);
+          members.push({ id, role, name: agent?.name ?? "Unknown agent", logo: progressAgentLogo(agent) });
+        };
+        if (task.delegate_agent_id) add(task.delegate_agent_id, task.parent_task_id ? "Worker" : "Lead");
+        if (!task.parent_task_id) {
+          const subtasks = records.filter((child) => child.parent_task_id === task.id && child.request_kind == null);
+          const planned = allRows.filter((child) => child.parentRowId === row.id && !byPage.get(child.pageId)).map((child) => {
+            const plan = rowPlans[child.pageId];
+            return storeWorkspace === workspaceId && plan?.workspace_id === workspaceId ? plan.worker_agent_id : null;
+          });
+          for (const id of jobWorkerIds(task, subtasks, planned)) add(id, "Worker");
+        }
+      }
+      return [row.pageId, members] as const;
+    }));
+  }, [allRows, byPage, activeTasks, agents, rowPlans, storeWorkspace, workspaceId]);
   const pending = useMemo(() => Object.values(approvals), [approvals]);
   const entries = useMemo(() => progressRows(rows, allRows,
     new Map(allRows.map((row) => [row.id, progressActivityAt(byPage.get(row.pageId))]))), [rows, allRows, byPage]);
@@ -204,19 +229,14 @@ function ProgressWorkspace({ pageId, rows, allRows, onOpenRow, active = true, wo
           const isOpen = expanded.has(row.id) || !!selectedEntry?.ancestors.includes(row.id);
           const agent = task?.delegate_agent_id ? agents.find((entry) => entry.id === task.delegate_agent_id && entry.workspace_id === workspaceId) : null;
           const family = task ? Object.values(activeTasks).filter((child) => child.id === task.id || child.parent_task_id === task.id) : [];
-          const subtasks = family.filter((child) => child.id !== task?.id && child.request_kind == null);
-          const planned = allRows.filter((child) => child.parentRowId === row.id && !byPage.get(child.pageId))
-            .map((child) => {
-              const plan = rowPlans[child.pageId];
-              return storeWorkspace === workspaceId && plan?.workspace_id === workspaceId ? plan.worker_agent_id : null;
-            });
-          const workerNames = task && !task.parent_task_id ? jobWorkerIds(task, subtasks, planned)
-            .map((id) => agents.find((entry) => entry.id === id && entry.workspace_id === workspaceId)?.name ?? "Unknown agent") : [];
+          const team = teamsByPage.get(row.pageId) ?? [];
+          const workerNames = task && !task.parent_task_id ? team.filter((member) => member.role === "Worker").map((member) => member.name) : [];
           const updated = family.some((child) => updatedSinceRead(child, readMarkers));
           const milestone = task ? latestMilestones.get(task.id) : undefined;
           return <div key={row.id} className={`task-progress-list-item ${selectedRow?.id === row.id ? "is-selected" : ""}`} style={{ marginLeft: Math.min(depth, 3) * 12 }}>
             <button type="button" className="task-progress-task" aria-current={selectedRow?.id === row.id ? "true" : undefined} onClick={() => selectPage(row.pageId)}>
               <span className="mb-2 block break-words text-sm font-medium">{titleOf(row)}</span>
+              <ProgressAgentLogos members={team} compact />
               <span className="flex flex-wrap items-center gap-1.5"><span className={`task-progress-badge ${TONE[state?.tone ?? "neutral"]}`}>{state?.label ?? "Open details"}</span>{updated && <span className="text-xs font-medium text-accent">Updated</span>}</span>
               <span className="mt-2 block truncate text-xs text-text-secondary">{agent ? `${task?.parent_task_id ? "Worker" : "Lead"}: ${agent.name}` : task ? "No agent assigned" : "Task details load when opened"}</span>
               {workerNames.length > 0 && <span className="mt-1 block break-words text-xs leading-relaxed text-text-secondary">Workers: {workerNames.join(", ")}</span>}
@@ -231,7 +251,7 @@ function ProgressWorkspace({ pageId, rows, allRows, onOpenRow, active = true, wo
       <section className="task-progress-detail" aria-label="Selected task">
         {selectedRow ? <>
           <header className="task-progress-detail-heading">
-            <div className="min-w-0"><p className="text-xs font-medium uppercase tracking-wide text-text-tertiary">{selectedTask?.parent_task_id || selectedRow.parentRowId ? "Subtask" : "Shared task"}</p><h3 className="mt-2 break-words text-xl font-semibold leading-tight">{title}</h3></div>
+            <div className="min-w-0"><p className="text-xs font-medium uppercase tracking-wide text-text-tertiary">{selectedTask?.parent_task_id || selectedRow.parentRowId ? "Subtask" : "Shared task"}</p><h3 className="mt-2 break-words text-xl font-semibold leading-tight">{title}</h3><ProgressAgentLogos members={teamsByPage.get(selectedRow.pageId) ?? []} /></div>
             <div className="flex flex-wrap items-center gap-3">{onOpenRow && <button type="button" className="text-xs text-text-secondary underline underline-offset-2" onClick={() => onOpenRow(selectedRow.id)}>Row properties</button>}<a className="task-progress-open" href={selectedTask ? taskUrl(selectedRow.pageId, selectedTask.id) : pageUrl(selectedRow.pageId)} onClick={(event) => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); void navigate(selectedTask ? taskUrl(selectedRow.pageId, selectedTask.id) : pageUrl(selectedRow.pageId)); }}>Open full page <ArrowUpRight size={14} aria-hidden="true" /></a></div>
           </header>
           {selectedOutsideView && <p className="mb-4 rounded-lg bg-bg-secondary p-3 text-xs text-text-secondary">This task is outside the current filter. It stays open so you can finish reviewing it.</p>}
