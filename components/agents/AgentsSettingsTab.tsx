@@ -10,7 +10,21 @@ import { AgentList } from "@/components/agents/settings/AgentList";
 import { ConnectedApps } from "@/components/agents/settings/ConnectedApps";
 import { CiConnections } from "@/components/agents/settings/CiConnections";
 import { NewAgentWizard } from "@/components/agents/settings/NewAgentWizard";
-import { AgentDetail } from "@/components/agents/settings/AgentDetail";
+import { AgentDetail, type AgentUsageSummary } from "@/components/agents/settings/AgentDetail";
+import { getAgentClient } from "@/lib/agentClient";
+import { loadUsageRuns, periodStart, type UsageRun } from "@/lib/agentUsage";
+
+function summarizeUsage(runs: UsageRun[], agentId: string): AgentUsageSummary {
+  const mine = runs.filter((r) => r.agent_id === agentId);
+  const last = mine.reduce<UsageRun | null>((best, r) => (!best || Date.parse(r.started_at) > Date.parse(best.started_at) ? r : best), null);
+  return {
+    runs: mine.length,
+    inputTokens: mine.reduce((sum, r) => sum + r.input_tokens, 0),
+    outputTokens: mine.reduce((sum, r) => sum + r.output_tokens, 0),
+    costUsd: mine.reduce((sum, r) => (Math.round(sum * 1e6) + Math.round(r.cost_usd * 1e6)) / 1e6, 0),
+    lastModel: last?.model ?? null,
+  };
+}
 import { TokenReveal } from "@/components/agents/settings/TokenReveal";
 import { EnvironmentList } from "@/components/agents/settings/EnvironmentList";
 import { CONNECT_URL } from "@/lib/routes";
@@ -31,6 +45,19 @@ export function AgentsSettingsTab() {
   useEffect(() => {
     void load(syncWorkspaceId);
   }, [load, syncWorkspaceId]);
+
+  const detailId = view.kind === "detail" ? view.id : null;
+  const [usage, setUsage] = useState<{ agentId: string; summary: AgentUsageSummary } | null>(null);
+  useEffect(() => {
+    if (!detailId || !syncWorkspaceId) return;
+    const controller = new AbortController();
+    const client = getAgentClient();
+    if (!client) return;
+    loadUsageRuns(client, syncWorkspaceId, periodStart("month"), controller.signal)
+      .then((runs) => { if (!controller.signal.aborted) setUsage({ agentId: detailId, summary: summarizeUsage(runs, detailId) }); })
+      .catch(() => { if (!controller.signal.aborted) setUsage(null); });
+    return () => controller.abort();
+  }, [detailId, syncWorkspaceId]);
 
   if (status === "unavailable") return <p className="text-sm text-text-secondary">Agents need the cloud. Configure a backend to register them.</p>;
   if (status === "signed_out") return <p className="text-sm text-text-secondary">Sign in to manage agents.</p>;
@@ -91,7 +118,7 @@ export function AgentsSettingsTab() {
     return (
       <div className="space-y-3">
         {created?.id === detailAgent.id && <TokenReveal token={created.token} onDone={() => setCreated(null)} />}
-        <AgentDetail agent={detailAgent} onBack={() => setView({ kind: "list" })} />
+        <AgentDetail agent={detailAgent} onBack={() => setView({ kind: "list" })} usage={usage?.agentId === detailAgent.id ? usage.summary : null} />
       </div>
     );
   }
