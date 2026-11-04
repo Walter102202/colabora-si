@@ -150,7 +150,7 @@ begin
   if p_job.parent_task_id is not null or p_job.request_kind is not null or p_job.state<>'ready_for_review' then reason := 'not_delivered';
   elsif private.task_autonomy_level(p_job.id)<>'autonomous' then reason := 'autonomy';
   elsif exists(select 1 from public.agent_tasks s where s.parent_task_id=p_job.id and s.request_kind is null
-                and (s.state<>'done' or s.acceptance<>'accepted')) then reason := 'subtasks_open';
+                and s.state<>'cancelled' and (s.state<>'done' or s.acceptance<>'accepted')) then reason := 'subtasks_open';
   elsif jsonb_array_length(private.job_pending_human(p_job))>0 or exists(select 1 from public.task_briefs b,jsonb_array_elements(b.done_when) c
                 where b.task_id=p_job.id and b.version=p_job.brief_version and c->>'check'='human' and c->>'by'='person') then reason := 'human_criteria';
   else

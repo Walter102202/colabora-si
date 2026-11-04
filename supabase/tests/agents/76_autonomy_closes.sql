@@ -132,11 +132,15 @@ select public.record_ci_check(:'conn'::uuid,'acme/app',jsonb_build_object('id',6
 select tests.reset_role();
 select is((select state from public.agent_tasks where id=:'e2e'::uuid),'done','passing delivery automatically closes pending job');
 update public.agent_tasks set state='ready_for_review',acceptance='pending' where id=:'e2e'::uuid;
-update public.agent_tasks set state='cancelled' where id=:'lead_task'::uuid;
+update public.agent_tasks set state='done', acceptance='pending' where id=:'lead_task'::uuid;
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
-select is(tests.detail_of(format('select public.close_job(%L::uuid)',:'e2e'))::jsonb->>'reason','subtasks_open','every subtask must be done and accepted');
+select is(tests.detail_of(format('select public.close_job(%L::uuid)',:'e2e'))::jsonb->>'reason','subtasks_open','a done but unaccepted subtask blocks the job');
 select tests.reset_role();
-update public.agent_tasks set state='done' where id=:'lead_task'::uuid;
+update public.agent_tasks set state='cancelled', acceptance='pending' where id=:'lead_task'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('do $b$ begin perform public.close_job(%L::uuid); raise exception ''closed''; end $b$',:'e2e')),'closed','a cancelled subtask is settled and never blocks the job');
+select tests.reset_role();
+update public.agent_tasks set state='done', acceptance='accepted' where id=:'lead_task'::uuid;
 update public.agent_artifacts set ref='no-commit' where id=:'final'::uuid;
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid,(:'lead'::jsonb->>'agent')::uuid);
 select is(public.job_ci_status(:'e2e'::uuid)->>'state','no_commit','no_commit fixture');
