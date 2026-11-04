@@ -242,5 +242,31 @@ select max(seq) as through_seq from public.agent_messages where workspace_id=:'w
 select tests.set_agent(:'pu',:'pa');
 select public.claim_task(:'req','memory-regression')->>'run_id' as run \gset
 select lives_ok(format('select public.reply_person_message(%L,%L,%s,null,null,null,null,array[%L::uuid])',:'run','Design',:'through_seq',:'retained'),'forgetting one fact does not break replies using another fact from the same source');
+-- The global pass cap is independent of the per-workspace hourly cap.
+create function tests.memory_people(p_owner uuid) returns void language plpgsql as $$
+declare v_ws uuid; v_user uuid; v_agent jsonb; v_page text;
+begin
+  for i in 1..4 loop
+    insert into public.workspaces(name,owner_id) values('Memory capacity',p_owner) returning id into v_ws;
+    insert into public.workspace_members(workspace_id,user_id,role) values(v_ws,p_owner,'owner');
+    v_page:='memory-capacity-'||i;
+    perform tests.make_page(v_ws,v_page,null);
+    v_agent:=tests.make_agent(v_ws,'capacity-'||i||'@agents.invalid','lead',v_page);
+    update public.agents set is_platform=true where id=(v_agent->>'agent')::uuid;
+    for j in 1..26 loop
+      v_user:=gen_random_uuid();
+      insert into auth.users(id,aud,role,email) values(v_user,'authenticated','authenticated',v_user||'@test.local');
+      insert into public.workspace_members(workspace_id,user_id,role) values(v_ws,v_user,'viewer');
+      insert into public.person_memory_settings(workspace_id,user_id) values(v_ws,v_user);
+      insert into public.agent_messages(workspace_id,user_id,direction,channel,body,created_at)
+        values(v_ws,v_user,'in','surface','I live in Lima',now()-interval '31 minutes');
+    end loop;
+  end loop;
+end $$;
+select tests.reset_role();
+select tests.memory_people(:'owner');
+select is(private.memory_tick(),100,'one tick opens at most 100 person requests');
+select is(private.memory_tick(),4,'remaining eligible people are picked up next time');
+select ok(exists(select 1 from cron.job where jobname='memory-tick' and schedule='*/5 * * * *' and command='select private.memory_tick()'),'memory extraction is scheduled');
 select * from finish();
 rollback;

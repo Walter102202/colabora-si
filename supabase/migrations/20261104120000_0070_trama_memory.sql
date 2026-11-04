@@ -702,3 +702,10 @@ begin
 end $$;
 revoke all on function public.apply_memory_updates(uuid,jsonb,bigint,jsonb) from public,anon;
 grant execute on function public.apply_memory_updates(uuid,jsonb,bigint,jsonb) to authenticated;
+
+do $$
+begin
+  if exists(select 1 from pg_extension where extname='pg_cron') then
+    perform cron.schedule('memory-tick','*/5 * * * *','select private.memory_tick()');
+  end if;
+end $$;
