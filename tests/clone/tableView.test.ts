@@ -127,6 +127,20 @@ it("ordinary tables retain the new sub-item action", () => {
   expect(container.querySelector('[aria-label="New sub-item"]')).not.toBeNull();
 });
 
+it("gives long agent-task titles more room and keeps the complete value accessible", () => {
+  const title = "Usage panel: model, input tokens, output tokens and cost per run, including runs where cost was not reported";
+  const database = db([prop({ id: "title", name: "Task" }), prop({ id: "state", type: "agentStatus" })], [row({ title }, "long-title")]);
+  const saved = view({ colWidths: { state: 160 } });
+  act(() => root.render(createElement(TableView, { ops: opsFor(database, true), database, view: saved, rows: database.rows, pages: {} })));
+  expect((container.querySelectorAll("thead th")[1] as HTMLElement).style.width).toBe("288px");
+  expect((container.querySelectorAll("thead th")[2] as HTMLElement).style.width).toBe("160px");
+  expect(container.querySelector(".agent-task-title")?.getAttribute("title")).toBe(title);
+  expect(container.querySelector(".agent-task-title .cell-button")?.textContent).toBe(title);
+  expect(database.rows[0].cells.title).toBe(title);
+  act(() => root.render(createElement(TableView, { ops: opsFor(database, true), database, view: { ...saved, colWidths: { title: 220 } }, rows: database.rows, pages: {} })));
+  expect((container.querySelectorAll("thead th")[1] as HTMLElement).style.width).toBe("220px");
+});
+
 it("selects a range, removes filtered selections, and selects rows beyond the virtual window", () => {
   const rows = Array.from({ length: VIRTUAL_THRESHOLD + 20 }, (_, i) => row({ title: `Item ${i}` }, `page-${i}`));
   const database = db([prop({ id: "title", name: "Name" })], rows), currentView = view(), ops = opsFor(database, false);
