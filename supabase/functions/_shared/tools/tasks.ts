@@ -170,6 +170,7 @@ const getTask: ToolDef = {
   outputSchema: output({
     task: { type: 'object' },
     brief: { type: ['object', 'null'] },
+    job_ci: { type: 'object', description: 'CI evidence on the job final commit: state, sha, checks and their sources.' },
     ci_checks: { type: 'array', items: { type: 'object' }, description: 'GitHub CI evidence for each ci criterion, when present.' },
     artifacts: { type: 'array', items: { type: 'object' } },
     approvals_pending: { type: 'array', items: { type: 'object' } },
@@ -193,7 +194,8 @@ const getTask: ToolDef = {
     return {
       text: `Task "${String(t.task.title || t.task.id)}": ${String(t.task.state)}, brief v${String(t.task.brief_version)}, ` +
         `${plural(t.artifacts.length, 'artifact')}, ${plural(t.approvals_pending.length, 'pending approval')}.` +
-        (pending.length ? ` ${plural(pending.length, 'human subtask')} to adopt; keep each chosen Worker.` : ''),
+        (pending.length ? ` ${plural(pending.length, 'human subtask')} to adopt; keep each chosen Worker.` : '') +
+        (t.job_ci?.state && t.job_ci.state !== 'none' ? ` CI: ${String(t.job_ci.state)} on ${String(t.job_ci.sha ?? '').slice(0, 7)}.` : ''),
       structured: { pending_rows: pending, ...t },
     };
   },
@@ -479,7 +481,7 @@ const finishExternalOp: ToolDef = {
 const submitForReview: ToolDef = {
   name: 'submit_for_review',
   title: 'Submit the task for review',
-  description:
+  description: "On a job with inherited CI checks, deliver a diff artifact naming the final commit (owner/repo@sha). At Autonomous autonomy the job can close when GitHub passes all checks and no human criteria remain. " +
     'Delivers the run: summary is two or three plain sentences a person reads before accepting. Needs at least one artifact and an artifact for every "done when" criterion that is not checked by a person. ' +
     'Ends the run and cancels your questions still open. While a request still blocks (after await_questions, every open question ' +
     'does) it fails with waiting_on_human and the ids of those requests: wait for their answers first. ' +

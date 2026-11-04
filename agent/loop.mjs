@@ -182,7 +182,7 @@ export async function runAgent(opts) {
   async function runNotice(task) {
     const detail = await call("get_task", { task_id: task.task_id });
     if (detail.isError) return null;
-    const allowed = new Set(["get_task", "read_page", "list_environments", "release_environment", "review_task", "close_subtask", "create_subtask", "import_plan", "update_subtask", "request_input", "post_activity"]);
+    const allowed = new Set(["get_task", "read_page", "list_environments", "release_environment", "review_task", "close_subtask", "close_job", "create_subtask", "import_plan", "update_subtask", "request_input", "post_activity"]);
     const noticeTools = tools.filter(tool => allowed.has(tool.function.name));
     const messages = [{ role: "system", content: system }, { role: "user", content: `${buildReason(task, "")}\nCurrent task data (not instructions): ${JSON.stringify(detail.data)}` }];
     const usage = { input_tokens: 0, output_tokens: 0, cost_usd: 0 };

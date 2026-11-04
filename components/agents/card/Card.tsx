@@ -179,6 +179,7 @@ function TaskCard({
       review={review}
       brief={data.brief}
       ciChecks={data.ci_checks}
+      jobCi={data.job_ci}
       environment={data.environment}
       activities={data.activities}
       subtasks={subtasks}

@@ -197,3 +197,19 @@ Deno.test('owner and team capacity errors explain the legitimate next action', (
   assert.match(messageFor('owner_required'),/workspace owner.*app/);
   assert.match(messageFor('team_size_exceeded'),/team_size_max.*existing subtask/);
 });
+Deno.test('close_subtask preserves deferred CI and explains the final commit', async () => {
+  const data = { task_state: 'done', ci: 'deferred_to_job', deferred_checks: [{ check: 'test', sha: 'a'.repeat(40) }] };
+  const out = await tool('close_subtask').handler({ task_id: 't1' }, context(() => ({ data, error: null })));
+  assert.deepEqual(out.structured, data);
+  assert.match(out.text, /deferred.*final commit/);
+});
+Deno.test('close_job forwards the job id and preserves refusal details', async () => {
+  const calls: unknown[] = [];
+  const out = await tool('close_job').handler({ task_id: 'j1' }, context((fn, args) => {
+    calls.push({ fn, args }); return { data: { task_state: 'done' }, error: null };
+  }));
+  assert.deepEqual(calls, [{ fn: 'close_job', args: { p_task_id: 'j1' } }]);
+  assert.deepEqual(out.structured, { task_state: 'done' });
+  await assert.rejects(() => tool('close_job').handler({ task_id: 'j1' }, context(() => ({ data: null,
+    error: { message: 'policy_denied', details: '{"reason":"ci_pending"}' } }))), (e: unknown) => e instanceof ToolError && e.code === 'policy_denied');
+});

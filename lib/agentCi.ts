@@ -52,3 +52,25 @@ export async function canManageConnections(client: SupabaseClient, workspaceId: 
   if (member.error) throw member.error;
   return Boolean(workspace.data || member.data);
 }
+export type JobCiState = "none" | CiState;
+export interface JobCiStatus {
+  state: JobCiState;
+  repo?: string;
+  sha?: string;
+  connected: boolean;
+  pending_human?: { criterion_id: string; text: string; task_id: string }[];
+  newer_commit?: string | null;
+  checks: { check: string; state: CiState; url?: string; sources: string[] }[];
+}
+export function jobCiLine(status: JobCiStatus | null | undefined): { text: string; blocks: boolean } | null {
+  if (!status || status.state === "none") return null;
+  const sha = status.sha?.slice(0, 7) ?? "";
+  const checks = status.checks.filter((c) => c.state === status.state).map((c) => c.check).sort().join(", ");
+  switch (status.state) {
+    case "pending": return { text: `Waiting for CI on ${sha}: ${checks}`, blocks: true };
+    case "failed": return { text: `CI failed on ${sha}: ${checks}`, blocks: true };
+    case "passed": return { text: `CI passed on ${sha}${status.newer_commit ? ` · the branch has moved since (${status.newer_commit.slice(0, 7)})` : ""}`, blocks: false };
+    case "not_connected": return { text: "No CI connected: a person must accept", blocks: false };
+    case "no_commit": return { text: "CI not checked: no final commit was named", blocks: false };
+  }
+}

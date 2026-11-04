@@ -135,3 +135,31 @@ it("keeps written feedback when the server refuses it", async () => {
   expect(input.value).toBe("Change the dates");
   expect(button("Reopen")).toBeDefined();
 });
+it.each(["pending", "failed", "passed", "not_connected"] as const)("job Accept reflects %s CI", (state) => {
+  const base = props("ready_for_review");
+  act(() => root.render(createElement(TaskView, { ...base, task: { ...base.task, parent_task_id: null },
+    jobCi: { state, sha: "a".repeat(40), connected: true, checks: [{ check: "test", state, sources: [] }] } })));
+  expect(button("Accept")!.disabled).toBe(state === "pending" || state === "failed");
+  expect(container.textContent).toContain(state === "pending" ? "Waiting for CI on" : state === "failed" ? "CI failed on" : state === "passed" ? "CI passed on" : "No CI connected: a person must accept");
+});
+it("subtask Accept does not show its parent's CI", () => {
+  const base = props("ready_for_review");
+  act(() => root.render(createElement(TaskView, { ...base, task: { ...base.task, parent_task_id: "job", review_state: "approved" },
+    jobCi: { state: "pending", connected: true, checks: [] } })));
+  expect(container.textContent).not.toContain("Waiting for CI on");
+});
+import { Card } from "@/components/agents/card/Card";
+import { mockActions } from "@/components/agents/card/mock";
+it("MCP card passes final-commit CI through to Accept", () => {
+  act(() => root.render(createElement(Card, { initial: mockCard("job-ci-pending"), actions: mockActions("job-ci-pending") })));
+  expect(button("Accept")!.disabled).toBe(true);
+  expect(container.textContent).toContain("Waiting for CI on aaaaaaa: test");
+});
+it("job Accept lists the deferred human criteria", () => {
+  const base = props("ready_for_review");
+  act(() => root.render(createElement(TaskView, { ...base, jobCi: { state: "none", connected: false, checks: [],
+    pending_human: [{ criterion_id: "h1", task_id: "s1", text: "Approve the design" }] } })));
+  expect(container.textContent).toContain("You are the check for:");
+  expect(container.textContent).toContain("Approve the design");
+  expect(button("Accept")!.disabled).toBe(false);
+});

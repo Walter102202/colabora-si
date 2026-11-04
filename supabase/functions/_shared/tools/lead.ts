@@ -313,14 +313,14 @@ const closeSubtask: ToolDef = {
   name: 'close_subtask',
   title: 'Close a reviewed subtask',
   description:
-    'Lead with an active parent run. A reviewer records review_task and ends its turn; the Lead or a person closes the delivery. Closes a subtask in ready_for_review when, at Autonomous autonomy, an agent other than its author approved it and no criterion is human, deterministic or CI; or when the parent brief allows it (policies.subtask_close = lead) or ' +
-    'every deterministic criterion is verified with evidence; CI criteria require a current verified review and a passing GitHub check on the delivered commit. Otherwise policy_denied and a person decides.',
+    'Lead with an active parent run. A reviewer records review_task and ends its turn; the Lead or a person closes the delivery. Closes a subtask in ready_for_review when, at Autonomous autonomy, an agent other than its author approved it and no criterion is deterministic; or when the parent brief allows it (policies.subtask_close = lead) or ' +
+    'every deterministic criterion is verified with evidence; Human criteria are deferred to one person Accept on the job and never permit automatic job closure. A pending or unconnected CI check is deferred to the job final commit, with a current approved independent review. A known failure blocks closure (policy_denied, reason ci_failed). Otherwise policy_denied and a person decides.',
   inputSchema: object({
     task_id: { type: 'string', minLength: 1 },
     verdict: { type: 'string', enum: ['accepted'], default: 'accepted' },
     evidence: { type: 'array', items: { type: 'object' } },
   }, ['task_id']),
-  outputSchema: output({ task_state: { type: 'string' } }),
+  outputSchema: output({ task_state: { type: 'string' }, human: { type: 'string' }, deferred_human: { type: 'array', items: { type: 'object' } }, ci: { type: 'string' }, deferred_checks: { type: 'array', items: { type: 'object' } } }),
   annotations: WRITE,
   async handler(args, ctx) {
     const data = await must(ctx.db.rpc<Row>('close_subtask', {
@@ -328,7 +328,20 @@ const closeSubtask: ToolDef = {
       p_verdict: str(args.verdict) ?? 'accepted',
       p_evidence: args.evidence ?? [],
     })) ?? {};
-    return { text: `Subtask ${String(args.task_id)} closed (${String(data.task_state)}).`, structured: data };
+    return { text: `Subtask ${String(args.task_id)} closed (${String(data.task_state)}).` +
+      (data.ci === 'deferred_to_job' ? ` CI deferred: ${(data.deferred_checks as Row[]).map((c) => `${String(c.check)} on ${String(c.sha ?? '').slice(0, 7)}`).join(', ')} is proved on the job final commit.` : '') +
+      (data.human === 'deferred_to_job' ? ' Human criteria are deferred to the person Accept on the job.' : ''), structured: data };
+  },
+};
+
+const closeJob: ToolDef = {
+  name: 'close_job', title: 'Close a delivered Autonomous job',
+  description: "Lead only, after submit_for_review. Closes without a person at Autonomous autonomy when every subtask is accepted, no human criteria remain and GitHub passed every required check on the job final diff commit. Otherwise policy_denied explains why (ci_pending, ci_not_connected, subtasks_open). When CI arrives later the server closes the job itself; you do not need to wait.",
+  inputSchema: object({ task_id: { type: 'string', minLength: 1 } }, ['task_id']),
+  outputSchema: output({ task_state: { type: 'string' } }), annotations: WRITE,
+  async handler(args, ctx) {
+    const data = await must(ctx.db.rpc<Row>('close_job', { p_task_id: args.task_id })) ?? {};
+    return { text: `Job ${String(args.task_id)} closed (${String(data.task_state)}).`, structured: data };
   },
 };
 
@@ -434,5 +447,5 @@ const listEnvironments: ToolDef = {
   },
 };
 
-export const leadTools: ToolDef[] = [createTask, createSubtask, updateSubtask, importPlan, reviewTask, closeSubtask, listSubtasks,
+export const leadTools: ToolDef[] = [createTask, createSubtask, updateSubtask, importPlan, reviewTask, closeSubtask, closeJob, listSubtasks,
   reserveEnvironment, releaseEnvironment, listEnvironments];

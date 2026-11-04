@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { agentErrorMessage, getAgentClient } from "@/lib/agentClient";
-import type { CiCheckRow } from "@/lib/agentCi";
+import type { CiCheckRow, JobCiStatus } from "@/lib/agentCi";
 import { waitsForAcceptance, type Acceptance, type RunStatus, type TaskState } from "@/lib/agentState";
 
 // Non-persisted store of the agent task model for one workspace: tasks, runs,
@@ -169,6 +169,7 @@ export interface AgentTasksState {
   artifacts: ById<ArtifactRow>; // per task, loaded with the detail
   briefs: ById<BriefRow>; // key `${task_id}:${version}`
   ciChecks: ById<CiCheckRow[]>;
+  jobCi: ById<JobCiStatus | null>;
   environments: ById<EnvironmentResource[]>;
   activities: ById<ActivityRow[]>; // by task id, ordered by seq (loaded on demand)
   closedCursor: ClosedCursor | null; // keyset of the oldest closed task loaded
@@ -281,7 +282,7 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
   reviews: {},
   artifacts: {},
   briefs: {},
-  ciChecks: {},
+  ciChecks: {}, jobCi: {},
   environments: {},
   activities: {},
   closedCursor: null,
@@ -300,7 +301,7 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
     const request = ++loadSequence;
     const reset = get().workspaceId === workspaceId
       ? {}
-      : { tasks: {}, rowPlans: {}, runs: {}, approvals: {}, reviews: {}, artifacts: {}, briefs: {}, activities: {}, ciChecks: {}, environments: {}, closedCursor: null, closedExhausted: false };
+      : { tasks: {}, rowPlans: {}, runs: {}, approvals: {}, reviews: {}, artifacts: {}, briefs: {}, activities: {}, ciChecks: {}, jobCi: {}, environments: {}, closedCursor: null, closedExhausted: false };
     set({ status: "loading", error: null, workspaceId, ...reset });
     const before = get();
     const revision = realtimeSequence;
@@ -397,10 +398,13 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
     const brief = task ? get().briefs[`${taskId}:${task.brief_version}`] : undefined;
     const ci = brief?.done_when.some((c) => c.check === "ci")
       ? await client.rpc("task_ci_status", { p_task_id: taskId }) : null;
+    const job = task && !task.parent_task_id && !task.request_kind
+      ? await client.rpc("job_ci_status", { p_task_id: taskId }) : null;
     const s = get();
     if (generation !== workspaceGeneration || s.workspaceId !== workspaceId || detailRequests.get(taskId) !== request) return;
     detailRequests.delete(taskId);
     set({
+      jobCi: { ...s.jobCi, [taskId]: job && !job.error ? job.data as JobCiStatus : null },
       ciChecks: { ...s.ciChecks, [taskId]: ci && !ci.error ? (ci.data ?? []) as CiCheckRow[] : [] },
       ...(environment.error ? {} : { environments: { ...s.environments, [taskId]: (environment.data ?? []) as EnvironmentResource[] } }),
       ...(artifacts.error ? {} : { artifacts: mergeFetched("artifacts", s.artifacts, before.artifacts, artifacts.data as ArtifactRow[], revision) }),
@@ -410,8 +414,8 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
 
   async refreshCiChecks(workspaceId) {
     const s = get();
-    const ids = Object.keys(s.ciChecks).filter((id) => !workspaceId || s.tasks[id]?.workspace_id === workspaceId);
-    set({ ciChecks: { ...s.ciChecks, ...Object.fromEntries(ids.map((id) => [id, []])) } });
+    const ids = Array.from(new Set([...Object.keys(s.ciChecks), ...Object.keys(s.jobCi)])).filter((id) => !workspaceId || s.tasks[id]?.workspace_id === workspaceId);
+    set({ ciChecks: { ...s.ciChecks, ...Object.fromEntries(ids.map((id) => [id, []])) }, jobCi: { ...s.jobCi, ...Object.fromEntries(ids.map((id) => [id, null])) } });
     await Promise.all(ids.map((id) => get().loadTaskDetail(id).catch(() => {})));
   },
 
@@ -468,7 +472,7 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
           if (table === "agent_artifacts") {
             const artifact = (payload.eventType === "DELETE" ? current[payload.old.id ?? ""] : payload.new) as ArtifactRow | undefined;
             if (artifact?.task_id && Object.hasOwn(get().ciChecks, artifact.task_id)) {
-              set({ ciChecks: { ...get().ciChecks, [artifact.task_id]: [] } });
+              set({ ciChecks: { ...get().ciChecks, [artifact.task_id]: [] }, jobCi: { ...get().jobCi, [artifact.task_id]: null } });
               void get().loadTaskDetail(artifact.task_id).catch(() => {});
             }
           }
@@ -488,8 +492,8 @@ export const useAgentTasks = create<AgentTasksState>()((set, get) => ({
         if (channel !== ch || get().workspaceId !== workspaceId) return;
         const row = payload.new as ActivityRow;
         if (!row?.task_id) return;
-        if (row.body?.ci) {
-          set({ ciChecks: { ...get().ciChecks, [row.task_id]: [] } });
+        if (row.body?.ci || row.body?.rule === "ci_job") {
+          set({ ciChecks: { ...get().ciChecks, [row.task_id]: [] }, jobCi: { ...get().jobCi, [row.task_id]: null } });
           void get().loadTaskDetail(row.task_id).catch(() => {});
         }
         const list = get().activities[row.task_id];

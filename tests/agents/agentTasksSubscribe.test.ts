@@ -190,7 +190,7 @@ describe("useAgentTasks.subscribe", () => {
     useAgentTasks.setState({ tasks: { [data.task.id]: data.task }, briefs: { [key]: data.brief! } });
     client.rpc.mockClear();
     await useAgentTasks.getState().loadTaskDetail(data.task.id);
-    expect(client.rpc).not.toHaveBeenCalled();
+    expect(client.rpc.mock.calls.filter(([name]) => name === "task_ci_status")).toHaveLength(0);
     useAgentTasks.setState({ briefs: { [key]: { ...data.brief!, done_when: [{ id: "ci", text: "CI", check: "ci", command: "check" }] } } });
     const checks = [{ criterion_id: "ci", check: "check", state: "passed" }];
     client.rpc.mockResolvedValue({ data: checks, error: null });
@@ -269,4 +269,24 @@ it("loads closed child conversation activity and receives its realtime messages"
     created.at(-1)!.handlers.get("agent_activities")!({ new: row, eventType: "INSERT" });
     expect(useAgentTasks.getState().activities[child.id]).toEqual([row]);
   } finally { release(); }
+});
+it("loads job CI only for jobs and invalidates it on final CI activity", async () => {
+  const release = useAgentTasks.getState().subscribe("job-ci-ws");
+  await vi.waitFor(() => expect(useAgentTasks.getState().status).toBe("ready"));
+  const data = mockCard("1") as TaskCardData;
+  const status = { state: "pending", checks: [], connected: true };
+  for (const kind of ["job", "subtask", "request"] as const) {
+    const task = { ...data.task, parent_task_id: kind === "subtask" ? "parent" : null, request_kind: kind === "request" ? "fill" as const : null };
+    useAgentTasks.setState({ tasks: { [task.id]: task }, briefs: { [`${task.id}:${task.brief_version}`]: data.brief! } });
+    client.rpc.mockClear().mockResolvedValue({ data: status, error: null });
+    await useAgentTasks.getState().loadTaskDetail(task.id);
+    expect(client.rpc.mock.calls.filter(([name]) => name === "job_ci_status")).toHaveLength(kind === "job" ? 1 : 0);
+    expect(useAgentTasks.getState().jobCi[task.id]).toEqual(kind === "job" ? status : null);
+  }
+  useAgentTasks.setState({ tasks: { [data.task.id]: { ...data.task, parent_task_id: null } }, jobCi: { [data.task.id]: status as never } });
+  client.rpc.mockClear();
+  created.at(-1)!.handlers.get("agent_activities")!({ new: { id: "final-check", task_id: data.task.id, body: { rule: "ci_job" } } });
+  expect(useAgentTasks.getState().jobCi[data.task.id]).toBeNull();
+  await vi.waitFor(() => expect(client.rpc).toHaveBeenCalledWith("job_ci_status", { p_task_id: data.task.id }));
+  release();
 });

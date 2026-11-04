@@ -44,3 +44,19 @@ it("connects through agent-admin, lists only active workspace connections and re
   rpc.mockResolvedValue({ error: new Error("offline") });
   await expect(revokeConnection(client, "id")).rejects.toThrow("offline");
 });
+import { jobCiLine, type JobCiStatus } from "@/lib/agentCi";
+it.each([
+  ["none", null, false], ["no_commit", "CI not checked: no final commit was named", false],
+  ["not_connected", "No CI connected: a person must accept", false],
+  ["pending", "Waiting for CI on aaaaaaa: build, test", true],
+  ["failed", "CI failed on aaaaaaa: build, test", true], ["passed", "CI passed on aaaaaaa", false],
+] as const)("summarizes job CI %s", (state, text, blocks) => {
+  const status: JobCiStatus = { state, sha: "a".repeat(40), connected: true,
+    checks: ["test", "build"].map((check) => ({ check, state: state === "none" ? "pending" : state, sources: [] })) };
+  expect(jobCiLine(status)).toEqual(text ? { text, blocks } : null);
+});
+it("shows branch movement without blocking the named passing commit", () => {
+  expect(jobCiLine({ state: "passed", sha: "a".repeat(40), connected: true, checks: [], newer_commit: "bbbbbbb" }))
+    .toEqual({ text: "CI passed on aaaaaaa · the branch has moved since (bbbbbbb)", blocks: false });
+  expect(jobCiLine(null)).toBeNull();
+});
