@@ -3,6 +3,8 @@ import type { ToolResult } from "./mcpClient.mjs";
 export interface RequestOptions {
   call: (name: string, args: Record<string, unknown>) => Promise<ToolResult>;
   model: Model;
+  memoryModel?: Model;
+  memoryPrices?: { input: number; output: number };
   task: { task_id: string; request_kind: string };
   runId: string;
   log: (message: string) => void;
@@ -24,6 +26,8 @@ export function runRequest(opts: RequestOptions): Promise<RequestOutcome>;
 export interface ExtractOptions {
   call: RequestOptions["call"];
   model: Model;
+  memoryModel?: Model;
+  memoryPrices?: { input: number; output: number };
   runId: string;
   pageId: string;
   fileId: string;
@@ -35,3 +39,5 @@ export interface ExtractOptions {
 export function extractFile(opts: ExtractOptions): Promise<{ data: Record<string, any>; usage: RequestOutcome["usage"] }>;
 
 export function parseUsedMemories(text: string, deliveredIds: string[]): { text: string; ids: string[] };
+
+export const MEMORY_SYSTEM: string;

@@ -7,6 +7,8 @@ import { readFile } from "node:fs/promises";
  * @typedef {object} AgentConfig
  * @property {string} modelBaseUrl      OpenAI-compatible base URL (POST {modelBaseUrl}/chat/completions)
  * @property {string} modelApiKey       bearer key for the model endpoint ("" for local endpoints)
+ * @property {string} [memoryModelName]
+ * @property {{input: number, output: number}} [memoryPrices]
  * @property {string} modelName         model id sent in every request
  * @property {string} modelEffort       reasoning effort of an ordinary task step (empty omits the provider field)
  * @property {string} modelEffortPlan   reasoning effort of a planning turn: the first one, and after an error, a conflict or a changed brief
@@ -126,14 +128,16 @@ export function readFleetConfig(env) {
   if (missing.length) throw new Error(`missing required settings: ${missing.join(", ")}`);
   const functions = `${/** @type {string} */ (env.VITE_SUPABASE_URL).replace(/\/+$/, "")}/functions/v1`;
   const modelName = env.MODEL_NAME || "muse-wonder-1.0";
-  const prices = new Map([
+  const priceMap = new Map([
     ["muse-wonder-1.0", { input: 4, output: 20 }],
     ["muse-spark-1.3", { input: 1.25, output: 4.25 }],
-  ]).get(modelName) ?? { input: 0, output: 0 };
+  ]);
+  const prices = priceMap.get(modelName) ?? { input: 0, output: 0 };
+  const memoryModelName = env.MODEL_NAME_MEMORY || "muse-spark-1.3";
   return {
     runtimeUrl: `${functions}/trama-runtime`,
     secret: /** @type {string} */ (env.TRAMA_RUNTIME_SECRET),
-    config: readConfig({
+    config: { memoryModelName, memoryPrices: priceMap.get(memoryModelName) ?? { input: 0, output: 0 }, ...readConfig({
       MODEL_BASE_URL: env.MODEL_BASE_URL || "https://api.meta.ai/v1",
       MODEL_NAME: modelName,
       MODEL_REASONING_EFFORT: env.MODEL_REASONING_EFFORT ?? "low",
@@ -150,6 +154,6 @@ export function readFleetConfig(env) {
       AGENT_DISPLAY_NAME: "Trama",
       TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN,
       TELEGRAM_TRANSPORT: "webhook",
-    }),
+    }) },
   };
 }

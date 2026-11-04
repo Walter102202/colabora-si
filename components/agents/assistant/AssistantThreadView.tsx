@@ -112,6 +112,7 @@ export function AssistantThreadView({ messages, draft, reviewing, busy = false, 
                   </span>
                   <div className={`min-w-0 rounded-2xl px-3 py-2.5 ${m.direction === "in" ? "rounded-tr-md bg-[#196eb9] text-white" : "rounded-tl-md border border-border bg-bg-secondary text-text"}`}>
                     <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed">{m.direction === "out" ? appLinks(m.body) : m.body}</p>
+                    {m.outcome?.kind === "memory_added" && <a href={settingsUrl("memory")} className="text-accent underline">Manage</a>}
                     {m.direction === "out" && !!m.outcome?.memory_used?.length && <div className="mt-2 text-xs text-text-secondary">
                       {m.outcome.memory_used.map((memory) => <p key={memory.id}>Used: {memory.text}</p>)}
                       <a href={settingsUrl("memory")} className="text-accent underline">Manage</a>

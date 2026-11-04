@@ -82,6 +82,7 @@ async function main() {
   }
 
   const model = createModel({ baseUrl: config.modelBaseUrl, apiKey: config.modelApiKey, model: config.modelName, reasoningEffort: config.modelEffort });
+  const memoryModel = createModel({ baseUrl: config.modelBaseUrl, apiKey: config.modelApiKey, model: config.memoryModelName });
   log(`trama started: model ${config.modelName}, effort ${config.modelEffort || "provider default"}`);
   await runFleet({
     signal: controller.signal,
@@ -90,7 +91,7 @@ async function main() {
     serve(agentId, signal) {
       const signIn = async () => (await runtime({ action: "token", agent_id: agentId })).access_token;
       const mcp = buildMcp(config, (url) => createMcpClient({ url, clientName: config.harness, signIn }));
-      return serveAgent({ config, mcp, model, signal, log, cacheKey: agentId });
+      return serveAgent({ config, mcp, model, memoryModel, signal, log, cacheKey: agentId });
     },
   });
   log("stopped");

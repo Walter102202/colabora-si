@@ -116,4 +116,18 @@ const recall: ToolDef = {
     return { text: 'Conversation matches.', structured: await must(ctx.db.rpc<Record<string, unknown>>('recall_person_messages', { p_run_id: str(args.run_id), p_query: str(args.query) })) ?? {} };
   },
 };
-export const personTools: ToolDef[] = [relay, reply, save, deliveries, updates, status, recall];
+export async function memoryRequest(taskId: string, ctx: ToolContext) {
+  const data = await must(ctx.db.rpc<Record<string, unknown>>('memory_request_context', { p_task_id: taskId }));
+  if (!data) throw new ToolError('not_found', 'The request was not found.');
+  return { text: 'Memory input ready.', structured: data };
+}
+const applyMemory: ToolDef = {
+  name: 'apply_memory_updates', title: 'Apply personal memory updates', description: 'Platform runtime only: validate cited facts from this person and finish the memory request.',
+  inputSchema: object({ run_id: { type: 'string', minLength: 1 }, ops: { type: 'array', items: { type: 'object' } }, through_seq: { type: 'integer', minimum: 0 }, usage }, ['run_id', 'ops', 'through_seq']),
+  outputSchema: output({ added: { type: 'integer' }, replaced: { type: 'integer' }, rejected: { type: 'array' } }), annotations: WRITE, cacheTtlMs: 0,
+  async handler(args, ctx) {
+    const data = await must(ctx.db.rpc<Record<string, unknown>>('apply_memory_updates', { p_run_id: str(args.run_id), p_ops: args.ops, p_through_seq: num(args.through_seq), p_usage: args.usage ?? null }));
+    return { text: 'Memory processed.', structured: data ?? {} };
+  },
+};
+export const personTools: ToolDef[] = [relay, reply, save, deliveries, updates, status, recall, applyMemory];
