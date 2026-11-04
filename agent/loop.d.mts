@@ -33,6 +33,8 @@ export function runAgent(opts: {
   channel?: Channel;
   clock?: Clock;
   maxTurns?: number;
+  contextBudgetTokens?: number;
+  contextKeepTurns?: number;
   maxTasks?: number;
   harness?: string;
   displayName?: string;

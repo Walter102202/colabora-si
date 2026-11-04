@@ -43,9 +43,9 @@ export function composeMcp(primary, secondary) {
     async listTools() {
       return (await load()).tools;
     },
-    async callTool(name, args) {
+    async callTool(name, args, opts) {
       const { owner } = await load();
-      return (owner.get(name) ?? primary).callTool(name, args);
+      return (owner.get(name) ?? primary).callTool(name, args, opts);
     },
     accessToken: (fresh) => primary.accessToken(fresh),
   };

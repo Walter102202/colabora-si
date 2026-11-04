@@ -28,6 +28,7 @@ import { readFile } from "node:fs/promises";
  * @property {string} telegramBotToken  "" selects the console channel
  * @property {"polling"|"webhook"} telegramTransport
  * @property {string} telegramOwnerChatId
+ * @property {number} contextBudgetTokens estimated conversation token budget per turn
  * @property {number} maxTurns          model turns per run before giving up
  * @property {boolean} inbox           the platform agent reads what its owner sends on Telegram
  * @property {string} voiceUrl          voice-transcribe endpoint
@@ -110,6 +111,7 @@ export function readConfig(env) {
     telegramBotToken: env.TELEGRAM_BOT_TOKEN ?? "",
     telegramOwnerChatId: env.TELEGRAM_OWNER_CHAT_ID ?? "",
     maxTurns: num(env.AGENT_MAX_TURNS, 40),
+    contextBudgetTokens: num(env.AGENT_CONTEXT_BUDGET_TOKENS, 100_000),
     inbox: env.AGENT_INBOX === "1" || env.TELEGRAM_TRANSPORT === "webhook",
     telegramTransport: env.TELEGRAM_TRANSPORT === "webhook" ? "webhook" : "polling",
     voiceUrl: env.WORKSPACE_VOICE_URL || `${new URL(mcpUrl).origin}/functions/v1/voice-transcribe`,
@@ -150,6 +152,7 @@ export function readFleetConfig(env) {
       WORKSPACE_TOOLS_MCP_URL: `${functions}/workspace-mcp`,
       WORKSPACE_AGENT_PAT: "managed",
       WORKSPACE_APP_URL: env.VITE_APP_URL,
+      AGENT_CONTEXT_BUDGET_TOKENS: env.AGENT_CONTEXT_BUDGET_TOKENS,
       AGENT_HARNESS_NAME: "trama",
       AGENT_DISPLAY_NAME: "Trama",
       TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN,

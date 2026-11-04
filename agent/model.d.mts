@@ -33,7 +33,7 @@ export function createModel(opts: {
   maxAttempts?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
-  sleep?: (ms: number) => Promise<void>;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   random?: () => number;
 }): Model;
 export function backoffDelayMs(attempt: number, opts: { baseDelayMs: number; maxDelayMs: number; random: () => number }): number;

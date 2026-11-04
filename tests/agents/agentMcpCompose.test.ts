@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { McpTool } from "../../agent/mcpClient.mjs";
 import { composeMcp } from "../../agent/mcpCompose.mjs";
 
@@ -58,4 +58,14 @@ describe("composeMcp", () => {
     expect(ws.calls.map((c) => c.name)).toEqual(["create_page"]);
     expect(task.calls).toEqual([]);
   });
+});
+
+it("MC-n forwards the same options to the secondary tool owner", async () => {
+  const primary = fakeClient({ tools: [] });
+  const secondary = fakeClient({ tools: ["secondary_tool"] });
+  const call = vi.spyOn(secondary, "callTool");
+  const opts = { signal: new AbortController().signal };
+  await composeMcp(primary, secondary).callTool("secondary_tool", {}, opts);
+  expect(call.mock.calls[0]).toEqual(["secondary_tool", {}, opts]);
+  expect((call.mock.calls[0] as unknown[])[2]).toBe(opts);
 });

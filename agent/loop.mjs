@@ -2,6 +2,7 @@
 // report liveness and cost, pause on human decisions, and hand the result to a person.
 
 import { argsHash, buildCheckpoint, guardFor, guardsFromResume, isWriteTool, parseCheckpoint } from "./checkpoint.mjs";
+import { trimMessages } from "./context.mjs";
 import { effortFor } from "./effort.mjs";
 import { McpError, toOpenAiTools } from "./mcpClient.mjs";
 import { buildSystemPrompt, buildTaskMessage } from "./prompt.mjs";
@@ -64,6 +65,7 @@ function answerText(p) {
  * Runs the agent until `maxTasks` tasks were handled or `signal` aborts.
  * @param {{
  *   mcp: McpClient, model: Model, channel?: Channel, clock?: Clock,
+ *   contextBudgetTokens?: number, contextKeepTurns?: number,
  *   maxTurns?: number, maxTasks?: number, displayName?: string, harness?: string, reviewerAgentId?: string, resume?: boolean,
  *   prices?: {input: number, output: number}, appUrl?: string,
  *   signal?: AbortSignal, waitTimeoutS?: number, log?: (msg: string) => void, modelVision?: boolean, modelPdf?: boolean,
@@ -81,6 +83,8 @@ export async function runAgent(opts) {
     channel = { notify() {} },
     clock = realClock,
     maxTurns = 40,
+    contextBudgetTokens = 100_000,
+    contextKeepTurns = 6,
     maxTasks = Infinity,
     harness = "reference-agent",
     displayName = "",
@@ -110,10 +114,10 @@ export async function runAgent(opts) {
       log(`channel error: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
-  /** @param {string} name @param {Record<string, unknown>} args */
-  const call = async (name, args) => {
+  /** @param {string} name @param {Record<string, unknown>} args @param {{signal?: AbortSignal}} [opts] */
+  const call = async (name, args, opts) => {
     try {
-      return await mcp.callTool(name, args);
+      return await mcp.callTool(name, args, opts);
     } catch (e) {
       const text = e instanceof Error ? e.message : String(e);
       // The server refused the call before running it (invalid arguments, unknown tool): nothing happened and the model sees why.
@@ -149,8 +153,9 @@ export async function runAgent(opts) {
   while (handled.length < maxTasks && !signal?.aborted) {
     if (channel?.reply) await flushPersonReplies({ call, reply: channel.reply, appUrl: channel.appUrl });
     await acknowledgeNotices();
-    const waited = await call("wait_for_my_tasks", cursor ? { after: cursor, timeout_s: waitTimeoutS } : { timeout_s: waitTimeoutS });
+    const waited = await call("wait_for_my_tasks", cursor ? { after: cursor, timeout_s: waitTimeoutS } : { timeout_s: waitTimeoutS }, { signal });
     if (waited.isError) {
+      if (signal?.aborted) break;
       log(`wait_for_my_tasks failed: ${waited.text}`);
       await clock.sleep(5000);
       continue;
@@ -174,7 +179,7 @@ export async function runAgent(opts) {
       else if (isLeadNotice(task)) { delivered = false; retryNotices.push(task); }
     }
     if (delivered) cursor = waited.data.next_cursor ?? cursor;
-    else await clock.sleep(5000);
+    else if (!signal?.aborted) await clock.sleep(5000);
   }
   return { tasks: handled };
 
@@ -190,7 +195,7 @@ export async function runAgent(opts) {
     try {
       for (let turn = 0; turn < maxTurns; turn++) {
         if (signal?.aborted) return null;
-        const reply = await model.chat({ messages, tools: noticeTools, reasoningEffort: efforts.step, promptCacheKey: cacheKey });
+        const reply = await model.chat({ messages, signal, tools: noticeTools, reasoningEffort: efforts.step, promptCacheKey: cacheKey });
         if (!modelDelivered) {
           modelDelivered = true;
           deliveredNotices.add(task.notice.event_id);
@@ -432,8 +437,9 @@ export async function runAgent(opts) {
           const answer = take(hb.pending_prompts ?? []);
           if (answer) return { answer };
         }
-        const res = await call("wait_for_task", { task_id: taskId, run_id: runId, after_seq: seenSeq, timeout_s: waitTimeoutS });
+        const res = await call("wait_for_task", { task_id: taskId, run_id: runId, after_seq: seenSeq, timeout_s: waitTimeoutS }, { signal });
         if (res.isError) {
+          if (signal?.aborted) return { aborted: true };
           log(`wait_for_task failed: ${res.text}`);
           await clock.sleep(5000);
           continue;
@@ -465,8 +471,9 @@ export async function runAgent(opts) {
             return { subtasks: [], activities: [], all_subtasks_closed: openSubtasks.size === 0, prompts: rest, brief_stale: !!hb.brief_stale };
           }
         }
-        const res = await call("wait_for_task", { task_id: taskId, run_id: runId, after_seq: seenSeq, timeout_s: waitTimeoutS });
+        const res = await call("wait_for_task", { task_id: taskId, run_id: runId, after_seq: seenSeq, timeout_s: waitTimeoutS }, { signal });
         if (res.isError) {
+          if (signal?.aborted) return { aborted: true };
           log(`wait_for_task failed: ${res.text}`);
           await clock.sleep(5000);
           continue;
@@ -546,8 +553,14 @@ export async function runAgent(opts) {
       /** @type {import("./model.mjs").ChatResult} */
       let reply;
       try {
-        reply = await model.chat({ messages, tools, reasoningEffort, promptCacheKey: cacheKey });
+        const trimmed = trimMessages(messages, { budgetTokens: contextBudgetTokens, keepTurns: contextKeepTurns });
+        if (trimmed.elided) log(`Context trimmed: ${trimmed.elided} tool result(s) elided, ~${trimmed.tokens} tokens`);
+        reply = await model.chat({ messages, tools, signal, reasoningEffort, promptCacheKey: cacheKey });
       } catch (e) {
+        if (signal?.aborted) {
+          await handOverOrEnd("agent process stopped");
+          return done("aborted");
+        }
         const text = e instanceof Error ? e.message : String(e);
         await endRun("error", text.slice(0, 500));
         await notify({ kind: "error", task_id: taskId, text: `Model error on "${label}": ${text.slice(0, 200)}`, link });

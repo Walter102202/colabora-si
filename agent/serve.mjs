@@ -59,6 +59,7 @@ export async function serveAgent({ config, mcp, model, memoryModel, noticeState,
     prices: config.prices,
     appUrl: config.appUrl,
     maxTurns: config.maxTurns,
+    contextBudgetTokens: config.contextBudgetTokens,
     signal,
     log,
   });

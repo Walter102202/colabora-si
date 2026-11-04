@@ -134,3 +134,15 @@ describe("per-call effort and prompt cache", () => {
     expect(body).toEqual({ model: "stub", messages: [] });
   });
 });
+
+it("aborts a Retry-After wait promptly without another model request", async () => {
+  const controller = new AbortController();
+  const f = fakeFetch([fail(429, { "Retry-After": "1" })]);
+  const client = createModel({ baseUrl: "http://m.test/v1", model: "stub", fetchImpl: f.fetchImpl });
+  const started = Date.now();
+  const request = client.chat({ messages: [], signal: controller.signal });
+  setTimeout(() => controller.abort(), 20);
+  await expect(request).rejects.toMatchObject({ name: "AbortError" });
+  expect(Date.now() - started).toBeLessThan(500);
+  expect(f.calls).toHaveLength(1);
+});

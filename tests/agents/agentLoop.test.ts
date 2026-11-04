@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { costUsd, runAgent, type ChannelEvent, type Clock } from "../../agent/loop.mjs";
 import { argsHash } from "../../agent/checkpoint.mjs";
 import { createModel } from "../../agent/model.mjs";
@@ -845,4 +845,80 @@ it("waits for every subtask created by import_plan before ending the run", async
   expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "import_plan", "wait_for_task", "wait_for_task", "end_run"]);
   expect(model.requests[2].messages.at(-1).content).toMatch(/task-a.*done.*"all_subtasks_closed":false/);
   expect(model.requests[3].messages.at(-1).content).toMatch(/task-b.*done.*"all_subtasks_closed":true/);
+});
+
+const abortError = () => new DOMException("The operation was aborted.", "AbortError");
+/** A model that answers only when the request's signal aborts. */
+function hangingModel() {
+  const requests: object[] = [];
+  return { name: "hang", requests, chat: (req: { signal?: AbortSignal }) => new Promise<never>((_, reject) => {
+    requests.push(req);
+    if (req.signal?.aborted) return reject(abortError());
+    req.signal?.addEventListener("abort", () => reject(abortError()), { once: true });
+  }) };
+}
+const handOverTool = { name: "hand_over", description: "Hand the run over", inputSchema: { type: "object", properties: { run_id: { type: "string" }, idempotency_key: { type: "string" }, checkpoint: { type: "object" } }, required: ["run_id", "checkpoint"] } };
+
+it("a) hands the task over at once when the process aborts during a model call", async () => {
+  const abort = new AbortController();
+  const mcp = createStubMcp({ tasks: queued, waits: [seed()], tools: [handOverTool], handlers: { hand_over: () => ({ ok: true }) } });
+  const model = hangingModel();
+  setTimeout(() => abort.abort(), 20);
+  const started = Date.now();
+  const { tasks } = await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, signal: abort.signal });
+  expect(Date.now() - started).toBeLessThan(1000);
+  expect(tasks[0].outcome).toBe("aborted");
+  expect(names(mcp.calls)).toEqual(["wait_for_my_tasks", "claim_task", "wait_for_task", "hand_over"]);
+  expect(mcp.calls.some((c) => c.name === "end_run")).toBe(false);
+});
+
+it("b) leaves a Lead notice undelivered when the process aborts during its model call", async () => {
+  const abort = new AbortController();
+  const notice = { task_id: "parent", state: "done", reason: "updated", notice: { event_id: "n1", ack_cursor: "ack:n1", type: "task.updated", payload: { subtask_id: "s1", environment_release: [] } } };
+  const mcp = createStubMcp({ handlers: { wait_for_my_tasks: () => ({ tasks: [notice], next_cursor: "scan" }) } });
+  let saved = { delivered: {} as Record<string, string> };
+  const noticeState = { load: () => saved, save: (v: typeof saved) => { saved = structuredClone(v); } };
+  const clock = fakeClock();
+  const sleep = vi.spyOn(clock, "sleep");
+  setTimeout(() => abort.abort(), 20);
+  await runAgent({ mcp, model: hangingModel(), noticeState, clock, maxTasks: 1, signal: abort.signal });
+  expect(sleep).not.toHaveBeenCalled();
+  expect(saved.delivered).toEqual({});
+  expect(mcp.calls.filter((c) => c.name === "wait_for_my_tasks" && String(c.args.after).startsWith("ack:"))).toHaveLength(0);
+});
+
+it("c) releases wait_for_task at once when the process aborts", async () => {
+  const abort = new AbortController(); let waits = 0;
+  const sleep = vi.fn(async () => { await new Promise((resolve) => setTimeout(resolve, 1)); });
+  const mcp = createStubMcp({ tasks: queued, tools: [handOverTool], handlers: {
+    hand_over: () => ({ ok: true }),
+    wait_for_task: (_a, opts) => {
+      if (++waits === 1) return seed();
+      expect(opts?.signal).toBe(abort.signal);
+      return new Promise((resolve) => opts!.signal!.addEventListener("abort", () => resolve({ isError: true, data: { code: "aborted" } }), { once: true }));
+    },
+  } });
+  const model = createStubModel([{ tool_calls: [toolCall("request_input", { question: "Ready?", blocking: true })] }]);
+  setTimeout(() => abort.abort(), 20);
+  const started = Date.now();
+  const { tasks } = await runAgent({ mcp, model, clock: { now: () => 0, sleep }, maxTasks: 1, signal: abort.signal });
+  expect(Date.now() - started).toBeLessThan(1000);
+  expect(tasks[0].outcome).toBe("aborted");
+  expect(names(mcp.calls).at(-1)).toBe("hand_over");
+  expect(sleep).not.toHaveBeenCalled();
+});
+
+it("CT-5 keeps each model request under the context budget on a long task", async () => {
+  const big = "# Row\n\n" + "lorem ipsum ".repeat(1000);          // ≈ 12 KB por lectura; 8 lecturas ≈ 24k tokens sin poda
+  const mcp = createStubMcp({ tasks: queued, waits: [seed()], handlers: { read_page: (a) => ({ page_id: a.page_id, title: "Row", revision: 1, markdown: big, blocks: [] }) } });
+  const script = [...Array.from({ length: 8 }, () => ({ tool_calls: [toolCall("read_page", { page_id: "row-task-1" })] })),
+    { tool_calls: [toolCall("submit_for_review", { summary: "Done", artifact_ids: [] })] }];
+  const model = createStubModel(script);
+  const { tasks } = await runAgent({ mcp, model, clock: fakeClock(), maxTasks: 1, contextBudgetTokens: 12_000, contextKeepTurns: 2 });
+  expect(tasks[0].outcome).toBe("submitted");
+  const last = model.requests.at(-1)!.messages;
+  expect(Math.ceil(JSON.stringify(last).length / 4)).toBeLessThanOrEqual(12_000);
+  const tools = last.filter((m: { role: string }) => m.role === "tool");
+  expect(tools.slice(-2).every((m: { content: string }) => m.content.includes("lorem ipsum"))).toBe(true);
+  expect(tools.slice(0, -2).filter((m: { content: string }) => m.content.startsWith('{"elided":true')).length).toBeGreaterThanOrEqual(4);
 });
