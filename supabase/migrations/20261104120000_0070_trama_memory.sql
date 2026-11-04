@@ -63,9 +63,8 @@ begin
   if lower(v_text) in ('forget it','olvídalo','never mind') then return null; end if;
   v_match:=regexp_match(v_text,'^(forget|olvida|olvídate)[[:space:]]+(.+)$','i');
   if v_match is null then return null; end if;
-  v_rest:=btrim(v_match[2]);
-  if lower(v_rest) in ('that','eso','what i said','lo que dije') then v_rest:=null;
-  else v_rest:=regexp_replace(v_rest,'^(that|about|que|lo de|de)[[:space:]]+','','i'); end if;
+  v_rest:=regexp_replace(btrim(v_match[2]),'^(that|about|que|lo de|de)[[:space:]]+','','i');
+  if lower(v_rest) in ('that','eso','what i said','lo que dije') then v_rest:=null; end if;
   return jsonb_build_object('kind','forget','target',v_rest);
 end $$;
 revoke all on function private.memory_command(text) from public,anon,authenticated;

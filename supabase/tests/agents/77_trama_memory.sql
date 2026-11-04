@@ -54,6 +54,8 @@ select tests.reset_role();
 select is(private.memory_command('remember that?'),null::jsonb,'questions are not commands');
 select is(private.memory_command('olvídalo'),null::jsonb,'dismissal is not forgetting');
 select is(private.memory_command('forget what i said')->'target','null'::jsonb,'implicit forget target');
+select is(private.memory_command('olvídate de eso')->'target','null'::jsonb,'Spanish implicit forget');
+select is(private.memory_command('forget about that')->'target','null'::jsonb,'English implicit forget');
 select ok(private.memory_has_secret('4111 1111 1111 1111'),'card rejected');
 select ok(private.memory_has_secret(repeat('a',32)),'long token rejected');
 select private.store_person_message(:'ws',:'owner',:'pa','surface',null,'remember that forwarded fact','text',true,false,null,'{}',null);
