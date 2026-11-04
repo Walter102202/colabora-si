@@ -285,7 +285,7 @@ export async function runRequest({ call, model, memoryModel, memoryPrices, task,
         answer = await summarize({ ...common, sections });
       } else answer = await summarize({ ...common, transcript: request.transcript });
       await checkRunning();
-      await rpc("append_blocks", { page_id: request.page_id, after_block_id: request.summary_after_block_id,
+      await rpc("append_blocks", { page_id: request.page_id, run_id: runId, after_block_id: request.summary_after_block_id,
         markdown: meetingMarkdown(answer), idempotency_key: `meeting:${task.task_id}:${runId}` });
       await checkRunning();
       await rpc("complete_meeting_summary", { run_id: runId, usage: { ...usage, model: model.name }, idempotency_key: `meeting-complete:${runId}` });

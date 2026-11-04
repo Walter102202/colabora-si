@@ -28,6 +28,7 @@ const appendBlocks: ToolDef = {
     'Inserting never conflicts. Never send HTML.',
   inputSchema: withDefs(object({
     page_id: { type: 'string', minLength: 1 },
+    run_id: { type: 'string', minLength: 1, description: 'Meeting summaries only: explicitly binds the append to its active meeting run. Other run kinds are rejected.' },
     markdown: { type: 'string', minLength: 1, maxLength: 200_000 },
     blocks: { type: 'array', items: { $ref: '#/$defs/AgentBlockInput' }, minItems: 1, maxItems: MAX_BLOCKS },
     after_block_id: { type: 'string' },
@@ -37,7 +38,8 @@ const appendBlocks: ToolDef = {
   annotations: WRITE_IDEMPOTENT,
   async handler(args, ctx) {
     const blocks = blocksFrom(args);
-    const data = await must(ctx.db.rpc<{ revision: number; block_ids: string[] }>('append_page_blocks', {
+    const data = await must(ctx.db.rpc<{ revision: number; block_ids: string[] }>(args.run_id ? 'append_meeting_summary' : 'append_page_blocks', {
+      ...(args.run_id ? { p_run_id: args.run_id } : {}),
       p_page_id: args.page_id,
       p_blocks: blocks,
       p_after_block_id: str(args.after_block_id),

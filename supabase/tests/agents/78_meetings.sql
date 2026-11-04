@@ -1,6 +1,6 @@
 -- Meeting quotas and summary authority, including independent voice budgets.
 begin;
-select plan(27);
+select plan(34);
 select tests.fixture() as f \gset
 select (:'f'::jsonb->>'ws') as ws, (:'f'::jsonb->>'owner') as owner,
        (:'f'::jsonb->>'viewer') as viewer, (:'f'::jsonb->>'agent') as agent,
@@ -45,6 +45,15 @@ select is(tests.error_of(format($q$select public.voice_reserve(%L,1000,32044,'me
 select is(tests.error_of($q$select public.request_meeting_summary('page_B','meeting-block')$q$), 'forbidden', 'viewer cannot request a summary');
 select tests.reset_role();
 select tests.set_human(:'owner'::uuid);
+select public.create_agent_task('page_B','{"objective":"Concurrent work"}',:'pa')->>'task_id' as work \gset
+select tests.reset_role();
+select tests.set_human(:'owner');
+select public.apply_page_ops('page_B','[{"op":"insert_block","block":{"id":"summary","type":"heading2","key":"meeting:summary:meeting-block","html":"Summary"}}]');
+select tests.reset_role();
+select tests.set_agent(:'pu',:'pa');
+select public.claim_task(:'work','custom')->>'run_id' as work_run \gset
+select tests.reset_role();
+select tests.set_human(:'owner');
 select public.request_meeting_summary('page_B','meeting-block','es')->>'task_id' as req \gset
 select is((select request_kind from public.agent_tasks where id=:'req'), 'meeting', 'meeting request kind');
 select is((select row_page_id from public.agent_tasks where id=:'req'), 'page_B', 'request is bound to its page');
@@ -62,7 +71,19 @@ select tests.set_agent(:'agent_user'::uuid, :'agent'::uuid);
 select is(tests.sqlstate_of(format($q$select public.complete_meeting_summary(%L,'{}','finish')$q$, :'run')), 'PT403', 'another agent cannot complete the run');
 select tests.reset_role();
 select tests.set_agent(:'pu'::uuid, :'pa'::uuid);
+select is(tests.sqlstate_of(format($q$select public.append_meeting_summary(%L,'page_A','[{"type":"paragraph","spans":["Summary"]}]','summary','append')$q$, :'run')), 'PT403', 'summary cannot write a different page');
+select is(tests.sqlstate_of(format($q$select public.append_meeting_summary(%L,'page_B','[{"type":"paragraph","spans":["Summary"]}]','wrong','append')$q$, :'run')), 'PT422', 'summary must follow its own heading');
+select is(tests.sqlstate_of(format($q$select public.append_meeting_summary(%L,'page_B','[{"type":"paragraph","spans":["Summary"]}]','summary','append')$q$, :'work_run')), 'PT422', 'work runs cannot use meeting writes');
+select public.append_meeting_summary(:'run','page_B','[{"type":"paragraph","spans":["Summary"]}]','summary','append') as appended \gset
+select is((select b#>>'{attr,runId}' from public.pages p, jsonb_array_elements(p.data->'blocks') b where p.id='page_B' and b->>'id'=(:'appended'::jsonb->'block_ids'->>0)), :'run', 'concurrent work cannot steal summary attribution');
+select is((select run_id from public.agent_activities where body->>'op'='append_blocks' and body->'block_ids'=(:'appended'::jsonb->'block_ids')), :'run'::uuid, 'undo activity belongs to meeting run');
+select tests.reset_role();
+select tests.set_agent(:'agent_user',:'agent');
+select is(tests.sqlstate_of(format($q$select public.append_meeting_summary(%L,'page_B','[]','summary','append')$q$, :'run')), 'PT403', 'another agent cannot replay meeting append');
+select tests.reset_role();
+select tests.set_agent(:'pu',:'pa');
 select public.complete_meeting_summary(:'run','{"input_tokens":100,"output_tokens":40,"cost_usd":0.01}','finish') as result \gset
+select is(public.append_meeting_summary(:'run','page_B','[]','summary','append'), :'appended'::jsonb, 'own completed run can replay its append receipt');
 select is((select state from public.agent_tasks where id=:'req'), 'done', 'summary closes task');
 select is((select acceptance from public.agent_tasks where id=:'req'), 'accepted', 'summary is accepted');
 select is((select status from public.agent_runs where id=:'run'), 'completed', 'run completes');

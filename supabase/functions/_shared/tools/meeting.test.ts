@@ -3,6 +3,7 @@ import type { Db, DbResult } from '../db.ts';
 import { ToolError } from '../db.ts';
 import type { ToolContext } from '../mcp.ts';
 import { aiTools } from './ai.ts';
+import { writeTools } from './write.ts';
 import { meetingTools } from './meeting.ts';
 const blocks = [
   { id: 'm', type: 'meeting' },
@@ -39,4 +40,14 @@ Deno.test('meeting completion forwards usage and idempotency to the owning-run R
   const h = harness(), usage = { input_tokens: 10, output_tokens: 5, cost_usd: 0.1 };
   await meetingTools[0].handler({ run_id: 'r', usage, idempotency_key: 'k' }, h.ctx);
   assert.deepEqual(h.calls, [{ name: 'complete_meeting_summary', args: { p_run_id: 'r', p_usage: usage, p_idempotency_key: 'k' } }]);
+});
+
+Deno.test('meeting append forwards its explicit run while generic append keeps the legacy RPC', async () => {
+  for (const run_id of ['r', undefined]) {
+    const h = harness();
+    await writeTools.find(t => t.name === 'append_blocks')!.handler({ page_id: 'p', markdown: 'Summary', after_block_id: 'summary', idempotency_key: 'k', run_id }, h.ctx);
+    assert.equal(h.calls[0].name, run_id ? 'append_meeting_summary' : 'append_page_blocks');
+    assert.equal(h.calls[0].args.p_run_id, run_id);
+    assert.equal(h.calls[0].args.p_page_id, 'p');
+  }
 });

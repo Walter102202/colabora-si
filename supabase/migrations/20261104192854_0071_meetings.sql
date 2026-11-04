@@ -151,3 +151,56 @@ revoke all on function public.request_meeting_summary(text, text, text) from pub
 revoke all on function public.complete_meeting_summary(uuid, jsonb, text) from public, anon;
 grant execute on function public.request_meeting_summary(text, text, text) to authenticated;
 grant execute on function public.complete_meeting_summary(uuid, jsonb, text) to authenticated;
+
+-- A meeting write must name its run: a page may also have a concurrent work request.
+create or replace function public.append_meeting_summary(p_run_id uuid, p_page_id text, p_blocks jsonb,
+  p_after_block_id text, p_idempotency_key text)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_r public.agent_runs%rowtype; v_t public.agent_tasks%rowtype; v_page public.pages%rowtype;
+        v_actor uuid := (select auth.uid()); v_receipt jsonb; v_new jsonb; v_ids text[]; v_ops jsonb; v_res jsonb;
+        v_previous_run text := current_setting('app.run_id', true);
+begin
+  v_r := private.own_run(p_run_id);
+  select * into v_t from public.agent_tasks where id = v_r.task_id for update;
+  if v_t.request_kind is distinct from 'meeting' then raise exception using errcode = 'PT422', message = 'not_a_request_run'; end if;
+  if p_page_id is distinct from v_t.row_page_id or p_page_id is distinct from v_t.request->>'page_id' then
+    raise exception using errcode = 'PT403', message = 'forbidden';
+  end if;
+  v_page := private.pw_page(p_page_id);
+  if not exists (select 1 from jsonb_array_elements(v_page.data->'blocks') b
+                 where b->>'id' = p_after_block_id and b->>'key' = 'meeting:summary:' || (v_t.request->>'block_id')
+                   and b->>'type' in ('heading1','heading2','heading3')) then
+    raise exception using errcode = 'PT422', message = 'meeting_summary_heading_required';
+  end if;
+  if v_r.stop_requested_at is not null then raise exception using errcode = 'PT409', message = 'stop_requested'; end if;
+  if p_idempotency_key is not null then
+    select result into v_receipt from private.write_receipts
+     where scope = 'append_meeting_summary:' || p_run_id::text and key = p_idempotency_key and actor_id = v_actor;
+    if found then return v_receipt; end if;
+  end if;
+  if v_r.status not in ('running','waiting') or v_t.active_run_id is distinct from v_r.id or v_t.state <> 'working' then
+    raise exception using errcode = 'PT422', message = 'not_a_request_run';
+  end if;
+  if jsonb_typeof(p_blocks) is distinct from 'array' or jsonb_array_length(p_blocks) not between 1 and 200 then
+    raise exception using errcode = 'PT400', message = 'invalid_input';
+  end if;
+  select jsonb_agg(r.blk order by r.i), array_agg(r.blk->>'id' order by r.i) into v_new, v_ids
+    from (select private.render_block(b) as blk, i from jsonb_array_elements(p_blocks) with ordinality e(b, i)) r;
+  select jsonb_agg(jsonb_build_object('op','insert_block','after', x.after, 'block', x.b) order by x.i) into v_ops
+    from (select b, i, lag(b->>'id', 1, p_after_block_id) over (order by i) as after
+            from jsonb_array_elements(v_new) with ordinality e(b, i)) x;
+  perform set_config('app.run_id', v_r.id::text, true);
+  v_res := private.apply_page_ops_core(p_page_id, v_ops, null);
+  perform set_config('app.run_id', coalesce(v_previous_run, ''), true);
+  perform private.pw_activity(v_r.id,
+    jsonb_build_object('op','append_blocks','page_id',p_page_id,'block_ids',to_jsonb(v_ids),'revision',v_res->'revision',
+                      'summary','Appended meeting summary'), v_res->'inverse');
+  v_receipt := jsonb_build_object('revision', v_res->'revision', 'block_ids', to_jsonb(v_ids));
+  if p_idempotency_key is not null then
+    insert into private.write_receipts(scope, key, actor_id, result)
+    values ('append_meeting_summary:' || p_run_id::text, p_idempotency_key, v_actor, v_receipt);
+  end if;
+  return v_receipt;
+end $$;
+revoke all on function public.append_meeting_summary(uuid, text, jsonb, text, text) from public, anon;
+grant execute on function public.append_meeting_summary(uuid, text, jsonb, text, text) to authenticated;

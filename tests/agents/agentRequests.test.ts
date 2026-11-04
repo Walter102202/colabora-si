@@ -291,7 +291,7 @@ it("writes a cited meeting summary after its heading and accounts for usage", as
   const h = meetingHarness();
   expect((await runRequest(h.opts)).status).toBe("completed");
   const write = h.mcp.calls.find(c => c.name === "append_blocks")!;
-  expect(write.args).toMatchObject({ page_id: "p", after_block_id: "summary", idempotency_key: "meeting:t:r" });
+  expect(write.args).toMatchObject({ page_id: "p", run_id: "r", after_block_id: "summary", idempotency_key: "meeting:t:r" });
   expect(write.args.markdown).toContain("- Agreed [00:12]");
   expect(write.args.markdown).toContain("- [ ] Send draft (Ana) · Friday [00:12]");
   expect(write.args.markdown).not.toMatch(/Invented|Bad evidence/);
