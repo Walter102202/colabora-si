@@ -1,6 +1,8 @@
 // Model slot: any OpenAI-compatible chat completions endpoint with tool calling.
 // Configured by base URL, key and model name; no provider SDK.
 
+import { setTimeout as delay } from "node:timers/promises";
+
 /**
  * @typedef {{id: string, type: "function", function: {name: string, arguments: string}}} ToolCall
  * @typedef {{role: "assistant", content: string | null, tool_calls?: ToolCall[]}} AssistantMessage
@@ -50,10 +52,10 @@ export function parseRetryAfterMs(header, nowMs) {
 }
 
 /**
- * @param {{baseUrl: string, apiKey?: string, model: string, reasoningEffort?: string, fetchImpl?: typeof fetch, timeoutMs?: number, maxAttempts?: number, baseDelayMs?: number, maxDelayMs?: number, sleep?: (ms: number) => Promise<void>, random?: () => number}} opts
+ * @param {{baseUrl: string, apiKey?: string, model: string, reasoningEffort?: string, fetchImpl?: typeof fetch, timeoutMs?: number, maxAttempts?: number, baseDelayMs?: number, maxDelayMs?: number, sleep?: (ms: number, signal?: AbortSignal) => Promise<void>, random?: () => number}} opts
  * @returns {Model}
  */
-export function createModel({ baseUrl, apiKey = "", model, reasoningEffort = "", fetchImpl = globalThis.fetch, timeoutMs = 180_000, maxAttempts = 4, baseDelayMs = 500, maxDelayMs = 8_000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), random = Math.random }) {
+export function createModel({ baseUrl, apiKey = "", model, reasoningEffort = "", fetchImpl = globalThis.fetch, timeoutMs = 180_000, maxAttempts = 4, baseDelayMs = 500, maxDelayMs = 8_000, sleep = (ms, signal) => delay(ms, undefined, { signal }), random = Math.random }) {
   const endpoint = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
   return {
     name: model,
@@ -101,7 +103,7 @@ export function createModel({ baseUrl, apiKey = "", model, reasoningEffort = "",
           retryAfter = parseRetryAfterMs(res.headers.get("Retry-After"), Date.now());
         }
         if (attempt >= maxAttempts) throw lastError;
-        await sleep(retryAfter ?? backoffDelayMs(attempt, { baseDelayMs, maxDelayMs, random }));
+        await sleep(retryAfter ?? backoffDelayMs(attempt, { baseDelayMs, maxDelayMs, random }), signal);
       }
     },
   };
