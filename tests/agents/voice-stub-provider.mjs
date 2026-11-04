@@ -12,8 +12,8 @@ function wavProblem(b) {
   return null;
 }
 
-/** @param {{port: number, key?: string}} opts */
-export function startStubProvider({ port, key = "stub" }) {
+/** @param {{port: number, key?: string, defaultTranscript?: string}} opts */
+export function startStubProvider({ port, key = "stub", defaultTranscript = "" }) {
   /** @type {{transcript?: string, status?: number}[]} */
   const script = [];
   const seen = { requests: 0, ok: 0 };
@@ -33,18 +33,23 @@ export function startStubProvider({ port, key = "stub" }) {
       const request = form.get("request"), audio = form.get("audio");
       if (typeof request !== "string" || !(audio instanceof File)) return answer(400, { error: { message: "missing part" } });
       const r = JSON.parse(request);
+      if (!["PUSH_TO_TALK", "ENDPOINTING", "DIARIZATION"].includes(r.mode)) return answer(400, { error: { message: "bad mode" } });
       if (r.model !== "muse-voice-transcribe-1.0" || r.audioEncoding !== "WAV" || audio.type !== "audio/wav") {
         return answer(400, { error: { message: "bad request part" } });
       }
       const wav = Buffer.from(await audio.arrayBuffer());
       const problem = wavProblem(wav);
       if (problem) return answer(400, { error: { message: problem } });
-      const step = script.shift() ?? { transcript: "" };
+      const step = script.shift() ?? { transcript: defaultTranscript };
       if (step.status) return answer(step.status, { error: { message: "scripted failure", type: "server_error" } });
       seen.ok++;
       const data = wav.indexOf("data", 12, "latin1");
-      answer(200, { sessionId: "stub", transcript: step.transcript, audioDurationMs: Math.floor(((wav.length - data - 8) / wav.readUInt32LE(wav.indexOf("fmt ", 12, "latin1") + 12) / 2) * 1000), turns: [] });
+      const audioDurationMs = Math.floor(((wav.length - data - 8) / wav.readUInt32LE(wav.indexOf("fmt ", 12, "latin1") + 12) / 2) * 1000);
+      const transcript = step.transcript ?? "";
+      const turns = r.mode === "PUSH_TO_TALK" || !transcript ? [] : [{ turnId: "0", startMs: 0, endMs: audioDurationMs,
+        transcript, ...(r.mode === "DIARIZATION" ? { speaker: "A" } : {}) }];
+      answer(200, { sessionId: new URL(req.url, "http://stub").searchParams.get("sessionId") ?? "stub", transcript, audioDurationMs, turns });
     });
   });
-  return new Promise((resolve) => server.listen(port, "0.0.0.0", () => resolve({ script, seen, stop: () => new Promise((r) => { server.closeAllConnections(); server.close(r); }) })));
+  return new Promise((resolve) => server.listen(port, "0.0.0.0", () => resolve({ url: `http://127.0.0.1:${server.address().port}`, script, seen, stop: () => new Promise((r) => { server.closeAllConnections(); server.close(r); }) })));
 }
