@@ -138,3 +138,27 @@ it("keeps polling bounded while an active claim can return agent_busy", async ()
   await runAgent({ mcp, model: createStubModel([]), clock: yieldingClock(), signal: abort.signal });
   expect(mcp.calls.filter(c => c.name === "wait_for_my_tasks").map(c => c.args.timeout_s)).toEqual([120, 5]);
 });
+
+it("advances the cursor while a run is active and replays its events once it ends", async () => {
+  let release!: () => void; const released = new Promise<void>((r) => { release = r; });
+  let waits = 0, polls = 0; const afters: unknown[] = [];
+  const claims = () => mcp.calls.filter((c) => c.name === "claim_task").length;
+  const mcp = createStubMcp({ handlers: {
+    wait_for_my_tasks: (args) => {
+      polls++; afters.push(args.after);
+      if (!args.after) return { changed: true, tasks: [work("w1")], next_cursor: "c1" };
+      // The server reports the task after every change, the claim included, until a cursor past that change is used.
+      if (claims() < 2 && mcp.calls.some((c) => c.name === "submit_for_review")) return { changed: true, tasks: [{ ...work("w1"), reason: "feedback" }], next_cursor: `c${polls}` };
+      if (claims() < 2) return { changed: true, tasks: [{ ...work("w1"), state: "working", reason: "claimed" }], next_cursor: `c${polls}` };
+      return { changed: false, tasks: [], next_cursor: args.after };
+    },
+    wait_for_task: () => ++waits === 1 ? seed() : released.then(() => answer),
+  } });
+  const model = createStubModel([...askThenSubmit, { tool_calls: [toolCall("submit_for_review", { summary: "Feedback", artifact_ids: [] })] }]);
+  const run = runAgent({ mcp, model, clock: yieldingClock(), maxTasks: 2 });
+  await until(() => polls >= 5); release();
+  const { tasks } = await run;
+  expect(tasks.map((t) => t.outcome)).toEqual(["submitted", "submitted"]);
+  // Once right after the first poll issued it, once to replay what arrived for the finished run; never held while the run was active.
+  expect(afters.filter((a) => a === "c1")).toHaveLength(2);
+});
