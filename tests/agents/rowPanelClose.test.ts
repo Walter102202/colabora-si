@@ -159,8 +159,9 @@ it("job Accept lists the deferred human criteria", () => {
   const base = props("ready_for_review");
   act(() => root.render(createElement(TaskView, { ...base, jobCi: { state: "none", connected: false, checks: [],
     pending_human: [{ criterion_id: "h1", task_id: "s1", text: "Approve the design" }] } })));
-  expect(container.textContent).toContain("Waiting for you");
-  expect(container.textContent).toContain("Approve the design");
+  const acceptance = container.querySelector('[aria-label="Ready for you"]');
+  expect(acceptance?.textContent).toContain("Waiting for you");
+  expect(acceptance?.textContent).toContain("Approve the design");
   expect(button("Accept")!.disabled).toBe(false);
 });
 
@@ -168,6 +169,9 @@ it.each(["agent", "person"] as const)("renders a %s-authored human criterion wit
   const base = props("ready_for_review");
   act(() => root.render(createElement(TaskView, { ...base,
     brief: { ...base.brief!, done_when: [{ id: "h", text: "Look at this screen", check: "human", by }] } })));
-  expect(container.textContent).toContain(by === "person" ? "Waiting for you" : "The Lead suggested you look");
-  expect(container.textContent).not.toContain(by === "agent" ? "Waiting for you" : "The Lead suggested you look");
+  const acceptance = container.querySelector('[aria-label="Ready for you"]');
+  const verification = container.querySelector('[aria-label="Verification"]');
+  expect(acceptance?.querySelector("ul")?.textContent ?? "").toBe(by === "person" ? "Look at this screen" : "");
+  expect(verification?.textContent).toContain(by === "person" ? "Waiting for you" : "The Lead suggested you look");
+  expect(verification?.textContent).not.toContain(by === "agent" ? "Waiting for you" : "The Lead suggested you look");
 });

@@ -23,10 +23,11 @@ export interface BriefInput {
 }
 
 // `messages` gives an error code a text specific to this action instead of the generic one.
-async function rpc<T>(name: string, args: Record<string, unknown>, messages: Record<string, string> = {}): Promise<T> {
+async function rpc<T>(name: string, args: Record<string, unknown>, messages: Record<string, string> = {}, signal?: AbortSignal): Promise<T> {
   const client = getAgentClient();
   if (!client) throw new Error("No connection. Agents need you to sign in.");
-  const { data, error } = await client.rpc(name, args);
+  const request = client.rpc(name, args);
+  const { data, error } = await (signal ? request.abortSignal(signal) : request);
   if (error) throw new Error(Object.hasOwn(messages, error.message) ? messages[error.message] : agentErrorMessage(error));
   return data as T;
 }
@@ -172,20 +173,22 @@ export async function setMergeRule(task: TaskRow, conditions: MergeCondition[] |
   return autonomy;
 }
 
-export function getTaskAutonomy(taskId: string): Promise<TaskAutonomy> {
-  return rpc<TaskAutonomy>("task_autonomy", { p_task_id: taskId });
+export function getTaskAutonomy(taskId: string, signal?: AbortSignal): Promise<TaskAutonomy> {
+  return rpc<TaskAutonomy>("task_autonomy", { p_task_id: taskId }, {}, signal);
 }
 
-export function setTaskAutonomy(taskId: string, level: AutonomyLevel | null): Promise<TaskAutonomy> {
-  return rpc<TaskAutonomy>("set_task_autonomy", { p_task_id: taskId, p_level: level });
+export async function setTaskAutonomy(taskId: string, level: AutonomyLevel | null): Promise<TaskAutonomy> {
+  const result = await rpc<TaskAutonomy>("set_task_autonomy", { p_task_id: taskId, p_level: level });
+  notifyAutonomyChanged();
+  return result;
 }
 
 export function getAutonomyPolicy(workspaceId: string): Promise<AutonomyPolicy> {
   return rpc<AutonomyPolicy>("get_autonomy_policy", { p_workspace_id: workspaceId });
 }
 
-// Bumped after this browser changes the workspace level, so an open task panel reads its autonomy again
-// (useSyncExternalStore). Settings opens over the page, which stays mounted.
+// Bumped after this browser changes a workspace or task level, so mounted
+// panels and Progress refresh their policy even when task.updated_at is unchanged.
 let workspaceAutonomyRevision = 0;
 const workspaceAutonomyListeners = new Set<() => void>();
 
@@ -198,10 +201,14 @@ export function subscribeWorkspaceAutonomy(listener: () => void): () => void {
   return () => { workspaceAutonomyListeners.delete(listener); };
 }
 
-export async function setWorkspaceAutonomy(workspaceId: string, level: AutonomyLevel): Promise<{ level: AutonomyLevel; previous: AutonomyLevel }> {
-  const result = await rpc<{ level: AutonomyLevel; previous: AutonomyLevel }>("set_workspace_autonomy", { p_workspace_id: workspaceId, p_level: level });
+function notifyAutonomyChanged(): void {
   workspaceAutonomyRevision++;
   for (const listener of workspaceAutonomyListeners) listener();
+}
+
+export async function setWorkspaceAutonomy(workspaceId: string, level: AutonomyLevel): Promise<{ level: AutonomyLevel; previous: AutonomyLevel }> {
+  const result = await rpc<{ level: AutonomyLevel; previous: AutonomyLevel }>("set_workspace_autonomy", { p_workspace_id: workspaceId, p_level: level });
+  notifyAutonomyChanged();
   return result;
 }
 

@@ -24,6 +24,7 @@ import { agentInputFor } from "@/lib/agentDefaults";
 import { foreignPageIds } from "@/lib/foreignPages";
 import { MAX_RECORDING_MS, type Recorder, startRecorder, uploadWav, voiceFailure, voiceReducer } from "@/lib/agentVoice";
 import { HOME_URL, settingsUrl, taskUrl, pageUrl } from "@/lib/routes";
+import { progressTramaTask, TRAMA_TASK_DRAFT_EVENT, useAgentProgressContext, type TramaTaskDraft } from "@/lib/agentTramaContext";
 
 const voiceUrl = () => `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-transcribe`;
 
@@ -32,7 +33,7 @@ const voiceUrl = () => `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-
 export function TramaSurface({ workspaceId, userId }: { workspaceId: string; userId: string }) {
   const navigate = useNavigate();
   const { pathname, search } = useLocation();
-  const pageId = /^\/p\/([^/]+)/.exec(pathname)?.[1];
+  const routePageId = /^\/p\/([^/]+)/.exec(pathname)?.[1];
   const subscribe = useAgentConversation((s) => s.subscribe);
   const messages = useAgentConversation((s) => s.messages);
   const thread = useMemo(() => currentThread(messages), [messages]);
@@ -46,6 +47,10 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const agentWorkspace = useAgentsStore((s) => s.workspaceId);
   const loadAgents = useAgentsStore((s) => s.load);
   const tasks = useAgentTasks((s) => s.tasks);
+  const progressContext = useAgentProgressContext((state) => state.context);
+  const progressTask = progressContext?.workspaceId === workspaceId && progressContext.userId === userId && progressContext.databaseId === routePageId
+    ? progressTramaTask(routePageId, search, tasks, workspaceId) : null;
+  const pageId = progressTask?.row_page_id ?? routePageId;
   const approvals = useAgentTasks((s) => s.approvals);
   const runs = useAgentTasks((s) => s.runs);
   const subscribeTasks = useAgentTasks((s) => s.subscribe);
@@ -86,7 +91,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const resetLock = useRef(false);
   const proposalLock = useRef(false);
   const trigger = useRef<HTMLButtonElement>(null);
-  const suggestions = tramaSuggestions({ kind: new URLSearchParams(search).has("task") ? "task" : currentPage?.database ? "database" : pageId ? "text" : "home", selection: selected, decisions: waiting });
+  const suggestions = tramaSuggestions({ kind: progressTask || new URLSearchParams(search).has("task") ? "task" : currentPage?.database ? "database" : pageId ? "text" : "home", selection: selected, decisions: waiting });
   const pending = messages.findLast((m) => m.direction === "in" && m.needs_reply);
   const missing = agentWorkspace === workspaceId && agentStatus === "ready" && !trama;
   const managed = import.meta.env.VITE_TRAMA_MANAGED === "1";
@@ -99,6 +104,10 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const status = pending ? now - Date.parse(pending.created_at) >= 60_000 ? "Trama is not answering right now. Your message stays here." : "Trama is thinking…" : null;
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
+  const [draftPageId, setDraftPageId] = useState<string | null | undefined>(undefined);
+  const [contextNotice, setContextNotice] = useState<string | null>(null);
+  const messagePageId = draftPageId === undefined ? pageId : draftPageId ?? undefined;
+  const messagePageTitle = useStore((state) => messagePageId ? state.pages[messagePageId]?.title : undefined);
   const [scrollRequest, setScrollRequest] = useState(0);
   const expanded = revealed && !open;
   const countText = waiting === 1 ? "1 decision waits for you" : `${waiting} decisions wait for you`;
@@ -118,6 +127,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const [voice, dispatch] = useReducer(voiceReducer, { phase: "idle" });
   const [elapsed, setElapsed] = useState(0);
   const recorder = useRef<Recorder | null>(null);
+  const recordingPage = useRef<string | null>(null);
   const captureBusy = useRef(false);
   const captureVersion = useRef(0);
   const voiceBusy = ["asking", "recording", "sending", "transcribing"].includes(voice.phase);
@@ -125,6 +135,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   const clip = useRef<string | null>(null);
   const pasted = useRef(false);
   const selection = useRef<string>("");
+  const selectionPage = useRef<string | undefined>(undefined);
   const ref = useRef<HTMLDivElement>(null);
   const leaveFocus = (event: FocusEvent<HTMLElement>) => {
     if (!ref.current?.contains(event.relatedTarget as Node | null)) hidePreview();
@@ -228,7 +239,8 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
     }
   }
   const suggest = (body: string) => {
-    selection.current = window.getSelection()?.toString().trim() || selection.current;
+    selection.current = window.getSelection()?.toString().trim() || (selectionPage.current === pageId ? selection.current : "");
+    selectionPage.current = pageId;
     setOpen(true);
     void submit({ clientId: crypto.randomUUID(), body, context: { ...(pageId ? { page_id: pageId } : {}), ...(pageId && selection.current ? { selection: { page_id: pageId, text: selection.current } } : {}) } });
   };
@@ -255,9 +267,26 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
 
   // Capture the selection before moving focus into the conversation.
   const openConversation = () => {
-    if (!open) selection.current = window.getSelection()?.toString().trim() ?? "";
+    if (!open) { selection.current = window.getSelection()?.toString().trim() ?? ""; selectionPage.current = pageId; }
     hidePreview(); setOpen(true);
   };
+
+  useEffect(() => {
+    const openTaskDraft = (event: Event) => {
+      const detail = (event as CustomEvent<TramaTaskDraft>).detail;
+      if (!detail || detail.workspaceId !== workspaceId || typeof detail.prompt !== "string" || !detail.prompt.trim()) return;
+      const task = useAgentTasks.getState().tasks[detail.taskId];
+      if (!task || task.workspace_id !== workspaceId || task.row_page_id !== detail.pageId || detail.pageId !== pageId) return;
+      hidePreview(); setOpen(true);
+      if (captureBusy.current) { setContextNotice("Finish your voice message before starting a new draft."); return; }
+      if (draft.trim()) { setContextNotice("Your unsent draft is kept. Send or clear it before starting another."); return; }
+      selection.current = ""; selectionPage.current = detail.pageId;
+      pasted.current = false; clip.current = null;
+      setDraftPageId(detail.pageId); setDraft(detail.prompt); setContextNotice(null);
+    };
+    window.addEventListener(TRAMA_TASK_DRAFT_EVENT, openTaskDraft);
+    return () => window.removeEventListener(TRAMA_TASK_DRAFT_EVENT, openTaskDraft);
+  }, [workspaceId, pageId, draft, hidePreview]);
   const toggle = () => { if (open) close(); else openConversation(); };
   const enterTrama = (event: PointerEvent<HTMLButtonElement>) => {
     if (event.pointerType !== "mouse" || open) return;
@@ -302,7 +331,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
       wav.current = null;
       if (!out.transcript) return dispatch({ type: "fail", reason: "no_speech", canRetry: false });
       clip.current = out.clip_id;
-      setDraft(out.transcript); pasted.current = false;
+      setDraft(out.transcript); setDraftPageId(recordingPage.current); pasted.current = false;
       dispatch({ type: "heard", clipId: out.clip_id, transcript: out.transcript });
     } catch (error) {
       if (version === captureVersion.current) dispatch({ type: "fail", ...voiceFailure(error instanceof Error ? error.message : "voice_failed") });
@@ -328,6 +357,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
   async function press() {
     if (captureBusy.current) return;
     captureBusy.current = true;
+    recordingPage.current = pageId ?? null;
     const version = ++captureVersion.current;
     dispatch({ type: "press" }); setElapsed(0);
     try {
@@ -370,15 +400,17 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
       clientId: crypto.randomUUID(), body,
       context: {
         pasted: pasted.current, tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        ...(pageId ? { page_id: pageId } : {}), ...(pageId && selection.current ? { selection: { page_id: pageId, text: selection.current } } : {}),
+        ...(messagePageId ? { page_id: messagePageId } : {}), ...(messagePageId && selectionPage.current === messagePageId && selection.current ? { selection: { page_id: messagePageId, text: selection.current } } : {}),
       },
       ...(clip.current ? { clipId: clip.current } : {}),
     };
-    setDraft("");
-    pasted.current = false;
-    selection.current = "";
-    clip.current = null;
-    dispatch({ type: "reset" });
+    if (!from) {
+      setDraft(""); setDraftPageId(undefined); setContextNotice(null);
+      pasted.current = false;
+      selection.current = "";
+      clip.current = null;
+      dispatch({ type: "reset" });
+    }
     await send(out);
   }
 
@@ -404,6 +436,8 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
       className="fixed bottom-4 right-4 z-30 flex max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] flex-col items-end gap-2" data-trama-surface>
       {open && <section role="dialog" aria-label="Trama conversation" className="flex h-[34rem] min-h-0 max-h-[calc(100dvh-5.5rem)] w-96 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-bg p-3 shadow-lg">
         <div className="flex shrink-0 justify-end"><button type="button" aria-label="Close Trama" className="icon-button" onClick={close}><X size={16} /></button></div>
+        {(progressTask || draftPageId !== undefined) && <p className="mb-2 shrink-0 rounded-md bg-bg-secondary px-2 py-1.5 text-xs text-text-secondary">Context: <span className="font-medium text-text">{messagePageTitle || (messagePageId ? "Selected page" : "Workspace")}</span></p>}
+        {contextNotice && <p role="status" className="mb-2 shrink-0 text-xs text-text-secondary">{contextNotice}</p>}
         <AssistantThreadView key={workspaceId} messages={thread} draft={draft} scrollRequest={scrollRequest} status={status} busy={voiceBusy} reviewing={voice.phase === "review"}
           onNewConversation={() => { void resetConversation(); }} resetting={resetting}
           decisions={decisions.length > 0 ? <section aria-label="Needs your decision" className="max-h-60 shrink-0 space-y-2 overflow-y-auto rounded-lg border border-border p-2">
@@ -426,7 +460,7 @@ export function TramaSurface({ workspaceId, userId }: { workspaceId: string; use
             </span>
           </span>}
           onRetrySend={failed ? () => void submit(failed) : null}
-          onDraft={(text) => { setDraft(text); if (!text) { pasted.current = false; clip.current = null; if (voice.phase === "review") dispatch({ type: "reset" }); } }}
+          onDraft={(text) => { if (!draft) setDraftPageId(pageId ?? null); setDraft(text); if (!text) { setDraftPageId(undefined); setContextNotice(null); pasted.current = false; clip.current = null; if (voice.phase === "review") dispatch({ type: "reset" }); } }}
           onPaste={onPaste} onSend={() => void submit()} onUndo={(id) => void undo(id)}
           onPropose={(message) => void propose(message)} onDeclineWork={(message) => void declineWork(message)} onSendMessage={(message, addRequirement) => void sendMessageProposal(message, addRequirement)} proposing={proposing}
           onSettleAgent={(message, accept) => void settleAgent(message, accept)} hasTaskDatabase={Boolean(taskDatabase)} agentProposalError={proposalError?.startsWith("We couldn’t create this agent.")}

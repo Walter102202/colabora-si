@@ -2,13 +2,13 @@ import { createRoot, type Root } from "react-dom/client";
 import { cardDataFrom, taskIdFrom, toolFailure, type CardData } from "@/lib/agentCard";
 import { createCardHost, windowPort, type CardHost, type ToolResult } from "@/lib/agentCardHost";
 import { Card, type CardActions } from "@/components/agents/card/Card";
-import { mockActions, mockCard } from "@/components/agents/card/mock";
 import { applyHostContext, applySystemTheme } from "@/components/agents/card/theme";
 import "./card.css";
 
 // Entry of apps/card.html: an isolated React root for the MCP Apps task card.
 // No router, no stores, no Supabase: the host sends the data and runs the
-// tools. With `?mock=<scenario>` it renders fake data without a host.
+// tools. The normal Vite preview supports `?mock=<scenario>` without a host.
+// The inline production resource excludes those fixtures at build time.
 
 function Status({ text }: { text: string }) {
   return <p className="p-3 text-xs text-text-tertiary" role="status">{text}</p>;
@@ -90,11 +90,13 @@ const params = new URLSearchParams(window.location.search);
 const root = createRoot(document.getElementById("root")!);
 const scenario = params.get("mock");
 
-if (scenario) {
+if (import.meta.env.COLABORA_CARD_PREVIEW !== false && scenario) {
   applySystemTheme();
   if (params.get("theme") === "dark") document.documentElement.classList.add("dark");
   if (params.get("theme") === "light") document.documentElement.classList.remove("dark");
-  root.render(<Card key="mock" initial={mockCard(scenario)} actions={mockActions(scenario)} />);
+  void import("./mock").then(({ mockCard, mockActions }) => {
+    root.render(<Card key="mock" initial={mockCard(scenario)} actions={mockActions(scenario)} />);
+  });
 } else {
   void start(root);
 }

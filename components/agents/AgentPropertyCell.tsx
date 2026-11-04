@@ -65,7 +65,11 @@ function TaskPropertyCell({ pageId, dbPageId, kind, isJob, isSubtask }: AgentPro
   const database = pages?.[dbPageId ?? ""]?.database, row = database?.rows.find((item) => item.pageId === pageId);
   const pending = row ? database!.rows.filter((item) => item.parentRowId === row.id && !Object.values(tasks).some((child) => child.row_page_id === item.pageId && child.request_kind == null)) : [];
   const subtasks = [...children, ...pending.map(() => null)];
-  if (kind === "agentDoneWhen") return <span className="cell-readonly">{task ? briefs[`${task.id}:${task.brief_version}`]?.done_when.map((criterion) => criterion.text).join("; ") ?? "" : ""}</span>;
+  if (kind === "agentDoneWhen") {
+    const criteria = task ? briefs[`${task.id}:${task.brief_version}`]?.done_when ?? [] : [];
+    const text = criteria.map((criterion) => criterion.text).join("; ");
+    return <span className="cell-readonly" title={text}><span className="line-clamp-2">{text}</span>{criteria.length > 1 && <span className="mt-1 block text-[11px] text-text-tertiary">{criteria.length} criteria · Open task for details</span>}</span>;
+  }
   if (kind === "agentWaiting") {
     const wait = isJob ? jobWait(task, subtasks) : { label: subWait(task), count: 0 };
     return <span className={`cell-readonly ${wait.label === "You" ? "text-[var(--c-yellow)]" : "text-text-secondary"}`}>{wait.label}{wait.count ? ` ${wait.count}` : ""}</span>;

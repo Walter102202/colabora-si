@@ -7,6 +7,9 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 import { pageUrl, taskUrl } from "@/lib/routes";
 import { useStore } from "@/lib/store";
+import { useAuthStore } from "@/lib/auth";
+import { isShell } from "@/lib/pageShell";
+import { isTerminal } from "@/lib/agentState";
 import { useAgentsStore } from "@/lib/agentsStore";
 import {
   activeRunFor,
@@ -41,20 +44,22 @@ export interface RowPanelProps {
   pageId: string;
   inline?: boolean;
   onOpenPage?: () => void;
+  embedded?: boolean;
+  onOpenTask?: (pageId: string, taskId: string) => void;
 }
 
-export function RowPanel({ pageId, inline, onOpenPage }: RowPanelProps) {
-  return inline ? <JobReadyConnector pageId={pageId} onOpenPage={onOpenPage ?? (() => {})} /> : <FullRowPanel pageId={pageId} />;
+export function RowPanel({ pageId, inline, onOpenPage, embedded, onOpenTask }: RowPanelProps) {
+  return inline ? <JobReadyConnector pageId={pageId} onOpenPage={onOpenPage ?? (() => {})} /> : <FullRowPanel pageId={pageId} embedded={embedded} onOpenTask={onOpenTask} />;
 }
 
-function FullRowPanel({ pageId }: RowPanelProps) {
+function FullRowPanel({ pageId, embedded = false, onOpenTask: openEmbeddedTask }: RowPanelProps) {
   const workspaceId = useStore((s) => s.syncWorkspaceId);
   const pages = useStore((state) => state.pages);
   const subscribe = useAgentTasks((s) => s.subscribe);
   const loadAgents = useAgentsStore((s) => s.load);
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const requestedId = params.get("task");
+  const requestedId = embedded ? null : params.get("task");
   const status = useAgentTasks((s) => s.status);
   const requested = useAgentTasks((s) => (requestedId ? (s.tasks[requestedId] ?? null) : null));
   const pageTask = useAgentTasks((s) => taskForPage(s, pageId));
@@ -62,9 +67,9 @@ function FullRowPanel({ pageId }: RowPanelProps) {
   // person is told explicitly instead of being shown another task as if it were it.
   const openable = requested && requested.request_kind !== "lesson" && requested.request_kind !== "source_check";
   const task = openable && requested.row_page_id === pageId ? requested : pageTask;
-  const jobDatabase = Object.entries(pages ?? {}).find(([, page]) => page.database?.properties.some((property) => property.type === "agentStatus") && page.database.rows.some((row) => row.pageId === pageId && !row.parentRowId));
+  const jobDatabase = Object.entries(pages ?? {}).find(([, page]) => !isShell(page) && page.database?.properties.some((property) => property.type === "agentStatus") && page.database.rows.some((row) => row.pageId === pageId && !row.parentRowId));
   const mismatch = requestedId && status === "ready" && (!requested || requested.row_page_id !== pageId) ? (requested ? "elsewhere" : "missing") : null;
-  const onOpenTask = (rowPageId: string, taskId: string) => { void navigate(taskUrl(rowPageId, taskId)); };
+  const onOpenTask = (rowPageId: string, taskId: string) => { if (openEmbeddedTask) openEmbeddedTask(rowPageId, taskId); else void navigate(taskUrl(rowPageId, taskId)); };
   const onOpenPage = (id: string) => { void navigate(pageUrl(id)); };
 
   useEffect(() => {
@@ -81,8 +86,8 @@ function FullRowPanel({ pageId }: RowPanelProps) {
     );
   }
   return (
-    <section className="mt-6 space-y-4 rounded-md border border-border p-3 text-sm" aria-label="Agent task">
-      {jobDatabase && !task?.parent_task_id && <a className="text-accent hover:underline" href={pageUrl(jobDatabase[0])}>← Back to {jobDatabase[1].title || "the table"}</a>}
+    <section className={embedded ? "min-w-0 space-y-4 text-sm" : "mt-6 space-y-4 rounded-md border border-border p-3 text-sm"} aria-label="Agent task">
+      {!embedded && jobDatabase && !task?.parent_task_id && <a className="text-accent hover:underline" href={pageUrl(jobDatabase[0])}>← Back to {jobDatabase[1].title || "the table"}</a>}
       {mismatch === "missing" && (
         <p className="rounded border border-yellow-500/40 bg-yellow-500/10 px-2 py-1 text-xs" role="status">
           The task in this link no longer exists, or you cannot see it. Below is this row&apos;s own task.
@@ -145,6 +150,7 @@ function AssignConnector({ pageId }: { pageId: string }) {
 }
 
 function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpenTask: (pageId: string, taskId: string) => void; onOpenPage: (pageId: string) => void }) {
+  const currentUserId = useAuthStore((state) => state.user?.id ?? null);
   // Tagged with its task, like the diff: a value read for another task never shows on this one.
   const [autonomy, setAutonomy] = useState<{ taskId: string; value: TaskAutonomy | null } | null>(null);
   // A read that started before a change of this panel returned may predate it: the change's answer wins.
@@ -174,6 +180,9 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
   const activities = allActivities[task.id];
   const allReviews = useAgentTasks((s) => s.reviews);
   const tasks = useAgentTasks((s) => s.tasks);
+  const parentTask = task.parent_task_id ? tasks[task.parent_task_id] : undefined;
+  const parentAcceptance = parentTask?.state === "done" && parentTask.acceptance === "accepted" ? "accepted"
+    : parentTask && !isTerminal(parentTask.state) ? "pending" : "unknown";
   const runs = useAgentTasks((s) => s.runs);
   const loadTask = useAgentTasks((s) => s.loadTask);
   const taskRuns = useMemo(() => Object.values(runs)
@@ -187,6 +196,10 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
   const loadTaskDetail = useAgentTasks((s) => s.loadTaskDetail);
   const loadActivities = useAgentTasks((s) => s.loadActivities);
   const loadTaskConversation = useAgentTasks((s) => s.loadTaskConversation);
+  const loadOlderActivities = useAgentTasks((s) => s.loadOlderActivities);
+  const activityHasMore = useAgentTasks((s) => s.activityHasMore);
+  const activityLoading = useAgentTasks((s) => s.activityLoading);
+  const activityErrors = useAgentTasks((s) => s.activityErrors);
 
   useEffect(() => {
     let alive = true;
@@ -254,6 +267,7 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
 
   return (
     <TaskView
+      currentUserId={currentUserId}
       lessons={<TaskLessons workspaceId={task.workspace_id} taskId={task.id} />}
       task={task}
       metrics={metrics}
@@ -278,11 +292,28 @@ function TaskConnector({ task, onOpenTask, onOpenPage }: { task: TaskRow; onOpen
       artifact={artifact}
       review={review}
       brief={brief}
+      parentAcceptance={parentAcceptance}
       ciChecks={ciChecks}
       jobCi={jobCi}
       environment={environment}
       activities={activities ?? []}
       conversation={conversation}
+      hasOlderActivity={[...conversationIds].some((id) => activityHasMore[id])}
+      activityLoading={[...conversationIds].some((id) => activityLoading[id])}
+      activityError={[...conversationIds].map((id) => activityErrors[id]).filter(Boolean).join(" ") || null}
+      onLoadOlderActivity={async () => {
+        const ids = [...conversationIds].filter((id) => activityHasMore[id] || activityErrors[id]);
+        // Bound concurrent reads when a project has many subtasks.
+        for (let index = 0; index < ids.length; index += 4) {
+          if (useAgentTasks.getState().workspaceId !== task.workspace_id) return;
+          await Promise.allSettled(ids.slice(index, index + 4).map(async (id) => {
+            if (activityErrors[id]) await loadActivities(id);
+            if (useAgentTasks.getState().workspaceId !== task.workspace_id) return;
+            if (useAgentTasks.getState().activityErrors[id]) return;
+            if (useAgentTasks.getState().activityHasMore[id]) await loadOlderActivities(id);
+          }));
+        }
+      }}
       agentNames={Object.fromEntries(agents.map((a) => [a.id, a.name]))}
       subtasks={subtasks}
       reviewerName={review ? (agents.find((a) => a.id === review.reviewer_id)?.name ?? null) : null}

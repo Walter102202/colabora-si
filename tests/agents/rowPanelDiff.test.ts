@@ -157,5 +157,5 @@ it("shows the live job conversation in time order with agent names and review fi
   expect(conversation.lastElementChild?.textContent).toContain("Dates corrected");
   const personMessage = { ...activity("person", parent.id, "person", "Add Y", 6), author_type: "human" as const, body: { text: "Add Y", source: "trama" } };
   act(() => useAgentTasks.setState({ activities: { [parent.id]: [parentMessage, personMessage], [child.id]: [progress, leadMessage, next] } }));
-  expect(conversation.lastElementChild?.textContent).toContain("You (via Trama) → Claude Code: Add Y");
+  expect(conversation.lastElementChild?.textContent).toContain("A teammate (via Trama) → Claude Code: Add Y");
 });
