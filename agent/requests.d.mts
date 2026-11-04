@@ -33,3 +33,5 @@ export interface ExtractOptions {
   signal?: AbortSignal;
 }
 export function extractFile(opts: ExtractOptions): Promise<{ data: Record<string, any>; usage: RequestOutcome["usage"] }>;
+
+export function parseUsedMemories(text: string, deliveredIds: string[]): { text: string; ids: string[] };

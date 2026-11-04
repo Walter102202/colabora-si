@@ -1,10 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import { REQUEST_TOOLS } from "../../agent/loop.mjs";
-import { runRequest } from "../../agent/requests.mjs";
+import { parseUsedMemories, runRequest } from "../../agent/requests.mjs";
 import { createStubMcp } from "../../agent/test/stub-mcp.mjs";
 import { createStubModel, toolCall } from "../../agent/test/stub-model.mjs";
 
 describe("the model and the channel tools", () => {
+  it.each([
+    ["Answer [[used:a,b]]", "Answer", ["a"]],
+    ["First [[used:a]] middle [[used:unknown]] end", "First  middle  end", ["a"]],
+    ["Answer", "Answer", []],
+  ])("strips memory marks and accepts only delivered ids: %s", (input, text, ids) => {
+    expect(parseUsedMemories(input as string, ["a"])).toEqual({ text, ids });
+  });
   it("hides the runtime tools from the model", () => {
     expect(REQUEST_TOOLS.has("relay_person_message")).toBe(true);
     expect(REQUEST_TOOLS.has("reply_person_message")).toBe(true);
@@ -21,6 +28,11 @@ describe("the model and the channel tools", () => {
     return { mcp, model, reply, opts: { call: mcp.callTool, model, reply, appUrl: "https://app.test", task: { task_id: "t", request_kind: "assist" }, runId: "run", log: () => {} } };
   }
   const saves = (h: ReturnType<typeof assist>) => h.mcp.calls.filter((c: { name: string }) => c.name === "save_to_notes");
+  it("removes citation marks before sending an answer", async () => {
+    const h = assist({ kind: "assist", messages: [], memory: [{ id: ID, text: "Short answers" }], through_seq: 7 }, {}, [{ content: `Brief. [[used:${ID},unknown]]` }]);
+    await runRequest(h.opts);
+    expect(h.mcp.calls.find((c) => c.name === "reply_person_message")?.args).toMatchObject({ text: "Brief.", memory_ids: [ID] });
+  });
   it("recalls earlier conversation as data without granting proposal authority", async () => {
     const memory = [{ id: ID, kind: "fact", text: "I live in Lima" }];
     const h = assist({ kind: "assist", messages: [{ from: "person", text: "What did I say earlier?", pasted: true }], memory, lessons: [{ text: "Use sources" }], through_seq: 7 },

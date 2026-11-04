@@ -109,6 +109,17 @@ select public.set_person_memory_enabled(:'ws',false);
 select tests.set_agent(:'pu',:'pa');
 select is(public.assist_request_context(:'req')->'memory','null'::jsonb,'paused context is null');
 select is(public.recall_person_messages(:'run','Lima'),' {"messages":[],"notes":[]}'::jsonb,'paused recall empty');
+select tests.set_human(:'owner');
+select public.set_person_memory_enabled(:'ws',true);
+select id as own_memory from public.person_memories where status='active' and expires_at is null limit 1 \gset
+select tests.reset_role();
+select id as foreign_memory from public.person_memories where user_id=:'viewer' limit 1 \gset
+select max(seq) as through_seq from public.agent_messages where workspace_id=:'ws' and user_id=:'owner' and needs_reply \gset
+select tests.set_agent(:'pu',:'pa');
+select public.reply_person_message(:'run','Brief answer',:'through_seq',null,null,null,null,array[:'own_memory'::uuid,:'foreign_memory'::uuid])->>'message_id' as answer \gset
+select tests.reset_role();
+select is((select jsonb_array_length(outcome->'memory_used') from public.agent_messages where id=:'answer'),1,'reply excludes foreign memory ids');
+select ok((select last_used_at is not null from public.person_memories where id=:'own_memory'),'reply updates last used');
 select tests.reset_role();
 delete from public.workspace_members where workspace_id=:'ws' and user_id=:'owner';
 insert into public.workspace_members(workspace_id,user_id,role) values(:'ws',:'owner','owner');

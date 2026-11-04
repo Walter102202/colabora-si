@@ -42,6 +42,7 @@ const reply: ToolDef = {
   description: 'Platform loop tool: answers everything up to through_seq and closes the request.',
   inputSchema: object({
     run_id: { type: 'string', minLength: 1 }, text: { type: 'string', minLength: 1, maxLength: 4000 }, through_seq: { type: 'integer', minimum: 0 }, usage, propose_message_id: { type: 'string', minLength: 1 },
+    memory_ids: { type: 'array', maxItems: 500, items: { type: 'string', format: 'uuid' } },
     work_summary: { type: 'string', minLength: 1, maxLength: 600 },
     message: object({ task_id: { type: 'string', minLength: 1 }, text: { type: 'string', minLength: 1, maxLength: 1000 }, adds_requirement: { type: 'boolean' } }, ['task_id','text']),
     job: object({ board_id: { type: 'string', minLength: 1 }, title: { type: 'string', minLength: 1, maxLength: 120 }, lead_agent_id: { type: 'string', minLength: 1 }, worker_agent_ids: { type: 'array', maxItems: 4, uniqueItems: true, items: { type: 'string' } } }, ['board_id','title','lead_agent_id','worker_agent_ids']),
@@ -53,6 +54,7 @@ const reply: ToolDef = {
   annotations: WRITE, cacheTtlMs: 0,
   async handler(args, ctx) {
     const data = await must(ctx.db.rpc<Record<string, unknown>>('reply_person_message', {
+      ...(args.memory_ids ? { p_memory_ids: args.memory_ids, p_propose_message_id: null, p_propose_agent: null, p_proposal: null } : {}),
       p_run_id: str(args.run_id), p_text: str(args.text), p_through_seq: num(args.through_seq), p_usage: args.usage ?? null, ...(args.propose_message_id && (args.work_summary || args.message) ? { p_propose_message_id: str(args.propose_message_id), p_propose_agent: null, p_proposal: { ...(args.work_summary ? { summary: str(args.work_summary) } : {}), ...(args.job ? { job: args.job } : {}), ...(args.message ? { message: args.message } : {}) } } : args.propose_agent ? { p_propose_agent: args.propose_agent, p_propose_message_id: str(args.propose_message_id) ?? null } : args.propose_message_id ? { p_propose_message_id: str(args.propose_message_id) } : {}),
     }));
     return { text: 'Answered.', structured: data ?? {} };

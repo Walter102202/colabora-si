@@ -451,3 +451,103 @@ end $$;
 revoke all on function public.assist_request_context(uuid) from public, anon;
 grant execute on function public.assist_request_context(uuid) to authenticated;
 
+
+drop function public.reply_person_message(uuid,text,bigint,jsonb,uuid,jsonb,jsonb);
+create or replace function public.reply_person_message(p_run_id uuid, p_text text, p_through_seq bigint, p_usage jsonb, p_propose_message_id uuid, p_propose_agent jsonb, p_proposal jsonb, p_memory_ids uuid[] default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_r public.agent_runs%rowtype; v_t public.agent_tasks%rowtype; v_last public.agent_messages%rowtype; v_m public.agent_messages%rowtype;
+        v_text text := btrim(coalesce(p_text, '')); v_notice text; v_page text; v_reply uuid; v_proposal public.agent_messages%rowtype; v_outcome jsonb := '{"kind":"reply"}'::jsonb; v_work_summary text:=p_proposal->>'summary'; v_job jsonb; v_message_task public.agent_tasks%rowtype;
+begin
+  if private.jwt_client_id() is not null then raise exception using errcode = 'PT403', message = 'direct_session_required'; end if;
+  v_r := private.own_run(p_run_id);
+  if v_r.stop_requested_at is not null then raise exception using errcode = 'PT409', message = 'stop_requested'; end if;
+  if v_r.status not in ('running','waiting') then raise exception using errcode = 'PT422', message = 'run_not_active'; end if;
+  select * into v_t from public.agent_tasks where id = v_r.task_id;
+  if v_t.request_kind is distinct from 'assist' then raise exception using errcode = 'PT422', message = 'not_a_request_run'; end if;
+  if v_text = '' or char_length(v_text) > 4000 then raise exception using errcode = 'PT400', message = 'invalid_input', detail = 'text'; end if;
+  select * into v_last from public.agent_messages
+   where workspace_id = v_t.workspace_id and user_id = v_t.owner_user_id and direction = 'in' and needs_reply and seq <= p_through_seq
+   order by seq desc limit 1 for update;
+  if v_last.id is not null then
+    if p_propose_message_id is not null then
+      if v_work_summary is not null and char_length(btrim(v_work_summary)) not between 1 and 600 then
+        raise exception using errcode='PT400', message='invalid_input', detail='work_summary';
+      end if;
+      select * into v_proposal from public.agent_messages m where m.id = p_propose_message_id
+        and m.workspace_id = v_t.workspace_id and m.user_id = v_t.owner_user_id and m.direction = 'in'
+        and m.channel = 'surface' and m.needs_reply and m.seq <= p_through_seq and not m.forwarded and not m.pasted
+        and (p_proposal ? 'job' or p_proposal ? 'message' or private.person_reads_page(m.context->>'page_id', v_t.workspace_id, v_t.owner_user_id));
+      if found then
+        if p_proposal ? 'message' then
+          if p_proposal ? 'job' or jsonb_typeof(p_proposal#>'{message,text}') is distinct from 'string'
+            or char_length(p_proposal#>>'{message,text}') not between 1 and 1000 or btrim(p_proposal#>>'{message,text}')='' then
+            raise exception using errcode='PT422',message='invalid_message',detail='text';
+          end if;
+          if (p_proposal->'message') ? 'adds_requirement' and jsonb_typeof(p_proposal#>'{message,adds_requirement}') is distinct from 'boolean' then
+            raise exception using errcode='PT422',message='invalid_message',detail='adds_requirement';
+          end if;
+          select * into v_message_task from public.agent_tasks t where t.id::text=p_proposal#>>'{message,task_id}'
+            and t.workspace_id=v_t.workspace_id and t.request_kind is null and t.state not in ('done','failed','cancelled')
+            and private.person_reads_page(t.row_page_id,v_t.workspace_id,v_t.owner_user_id);
+          if not found then raise exception using errcode='PT422',message='invalid_message',detail='task_id'; end if;
+          v_outcome:=jsonb_build_object('kind','message_proposed','task_id',v_message_task.id,'page_id',v_message_task.row_page_id,
+            'task_title',v_message_task.title,'agent_name',coalesce((select name from public.agents where id=v_message_task.delegate_agent_id),'Agent'),
+            'text',p_proposal#>>'{message,text}') || case when (p_proposal->'message') ? 'adds_requirement'
+              then jsonb_build_object('adds_requirement',p_proposal#>'{message,adds_requirement}') else '{}'::jsonb end;
+        else
+        if p_proposal ? 'job'  then
+          if nullif(btrim(v_work_summary),'') is null then raise exception using errcode='PT400',message='invalid_input',detail='work_summary'; end if;
+          v_job:=private.validate_proposed_job(p_proposal->'job',v_t.workspace_id,v_t.owner_user_id);
+        end if;
+        v_outcome := jsonb_strip_nulls(jsonb_build_object('kind','work_proposed',
+          'page_id',v_proposal.context->>'page_id','message_id',v_proposal.id,'agent_id',v_r.agent_id,
+          'page_title',left(coalesce((select title from public.pages where id=v_proposal.context->>'page_id'),''),200),
+          'summary',btrim(v_work_summary),'job',v_job));
+        if v_job is not null then v_outcome:=v_outcome||jsonb_build_object('page_id',v_job->>'board_id','page_title',v_job->>'board_title'); end if;
+        end if;
+      end if;
+    elsif jsonb_typeof(p_propose_agent)='object'
+      and char_length(btrim(coalesce(p_propose_agent->>'name',''))) between 1 and 80
+      and p_propose_agent->>'role' in ('worker','lead')
+      and p_propose_agent->>'harness' in ('claude-code','codex','muse-code','cursor','gemini-cli','antigravity','hermes','openclaw') then
+      select * into v_proposal from public.agent_messages m where m.id::text=p_propose_agent->>'message_id'
+        and m.workspace_id=v_t.workspace_id and m.user_id=v_t.owner_user_id and m.direction='in'
+        and m.channel='surface' and m.needs_reply and m.seq<=p_through_seq and not m.forwarded and not m.pasted;
+      if found then v_outcome:=jsonb_build_object('kind','agent_proposed','name',btrim(p_propose_agent->>'name'),
+        'harness',p_propose_agent->>'harness','role',p_propose_agent->>'role','message_id',v_proposal.id); end if;
+    end if;
+    perform private.lock_person_memory(v_t.workspace_id,v_t.owner_user_id);
+    with used as (
+      update public.person_memories set last_used_at=now() where id=any(p_memory_ids)
+        and workspace_id=v_t.workspace_id and user_id=v_t.owner_user_id and status='active'
+        and (expires_at is null or expires_at>now()) and private.person_memory_enabled(v_t.workspace_id,v_t.owner_user_id)
+      returning id,body
+    ) select v_outcome||jsonb_build_object('memory_used',coalesce(jsonb_agg(jsonb_build_object('id',id,'text',body)),'[]'))
+      into v_outcome from used;
+    insert into public.agent_messages (workspace_id, user_id, agent_id, direction, channel, kind, body, reply_to_id, outcome)
+    values (v_t.workspace_id, v_t.owner_user_id, v_r.agent_id, 'out', v_last.channel, 'text', v_text, v_last.id, v_outcome) returning id into v_reply;
+    select string_agg(s.body, E'\n' order by s.seq), (array_agg(s.outcome->>'page_id' order by s.seq desc))[1] into v_notice, v_page
+      from public.agent_messages s join public.agent_messages m on m.id = s.reply_to_id
+     where m.workspace_id = v_t.workspace_id and m.user_id = v_t.owner_user_id and m.direction = 'in' and m.needs_reply and m.seq <= p_through_seq
+       and s.kind = 'system' and s.outcome->>'kind' = 'note_saved';
+    if v_last.channel = 'telegram' then
+      update public.agent_messages set outcome = outcome || jsonb_strip_nulls(jsonb_build_object(
+        'delivery_pending', true, 'chat_id', split_part(v_last.external_id, ':', 1), 'note_page_id', v_page,
+        'delivery_text', case when v_notice is null then v_text else v_text || E'\n\n' || v_notice end)) where id = v_reply;
+    end if;
+    update public.agent_messages set needs_reply = false
+     where workspace_id = v_t.workspace_id and user_id = v_t.owner_user_id and direction = 'in' and needs_reply and seq <= p_through_seq;
+  end if;
+  perform private.finish_request(v_r, 'assist', 'Answered the person.', p_usage);
+  -- A message that arrived while the model was thinking gets its own turn.
+  select * into v_m from public.agent_messages
+   where workspace_id = v_t.workspace_id and user_id = v_t.owner_user_id and direction = 'in' and needs_reply order by seq desc limit 1;
+  if v_m.id is not null then perform private.queue_assist(v_m); end if;
+  return jsonb_strip_nulls(jsonb_build_object(
+    'channel', v_last.channel, 'message_id', v_reply,
+    'chat_id', case when v_last.channel = 'surface' then null else split_part(v_last.external_id, ':', 1) end,
+    'note_page_id', v_page,
+    'text', case when v_last.id is null then null when v_notice is null then v_text else v_text || E'\n\n' || v_notice end));
+end $$;
+revoke all on function public.reply_person_message(uuid,text,bigint,jsonb,uuid,jsonb,jsonb,uuid[]) from public,anon;
+grant execute on function public.reply_person_message(uuid,text,bigint,jsonb,uuid,jsonb,jsonb,uuid[]) to authenticated;
