@@ -14,7 +14,7 @@ import { pendingApprovalFor, taskForPage, useAgentTasks, type TaskRow } from "@/
 export interface BriefInput {
   objective: string;
   constraints?: string;
-  done_when?: { id: string; text: string; check: "human" | "deterministic" | "lead" | "ci"; command?: string }[];
+  done_when?: { id: string; text: string; check: "human" | "deterministic" | "lead" | "ci"; by?: "person" | "agent"; command?: string }[];
   decisions?: { at: string; by: string; text: string }[];
   sources?: { kind: "page" | "url" | "artifact"; ref: string; trust: "internal" | "external" }[];
   open_questions?: string[];
@@ -117,8 +117,8 @@ export async function decideApproval(
 
 export async function closeTask(taskId: string, acceptance: "accepted" | "rejected", note: string | null = null): Promise<void> {
   await rpc("close_task", { p_task_id: taskId, p_acceptance: acceptance, p_note: note }, {
-    ci_pending: "CI has not finished on the final commit. Accept opens when it passes.",
-    ci_failed: "CI failed on the final commit. Ask for a fix or close without accepting.",
+    ci_pending: "CI is pending on the delivered commit. An eligible Autonomous job closes automatically when it passes.",
+    ci_failed: "CI failed on the delivered commit. Fix the failed check before accepting.",
   });
   await refresh(taskId);
 }
@@ -252,7 +252,7 @@ export function briefFromRow(pageId: string): BriefInput {
   return {
     objective: sections.goal?.join("\n") || page.title.trim() || "Untitled task",
     constraints: (sections.constraints ?? []).join("\n").slice(0, 4000),
-    done_when: criteria.map((text, i) => ({ id: `c${i + 1}`, text, check: "human" as const })),
+    done_when: criteria.map((text, i) => ({ id: `c${i + 1}`, text, check: "human" as const, by: "person" as const })),
     sources,
   };
 }

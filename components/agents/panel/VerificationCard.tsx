@@ -33,7 +33,7 @@ export function VerificationCard({ review, brief, reviewerName, ciChecks }: Veri
     return (
       <ul className="space-y-0.5 text-xs">
         {criteria.map((c) => c.check === "ci" ? <CiCriterion key={c.id} text={c.text} check={ciChecks?.find((r) => r.criterion_id === c.id)} /> : (
-          <li key={c.id} className="flex gap-2"><span className="text-text-tertiary">–</span><span>{c.text}</span><span className="text-text-tertiary">· not verified yet</span></li>
+          <li key={c.id} className="flex gap-2"><span className="text-text-tertiary">–</span><span>{c.text}</span><span className="text-text-tertiary">· {c.check === "human" ? (c.by === "agent" ? "The Lead suggested you look" : "Waiting for you") : "not verified yet"}</span></li>
         ))}
       </ul>
     );
@@ -61,7 +61,7 @@ export function VerificationCard({ review, brief, reviewerName, ciChecks }: Veri
             <li key={c.id} className="flex gap-2">
               <span className={s.cls}>{s.mark}</span>
               <span className="min-w-0 flex-1">{c.text}{f?.note ? <span className="text-text-secondary"> · {f.note}</span> : null}</span>
-              <span className={"shrink-0 " + s.cls}>{s.label}</span>
+              <span className={"shrink-0 " + s.cls}>{c.check === "human" ? (c.by === "agent" ? "The Lead suggested you look" : "Waiting for you") : s.label}</span>
             </li>
           );
         })}

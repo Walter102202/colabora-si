@@ -247,7 +247,9 @@ export function TaskView({ agentAvatar = null, lessons = null, task, agent, run,
         summary={deliverySummary(activities)}
         ciLine={ci?.text}
         ciBlocks={ci?.blocks}
-        pendingHuman={task.parent_task_id ? undefined : jobCi?.pending_human}
+        pendingHuman={[...(task.parent_task_id ? [] : jobCi?.pending_human ?? []),
+          ...(brief?.done_when ?? []).filter((c) => c.check === "human" && c.by === "person")
+            .map((c) => ({ criterion_id: c.id, text: c.text, task_id: task.id }))]}
         deliveredSubtasks={task.parent_task_id ? 0 : subtasks.filter((s) => s.task.state === "ready_for_review").length}
         disabled={busy !== null}
         onAccept={() => void act("close", () => onClose("accepted", null))} />}

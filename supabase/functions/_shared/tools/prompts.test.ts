@@ -39,7 +39,7 @@ Deno.test('continue_task asks to claim with resume', async () => {
   assert.match(message.content.text, /claim_task\("t1", resume: true\)/);
 });
 
-Deno.test('CI prompts ask for a commit and leave the result to GitHub', async () => {
+Deno.test('CI prompts ask for a commit and cited evidence with optional GitHub', async () => {
   const ctx: import('../mcp.ts').ToolContext = {
     db: { download: async () => ({ data: null, error: null }), rpc: () => Promise.resolve({ data: null, error: null }), select: <T>(spec: import('../db.ts').SelectSpec) => Promise.resolve({
       data: (spec.table === 'agent_tasks' ? [{ id: 't1', row_page_id: 'p1', brief_version: 1 }] : spec.table === 'task_briefs'
@@ -51,7 +51,7 @@ Deno.test('CI prompts ask for a commit and leave the result to GitHub', async ()
     const out = await PROMPTS.find(x => x.name === name)!.get({ task_id: 't1' }, ctx);
     const message = out.messages[0] as { content: { text: string } };
     assert.match(message.content.text, /Deliver a diff artifact with ref owner\/repo@<full sha>/);
-    assert.match(message.content.text, /GitHub reports the result; do not state it yourself/);
+    assert.match(message.content.text, /GitHub connection is optional; verify CI and cite the run URL/);
   }
 });
 
@@ -61,4 +61,11 @@ Deno.test('bridge and Edge share the same environment, lease and reviewer instru
   assert.match(INSTRUCTIONS,/policies\.lease_minutes/);
   assert.match(INSTRUCTIONS,/reviewers use their own isolated environment/);
   assert.match(INSTRUCTIONS,/Reviewers instead record review_task and end their turn/);
+});
+
+Deno.test('shared Lead instructions finish Autonomous jobs without asking to close', () => {
+  assert.match(INSTRUCTIONS, /At Autonomous you finish the job/);
+  assert.match(INSTRUCTIONS, /Never ask whether you may close/);
+  assert.match(INSTRUCTIONS, /only for a decision the brief leaves open/);
+  assert.doesNotMatch(INSTRUCTIONS, /People close tasks/);
 });

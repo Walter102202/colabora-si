@@ -26,6 +26,7 @@ it("keeps repository management hidden from non-owners", async () => {
 it("connects a repository and lets the owner copy the once-shown command", async () => {
   const copy = vi.fn().mockResolvedValue(undefined); vi.stubGlobal("navigator", { clipboard: { writeText: copy } });
   await mount();
+  expect(container.textContent).toContain("Optional. Lets GitHub confirm checks; without it the Lead verifies CI and cites the run.");
   const input = container.querySelector("input")!;
   act(() => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "acme/app"); input.dispatchEvent(new Event("input", { bubbles: true })); });
   await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
