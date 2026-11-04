@@ -25,16 +25,12 @@ app/                 SPA routes; app/main.tsx is the entry and picks the landing
 apps/card.html       second Vite entry: the MCP App card
 components/          UI; components/agents/ is the agent layer, components/agents/panel/ its pure views, components/landing/ the public landing page
 lib/                 types, stores, pure engines; lib/agent* is the client side of the agent layer
-supabase/migrations  0001 core, 0002 agents, 0003 core RPCs, 0004 tasks, 0005 partial writes, 0006 control, 0007 derived state, 0008 dispatch, 0009 lead, 0010 retention,
-                     0011 chat decisions, 0012 receipts for actions, 0013 agent write boundary, 0014 task.updated events, 0015 search, 0016 page ops review and version cap,
-                     0017 platform agent, 0018 reviewer agent, 0019 handover, 0020 decisions, 0021 metrics, 0022 blocked review and webhook delivery, 0023 fair push batches,
-                     0024 claim dependencies, 0025 AI properties, 0026 AI rewrite, 0027 mention tasks, 0028 file texts, 0029 OAuth session links, 0030 CI evidence,
-                     0031 run lease, 0032 task environment, 0033 finding severity, 0034 reviewer policy, 0035 conditional approval, 0036 lessons, 0037 context package,
-                     0038 page sources
-supabase/functions   mcp, agent-token, trama-runtime, agent-admin, agent-dispatch, agent-webhook, github-webhook, voice-transcribe, telegram-webhook, channel-notify, pub-html, send-reminders, send-email, account-link, waitlist, waitlist-invites; _shared/ holds the MCP server and its tools
+supabase/migrations  one numbered migration per concern
+supabase/functions   mcp, workspace-mcp, agent-token, trama-runtime, agent-admin, agent-dispatch, agent-webhook, github-webhook, voice-transcribe, telegram-webhook, channel-notify, pub-html, send-reminders, send-email, account-link, waitlist, waitlist-invites; _shared/ holds the MCP server and its tools
 supabase/tests       pgTAP suites (clone/, agents/)
 supabase/seeds       demo workspace (01) and demo agents (02)
 tests/               Vitest suites (clone/, agents/, infra/)
+api/                 Vercel function that serves public pages to crawlers
 scripts/             repository checks (ownership)
 ```
 
@@ -70,7 +66,7 @@ A task is done when its suites pass, lint, types and build are clean, and the ow
 
 ## Conventions
 
-- English everywhere: code, comments, docs, commit messages. Conventional commits with a scope: `feat(editor): …`, `fix(agents): …`, `chore(agents): …`, `infra(docs): …`. One commit per finished task; never skip hooks.
+- English everywhere: code, comments, docs, commit messages and all user-facing text, including Trama's fixed strings. Conventional commits with a scope: `feat(editor): …`, `fix(agents): …`, `chore(agents): …`, `infra(docs): …`. One commit per finished task; never skip hooks.
 - LF line endings (`.gitattributes` enforces them). Two spaces, double quotes, semicolons, `@/` import alias.
 - No new dependencies unless the report states why. Markdown, LaTeX, code highlighting, emoji, ZIP, sanitization and Web Push are written in-house. `package.json` is infra.
 - Accessibility: native controls (`button`, `input`, `select`, `dialog`) with visible labels or `aria-label`; `jsx-a11y` strict runs on `app/`, `components/` and `lib/`.
@@ -96,7 +92,7 @@ A task is done when its suites pass, lint, types and build are clean, and the ow
 
 Props, tool schemas and RPC signatures are contracts: agree a change with the other track before making it.
 
-### Development loop contracts (P11)
+### Development loop contracts
 
 | Migration | Contract |
 |---|---|
@@ -134,11 +130,11 @@ Props, tool schemas and RPC signatures are contracts: agree a change with the ot
 - Edit another track's files, `package.json` or the root configs from a track branch.
 - Delete branches, rewrite published history or force-push.
 
-### Telegram decision boundary (P12b)
+### Telegram decision boundary
 
 Migrations 0044–0046 add person-scoped work status, channel links/updates, and server notices. `channel_decide` and `channel_answer` are service-role only. Never expose them or button construction to an agent/model. Reuse `decide_approval` without weakening it; restore transaction-local identity after every outcome. The runtime queue acknowledges after inbox delivery. Test Telegram only with the local fake transport.
 
-## Workspace connection (P14)
+## Workspace connection
 
 `/functions/v1/workspace-mcp` is the compact, 23-tool connection for direct page and database work without tasks. `/functions/v1/mcp` retains its tool list for tasks, reviews and handovers. Connect both when needed. The same bearer verification, OAuth session links, caller client, RLS and write core apply.
 
@@ -148,7 +144,7 @@ Set the Edge Function secret `MCP_WORKSPACE_RESOURCE_URL` to the external worksp
 
 Migrations 0047-0048 and pgTAP 57-58 implement these operations. Calculated properties (`formula`, `relation`, `rollup`, `ai`, agent properties) are not created here. A hosted OAuth conversation is verified after deployment.
 
-Local checks: `node tests/agents/workspace-mcp-smoke.mjs` exercises the served P14 runtime. `node tests/agents/workspace-agent-check.mjs` sends fictitious local tasks to Muse using the authorized credential file, without printing it. Use the isolated `colabora-si-p14` stack on 60990-60999.
+Local checks: `node tests/agents/workspace-mcp-smoke.mjs` exercises the served runtime. `node tests/agents/workspace-agent-check.mjs` sends fictitious local tasks to Muse using the authorized credential file, without printing it. Use the isolated `colabora-si-p14` stack on 60990-60999.
 
 ## Account email access (0052)
 
