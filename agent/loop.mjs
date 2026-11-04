@@ -163,7 +163,9 @@ export async function runAgent(opts) {
   const start = (task) => {
     const id = task.task_id;
     const promise = runTask(task).then((outcome) => {
-      if (outcome) handled.push(outcome);
+      if (outcome?.skipped === "agent_busy") {
+        backlog.set(id, { task, notBefore: clock.now() + 5000 });
+      } else if (outcome) handled.push(outcome);
     }, (error) => { firstError ??= error; }).finally(() => active.delete(id));
     active.set(id, { lane: laneOf(task), promise });
   };
@@ -195,13 +197,18 @@ export async function runAgent(opts) {
     const incoming = [...retryNotices, ...(waited.data.tasks ?? [])];
     retryNotices = [];
     const seenNotices = new Set();
+    // Re-poll active events after completion instead of acknowledging feedback we could not claim.
+    let activeEvents = false;
     const candidates = incoming.filter(task => {
-      if (!isLeadNotice(task)) return !active.has(task.task_id);
+      if (!isLeadNotice(task)) {
+        if (active.has(task.task_id)) { activeEvents = true; return false; }
+        return true;
+      }
       if (deliveredNotices.has(task.notice.event_id)) return false;
       if (seenNotices.has(task.notice.event_id)) return false;
       seenNotices.add(task.notice.event_id); return true;
     }).filter((/** @type {any} */ t) => isLeadNotice(t) || CLAIM_REASONS.has(t.reason) || (!t.reason && t.state === "queued"));
-    if (!candidates.length && !waited.data.changed) await clock.sleep(1000);
+    if (!candidates.length && (!waited.data.changed || activeEvents)) await clock.sleep(1000);
     if (!candidates.length && noticeAcks.size) await clock.sleep(5000);
     for (const task of candidates) {
       if (signal?.aborted || firstError) break;
@@ -211,14 +218,14 @@ export async function runAgent(opts) {
         if (outcome) handled.push(outcome);
         else { delivered = false; retryNotices.push(task); }
       } else if (!active.has(task.task_id)) {
-        if (hasCapacity() && slots(laneOf(task)) > 0) {
+        if (hasCapacity() && slots(laneOf(task)) > 0 && (backlog.get(task.task_id)?.notBefore ?? 0) <= clock.now()) {
           backlog.delete(task.task_id);
           start(task);
-        } else backlog.set(task.task_id, { task, notBefore: 0 });
+        } else backlog.set(task.task_id, { task, notBefore: backlog.get(task.task_id)?.notBefore ?? 0 });
       }
     }
-    if (delivered) cursor = waited.data.next_cursor ?? cursor;
-    else if (!signal?.aborted) await clock.sleep(5000);
+    if (delivered && !activeEvents) cursor = waited.data.next_cursor ?? cursor;
+    else if (!delivered && !signal?.aborted) await clock.sleep(5000);
   }
   await Promise.all([...active.values()].map((entry) => entry.promise));
   if (firstError) throw firstError;
@@ -269,7 +276,7 @@ export async function runAgent(opts) {
   /**
    * One run over one task.
    * @param {Record<string, any>} task
-   * @returns {Promise<TaskOutcome | null>}
+   * @returns {Promise<TaskOutcome | {skipped: "agent_busy"} | null>}
    */
   async function runTask(task) {
     const claimArgs = { task_id: task.task_id, harness };
@@ -282,7 +289,7 @@ export async function runAgent(opts) {
     }
     if (claimed.isError) {
       log(`claim_task ${task.task_id} skipped: ${claimed.text}`);
-      return null;
+      return claimed.data.code === "agent_busy" ? { skipped: "agent_busy" } : null;
     }
     const claim = claimed.data;
     const resumeCtx = claim.resume ?? null;
