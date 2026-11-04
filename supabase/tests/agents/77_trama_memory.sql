@@ -243,6 +243,7 @@ select tests.set_agent(:'pu',:'pa');
 select public.claim_task(:'req','memory-regression')->>'run_id' as run \gset
 select lives_ok(format('select public.reply_person_message(%L,%L,%s,null,null,null,null,array[%L::uuid])',:'run','Design',:'through_seq',:'retained'),'forgetting one fact does not break replies using another fact from the same source');
 -- The global pass cap is independent of the per-workspace hourly cap.
+select tests.reset_role();
 create function tests.memory_people(p_owner uuid) returns void language plpgsql as $$
 declare v_ws uuid; v_user uuid; v_agent jsonb; v_page text;
 begin
@@ -263,7 +264,6 @@ begin
     end loop;
   end loop;
 end $$;
-select tests.reset_role();
 select tests.memory_people(:'owner');
 select is(private.memory_tick(),100,'one tick opens at most 100 person requests');
 select is(private.memory_tick(),4,'remaining eligible people are picked up next time');
