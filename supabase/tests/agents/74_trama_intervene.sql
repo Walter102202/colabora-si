@@ -225,7 +225,7 @@ select is(:'requirement_sent'::jsonb->>'requirement_id','c3','criterion IDs skip
 select is(public.send_proposed_message(:'requirement_proposal',true),:'requirement_sent'::jsonb||'{"already_sent":true}','Add and send is idempotent');
 select tests.reset_role();
 select is((select brief_version from public.agent_tasks where id=:'job'),3,'adding a criterion increments the brief once');
-select is((select done_when->1 from public.task_briefs where task_id=:'job' and version=3),'{"id":"c3","text":"Add <Y> & sources.","check":"human"}'::jsonb,'exact person text becomes a human criterion');
+select is((select done_when->1 from public.task_briefs where task_id=:'job' and version=3),'{"id":"c3","text":"Add <Y> & sources.","check":"human","by":"person"}'::jsonb,'exact person text becomes a human criterion');
 select ok((select constraints='Keep constraints' and author_type='human' and author_id=:'owner' from public.task_briefs where task_id=:'job' and version=3),'brief preserves other fields and human authorship');
 select is((select data#>>'{blocks,0,key}' from public.pages where id='digest-job'),'brief:done_when','missing Done when section is created');
 select is((select data#>>'{blocks,1,html}' from public.pages where id='digest-job'),'Existing criterion','missing section materializes existing criteria too');

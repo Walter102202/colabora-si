@@ -13,6 +13,7 @@ const doneWhenItem = object({
   text: { type: 'string', minLength: 1, maxLength: 2000 },
   check: { type: 'string', enum: ['human', 'deterministic', 'lead', 'ci'] },
   command: { type: 'string' },
+  by: { type: 'string', enum: ['person', 'agent'], description: 'Read-only authorship; the server overrides caller values.' },
 }, ['id', 'text']);
 
 const sourceItem = object({
