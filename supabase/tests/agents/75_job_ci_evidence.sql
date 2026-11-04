@@ -36,5 +36,76 @@ select tests.reset_role();
 select tests.set_anon();
 select is(tests.sqlstate_of(format('select public.job_ci_status(%L::uuid)',:'job')),'42501','anonymous cannot call status');
 select tests.reset_role();
+
+-- Step 2: current independent review is the first key; only unknown CI is deferred.
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'s1'::uuid,'custom')->>'run_id' as sr \gset
+select public.add_artifact(:'sr'::uuid,'diff','acme/app@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','Subtask',array['c1'])->>'artifact_id' as sa \gset
+select public.submit_for_review(:'sr'::uuid,'Done',array[:'sa'::uuid]);
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.close_subtask(%L::uuid)',:'s1')),'policy_denied','deferred CI still needs review');
+select public.review_task(:'s1'::uuid,'approved','[{"criterion_id":"c1","status":"unverified"}]','[]',null,:'lr'::uuid);
+select tests.reset_role();
+update public.ci_connections set revoked_at=now() where id=:'conn'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select public.close_subtask(:'s1'::uuid) as closed \gset
+select is(:'closed'::jsonb->>'task_state','done','unconnected CI does not strand reviewed work');
+select is(:'closed'::jsonb->>'ci','deferred_to_job','CI is explicitly deferred');
+select is(:'closed'::jsonb->'deferred_checks'->0->>'check','test','deferred result names the check');
+select tests.reset_role();
+select ok(exists(select 1 from public.agent_activities where task_id=:'s1'::uuid and body->>'rule'='ci_deferred'),'history records deferral');
+select ok(exists(select 1 from public.agent_events where task_id=:'job'::uuid and payload ? 'ci_deferred'),'Lead event records deferral');
+update public.agent_tasks set state='ready_for_review',acceptance='pending' where id=:'s1'::uuid;
+update public.ci_connections set revoked_at=null where id=:'conn'::uuid;
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.set_agent_autonomy((:'lead'::jsonb->>'agent')::uuid,'balanced');
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.close_subtask(%L::uuid)',:'s1')),'policy_denied','Balanced cannot defer without another policy');
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.set_agent_autonomy((:'lead'::jsonb->>'agent')::uuid,'autonomous');
+select tests.reset_role();
+update public.agent_reviews set reviewer_id=(:'f'::jsonb->>'agent')::uuid where task_id=:'s1'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.close_subtask(%L::uuid)',:'s1')),'policy_denied','author cannot approve its own deferred delivery');
+select tests.reset_role();
+update public.agent_reviews set reviewer_id=(:'lead'::jsonb->>'agent')::uuid where task_id=:'s1'::uuid;
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is(public.close_subtask(:'s1'::uuid)->>'ci','deferred_to_job','connected but pending CI is deferred too');
+select tests.reset_role();
+update public.agent_tasks set state='ready_for_review',acceptance='pending' where id=:'s1'::uuid;
+select tests.set_service();
+select public.record_ci_check(:'conn'::uuid,'acme/app',jsonb_build_object('id',101,'name','test','head_sha',repeat('a',40),'conclusion','failure','html_url','https://github.com/acme/app/runs/101','completed_at',now()));
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.close_subtask(%L::uuid)',:'s1')),'policy_denied','known failure blocks deferral');
+select is(tests.detail_of(format('select public.close_subtask(%L::uuid)',:'s1'))::jsonb->>'reason','ci_failed','failure explains its reason');
+select tests.reset_role();
+select tests.set_service();
+select public.record_ci_check(:'conn'::uuid,'acme/app',jsonb_build_object('id',102,'name','test','head_sha',repeat('a',40),'conclusion','success','html_url','https://github.com/acme/app/runs/102','completed_at',now()+interval '1 second'));
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select is(tests.error_of(format('select public.close_subtask(%L::uuid)',:'s1')),'policy_denied','passing CI retains the verified-finding requirement');
+select public.review_task(:'s1'::uuid,'approved','[{"criterion_id":"c1","status":"verified"}]','[]',null,:'lr'::uuid);
+select is(public.close_subtask(:'s1'::uuid),'{"task_state":"done"}'::jsonb,'passing CI follows the original close route');
+select tests.reset_role();
+
+-- A deterministic check remains independently proved while CI waits.
+update public.task_briefs set done_when=done_when || '[{"id":"d1","text":"Local test","check":"deterministic","command":"npm test"}]' where task_id=:'s2'::uuid;
+select tests.set_agent((:'f'::jsonb->>'agent_user')::uuid, (:'f'::jsonb->>'agent')::uuid);
+select public.claim_task(:'s2'::uuid,'custom')->>'run_id' as sr2 \gset
+select public.add_artifact(:'sr2'::uuid,'diff','acme/app@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','Mixed',array['c1','d1'])->>'artifact_id' as sa2 \gset
+select public.submit_for_review(:'sr2'::uuid,'Done',array[:'sa2'::uuid]);
+select tests.reset_role();
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.set_agent_autonomy((:'lead'::jsonb->>'agent')::uuid,'balanced');
+select tests.reset_role();
+select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
+select public.review_task(:'s2'::uuid,'approved','[{"criterion_id":"c1","status":"unverified"},{"criterion_id":"d1","status":"verified"}]','[{"kind":"command","ref":"npm test"}]',null,:'lr'::uuid);
+select is(tests.error_of(format('select public.update_brief(%L::uuid,%L::jsonb)',:'s2','{"done_when":[{"id":"d1","text":"Local test","check":"deterministic","command":"npm test"}]}')),'ci_criteria_locked','Lead still cannot remove inherited CI requirements');
+select is(public.close_subtask(:'s2'::uuid)->>'ci','deferred_to_job','verified deterministic evidence permits deferral at Balanced');
+select tests.reset_role();
 select * from finish();
 rollback;

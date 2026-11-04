@@ -68,17 +68,22 @@ select tests.set_human((:'f'::jsonb->>'owner')::uuid);
 select is((public.task_ci_status(:'sub'::uuid))->0->>'state', 'pending', 'but it does not prove a newer task');
 select tests.reset_role();
 
--- 17. The Lead reviews before CI ends: review alone does not close.
+-- 17. Approved review at Autonomous defers CI. Probe in a subtransaction so later rerun cases reuse this delivery.
+select tests.reset_role();
+insert into public.agent_workspace_policies(workspace_id,autonomy) values ((:'f'::jsonb->>'ws')::uuid,'autonomous') on conflict(workspace_id) do update set autonomy='autonomous';
+select tests.set_human((:'f'::jsonb->>'owner')::uuid);
+select public.set_agent_autonomy((:'lead'::jsonb->>'agent')::uuid,'autonomous');
+select tests.reset_role();
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
 select public.claim_task(:'parent'::uuid, 'claude_code') ->> 'run_id' as lr \gset
 select public.review_task(:'sub'::uuid, 'approved', '[{"criterion_id":"c1","status":"verified","note":"looks right"}]'::jsonb,
                           '[]'::jsonb, null, :'lr'::uuid);
-select is(tests.error_of(format('select public.close_subtask(%L::uuid)', :'sub')), 'policy_denied', 'a verified finding without a passing run does not close');
+select is(tests.error_of(format('do $b$ declare r jsonb; begin r := public.close_subtask(%L::uuid); raise exception using message = r->>''ci''; end $b$', :'sub')), 'deferred_to_job', 'an approved review defers a pending CI check');
 select tests.reset_role();
 update public.task_briefs set policies = '{"subtask_close":"lead"}' where task_id = :'parent'::uuid;
 select tests.set_agent((:'lead'::jsonb->>'user')::uuid, (:'lead'::jsonb->>'agent')::uuid);
-select is(tests.error_of(format('do $b$ begin perform public.close_subtask(%L::uuid); raise exception ''unexpected_success''; end $b$', :'sub')),
-          'policy_denied', 'lead policy cannot bypass a missing CI pass');
+select is(tests.error_of(format('do $b$ declare r jsonb; begin r := public.close_subtask(%L::uuid); raise exception using message = r->>''ci''; end $b$', :'sub')),
+          'deferred_to_job', 'lead policy defers CI with an approved current review');
 select tests.reset_role();
 update public.task_briefs set policies = '{}' where task_id = :'parent'::uuid;
 
