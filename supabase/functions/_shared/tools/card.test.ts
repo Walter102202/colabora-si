@@ -142,7 +142,7 @@ Deno.test('get_task returns the card: run, pending approval, current artifact, l
   assert.deepEqual(subtasks.map((x) => [x.task.id, x.run?.id ?? null, x.agent_name]), [['sub1', 'run-2', 'Lead']]);
   assert.deepEqual((s.agents as Row[]).map((a) => a.name).sort(), ['Codex worker', 'Lead']);
   assert.equal(s.app_url, 'https://app.example');
-  assert.deepEqual(h.rpcs.filter((r) => r.fn !== 'task_autonomy'), [{ fn: 'task_diff', params: { p_task_id: 't1' } }]);
+  assert.deepEqual(h.rpcs.filter((r) => r.fn !== 'task_autonomy' && r.fn !== 'job_ci_status'), [{ fn: 'task_diff', params: { p_task_id: 't1' } }]);
 });
 
 Deno.test('get_task includes only its unreleased environment', async () => {
@@ -171,7 +171,7 @@ Deno.test('decide_approval and close_task refuse agents with humans_only before 
   for (const [name, args] of [['decide_approval', { approval_id: 'ap1', decision: 'approve' }], ['close_task', { task_id: 't1', acceptance: 'accepted' }], ['list_waiting_on_me', {}]] as const) {
     const h = harness(world(), { principal: AGENT });
     await assert.rejects(tool(name).handler({ ...args }, h.ctx), (err: unknown) => err instanceof ToolError && err.code === 'humans_only');
-    assert.deepEqual(h.rpcs, []);
+    assert.deepEqual(h.rpcs.filter((r) => r.fn !== 'job_ci_status'), []);
   }
 });
 
@@ -186,7 +186,7 @@ Deno.test('decide_approval calls the RPC as the person and returns the refreshed
     },
   });
   const out = await tool('decide_approval').handler({ approval_id: 'ap1', decision: 'approve' }, h.ctx);
-  assert.deepEqual(h.rpcs, [{ fn: 'decide_approval', params: { p_approval_id: 'ap1', p_decision: 'approve', p_response: null } }]);
+  assert.deepEqual(h.rpcs.filter((r) => r.fn !== 'job_ci_status'), [{ fn: 'decide_approval', params: { p_approval_id: 'ap1', p_decision: 'approve', p_response: null } }]);
   assert.equal(out.structured.status, 'decided');
   assert.equal('receipt' in out.structured, false);
   assert.equal(out.structured.kind, 'task');
@@ -195,7 +195,7 @@ Deno.test('decide_approval calls the RPC as the person and returns the refreshed
   assert.match(out.text, /approve.*now working/);
 
   const answered = await tool('decide_approval').handler({ approval_id: 'ap1', decision: 'respond', response: { text: 'Keep the oldest' } }, h.ctx);
-  assert.deepEqual(h.rpcs[1].params, { p_approval_id: 'ap1', p_decision: 'respond', p_response: { text: 'Keep the oldest' } });
+  assert.deepEqual(h.rpcs.filter((r) => r.fn === 'decide_approval')[1].params, { p_approval_id: 'ap1', p_decision: 'respond', p_response: { text: 'Keep the oldest' } });
   assert.equal(answered.structured.kind, 'task');
 
   await assert.rejects(tool('decide_approval').handler({ approval_id: 'nope', decision: 'approve' }, h.ctx), (err: unknown) => err instanceof ToolError && err.code === 'not_found');
@@ -213,7 +213,7 @@ Deno.test('a control RPC the database refuses becomes direct_session_required wi
     assert.deepEqual(err.detail, { task_id: 't1', url: 'https://app.example/p/row1?task=t1' });
     return true;
   });
-  assert.deepEqual(h.rpcs, [{ fn: 'close_task', params: { p_task_id: 't1', p_acceptance: 'accepted', p_note: 'Nice' } }]);
+  assert.deepEqual(h.rpcs.filter((r) => r.fn !== 'job_ci_status'), [{ fn: 'close_task', params: { p_task_id: 't1', p_acceptance: 'accepted', p_note: 'Nice' } }]);
   assert.equal(taskLink('https://app.example', 'row 1', 'a/b'), 'https://app.example/p/row%201?task=a%2Fb');
 });
 
@@ -242,7 +242,7 @@ Deno.test('close_task calls the RPC and returns the closed task as a card', asyn
     },
   });
   const out = await tool('close_task').handler({ task_id: 't1', acceptance: 'accepted' }, h.ctx);
-  assert.deepEqual(h.rpcs, [{ fn: 'close_task', params: { p_task_id: 't1', p_acceptance: 'accepted', p_note: undefined } }, { fn: 'task_diff', params: { p_task_id: 't1' } }]);
+  assert.deepEqual(h.rpcs.filter((r) => r.fn !== 'job_ci_status'), [{ fn: 'close_task', params: { p_task_id: 't1', p_acceptance: 'accepted', p_note: undefined } }, { fn: 'task_diff', params: { p_task_id: 't1' } }]);
   assert.equal(out.structured.task_state, 'done');
   assert.equal(out.structured.kind, 'task');
   assert.equal(out.structured.run, null);
@@ -356,7 +356,7 @@ Deno.test('get_task card carries continuity: the agent declares resume and the l
     const out = await tool('get_task').handler({ task_id: 't1' }, h.ctx);
     assert.deepEqual(out.structured.continuity, { resume: true, checkpoint: { seq: 9, created_at: '2026-10-30T10:00:00+00:00',
       harness: 'claude_code', next_step: 'Email the team', handover: !ephemeral } });
-    assert.deepEqual(h.rpcs, [{ fn: 'task_autonomy', params: { p_task_id: 't1' } }]);
+    assert.deepEqual(h.rpcs.filter((r) => r.fn !== 'job_ci_status'), [{ fn: 'task_autonomy', params: { p_task_id: 't1' } }]);
   }
 });
 
@@ -367,7 +367,7 @@ Deno.test('get_task card carries the diff when the task is ready for review', as
     const h = harness(tables, { onRpc: ({ fn }) => fn === 'task_diff' ? { data: diff } : undefined });
     const out = await tool('get_task').handler({ task_id: 't1' }, h.ctx);
     assert.deepEqual(out.structured.diff, state === 'input_required' ? null : diff);
-    assert.deepEqual(h.rpcs, [
+    assert.deepEqual(h.rpcs.filter((r) => r.fn !== 'job_ci_status'), [
       ...(state === 'input_required' ? [] : [{ fn: 'task_diff', params: { p_task_id: 't1' } }]),
       { fn: 'task_autonomy', params: { p_task_id: 't1' } },
     ]);
@@ -378,7 +378,7 @@ Deno.test('get_task with after_seq skips the diff, and the diff is the last key 
   const diff = { task_id: 't1', hidden_items: 0, runs: [] };
   const h = harness(world(), { onRpc: ({ fn }) => fn === 'task_diff' ? { data: diff } : undefined });
   const paged = await tool('get_task').handler({ task_id: 't1', after_seq: 1 }, h.ctx);
-  assert.deepEqual(h.rpcs, [{ fn: 'task_autonomy', params: { p_task_id: 't1' } }]);
+  assert.deepEqual(h.rpcs.filter((r) => r.fn !== 'job_ci_status'), [{ fn: 'task_autonomy', params: { p_task_id: 't1' } }]);
   assert.equal(paged.structured.diff, null);
   const full = await tool('get_task').handler({ task_id: 't1' }, h.ctx);
   assert.deepEqual(full.structured.diff, diff);
@@ -386,7 +386,7 @@ Deno.test('get_task with after_seq skips the diff, and the diff is the last key 
 });
 
 Deno.test('the card diff is null when task_diff fails', async () => {
-  const h = harness(world(), { onRpc: () => ({ error: { code: 'PT404', message: 'not_found' } }) });
+  const h = harness(world(), { onRpc: ({ fn }) => fn === 'job_ci_status' ? undefined : ({ error: { code: 'PT404', message: 'not_found' } }) });
   const out = await tool('get_task').handler({ task_id: 't1' }, h.ctx);
   assert.equal(out.structured.diff, null);
   assert.equal(out.structured.autonomy, null);

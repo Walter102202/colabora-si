@@ -401,3 +401,15 @@ Deno.test('join_job names projects and explains missing assignments', async () =
   })));
   assert.equal(out.text, 'Refused: Beta launch has no work assigned to you. Ask Trama or a person to assign it.');
 });
+Deno.test('get_task loads final CI only for jobs, not subtasks or requests', async () => {
+  for (const kind of ['job', 'subtask', 'request']) {
+    const tables = world();
+    Object.assign(tables.agent_tasks[0], { parent_task_id: kind === 'subtask' ? 'parent' : null, request_kind: kind === 'request' ? 'assist' : null });
+    const ci = { state: 'pending', sha: 'a'.repeat(40), checks: [] };
+    const { ctx, rpcs } = harness(tables, { onRpc: ({ fn }) => fn === 'job_ci_status' ? { data: ci } : undefined });
+    const out = await tool('get_task').handler({ task_id: 't1' }, ctx);
+    assert.deepEqual(rpcs.filter((c) => c.fn === 'job_ci_status'), kind === 'job' ? [{ fn: 'job_ci_status', params: { p_task_id: 't1' } }] : []);
+    assert.deepEqual(out.structured.job_ci, kind === 'job' ? ci : undefined);
+    if (kind === 'job') assert.match(out.text, /CI: pending on aaaaaaa/);
+  }
+});

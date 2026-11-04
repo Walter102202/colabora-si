@@ -7,6 +7,7 @@ export interface TaskBundle {
   task: Row;
   brief: Row | null;
   ci_checks?: Row[];
+  job_ci?: Row;
   artifacts: Row[];
   approvals_pending: Row[];
   activities: Row[];
@@ -15,7 +16,7 @@ export interface TaskBundle {
 }
 
 export const TASK_COLUMNS =
-  'id,workspace_id,context_id,db_page_id,row_page_id,title,delegate_agent_id,owner_user_id,parent_task_id,depends_on_task_ids,' +
+  'id,workspace_id,context_id,db_page_id,row_page_id,title,delegate_agent_id,owner_user_id,parent_task_id,request_kind,depends_on_task_ids,' +
   'state,review_state,acceptance,waiting_on,brief_version,brief_stale,active_run_id,review_rounds,max_review_rounds,' +
   'cost_usd,last_activity_at,created_at,updated_at,closed_at,closed_by';
 
@@ -87,6 +88,7 @@ export async function loadTaskBundle(
     ...(doneWhen(brief).some((c) => c.check === 'ci')
       ? { ci_checks: (await must(db.rpc<Row[]>('task_ci_status', { p_task_id: taskId }))) ?? [] }
       : {}),
+    ...(!task.parent_task_id && !task.request_kind ? { job_ci: await must(db.rpc<Row>('job_ci_status', { p_task_id: taskId })) ?? { state: 'none', checks: [] } } : {}),
     artifacts: artifacts ?? [],
     approvals_pending: approvals ?? [],
     activities: ordered,
