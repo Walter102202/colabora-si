@@ -23,10 +23,12 @@ it("DM-3 title cells return a row page patch", () => {
 it("keeps generated text on AI property conversion and preserves attribution on rename", () => {
   const property = prop({ type: "ai" });
   const value = { text: "Hello", by: "agent", id: "a", at: 1 };
-  const source = page({ database: db([property], [row({ [property.id]: value })]) });
+  const rows = [row({ [property.id]: value }), row({ [property.id]: { ...value, text: "" } })];
+  const source = page({ database: db([property], rows) });
 
   const converted = mutations.updateProperty(source, property.id, { type: "text" });
   expect(converted.database!.rows[0].cells[property.id]).toBe("Hello");
+  expect(converted.database!.rows[1].cells).not.toHaveProperty(property.id);
   const renamed = mutations.updateProperty(source, property.id, { name: "Renamed" });
   expect(renamed.database!.rows[0].cells[property.id]).toBe(value);
 });

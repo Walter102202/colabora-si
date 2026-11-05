@@ -68,7 +68,7 @@ export function updateProperty(page: Page, propId: string, patch: Partial<DbProp
     rows = rows.map((row) => {
       const value = row.cells[propId];
       const cells = { ...row.cells };
-      if (value !== null && typeof value === "object" && "text" in value && typeof value.text === "string") {
+      if (value !== null && typeof value === "object" && "text" in value && typeof value.text === "string" && value.text.length > 0) {
         cells[propId] = value.text;
       } else {
         delete cells[propId];
