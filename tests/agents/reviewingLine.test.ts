@@ -35,7 +35,7 @@ describe("who reviews a delivered task", () => {
   });
   it("a top-level delivery shows review readiness without assigning the next move to a person", () => {
     const task = delivered({ parent_task_id: null });
-    expect(card(task)).toContain("Ready for review · round 1 of 2");
+    expect(card(task)).toContain("Ready to accept · round 1 of 2");
     expect(card(task)).not.toContain("Waiting for your review");
     expect(card(task)).not.toContain("Lead reviewing");
     expect(taskSubtitle(task, null, "Codex")).toBe("delivery ready for review");

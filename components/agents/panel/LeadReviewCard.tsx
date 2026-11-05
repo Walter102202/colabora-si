@@ -55,7 +55,7 @@ export function LeadReviewCard({
   const inReview = task.state === "ready_for_review" && task.review_state === "pending";
   const roundLine =
     inReview
-      ? `${task.parent_task_id ? "Lead reviewing" : "Ready for review"} · round ${task.review_rounds + 1} of ${task.max_review_rounds}`
+      ? `${task.parent_task_id ? "Lead reviewing" : "Ready to accept"} · round ${task.review_rounds + 1} of ${task.max_review_rounds}`
       : task.review_rounds > 0
         ? `Round ${task.review_rounds} of ${task.max_review_rounds}${!isTerminal(task.state) && task.review_rounds >= task.max_review_rounds ? " · escalated to you" : ""}`
         : null;
