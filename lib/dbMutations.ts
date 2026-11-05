@@ -61,7 +61,21 @@ export function updateProperty(page: Page, propId: string, patch: Partial<DbProp
   const old = page.database.properties.find((p) => p.id === propId);
   if (!old) return page;
   const toId = patch.type === "id" && old.type !== "id";
-  const rows = toId ? page.database.rows.map((row, i) => ({ ...row, cells: { ...row.cells, [propId]: i + 1 } })) : page.database.rows;
+  let rows = page.database.rows;
+  if (toId) {
+    rows = rows.map((row, i) => ({ ...row, cells: { ...row.cells, [propId]: i + 1 } }));
+  } else if (old.type === "ai" && patch.type && patch.type !== "ai") {
+    rows = rows.map((row) => {
+      const value = row.cells[propId];
+      const cells = { ...row.cells };
+      if (value !== null && typeof value === "object" && "text" in value && typeof value.text === "string") {
+        cells[propId] = value.text;
+      } else {
+        delete cells[propId];
+      }
+      return { ...row, cells };
+    });
+  }
   const properties = page.database.properties.map((p) => p.id === propId ? { ...p, ...patch, ...(toId ? { nextId: rows.length + 1 } : {}) } : p);
   return withDatabase(page, { ...page.database, rows, properties }, now);
 }

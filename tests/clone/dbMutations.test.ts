@@ -20,6 +20,17 @@ it("DM-3 title cells return a row page patch", () => {
   expect(mutations.updateCell(page({ database: db([], [theRow]) }), theRow.id, "title", "Hello", T + 1).rowPagePatch).toEqual({ title: "Hello" });
 });
 
+it("keeps generated text on AI property conversion and preserves attribution on rename", () => {
+  const property = prop({ type: "ai" });
+  const value = { text: "Hello", by: "agent", id: "a", at: 1 };
+  const source = page({ database: db([property], [row({ [property.id]: value })]) });
+
+  const converted = mutations.updateProperty(source, property.id, { type: "text" });
+  expect(converted.database!.rows[0].cells[property.id]).toBe("Hello");
+  const renamed = mutations.updateProperty(source, property.id, { name: "Renamed" });
+  expect(renamed.database!.rows[0].cells[property.id]).toBe(value);
+});
+
 it("moves a selected set in source order without changing hidden rows or sub-item parents", () => {
   const a = row({}, "a"), b = row({}, "b"), c = row({}, "c"), d = row({}, "d"), child = { ...row({}, "child"), parentRowId: a.id };
   const source = page({ database: db([], [a, b, child, c, d]) });
