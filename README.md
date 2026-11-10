@@ -2,6 +2,8 @@
 
 **A shared workspace for people and AI agents.**
 
+> Built by Walter Guzmán for the [Meta Global AI Developer Hackathon](https://cerebralvalley.ai/e/meta-ai-developer-hackathon/details), Indie Developer track (October 26 – November 4, 2026). This repository is the public record of that submission.
+
 colabora.si is a local-first, Notion-style workspace where humans and AI agents work on the same pages. People get a block editor, a page tree, inline databases with views, comments and an optional cloud for accounts, real-time sync, sharing and publishing. Agents get the same workspace through a remote [MCP](https://modelcontextprotocol.io) server: they pick up tasks from an inline database, write into pages with visible attribution, ask for decisions, and hand the work back for review.
 
 Any harness that speaks MCP can take part: Claude Code, Codex, Muse Code, Cursor, Gemini CLI, a chat app, or the small reference agent that ships in this repository. A task can pass from one harness to another without losing its brief, its permissions or its history, because all of that lives in the workspace, not in the agent. Every workspace also has its own agent, Trama, running on Meta's Muse Wonder.
@@ -38,6 +40,7 @@ Agents today work in the dark: in a terminal, a chat, or a tab nobody else sees.
 - **Jobs.** Name a Lead and Workers on a row, and the Lead writes and assigns the subtasks. A board shows each job in its lane, with its progress and who it is waiting on, and one **Accept** closes the delivered work. See [Jobs](#jobs).
 - **Agents.** An "Agent Tasks" database as the control room, a Lead/Worker protocol, role and autonomy per agent, per-block attribution, decision and approval cards, a Home with what is waiting on you, task panel with "what was asked and what changed", handover between harnesses from the last checkpoint, review tasks opened on delivery, merges conditioned on an approved review and green CI, revert for a whole run, heartbeats and cost per run, metrics per agent, kill switch per workspace and per agent. Chat hosts that support MCP Apps render the same task card inline.
 - **Workspace memory.** A correction proposes a lesson; once a person accepts it, the next agent receives it with the reason it applies, along with related decisions, sources and pages. A page keeps its sources: when one changes, Trama checks the page and shows any difference for a person to settle.
+- **Meetings.** Press Start on the Meetings page, or type `/meeting` on any page, and the transcript appears as you talk, for up to 60 minutes. When you stop, Trama writes a summary with the decisions and action items, each cited to the transcript, building on the notes you typed. Audio is transcribed by Meta and never stored; an interrupted recording is recovered from the browser.
 - **Personal memory.** Trama remembers preferences, facts and commitments from what you tell it in a workspace. Only you can see it, and you can edit, forget or pause it in Settings → Memory. It never authorizes actions.
 - **Remote MCP server.** Read and write tools for pages and databases, task tools, waiting tools that hold the call until something changes, prompts and resources for briefs and pages, and a connection recipe per harness.
 - **Cloud (optional).** Accounts, sync by block operations (no lost edits, conflicts shown on the block), presence, sharing and public pages (served as HTML to crawlers and as Markdown to agents at `/pub/<id>.md`), members and invitations, file uploads, web push reminders, email notifications.
@@ -49,7 +52,7 @@ Without a backend the app is 100 % local: everything lives in the browser's Inde
 Any model can take part, and Meta's Muse models run the agents that ship with the product:
 
 - **Trama**, the workspace's platform agent, runs on Muse Wonder 1.0. It answers people, leads tasks, fills AI properties, rewrites selected blocks and checks changed sources.
-- **Voice** is transcribed with `muse-voice-transcribe-1.0`.
+- **Voice** and meeting recordings are transcribed with `muse-voice-transcribe-1.0`.
 - **Muse Code** connects over OAuth to both MCP endpoints and can work as Lead or Worker on a job.
 - **Muse (Meta)**, Meta's personal assistant, connects to pages as a custom connector.
 
@@ -234,7 +237,7 @@ app/            SPA routes (Vite, React Router); app/main.tsx is the entry and p
 components/     UI; components/agents/ holds the agent-layer surfaces, components/agents/panel/ the pure views, components/landing/ the public landing page
 lib/            domain types, store, pure engines (markdown, formulas, block operations, sync)
 supabase/
-  migrations/   numbered SQL, one concern per file: core, agents, tasks, writes, control, dispatch, Lead, decisions, metrics, AI, OAuth, CI evidence, review policy, lessons, page sources, private pages, notes, voice, channels, connections, jobs, Trama proposals and messages
+  migrations/   numbered SQL, one concern per file: core, agents, tasks, writes, control, dispatch, Lead, decisions, metrics, AI, OAuth, CI evidence, review policy, lessons, page sources, private pages, notes, voice, channels, connections, jobs, Trama proposals and messages, personal memory, meetings
   functions/    mcp, workspace-mcp, agent-token, trama-runtime, agent-admin, agent-dispatch, agent-webhook, github-webhook, voice-transcribe, telegram-webhook, channel-notify, pub-html, send-reminders, send-email, account-link, waitlist, waitlist-invites
   tests/        pgTAP suites (clone/, agents/)
   seeds/        demo workspace and demo agents
@@ -290,6 +293,10 @@ where owner_id = '<owner UUID>' and email = lower(btrim('<recipient email>'));
 ```
 
 This changes only quota accounting; it does not remove membership or invalidate a pending invite. The current UI message says "You can invite 1 person for now." Update that copy when raising the server allowance. No `supabase config push` is needed for this change.
+
+## Contributing
+
+This repository is kept as it was submitted to the hackathon. It is open to read, run and fork under the license below, and it does not take pull requests.
 
 ## License
 
